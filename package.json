@@ -1,0 +1,22 @@
+{
+  "name": "openstack-management-api",
+  "version": "1.0.0",
+  "description": "",
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "devDependencies": {
+    "@hey-api/openapi-ts": "^0.94.0",
+    "esbuild": "^0.27.3",
+    "esbuild-plugin-alias-path": "^2.0.2",
+    "swagger2openapi": "^7.0.8",
+    "typescript": "^5.9.3"
+  }
+}

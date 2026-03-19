@@ -1,0 +1,15 @@
+vendor/
+*.exe
+*.DS_Store
+build/
+cmd/cmd
+*.log
+tmp/
+.env
+.npm-temp
+node_modules/
+__*
+ansible-deployment-example/inventory.yaml
+kubeconfig-*.yaml
+internal/generated_docs/
+private/

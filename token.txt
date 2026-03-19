@@ -1,0 +1,15 @@
+ubuntu@openstack-dev:~$ openstack application credential create backend-admin   --unrestricted
++--------------+----------------------------------------------------------------------------------------+
+| Field        | Value                                                                                  |
++--------------+----------------------------------------------------------------------------------------+
+| description  | None                                                                                   |
+| expires_at   | None                                                                                   |
+| id           | eefb2fd80d8b4ee28f15ba97cd55fddc                                                       |
+| name         | backend-admin                                                                          |
+| project_id   | e95604d0133f484d8a6fc517678bf1d0                                                       |
+| roles        | reader admin member                                                                    |
+| secret       | -YbQqo47WxdPiHwb3JlShfU9o72ZDFejTo0sVWew0OtydsSnkFxCIsynivl6orOkJ0VQr0j_ZlrW91yq0a4wog |
+| system       | None                                                                                   |
+| unrestricted | True                                                                                   |
+| user_id      | fc9fb9613402461ba0a8da8af44d7d16                                                       |
++--------------+----------------------------------------------------------------------------------------+

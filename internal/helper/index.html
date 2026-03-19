@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Openstack Management API</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f9f9f9;
+            color: #333;
+            margin: 2rem;
+        }
+
+        h1 {
+            color: #2c3e50;
+        }
+
+        section {
+            background: #fff;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 1.5rem;
+        }
+
+        a {
+            color: #3498db;
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        .note {
+            margin-top: 0.5rem;
+            font-size: 0.95rem;
+            color: #555;
+        }
+    </style>
+</head>
+
+<body>
+    <section>
+        <h1>Openstack Management API Documentation</h1>
+
+        <p>
+            The API endpoint for version 1 of the API is available at <code id="apiBasePre"></code>
+        </p>
+        <p>
+            See <a href="swagger.json">swagger.json</a> for an API specification.
+            You can also use the
+            JavaScript client
+            (<a href="client/client.gen.js">client</a>,
+            <a href="client/sdk.gen.js">SDK</a>) or the
+            ESM variant
+            (<a href="client/client.gen.mjs">client</a>,
+            <a href="client/sdk.gen.mjs">SDK</a>)
+            to access the API.
+        </p>
+
+    </section>
+
+    <script type="text/javascript">
+        (function () {
+            const apiBase = new URL('/v1/', window.location.origin).toString();
+            document.getElementById('apiBasePre').textContent = apiBase;
+        })();
+    </script>
+</body>
+
+</html>

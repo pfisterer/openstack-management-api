@@ -4,7 +4,6 @@ import (
 	"context"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 )
@@ -35,7 +34,7 @@ func (m *MockRoleProvider) GetUserTokens(ctx context.Context, claims *common.Use
 		return common.TokenList{}, nil
 	}
 	// Use mockdata identities for token lookup
-	identities, _, _ := DefaultMockResourceState(time.Now())
+	identities, _, _, _ := DefaultMockResourceState()
 	for _, ident := range identities {
 		if strings.EqualFold(ident.Email, userEmail) {
 			return ident.Tokens, nil
@@ -46,7 +45,7 @@ func (m *MockRoleProvider) GetUserTokens(ctx context.Context, claims *common.Use
 
 // SearchGroupTokens returns mock group tokens from mockdata identities.
 func (m *MockRoleProvider) SearchGroupTokens(_ context.Context, query string, limit int) (common.TokenList, error) {
-	identities, _, _ := DefaultMockResourceState(time.Now())
+	identities, _, _, _ := DefaultMockResourceState()
 	groupSet := map[string]struct{}{}
 	for _, ident := range identities {
 		for _, token := range ident.Tokens {
@@ -72,4 +71,19 @@ func (m *MockRoleProvider) SearchGroupTokens(_ context.Context, query string, li
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+// GetGroupUsers returns mock email addresses for users belonging to the given group token.
+func (m *MockRoleProvider) GetGroupUsers(_ context.Context, groupToken string) ([]string, error) {
+	identities, _, _, _ := DefaultMockResourceState()
+	var emails []string
+	for _, ident := range identities {
+		for _, token := range ident.Tokens {
+			if token == groupToken {
+				emails = append(emails, ident.Email)
+				break
+			}
+		}
+	}
+	return emails, nil
 }

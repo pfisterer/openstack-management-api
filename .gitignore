@@ -14,3 +14,4 @@ kubeconfig-*.yaml
 internal/generated_docs/
 private/
 private-*
+docs/helm-repo

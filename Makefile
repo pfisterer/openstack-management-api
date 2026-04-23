@@ -174,7 +174,7 @@ helm-update:
 
 	helm package helm-chart
 	mkdir -p docs/helm-repo
-	mv cloud-self-service*.tgz docs/helm-repo/
+	mv $(PROJECT_NAME)*.tgz docs/helm-repo/
 	helm repo index docs/helm-repo --url https://pfisterer.github.io/dynamic-zones/helm-repo
 	echo "✅ Helm chart linted successfully."
 

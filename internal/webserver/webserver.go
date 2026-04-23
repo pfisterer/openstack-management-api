@@ -12,45 +12,78 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/helper"
+	"github.com/pfisterer/openstack-management-api/internal/reconciler"
 	"go.uber.org/zap"
 )
 
 const (
-	defaultPageLimit = 100
-	maxPageLimit     = 500
+	defaultPageLimit = common.DefaultPageLimit
+	maxPageLimit     = common.MaxPageLimit
 )
+
+// ReconcilerAPI is the minimal interface the admin endpoint needs from the reconciler.
+type ReconcilerAPI interface {
+	Trigger()
+	GetStatus() reconciler.Status
+}
 
 // SetupConfig defines required dependencies for constructing the HTTP router.
 type SetupConfig struct {
-	DevMode        bool
-	Log            *zap.SugaredLogger
-	StaticConfig   StaticConfig
-	ResourceAPI    ResourceAPIConfig
-	AuthMiddleware gin.HandlerFunc
+	DevMode      bool
+	Log          *zap.SugaredLogger
+	StaticConfig StaticConfig
+	ProjectAPI   ProjectAPIConfig
+	// Reconciler is optional; when nil the /v1/admin/reconcile endpoints are omitted.
+	Reconciler ReconcilerAPI
+	// RootAdminTokens is the set of tokens whose holders may access the reconciler admin endpoints.
+	// Requests that carry none of these tokens receive 403 Forbidden.
+	RootAdminTokens common.TokenList
+	AuthMiddleware  gin.HandlerFunc
 }
 
-// ResourceAPIService provides business operations consumed by HTTP handlers.
-type ResourceAPIService interface {
-	// Returns delegations created by the given user (CreatedBy matches userEmail). Supports pagination.
+type DelegationStrategy struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+// ProjectConfigResponse contains system-wide project configuration.
+type ProjectConfigResponse struct {
+	Projects             []common.ManagedProject `json:"projects"`
+	OpenstackRoles       []string                `json:"openstackRoles"`
+	DelegationStrategies []DelegationStrategy    `json:"delegationStrategies"`
+	DummyDevUsers        []string                `json:"dummyDevUsers,omitempty"`
+}
+
+// ProjectAPIService provides business operations consumed by HTTP handlers.
+type ProjectAPIService interface {
 	// Group search operation
 	SearchGroupTokens(query string, limit int) (common.TokenList, error)
 
-	// Request management operations
-	ListRequestsBy(userEmail string, limit, offset int) ([]Request, error)
-	ListRequestsManagedBy(userEmail string, userTokens common.TokenList, limit, offset int) ([]Request, error)
+	// Project management operations
+	GetProjectByID(id string, userTokens common.TokenList) (*common.Project, error)
+	ListProjectsBy(userEmail string, limit, offset int) ([]common.Project, error)
+	ListProjectsManagedBy(userEmail string, userTokens common.TokenList, limit, offset int) ([]common.Project, error)
 
-	CreateRequest(req CreateRequestRequest, actor string, userEmail string, userTokens common.TokenList) (Request, error)
-	UpdateRequest(id string, req UpdateRequestRequest, actor string) (Request, error)
-	ApproveRequest(id string, req ApproveRequestRequest, actor string, userEmail string, userTokens common.TokenList) (Request, error)
-	RejectRequest(id string, req RejectRequestRequest, actor string) (Request, error)
-	ReleaseRequest(id string, actor string) (Request, error)
+	CreateProject(req CreateProjectRequest, actor string, userEmail string, userTokens common.TokenList) (common.Project, error)
+	UpdateProject(id string, req UpdateProjectRequest, actor string) (common.Project, error)
+	ApproveProject(id string, req ApproveProjectRequest, actor string, userEmail string, userTokens common.TokenList) (common.Project, error)
+	RejectProject(id string, req RejectProjectRequest, actor string) (common.Project, error)
+	ReleaseProject(id string, actor string) (common.Project, error)
+	MarkProjectForPromotion(id string, req PromoteProjectRequest, actor string, userTokens common.TokenList) (common.Project, error)
 
 	// Delegation management operations
-	GetDelegationsBy(userTokens common.TokenList, limit, offset int) ([]Delegation, error)
-	GetDelegationsFor(userTokens common.TokenList, limit, offset int) ([]Delegation, error)
-	CreateDelegation(req CreateDelegationRequest, userEmail string) (Delegation, error)
-	UpdateDelegation(id string, req UpdateDelegationRequest, userEmail string) (Delegation, error)
+	GetDelegationsByAdminScope(userTokens common.TokenList, limit, offset int) ([]common.Delegation, error)
+	GetDelegationsDelegatedToMe(userTokens common.TokenList, limit, offset int) ([]common.Delegation, error)
+	ListDelegationsEligibleForMe(userTokens common.TokenList, limit, offset int) ([]common.Delegation, error)
+	ListDelegationsEligibleForOwner(callerTokens common.TokenList, ownerTokens common.TokenList, limit, offset int) ([]common.Delegation, error)
+	CreateDelegation(req CreateDelegationRequest, userEmail string) (common.Delegation, error)
+	UpdateDelegation(id string, req UpdateDelegationRequest, userEmail string) (common.Delegation, error)
 	DeleteDelegation(id string, userEmail string) error
+
+	// Token eligibility rule operations
+	GetMyEligibilityRules(userTokens common.TokenList) ([]common.TokenEligibilityRule, error)
+	SetEligibilityRule(ownerToken string, eligibleRequesters common.TokenList, actorEmail string, userTokens common.TokenList) (common.TokenEligibilityRule, error)
+	DeleteEligibilityRule(ownerToken string, actorEmail string, userTokens common.TokenList) error
 
 	//Role switch related operations
 	GetUserGroupSwitchForActor(actorEmail string) *string
@@ -59,11 +92,12 @@ type ResourceAPIService interface {
 	ResolveEffectiveUserTokens(actorEmail string, originalTokens common.TokenList) common.TokenList
 }
 
-// ResourceAPIConfig configures resource API route registration.
-type ResourceAPIConfig struct {
-	RoleSwitchGroups    common.TokenList
-	ResourceDefinitions []ResourceDefinition
-	Service             ResourceAPIService
+// ProjectAPIConfig configures resource API route registration.
+type ProjectAPIConfig struct {
+	RoleSwitchGroups   common.TokenList
+	ProjectDefinitions []common.ManagedProject
+	Service            ProjectAPIService
+	DummyDevUsers      []string
 }
 
 // SetupGinWebserver configures and returns the application router.
@@ -107,13 +141,19 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 	}
 
 	// Register API routes with the provided resource service and role switch groups configuration
-	RegisterResourceApiRoutes(apiV1Group, cfg.ResourceAPI)
+	RegisterProjectApiRoutes(apiV1Group, cfg.ProjectAPI, cfg.Log)
+
+	// Always register reconciler admin endpoints so CORS headers are present even
+	// when the reconciler is disabled. Handlers return 503 when Reconciler is nil.
+	RegisterReconcilerRoutes(apiV1Group, cfg.Reconciler, cfg.RootAdminTokens, cfg.Log)
 
 	return router
 }
 
-// RegisterResourceApiRoutes wires all resource-management API endpoints.
-func RegisterResourceApiRoutes(v1 *gin.RouterGroup, cfg ResourceAPIConfig) *gin.RouterGroup {
+// RegisterProjectApiRoutes wires all resource-management API endpoints.
+func RegisterProjectApiRoutes(v1 *gin.RouterGroup, cfg ProjectAPIConfig, log *zap.SugaredLogger) *gin.RouterGroup {
+	v1.Use(EffectiveAuthMiddleware(cfg.Service))
+
 	v1.GET("/config", getConfig(cfg))
 
 	roleSwitch := v1.Group("/role-switch")
@@ -127,27 +167,83 @@ func RegisterResourceApiRoutes(v1 *gin.RouterGroup, cfg ResourceAPIConfig) *gin.
 	{
 		delegations.GET("/delegated-to-me", listDelegationsToMe(cfg))
 		delegations.GET("/made-by-me", listDelegationsMadeByMe(cfg))
+		delegations.GET("/eligible-for-me", listDelegationsEligibleForMe(cfg))
+		delegations.GET("/eligible-for-owner", listDelegationsEligibleForOwner(cfg))
 		delegations.POST("", createDelegation(cfg))
-		delegations.PUT(":id", updateDelegation(cfg))
-		delegations.DELETE(":id", deleteDelegation(cfg))
+		delegations.PUT("/:id", updateDelegation(cfg))
+		delegations.DELETE("/:id", deleteDelegation(cfg))
 	}
 
 	groups := v1.Group("/groups")
 	{
 		groups.GET("/search", searchGroups(cfg))
+		groups.GET("/mine", listMyGroups(cfg))
 	}
 
-	requests := v1.Group("/requests")
+	projects := v1.Group("/projects")
 	{
-		requests.GET("", listRequests(cfg))
-		requests.POST("", createRequest(cfg))
-		requests.PUT("/:id", updateRequest(cfg))
-		requests.POST("/:id/approve", approveRequest(cfg))
-		requests.POST("/:id/reject", rejectRequest(cfg))
-		requests.POST("/:id/release", releaseRequest(cfg))
+		projects.GET("/mine", listMyProjects(cfg))
+		projects.GET("/manage", listProjectsToManage(cfg))
+		projects.GET("/:id", getProject(cfg))
+		projects.POST("", createProject(cfg))
+		projects.PUT("/:id", updateProject(cfg))
+		projects.POST("/:id/approve", approveProject(cfg))
+		projects.POST("/:id/reject", rejectProject(cfg))
+		projects.POST("/:id/release", releaseProject(cfg))
+		projects.POST("/:id/promote", markProjectForPromotion(cfg))
+	}
+
+	eligibility := v1.Group("/eligibility")
+	{
+		eligibility.GET("", listMyEligibilityRules(cfg))
+		eligibility.PUT("/:token", setEligibilityRule(cfg))
+		eligibility.DELETE("/:token", deleteEligibilityRule(cfg))
 	}
 
 	return v1
+}
+
+// getConfig returns the system-wide resource configuration.
+//
+//	@Summary		Get resource configuration
+//	@Description	Retrieves system-wide configuration including resource types and roles.
+//	@Tags			config
+//	@Produce		json
+//	@Security		Bearer
+//	@Success		200	{ProjectConfigResponse}	resourceConfig	"Resource configuration."
+//	@ID				getConfig
+//	@Router			/v1/config [get]
+func getConfig(cfg ProjectAPIConfig) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		resources := make([]common.ManagedProject, 0, len(cfg.ProjectDefinitions))
+		for _, r := range cfg.ProjectDefinitions {
+			if r.ShowOnUI {
+				resources = append(resources, r)
+			}
+		}
+
+		// Set default delegation strategies
+		delegationStrategies := []DelegationStrategy{
+			{Value: common.DelegationStrategyPool, Label: "Pool (Shared, manual approval)"},
+			{Value: common.DelegationStrategyAllowance, Label: "Allowance (Per-user, auto-approve)"},
+		}
+
+		// Default OpenStack roles to be used in the frontend
+		openstackRoles := []string{"admin", "member", "reader"}
+
+		// Return the static configuration
+		config := ProjectConfigResponse{
+			Projects:             resources,
+			DelegationStrategies: delegationStrategies,
+			OpenstackRoles:       openstackRoles,
+		}
+
+		// Include dummy dev users in config if set, to inform frontend of available users for testing.
+		if len(cfg.DummyDevUsers) > 0 {
+			config.DummyDevUsers = cfg.DummyDevUsers
+		}
+		c.JSON(http.StatusOK, config)
+	}
 }
 
 func disableCachingMiddleware() gin.HandlerFunc {
@@ -160,7 +256,7 @@ func disableCachingMiddleware() gin.HandlerFunc {
 }
 
 func enableCorsOriginReflectionConfig(router *gin.RouterGroup) {
-	allowedHeaders := []string{"Origin", "Content-Type", "Authorization", "X-DNS-Key-Name", "X-DNS-Key-Algorithm", "X-DNS-Key"}
+	allowedHeaders := []string{"Origin", "Content-Type", "Authorization", "X-DNS-Key-Name", "X-DNS-Key-Algorithm", "X-DNS-Key", "X-Dummy-Auth-User"}
 
 	corsConfig := cors.Config{
 		AllowOriginFunc: func(origin string) bool {

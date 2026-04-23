@@ -9,13 +9,7 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/common"
 )
 
-// Identity represents a user or group in the identity catalog.
-type Identity struct {
-	ID     string           `json:"id"`
-	Label  string           `json:"label"`
-	Email  string           `json:"email"`
-	Tokens common.TokenList `json:"tokens"`
-}
+const groupTokenPrefix = "group:"
 
 // setRoleSwitchGroupRequest defines the payload for selecting a temporary group override.
 type setRoleSwitchGroupRequest struct {
@@ -26,7 +20,7 @@ type setRoleSwitchGroupRequest struct {
 type roleSwitchStateResponse struct {
 	Enabled            bool             `json:"enabled"`
 	Allowed            bool             `json:"allowed"`
-	ActiveIdentity     Identity         `json:"active_identity"`
+	ActiveIdentity     common.Identity  `json:"active_identity"`
 	OriginalTokens     common.TokenList `json:"original_tokens"`
 	EffectiveTokens    common.TokenList `json:"effective_tokens"`
 	OverrideGroupToken *string          `json:"override_group_token"`
@@ -35,7 +29,7 @@ type roleSwitchStateResponse struct {
 // NormalizeGroupToken normalizes a raw group token into canonical `group:<name>` form.
 //
 // Parameter:
-// - raw: Input token value from config, claim, or request.
+// - raw: Input token value from config, claim, or project.
 //
 // Returns:
 // - Canonical `group:<name>` token when input is valid.
@@ -46,7 +40,7 @@ func NormalizeGroupToken(raw string) string {
 		return ""
 	}
 
-	if strings.HasPrefix(value, "group:") {
+	if strings.HasPrefix(value, groupTokenPrefix) {
 		return value
 	}
 
@@ -54,7 +48,7 @@ func NormalizeGroupToken(raw string) string {
 		return ""
 	}
 
-	return "group:" + value
+	return groupTokenPrefix + value
 }
 
 // strictGroupTokenSet builds a set from configuration values and enforces strict
@@ -63,10 +57,10 @@ func strictGroupTokenSet(values common.TokenList) (*goset.Set[string], bool) {
 	set := goset.New[string](len(values))
 	for _, value := range values {
 		normalized := strings.TrimSpace(value)
-		if normalized == "" || !strings.HasPrefix(normalized, "group:") {
+		if normalized == "" || !strings.HasPrefix(normalized, groupTokenPrefix) {
 			return nil, false
 		}
-		if normalized == "group:" {
+		if normalized == groupTokenPrefix {
 			return nil, false
 		}
 		set.Insert(normalized)
@@ -80,7 +74,7 @@ func userGroupTokenSet(values common.TokenList) *goset.Set[string] {
 	set := goset.New[string](len(values))
 	for _, value := range values {
 		normalized := strings.TrimSpace(value)
-		if strings.HasPrefix(normalized, "group:") && normalized != "group:" {
+		if strings.HasPrefix(normalized, groupTokenPrefix) && normalized != groupTokenPrefix {
 			set.Insert(normalized)
 		}
 	}
@@ -109,26 +103,37 @@ func canUseRoleSwitch(userTokens common.TokenList, allowedGroups common.TokenLis
 	return false
 }
 
-func buildRoleSwitchStateResponse(c *gin.Context, cfg ResourceAPIConfig, allowed bool) (roleSwitchStateResponse, error) {
-	svc := cfg.Service
-	userEmail, userTokens, err := ResolveEffectiveAuthContext(c, svc)
+// requireRoleSwitch resolves the original auth context and checks the role-switch
+// allowlist. Returns the actor email, original tokens, and true when the caller is
+// permitted. Writes a 401/403 response and returns false when not permitted.
+func requireRoleSwitch(c *gin.Context, cfg ProjectAPIConfig) (string, common.TokenList, bool) {
+	auth, err := mustGetAuthContext(c)
 	if err != nil {
-		return roleSwitchStateResponse{}, err
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
+		return "", nil, false
 	}
-	_, originalTokens, err := ResolveOriginalAuthContext(c)
+	if !canUseRoleSwitch(auth.OriginalTokens, cfg.RoleSwitchGroups) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		return "", nil, false
+	}
+	return auth.UserEmail, auth.OriginalTokens, true
+}
+
+func buildRoleSwitchStateResponse(c *gin.Context, cfg ProjectAPIConfig, allowed bool) (roleSwitchStateResponse, error) {
+	auth, err := mustGetAuthContext(c)
 	if err != nil {
 		return roleSwitchStateResponse{}, err
 	}
 
-	activeIdentity := Identity{
-		ID:     userEmail,
-		Label:  userEmail,
-		Email:  userEmail,
-		Tokens: userTokens,
+	activeIdentity := common.Identity{
+		ID:     auth.UserEmail,
+		Label:  auth.UserEmail,
+		Email:  auth.UserEmail,
+		Tokens: auth.EffectiveTokens,
 	}
 
 	var overrideGroupToken *string
-	if override := svc.GetUserGroupSwitchForActor(userEmail); override != nil {
+	if override := cfg.Service.GetUserGroupSwitchForActor(auth.UserEmail); override != nil {
 		overrideGroupToken = override
 	}
 
@@ -136,8 +141,8 @@ func buildRoleSwitchStateResponse(c *gin.Context, cfg ResourceAPIConfig, allowed
 		Enabled:            len(cfg.RoleSwitchGroups) > 0,
 		Allowed:            allowed,
 		ActiveIdentity:     activeIdentity,
-		OriginalTokens:     originalTokens,
-		EffectiveTokens:    userTokens,
+		OriginalTokens:     auth.OriginalTokens,
+		EffectiveTokens:    auth.EffectiveTokens,
 		OverrideGroupToken: overrideGroupToken,
 	}, nil
 }
@@ -152,14 +157,14 @@ func buildRoleSwitchStateResponse(c *gin.Context, cfg ResourceAPIConfig, allowed
 //	@Success		200	{object}	roleSwitchStateResponse	"Current role-switch context."
 //	@ID				getRoleSwitch
 //	@Router			/v1/role-switch [get]
-func getRoleSwitch(cfg ResourceAPIConfig) gin.HandlerFunc {
+func getRoleSwitch(cfg ProjectAPIConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		_, originalTokens, err := ResolveOriginalAuthContext(c)
+		auth, err := mustGetAuthContext(c)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		allowed := canUseRoleSwitch(originalTokens, cfg.RoleSwitchGroups)
+		allowed := canUseRoleSwitch(auth.OriginalTokens, cfg.RoleSwitchGroups)
 		response, err := buildRoleSwitchStateResponse(c, cfg, allowed)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
@@ -183,16 +188,11 @@ func getRoleSwitch(cfg ResourceAPIConfig) gin.HandlerFunc {
 //	@Failure		403		{object}	map[string]any	"Forbidden."
 //	@ID				setRoleSwitch
 //	@Router			/v1/role-switch [put]
-func setRoleSwitch(cfg ResourceAPIConfig) gin.HandlerFunc {
+func setRoleSwitch(cfg ProjectAPIConfig) gin.HandlerFunc {
 	svc := cfg.Service
 	return func(c *gin.Context) {
-		actorEmail, originalTokens, err := ResolveOriginalAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		if !canUseRoleSwitch(originalTokens, cfg.RoleSwitchGroups) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		actorEmail, _, ok := requireRoleSwitch(c, cfg)
+		if !ok {
 			return
 		}
 
@@ -227,16 +227,11 @@ func setRoleSwitch(cfg ResourceAPIConfig) gin.HandlerFunc {
 //	@Failure		403	{object}	map[string]any	"Forbidden."
 //	@ID				clearRoleSwitch
 //	@Router			/v1/role-switch [delete]
-func clearRoleSwitch(cfg ResourceAPIConfig) gin.HandlerFunc {
+func clearRoleSwitch(cfg ProjectAPIConfig) gin.HandlerFunc {
 	svc := cfg.Service
 	return func(c *gin.Context) {
-		actorEmail, originalTokens, err := ResolveOriginalAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		if !canUseRoleSwitch(originalTokens, cfg.RoleSwitchGroups) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+		actorEmail, _, ok := requireRoleSwitch(c, cfg)
+		if !ok {
 			return
 		}
 

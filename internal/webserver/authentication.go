@@ -10,12 +10,55 @@ import (
 	"github.com/coreos/go-oidc"
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/mockdata"
 	"go.uber.org/zap"
 )
 
 const apiTokenPrefix = "os_mgt_"
 const userDataKey = "__api_userData"
 const userTokensKey = "__api_userTokens"
+const authContextKey = "__api_authContext"
+
+// AuthContext holds the resolved identity for a single request, set once by
+// EffectiveAuthMiddleware and read by handlers via mustGetAuthContext.
+type AuthContext struct {
+	UserEmail       string
+	OriginalTokens  common.TokenList
+	EffectiveTokens common.TokenList
+}
+
+// EffectiveAuthMiddleware resolves both the original and effective token sets
+// once per request and stores them in the Gin context. Must run after the auth
+// middleware that populates userDataKey / userTokensKey.
+func EffectiveAuthMiddleware(svc ProjectAPIService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userEmail, originalTokens, err := ResolveOriginalAuthContext(c)
+		if err != nil {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
+			return
+		}
+		effectiveTokens := svc.ResolveEffectiveUserTokens(userEmail, originalTokens)
+		c.Set(authContextKey, AuthContext{
+			UserEmail:       userEmail,
+			OriginalTokens:  originalTokens,
+			EffectiveTokens: effectiveTokens,
+		})
+		c.Next()
+	}
+}
+
+// mustGetAuthContext returns the AuthContext set by EffectiveAuthMiddleware.
+func mustGetAuthContext(c *gin.Context) (AuthContext, error) {
+	v, ok := c.Get(authContextKey)
+	if !ok {
+		return AuthContext{}, fmt.Errorf("auth context not set")
+	}
+	ctx, ok := v.(AuthContext)
+	if !ok {
+		return AuthContext{}, fmt.Errorf("invalid auth context type")
+	}
+	return ctx, nil
+}
 
 // Use common.UserClaims everywhere
 
@@ -58,18 +101,7 @@ func NewOIDCAuthVerifier(cfg OIDCVerifierConfig, log *zap.SugaredLogger) (*oidcA
 }
 
 func authenticatedEmailFromClaims(claims *common.UserClaims) string {
-	if claims == nil {
-		return ""
-	}
-
-	userEmail := strings.TrimSpace(claims.Email)
-	if userEmail == "" {
-		userEmail = strings.TrimSpace(claims.PreferredUsername)
-	}
-	if userEmail == "" {
-		userEmail = strings.TrimSpace(claims.Subject)
-	}
-	return userEmail
+	return claims.ResolveEmail()
 }
 
 // ResolveOriginalAuthContext returns the authenticated identity and token set
@@ -103,21 +135,6 @@ func ResolveOriginalAuthContext(c *gin.Context) (string, common.TokenList, error
 	return userEmail, tokens, nil
 }
 
-// ResolveEffectiveAuthContext returns the authenticated identity and effective
-// token set after applying actor-specific role-switch overrides.
-func ResolveEffectiveAuthContext(c *gin.Context, svc ResourceAPIService) (string, common.TokenList, error) {
-	if svc == nil {
-		return "", nil, fmt.Errorf("missing resource service")
-	}
-
-	userEmail, originalTokens, err := ResolveOriginalAuthContext(c)
-	if err != nil {
-		return "", nil, err
-	}
-
-	return userEmail, svc.ResolveEffectiveUserTokens(userEmail, originalTokens), nil
-}
-
 // ApplyRoleSwitchOverride returns effective tokens by replacing all group tokens
 // with the provided override group token, while preserving non-group tokens.
 func ApplyRoleSwitchOverride(originalTokens common.TokenList, overrideGroupToken *string) common.TokenList {
@@ -128,7 +145,7 @@ func ApplyRoleSwitchOverride(originalTokens common.TokenList, overrideGroupToken
 	override := *overrideGroupToken
 	out := make(common.TokenList, 0, len(originalTokens)+1)
 	for _, token := range originalTokens {
-		if !strings.HasPrefix(token, "group:") {
+		if !strings.HasPrefix(token, groupTokenPrefix) {
 			out = append(out, token)
 		}
 	}
@@ -254,12 +271,34 @@ func CombinedAuthMiddleware(oidcVerifier *oidcAuthVerifier, tokenLookup common.T
 // DummyAuthMiddleware injects a default user in group:uni_root for development/testing without SSO.
 func DummyAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		claims := &common.UserClaims{
-			Email: "root.admin@uni.example",
-			Name:  "Root Admin",
+		// Get the dummy user email from header X-Dummy-Auth-User
+		dev_user := c.GetHeader("X-Dummy-Auth-User")
+
+		// If not set, default to the root
+		if strings.TrimSpace(dev_user) == "" {
+			dev_user = "root.admin@uni.example"
 		}
+
+		// Set the user in the context as if it was authenticated, with a token representing group membership for "uni_root".
+		claims := &common.UserClaims{
+			Email: dev_user,
+			Name:  fmt.Sprintf("User: %s", dev_user),
+		}
+
+		//Resolve the tokens from the identies for the email given
+		identities, _, _, _ := mockdata.DefaultMockResourceState()
+		var userTokens common.TokenList = []string{}
+		for _, identity := range identities {
+			if identity.Email == dev_user {
+				userTokens = identity.Tokens
+				break
+			}
+		}
+
+		// Set the claims and tokens in the context for downstream handlers to use.
+		fmt.Printf("DummyAuthMiddleware: setting dummy auth for user '%s' with tokens: %v\n", dev_user, userTokens)
 		c.Set(userDataKey, claims)
-		c.Set(userTokensKey, common.TokenList{"group:root_uni"})
+		c.Set(userTokensKey, userTokens)
 		c.Next()
 	}
 }

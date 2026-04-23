@@ -18,9 +18,12 @@ DOCKER_REPO ?= ghcr.io/pfisterer/$(PROJECT_NAME)
 DOCKER_TAG ?= $(shell cat VERSION)
 DOCKER_PLATFORMS ?= linux/amd64,linux/arm64
 
+RP_API_DIR        := ./internal/roleprovider/api
+RP_SWAGGER_SRC    := ../role-provider-service/internal/generated_docs/swagger.json
+
 .DEFAULT_GOAL := all
 
-.PHONY: all build clean doc convert client bundle check swag run help install-npm bundle-deps docker docker-login docker-build multi-arch-build dev helm-update
+.PHONY: all build clean doc convert client bundle check swag run help install-npm bundle-deps docker docker-login docker-build multi-arch-build dev helm-update test generate-role-provider-client
 
 all: bundle build bundle-deps
 
@@ -61,7 +64,7 @@ client: convert-to-openapi3 install-npm
 	@echo "✅ TS client generated in $(CLIENT_DIR)"
 
 # Bundle web UI dependencies into single JS file and embed into Go
-bundle: client install-npm
+bundle: client install-npm generate-role-provider-client
 	@echo "📦 Bundling into a single JS file with esbuild..."
 	@mkdir -p $(DIST_DIR)
 	set -e; \
@@ -88,6 +91,29 @@ bundle: client install-npm
 	@echo "Deleting intermediate client files in $(CLIENT_DIR)..."
 	@rm -rf $(CLIENT_DIR)
 	@echo "✅ Bundled JS in $(DIST_DIR)/"
+
+# Generate Go client from the role-provider-service Swagger spec
+generate-role-provider-client: install-npm
+	@if [ -f "$(RP_SWAGGER_SRC)" ]; then \
+		echo "🔁 Copying swagger.json from $(RP_SWAGGER_SRC)..."; \
+		cp "$(RP_SWAGGER_SRC)" "$(RP_API_DIR)/swagger.json"; \
+	else \
+		echo "⚠️  Warning: $(RP_SWAGGER_SRC) not found — using existing $(RP_API_DIR)/swagger.json"; \
+	fi
+	@echo "🔁 Converting role-provider-service swagger.json → OpenAPI 3..."
+	@npx swagger2openapi $(RP_API_DIR)/swagger.json \
+		--outfile $(RP_API_DIR)/openapi3.json \
+		--yaml=false --patch --warnOnly
+	@echo "📦 Generating Go client..."
+	@command -v oapi-codegen >/dev/null 2>&1 || go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
+	@oapi-codegen -config $(RP_API_DIR)/oapi-codegen.yaml $(RP_API_DIR)/openapi3.json
+	@echo "✅ Go client generated in $(RP_API_DIR)/client.gen.go"
+
+# Run Go tests
+test: check-modules
+	@echo "🧪 Running Go tests..."
+	@go test ./...
+	@echo "✅ Tests complete"
 
 # Build Go binary
 build: check-modules
@@ -167,6 +193,7 @@ help:
 	@echo "Usage: make <target>"
 	@echo "  all                     → Build and generate everything"
 	@echo "  dev                     → Start development server with live reload (requires air)"
+	@echo "  test                    → Run Go tests"
 	@echo "  run                     → Run Go app"
 	@echo "  build                   → Compile Go binary"
 	@echo "  clean                   → Remove build artifacts"
@@ -177,6 +204,7 @@ help:
 	@echo "  client                  → Generate TypeScript client"
 	@echo "  bundle                  → Bundle client into JS"
 	@echo "  bundle-deps             → Bundle web UI dependencies"
+	@echo "  generate-role-provider-client      → Regenerate Go client from role-provider-service swagger.json"
 	@echo "  docker-build            → Build Docker image"
 	@echo "  docker-run              → Run Docker container"
 	@echo "  docker-multi-arch-build → Build and push multi-architecture Docker image (requires buildx & Docker login)"

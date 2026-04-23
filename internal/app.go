@@ -5,18 +5,23 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/openstack-management-api/internal/applogic"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/helper"
 	"github.com/pfisterer/openstack-management-api/internal/mockdata"
+	osclient "github.com/pfisterer/openstack-management-api/internal/openstack/client"
+	"github.com/pfisterer/openstack-management-api/internal/reconciler"
+	"github.com/pfisterer/openstack-management-api/internal/roleprovider"
 	"github.com/pfisterer/openstack-management-api/internal/storage"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 	"go.uber.org/zap"
 )
 
-func configureStores(cfg *common.StorageConfiguration, log *zap.SugaredLogger) (applogic.ResourceStore, common.TokenLookupFunc, error) {
+
+func configureStores(cfg *common.StorageConfiguration, log *zap.SugaredLogger) (applogic.ProjectStore, common.TokenLookupFunc, error) {
 	storageType := strings.ToLower(strings.TrimSpace(cfg.Type))
 
 	switch storageType {
@@ -26,7 +31,17 @@ func configureStores(cfg *common.StorageConfiguration, log *zap.SugaredLogger) (
 		tokenLookup := func(_ context.Context, _ string) (common.TokenLookupResult, error) {
 			return common.TokenLookupResult{Found: false}, nil
 		}
-		return storage.NewInMemoryResourceStore(log), tokenLookup, nil
+		return storage.NewInMemoryProjectStore(log), tokenLookup, nil
+
+	case "postgres":
+		store, err := storage.NewPostgresProjectStore(cfg.ConnectionString, log)
+		if err != nil {
+			return nil, nil, fmt.Errorf("postgres storage: %w", err)
+		}
+		tokenLookup := func(_ context.Context, _ string) (common.TokenLookupResult, error) {
+			return common.TokenLookupResult{Found: false}, nil
+		}
+		return store, tokenLookup, nil
 
 	default:
 		return nil, nil, fmt.Errorf("unsupported storage type %q", cfg.Type)
@@ -79,14 +94,33 @@ func RunApplication() {
 	}
 	logger.Infof("Using storage backend: %s", config.Storage.Type)
 
-	resourceTypeIDs := make([]string, 0, len(config.ResourceDefinitions))
-	for _, definition := range config.ResourceDefinitions {
+	resourceTypeIDs := make([]string, 0, len(config.ProjectDefinitions))
+	for _, definition := range config.ProjectDefinitions {
 		resourceTypeIDs = append(resourceTypeIDs, definition.ID)
 	}
 
-	// Create resource service
-	roleProvider := mockdata.NewMockRoleProvider()
-	resourceSvc := applogic.NewService(resourceStore, roleProvider, resourceTypeIDs, logger)
+	// Create role provider based on ROLE_PROVIDER env var ("mock" or "http").
+	var roleProvider common.RoleProvider
+	switch strings.ToLower(strings.TrimSpace(config.RoleProvider.Type)) {
+	case "http":
+		logger.Infow("Using HttpRoleProvider", "url", config.RoleProvider.URL)
+		rp, err := roleprovider.NewHttpRoleProvider(
+			config.RoleProvider.URL,
+			config.RoleProvider.APIToken,
+			config.ServiceTimeoutSeconds,
+			logger,
+		)
+		if err != nil {
+			logger.Fatalw("Failed to create HttpRoleProvider", zap.Error(err))
+		}
+		roleProvider = rp
+	default:
+		logger.Info("Using MockRoleProvider")
+		roleProvider = roleprovider.NewMockRoleProvider()
+	}
+
+	requestTimeout := time.Duration(config.ServiceTimeoutSeconds) * time.Second
+	resourceSvc := applogic.NewService(resourceStore, roleProvider, resourceTypeIDs, config.RoleSwitchGroups, requestTimeout, logger)
 	if err := resourceSvc.InitializeState(context.Background(), config.Storage.AddMockData); err != nil {
 		logger.Fatal("Failed to initialize resource state storage", zap.Error(err))
 	}
@@ -97,7 +131,63 @@ func RunApplication() {
 		logger.Fatal("Failed to initialize authentication middleware", zap.Error(err))
 	}
 
-	// Setup Gin web server with configured dependencies
+	// Add dummy dev users from mock data if dummy auth is enabled
+	dummyDevUsers := []string{}
+	if config.WebServer.DummyAuth {
+		identities, _, _, _ := mockdata.DefaultMockResourceState()
+		for _, ident := range identities {
+			dummyDevUsers = append(dummyDevUsers, ident.Email)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var rec *reconciler.Reconciler
+
+	if config.Reconciler.Enabled {
+		logger.Infow("Starting reconciler", "interval_seconds", config.Reconciler.IntervalSeconds, "dry_run", config.Reconciler.DryRun)
+
+		osClient, osErr := osclient.NewOSAdminWithAppCredential(
+			config.Openstack.AuthURL,
+			config.Openstack.ApplicationCredentialID,
+			config.Openstack.ApplicationCredentialSecret,
+			config.Openstack.ProjectID,
+			config.Openstack.Region,
+			config.Openstack.Insecure,
+			log,
+			logger,
+		)
+		if osErr != nil {
+			logger.Warnw("OpenStack API not reachable — reconciler will be disabled; restart to retry", zap.Error(osErr))
+		} else {
+			osClient.SetTagConfig(config.Reconciler.ManagedProjectTag, config.Reconciler.ResourceIDTagPrefix)
+
+			reconcilerCfg := reconciler.Config{
+				Interval:                 time.Duration(config.Reconciler.IntervalSeconds) * time.Second,
+				ProjectPrefix:            config.Reconciler.ProjectPrefix,
+				ScopeParentID:            config.Reconciler.ScopeParentID,
+				DryRun:                   config.Reconciler.DryRun,
+				DeleteReleasedProjects:   config.Reconciler.DeleteReleasedProjects,
+				PendingDeletionGraceDays: config.Reconciler.PendingDeletionGraceDays,
+				PendingDeletionTagPrefix: config.Reconciler.PendingDeletionTagPrefix,
+				ContactTagPrefix:         config.Reconciler.ContactTagPrefix,
+			}
+			rec = reconciler.New(resourceStore, osClient, reconcilerCfg, config.ProjectDefinitions, roleProvider, logger)
+			go rec.Start(ctx)
+		}
+	} else {
+		logger.Info("Reconciler disabled (set RECONCILER_ENABLED=true to enable)")
+	}
+
+	// Setup Gin web server with configured dependencies.
+	// Use a local ReconcilerAPI variable to avoid passing a typed nil (*reconciler.Reconciler)
+	// as the interface, which would make cfg.Reconciler != nil even when rec is nil.
+	var reconcilerAPI webserver.ReconcilerAPI
+	if rec != nil {
+		reconcilerAPI = rec
+	}
+
 	router := webserver.SetupGinWebserver(webserver.SetupConfig{
 		DevMode: config.DevMode,
 		Log:     logger,
@@ -105,12 +195,15 @@ func RunApplication() {
 			OIDCIssuerURL: config.WebServer.OIDCIssuerURL,
 			OIDCClientID:  config.WebServer.OIDCClientID,
 		},
-		ResourceAPI: webserver.ResourceAPIConfig{
+		ProjectAPI: webserver.ProjectAPIConfig{
 			RoleSwitchGroups:    config.RoleSwitchGroups,
-			ResourceDefinitions: config.ResourceDefinitions,
+			ProjectDefinitions: config.ProjectDefinitions,
 			Service:             resourceSvc,
+			DummyDevUsers:       dummyDevUsers,
 		},
-		AuthMiddleware: authMiddleware,
+		Reconciler:      reconcilerAPI,
+		RootAdminTokens: config.RoleSwitchGroups,
+		AuthMiddleware:  authMiddleware,
 	})
 
 	// Start the Web server

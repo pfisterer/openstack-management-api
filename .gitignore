@@ -13,3 +13,4 @@ ansible-deployment-example/inventory.yaml
 kubeconfig-*.yaml
 internal/generated_docs/
 private/
+private-*

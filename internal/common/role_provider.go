@@ -12,6 +12,10 @@ type RoleProvider interface {
 
 	// SearchGroupTokens searches for known group tokens matching the query.
 	SearchGroupTokens(ctx context.Context, query string, limit int) (TokenList, error)
+
+	// GetGroupUsers returns the email addresses of all users belonging to the given group token
+	// (e.g. "group:dept_cs_faculty"). Returns an empty slice when the group has no members.
+	GetGroupUsers(ctx context.Context, groupToken string) ([]string, error)
 }
 
 // TokenLookupResult is the token information required by the auth middleware.

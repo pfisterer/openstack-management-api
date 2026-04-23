@@ -20,6 +20,16 @@ type OpenStackClient struct {
 	logger   *zap.Logger
 	log      *zap.SugaredLogger
 	region   string
+
+	managedProjectTag   string
+	resourceIDTagPrefix string
+}
+
+// SetTagConfig sets the managed-project tag and resource-ID tag prefix from config.
+// Must be called before any project tag operations.
+func (c *OpenStackClient) SetTagConfig(managedProjectTag, resourceIDTagPrefix string) {
+	c.managedProjectTag = managedProjectTag
+	c.resourceIDTagPrefix = resourceIDTagPrefix
 }
 
 // NewOSAdmin creates a new OpenStack administrative client with default region.
@@ -128,14 +138,14 @@ func NewOSAdminWithAppCredential(
 
 	provider.HTTPClient = http.Client{Transport: transport}
 
+	// Application credentials must not include an explicit project scope — the scope is
+	// embedded in the credential by Keystone. Setting authOpts.Scope causes a 401 because
+	// Keystone treats it as an attempt to override the credential's own project binding.
 	authOpts := gophercloud.AuthOptions{
 		IdentityEndpoint:            authURL,
 		ApplicationCredentialID:     appCredID,
 		ApplicationCredentialSecret: appCredSecret,
 		AllowReauth:                 true,
-	}
-	if projectID != "" {
-		authOpts.Scope = &gophercloud.AuthScope{ProjectID: projectID}
 	}
 
 	if err := openstack.Authenticate(provider, authOpts); err != nil {

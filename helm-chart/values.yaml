@@ -1,0 +1,96 @@
+---
+#------------------------------------
+# OpenStack Management API — Image & Replicas
+#------------------------------------
+openstackManagementApi:
+  image: ghcr.io/pfisterer/openstack-management-api
+  imagePullPolicy: Always
+  version: "latest"
+  hostname: "os-mgt-api.example.com"
+  replicas: 1
+
+  #------------------------------------
+  # Database
+  #------------------------------------
+  db:
+    # "postgres" or "memory"
+    type: "memory"
+    # Full DSN — stored in a Secret
+    connectionString: "host=localhost user=postgres password=postgres dbname=openstack_management_api port=5432 sslmode=disable TimeZone=UTC"
+    addMockData: true
+
+  #------------------------------------
+  # OpenStack Credentials
+  #------------------------------------
+  openstack:
+    authUrl: ""
+    applicationCredentialId: ""
+    # Stored in a Secret
+    applicationCredentialSecret: ""
+    projectId: ""
+    region: "microstack"
+    insecure: false
+
+  #------------------------------------
+  # Web Server / API
+  #------------------------------------
+  api:
+    bind: ":8083"
+    baseUrl: "http://localhost:8083"
+    tokenTTLHours: 24
+    # Set to true to bypass OIDC (development only)
+    dummyAuth: false
+    # "production" or "development"
+    mode: "development"
+
+  #------------------------------------
+  # OIDC Authentication
+  #------------------------------------
+  oidc:
+    issuerUrl: "https://sso.example.cloud/realms/example"
+    clientId: "example-cloud-dns"
+
+  #------------------------------------
+  # Reconciler
+  #------------------------------------
+  reconciler:
+    enabled: false
+    intervalSeconds: 300
+    projectPrefix: "managed-"
+    # Limit OS-only import to children of this parent project; empty = no scope
+    scopeParentId: ""
+    dryRun: false
+    managedProjectTag: "managed"
+    resourceIdTagPrefix: "managed-resource-id:"
+    # When false, released projects are tagged for pending deletion instead of deleted
+    deleteReleasedProjects: false
+    pendingDeletionGraceDays: 30
+    pendingDeletionTagPrefix: "pending-deletion:"
+    contactTagPrefix: "contact:"
+    # Static quota defaults applied at project creation
+    defaultNetworks: 2
+    defaultSubnets: 4
+    defaultPorts: 50
+    defaultRouters: 1
+    defaultFloatingIps: 2
+    defaultSecurityGroups: 10
+    defaultVolumes: 10
+    defaultSnapshots: 10
+
+  #------------------------------------
+  # Miscellaneous
+  #------------------------------------
+  # Comma-separated list of tokens that grant role-switch (super-admin) access
+  rootAdminTokens: ""
+  serviceTimeoutSeconds: 30
+
+#------------------------------------
+# Ingress
+#------------------------------------
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-production"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"

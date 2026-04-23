@@ -1,0 +1,176 @@
+{{- $comp := dict "context" . "component" "openstack-management" -}}
+{{- $name := include "openstack-mangament-api.componentName" $comp -}}
+{{- $labels := include "openstack-mangament-api.labels" $comp -}}
+{{- $selectors := include "openstack-mangament-api.selectorLabels" $comp -}}
+{{- $tlsSecretName := include "openstack-mangament-api.resourceName" (dict "context" . "component" "openstack-management" "name" "tls") -}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- include "openstack-mangament-api.rolloutAnnotations" . | nindent 4 }}
+    keel.sh/policy: all
+    keel.sh/trigger: poll
+    keel.sh/pollSchedule: "@every 30m"
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  replicas: {{ .Values.openstackManagementApi.replicas }}
+  selector:
+    matchLabels:
+      {{- $selectors | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- include "openstack-mangament-api.rolloutAnnotations" . | nindent 8 }}
+      labels:
+        {{- $selectors | nindent 8 }}
+    spec:
+      containers:
+        - name: openstack-management
+          image: {{ .Values.openstackManagementApi.image }}:{{ .Values.openstackManagementApi.version }}
+          imagePullPolicy: {{ .Values.openstackManagementApi.imagePullPolicy | default "Always" }}
+          ports:
+            - containerPort: 8083
+          env:
+            # ── Database ────────────────────────────────────────────────────
+            - name: DB_TYPE
+              value: {{ .Values.openstackManagementApi.db.type | quote }}
+            - name: DB_CONNECTION_STRING
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $name }}
+                  key: db-connection-string
+            - name: DB_ADD_MOCK_DATA
+              value: {{ .Values.openstackManagementApi.db.addMockData | toString | quote }}
+
+            # ── OpenStack ────────────────────────────────────────────────────
+            - name: OPENSTACK_AUTH_URL
+              value: {{ .Values.openstackManagementApi.openstack.authUrl | quote }}
+            - name: OPENSTACK_APPLICATION_CREDENTIAL_ID
+              value: {{ .Values.openstackManagementApi.openstack.applicationCredentialId | quote }}
+            - name: OPENSTACK_APPLICATION_CREDENTIAL_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $name }}
+                  key: openstack-application-credential-secret
+            - name: OPENSTACK_PROJECT_ID
+              value: {{ .Values.openstackManagementApi.openstack.projectId | quote }}
+            - name: OPENSTACK_REGION
+              value: {{ .Values.openstackManagementApi.openstack.region | quote }}
+            - name: OPENSTACK_INSECURE
+              value: {{ .Values.openstackManagementApi.openstack.insecure | toString | quote }}
+
+            # ── Web Server / API ─────────────────────────────────────────────
+            - name: API_BIND
+              value: {{ .Values.openstackManagementApi.api.bind | quote }}
+            - name: API_BASE_URL
+              value: {{ .Values.openstackManagementApi.api.baseUrl | quote }}
+            - name: API_TOKEN_TTL_HOURS
+              value: {{ .Values.openstackManagementApi.api.tokenTTLHours | toString | quote }}
+            - name: API_DUMMY_AUTH
+              value: {{ .Values.openstackManagementApi.api.dummyAuth | toString | quote }}
+            - name: API_MODE
+              value: {{ .Values.openstackManagementApi.api.mode | quote }}
+
+            # ── OIDC ─────────────────────────────────────────────────────────
+            - name: OIDC_ISSUER_URL
+              value: {{ .Values.openstackManagementApi.oidc.issuerUrl | quote }}
+            - name: OIDC_CLIENT_ID
+              value: {{ .Values.openstackManagementApi.oidc.clientId | quote }}
+
+            # ── Reconciler ───────────────────────────────────────────────────
+            - name: RECONCILER_ENABLED
+              value: {{ .Values.openstackManagementApi.reconciler.enabled | toString | quote }}
+            - name: RECONCILER_INTERVAL_SECONDS
+              value: {{ .Values.openstackManagementApi.reconciler.intervalSeconds | toString | quote }}
+            - name: RECONCILER_PROJECT_PREFIX
+              value: {{ .Values.openstackManagementApi.reconciler.projectPrefix | quote }}
+            - name: RECONCILER_SCOPE_PARENT_ID
+              value: {{ .Values.openstackManagementApi.reconciler.scopeParentId | quote }}
+            - name: RECONCILER_DRY_RUN
+              value: {{ .Values.openstackManagementApi.reconciler.dryRun | toString | quote }}
+            - name: RECONCILER_MANAGED_PROJECT_TAG
+              value: {{ .Values.openstackManagementApi.reconciler.managedProjectTag | quote }}
+            - name: RECONCILER_RESOURCE_ID_TAG_PREFIX
+              value: {{ .Values.openstackManagementApi.reconciler.resourceIdTagPrefix | quote }}
+            - name: RECONCILER_DELETE_RELEASED_PROJECTS
+              value: {{ .Values.openstackManagementApi.reconciler.deleteReleasedProjects | toString | quote }}
+            - name: RECONCILER_PENDING_DELETION_GRACE_DAYS
+              value: {{ .Values.openstackManagementApi.reconciler.pendingDeletionGraceDays | toString | quote }}
+            - name: RECONCILER_PENDING_DELETION_TAG_PREFIX
+              value: {{ .Values.openstackManagementApi.reconciler.pendingDeletionTagPrefix | quote }}
+            - name: RECONCILER_CONTACT_TAG_PREFIX
+              value: {{ .Values.openstackManagementApi.reconciler.contactTagPrefix | quote }}
+            - name: RECONCILER_DEFAULT_NETWORKS
+              value: {{ .Values.openstackManagementApi.reconciler.defaultNetworks | toString | quote }}
+            - name: RECONCILER_DEFAULT_SUBNETS
+              value: {{ .Values.openstackManagementApi.reconciler.defaultSubnets | toString | quote }}
+            - name: RECONCILER_DEFAULT_PORTS
+              value: {{ .Values.openstackManagementApi.reconciler.defaultPorts | toString | quote }}
+            - name: RECONCILER_DEFAULT_ROUTERS
+              value: {{ .Values.openstackManagementApi.reconciler.defaultRouters | toString | quote }}
+            - name: RECONCILER_DEFAULT_FLOATING_IPS
+              value: {{ .Values.openstackManagementApi.reconciler.defaultFloatingIps | toString | quote }}
+            - name: RECONCILER_DEFAULT_SECURITY_GROUPS
+              value: {{ .Values.openstackManagementApi.reconciler.defaultSecurityGroups | toString | quote }}
+            - name: RECONCILER_DEFAULT_VOLUMES
+              value: {{ .Values.openstackManagementApi.reconciler.defaultVolumes | toString | quote }}
+            - name: RECONCILER_DEFAULT_SNAPSHOTS
+              value: {{ .Values.openstackManagementApi.reconciler.defaultSnapshots | toString | quote }}
+
+            # ── Miscellaneous ────────────────────────────────────────────────
+            - name: ROOT_ADMIN_TOKENS
+              value: {{ .Values.openstackManagementApi.rootAdminTokens | quote }}
+            - name: SERVICE_TIMEOUT_SECONDS
+              value: {{ .Values.openstackManagementApi.serviceTimeoutSeconds | toString | quote }}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- $labels | nindent 4 }}
+spec:
+  selector:
+    {{- $selectors | nindent 4 }}
+  ports:
+    - protocol: TCP
+      port: 8083
+      targetPort: 8083
+
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    {{- range $key, $value := .Values.ingress.annotations }}
+    {{ $key }}: {{ $value | quote }}
+    {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.openstackManagementApi.hostname | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $name }}
+                port:
+                  number: 8083
+  tls:
+    - hosts:
+        - {{ .Values.openstackManagementApi.hostname | quote }}
+      secretName: {{ $tlsSecretName }}
+{{- end }}

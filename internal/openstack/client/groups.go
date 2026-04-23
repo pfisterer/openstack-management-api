@@ -25,6 +25,15 @@ func (c *OpenStackClient) CreateGroup(name, description string) (*groups.Group, 
 	return group, nil
 }
 
+// GetGroupByID retrieves a group by its OpenStack ID.
+func (c *OpenStackClient) GetGroupByID(groupID string) (*groups.Group, error) {
+	group, err := groups.Get(c.Identity, groupID).Extract()
+	if err != nil {
+		return nil, fmt.Errorf("get group %s: %w", groupID, err)
+	}
+	return group, nil
+}
+
 // FindGroupByName finds a group by its name
 func (c *OpenStackClient) FindGroupByName(groupName string) (*groups.Group, error) {
 	iter := NewPagerIterator(

@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "openstack-management-api values",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["openstackManagementApi", "ingress"],
+  "properties": {
+    "openstackManagementApi": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image", "version", "hostname", "replicas", "db", "openstack", "api", "oidc", "reconciler"],
+      "properties": {
+        "image": { "type": "string", "minLength": 1 },
+        "imagePullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] },
+        "version": { "type": "string", "minLength": 1 },
+        "hostname": { "type": "string", "minLength": 1 },
+        "replicas": { "type": "integer", "minimum": 0 },
+        "rootAdminTokens": { "type": "string" },
+        "serviceTimeoutSeconds": { "type": "integer", "minimum": 1 },
+        "existingSecret": { "type": "string" },
+        "db": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "connectionString"],
+          "properties": {
+            "type": { "type": "string", "enum": ["postgres", "memory"] },
+            "connectionString": { "type": "string", "minLength": 1 },
+            "addMockData": { "type": "boolean" }
+          }
+        },
+        "openstack": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "authUrl": { "type": "string" },
+            "applicationCredentialId": { "type": "string" },
+            "applicationCredentialSecret": { "type": "string" },
+            "projectId": { "type": "string" },
+            "region": { "type": "string" },
+            "insecure": { "type": "boolean" }
+          }
+        },
+        "api": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "bind": { "type": "string" },
+            "baseUrl": { "type": "string" },
+            "tokenTTLHours": { "type": "integer", "minimum": 1 },
+            "dummyAuth": { "type": "boolean" },
+            "mode": { "type": "string", "enum": ["production", "development"] }
+          }
+        },
+        "oidc": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["issuerUrl", "clientId"],
+          "properties": {
+            "issuerUrl": { "type": "string", "minLength": 1 },
+            "clientId": { "type": "string", "minLength": 1 }
+          }
+        },
+        "reconciler": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "intervalSeconds": { "type": "integer", "minimum": 1 },
+            "projectPrefix": { "type": "string" },
+            "scopeParentId": { "type": "string" },
+            "dryRun": { "type": "boolean" },
+            "managedProjectTag": { "type": "string" },
+            "resourceIdTagPrefix": { "type": "string" },
+            "deleteReleasedProjects": { "type": "boolean" },
+            "pendingDeletionGraceDays": { "type": "integer", "minimum": 0 },
+            "pendingDeletionTagPrefix": { "type": "string" },
+            "contactTagPrefix": { "type": "string" },
+            "defaultNetworks": { "type": "integer", "minimum": 0 },
+            "defaultSubnets": { "type": "integer", "minimum": 0 },
+            "defaultPorts": { "type": "integer", "minimum": 0 },
+            "defaultRouters": { "type": "integer", "minimum": 0 },
+            "defaultFloatingIps": { "type": "integer", "minimum": 0 },
+            "defaultSecurityGroups": { "type": "integer", "minimum": 0 },
+            "defaultVolumes": { "type": "integer", "minimum": 0 },
+            "defaultSnapshots": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "ingress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    }
+  }
+}

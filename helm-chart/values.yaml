@@ -9,6 +9,13 @@ openstackManagementApi:
   hostname: "os-mgt-api.example.com"
   replicas: 1
 
+  # Name of an existing Secret providing the keys `db-connection-string`,
+  # `openstack-application-credential-secret` and `root-admin-tokens`. When set,
+  # the chart does NOT create its own Secret and the corresponding plaintext
+  # values below (db.connectionString, openstack.applicationCredentialSecret,
+  # rootAdminTokens) are ignored.
+  existingSecret: ""
+
   #------------------------------------
   # Database
   #------------------------------------

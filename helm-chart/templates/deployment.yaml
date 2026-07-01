@@ -3,6 +3,7 @@
 {{- $labels := include "openstack-mangament-api.labels" $comp -}}
 {{- $selectors := include "openstack-mangament-api.selectorLabels" $comp -}}
 {{- $tlsSecretName := include "openstack-mangament-api.resourceName" (dict "context" . "component" "openstack-management" "name" "tls") -}}
+{{- $secretName := default $name .Values.openstackManagementApi.existingSecret -}}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -41,7 +42,7 @@ spec:
             - name: DB_CONNECTION_STRING
               valueFrom:
                 secretKeyRef:
-                  name: {{ $name }}
+                  name: {{ $secretName }}
                   key: db-connection-string
             - name: DB_ADD_MOCK_DATA
               value: {{ .Values.openstackManagementApi.db.addMockData | toString | quote }}
@@ -54,7 +55,7 @@ spec:
             - name: OPENSTACK_APPLICATION_CREDENTIAL_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ $name }}
+                  name: {{ $secretName }}
                   key: openstack-application-credential-secret
             - name: OPENSTACK_PROJECT_ID
               value: {{ .Values.openstackManagementApi.openstack.projectId | quote }}
@@ -123,7 +124,10 @@ spec:
 
             # ── Miscellaneous ────────────────────────────────────────────────
             - name: ROOT_ADMIN_TOKENS
-              value: {{ .Values.openstackManagementApi.rootAdminTokens | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: root-admin-tokens
             - name: SERVICE_TIMEOUT_SECONDS
               value: {{ .Values.openstackManagementApi.serviceTimeoutSeconds | toString | quote }}
 

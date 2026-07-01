@@ -175,5 +175,4 @@ spec:
   tls:
     - hosts:
         - {{ .Values.openstackManagementApi.hostname | quote }}
-      secretName: {{ $tlsSecretName }}
 {{- end }}

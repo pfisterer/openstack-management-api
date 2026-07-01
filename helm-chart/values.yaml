@@ -96,8 +96,7 @@ openstackManagementApi:
 #------------------------------------
 ingress:
   enabled: true
-  className: nginx
-  annotations:
-    cert-manager.io/cluster-issuer: "letsencrypt-production"
-    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  # Empty className -> field omitted -> cluster default IngressClass (Traefik on
+  # k3s). No cert-manager annotation: TLS = cluster wildcard default cert.
+  className: ""
+  annotations: {}

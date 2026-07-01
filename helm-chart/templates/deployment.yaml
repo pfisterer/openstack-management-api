@@ -12,9 +12,8 @@ metadata:
   namespace: {{ .Release.Namespace }}
   annotations:
     {{- include "openstack-mangament-api.rolloutAnnotations" . | nindent 4 }}
-    keel.sh/policy: all
-    keel.sh/trigger: poll
-    keel.sh/pollSchedule: "@every 30m"
+    # Restart this Deployment when the referenced Secret changes (Stakater Reloader)
+    secret.reloader.stakater.com/reload: {{ $secretName }}
   labels:
     {{- $labels | nindent 4 }}
 spec:

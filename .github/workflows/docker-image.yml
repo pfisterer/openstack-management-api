@@ -14,12 +14,6 @@ jobs:
       packages: write
 
     steps:
-      - uses: dataaxiom/ghcr-cleanup-action@v1
-        with:
-          keep-n-tagged: 3
-          delete-untagged: true
-          delete-ghost-images: true
-          delete-orphaned-images: true
 
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -50,3 +44,30 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # --- ghcr retention (runs after the push, so counts include the new tag) ---
+      # Keep only the newest pre-release "-test.N" tag
+      - uses: dataaxiom/ghcr-cleanup-action@v1
+        with:
+          use-regex: true
+          exclude-tags: '^latest$'
+          delete-tags: '^\d+\.\d+\.\d+-test\.\d+$'
+          keep-n-tagged: 1
+      # Keep the newest 3 stable semver tags (X.Y.Z)
+      - uses: dataaxiom/ghcr-cleanup-action@v1
+        with:
+          use-regex: true
+          exclude-tags: '^latest$'
+          delete-tags: '^v?\d+\.\d+\.\d+$'
+          keep-n-tagged: 3
+      # Delete all old pre-release "-alpha" tags
+      - uses: dataaxiom/ghcr-cleanup-action@v1
+        with:
+          use-regex: true
+          delete-tags: '^.*-alpha$'
+      # Clean up untagged / ghost / orphaned leftovers
+      - uses: dataaxiom/ghcr-cleanup-action@v1
+        with:
+          delete-untagged: true
+          delete-ghost-images: true
+          delete-orphaned-images: true

@@ -32,5 +32,19 @@ func RegisterStaticRoutes(group *gin.RouterGroup, cfg StaticConfig) *gin.RouterG
 		c.String(http.StatusOK, generated_docs.SwaggerJSON)
 	})
 
+	// Unauthenticated bootstrap config (mirrors the Dynamic Zones API's
+	// /config.json): lets the frontend read this service's version + auth
+	// without a client/auth setup (used e.g. by the self-service-ui footer).
+	group.GET("/config.json", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"version": generated_docs.Version,
+			"auth": gin.H{
+				"auth_provider": "oidc",
+				"issuer_url":    cfg.OIDCIssuerURL,
+				"client_id":     cfg.OIDCClientID,
+			},
+		})
+	})
+
 	return group
 }

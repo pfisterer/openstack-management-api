@@ -25,6 +25,14 @@ type Service struct {
 	overridesWriteMu sync.Mutex
 	groupOverrides   atomic.Value // stores immutable map[string]string snapshots
 
+	// approvalMu serializes the capacity check-then-write critical section of the
+	// approval paths (CreateProject auto-approve, ApproveProject,
+	// MarkProjectForPromotion) so concurrent approvals cannot both pass the
+	// capacity check and over-allocate a pool. Process-level lock — correct for
+	// the single-replica deployment; a multi-replica setup would need DB-level
+	// row locking (SELECT ... FOR UPDATE) instead.
+	approvalMu sync.Mutex
+
 	log *zap.SugaredLogger
 }
 
@@ -116,6 +124,60 @@ func (s *Service) canManageProjectFunding(ctx context.Context, userTokens common
 // isProjectRequester reports whether the caller holds one of the project's requester tokens.
 func isProjectRequester(userTokens common.TokenList, p *common.Project) bool {
 	return common.NewTokenSet(userTokens).ContainsAny(p.RequesterTokens)
+}
+
+// ── Quota / lifecycle validation ──────────────────────────────────────────────
+
+// validateProjectQuota rejects a project quota that is negative or set on an
+// unmanaged resource. Unlike a delegation LIMIT, a project quota is a concrete
+// allocation with no "unlimited" (-1) sentinel: previously a negative value
+// passed quotaFits, auto-approved, lowered the tracked pool usage, and (as -1)
+// mapped to Nova's unlimited — letting a request grab unbounded resources.
+func (s *Service) validateProjectQuota(q common.ProjectQuota) error {
+	known := make(map[string]struct{}, len(s.quotaResourceIDs))
+	for _, id := range s.quotaResourceIDs {
+		known[id] = struct{}{}
+	}
+	for key, val := range q {
+		if _, ok := known[key]; !ok {
+			return fmt.Errorf("unknown quota resource %q", key)
+		}
+		if val < 0 {
+			return fmt.Errorf("quota for %q must not be negative (got %d)", key, val)
+		}
+	}
+	return nil
+}
+
+// isTerminalProjectStatus reports whether a project is in a terminal state that
+// must not transition further (guards against reviving released/rejected work).
+func isTerminalProjectStatus(status string) bool {
+	switch status {
+	case common.ProjectStatusReleased, common.ProjectStatusRejected, common.ProjectStatusChangeRejected:
+		return true
+	}
+	return false
+}
+
+// userAllowanceUsage sums the caller's already-committed (active) quota funded by
+// the given allowance delegation, so auto-approval can enforce a cumulative
+// per-user cap rather than only checking each request in isolation.
+func (s *Service) userAllowanceUsage(ctx context.Context, delegationID string, userTokens common.TokenList) (common.ProjectQuota, error) {
+	projects, err := s.store.GetProjectsByFundedByIDs(ctx, []string{delegationID}, common.ActiveProjectStatuses, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	callerSet := common.NewTokenSet(userTokens)
+	usage := make(common.ProjectQuota, len(s.quotaResourceIDs))
+	for _, p := range projects {
+		if !callerSet.ContainsAny(p.RequesterTokens) {
+			continue
+		}
+		for _, id := range s.quotaResourceIDs {
+			usage[id] += p.Quota[id]
+		}
+	}
+	return usage, nil
 }
 
 // InitializeState seeds storage with mock data when requested and when storage is empty.

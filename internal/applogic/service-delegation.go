@@ -272,6 +272,18 @@ func (s *Service) DeleteDelegation(id string, userEmail string, userTokens commo
 		deletedIDs = append(deletedIDs, delegID)
 	}
 
+	// Refuse to delete a subtree that still funds active (approved/change_pending)
+	// projects: deleting it would orphan them (FundedBy=nil while still approved),
+	// leaking their OpenStack resources and dropping them from usage rollups. The
+	// manager must release those projects first.
+	activeProjects, err := s.store.GetProjectsByFundedByIDs(ctx, deletedIDs, common.ActiveProjectStatuses, 0, 0)
+	if err != nil {
+		return fmt.Errorf("check active projects before delete: %w", err)
+	}
+	if len(activeProjects) > 0 {
+		return fmt.Errorf("cannot delete delegation: %d active project(s) are still funded by it — release them first", len(activeProjects))
+	}
+
 	if err := s.store.DeleteDelegations(ctx, deletedIDs); err != nil {
 		return fmt.Errorf("persist delegation state: %w", err)
 	}

@@ -62,10 +62,12 @@ func (s *InMemoryProjectStore) GetDelegationByID(_ context.Context, id string) (
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	// Search for the delegation with the given ID.
+	// Search for the delegation with the given ID. Return a copy, not a pointer
+	// into the live slice, so callers cannot mutate stored state without a lock.
 	for i := range s.delegations {
 		if s.delegations[i].ID == id {
-			return &s.delegations[i], nil
+			d := s.delegations[i]
+			return &d, nil
 		}
 	}
 	return nil, nil
@@ -176,7 +178,8 @@ func (s *InMemoryProjectStore) GetProjectByID(_ context.Context, id string) (*co
 	defer s.mu.RUnlock()
 	for i := range s.projects {
 		if s.projects[i].ID == id {
-			return &s.projects[i], nil
+			p := s.projects[i]
+			return &p, nil
 		}
 	}
 	return nil, nil

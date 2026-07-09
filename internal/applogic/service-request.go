@@ -160,6 +160,15 @@ func (s *Service) CreateProject(req webserver.CreateProjectRequest, actor string
 		return common.Project{}, fmt.Errorf("no current user tokens")
 	}
 
+	if err := s.validateProjectQuota(req.Quota); err != nil {
+		return common.Project{}, err
+	}
+
+	// Serialize the capacity-affecting auto-approval below so concurrent requests
+	// cannot both pass the pool/allowance check and over-allocate.
+	s.approvalMu.Lock()
+	defer s.approvalMu.Unlock()
+
 	normalizedAuthorizedUsers, err := normalizeAuthorizedUsers(req.AuthorizedUsers)
 	if err != nil {
 		return common.Project{}, err
@@ -200,22 +209,28 @@ func (s *Service) CreateProject(req webserver.CreateProjectRequest, actor string
 		History:         []common.HistoryEntry{createdEntry},
 	}
 
-	// Auto-approval: only if the chosen delegation is an allowance type whose per-user cap
-	// covers the project and all ancestor pools have sufficient remaining capacity.
-	if fundingDelegation.DelegationStrategy == common.DelegationStrategyAllowance &&
-		quotaFits(req.Quota, fundingDelegation.Quota.Limit, s.quotaResourceIDs) {
-
-		poolAncestors, err := s.collectPoolAncestors(ctx, fundingDelegation)
+	// Auto-approval: only for an allowance delegation whose per-user cap still
+	// covers the caller's CUMULATIVE usage (existing active allowance projects +
+	// this one), and where all ancestor pools have remaining capacity.
+	if fundingDelegation.DelegationStrategy == common.DelegationStrategyAllowance {
+		usage, err := s.userAllowanceUsage(ctx, fundingDelegation.ID, userTokens)
 		if err != nil {
-			return common.Project{}, fmt.Errorf("collect pool ancestors for auto-approval check: %w", err)
+			return common.Project{}, fmt.Errorf("compute per-user allowance usage: %w", err)
 		}
-		if err := s.checkPoolCapacity(ctx, poolAncestors, req.Quota, nil); err == nil {
-			newReq.Status = common.ProjectStatusApproved
-			autoApprovalEntry := newHistoryEntry("approved", "system:auto-approval", common.ProjectStatusApproved)
-			autoApprovalEntry.Group = &fundingDelegation.ID
-			autoApprovalEntry.StatusFrom = ptr(common.ProjectStatusPending)
-			autoApprovalEntry.Reason = ptr("Auto-approved (per-user allowance)")
-			newReq.History = append(newReq.History, autoApprovalEntry)
+		cumulative := quotaAdd(usage, req.Quota, s.quotaResourceIDs)
+		if quotaFits(cumulative, fundingDelegation.Quota.Limit, s.quotaResourceIDs) {
+			poolAncestors, err := s.collectPoolAncestors(ctx, fundingDelegation)
+			if err != nil {
+				return common.Project{}, fmt.Errorf("collect pool ancestors for auto-approval check: %w", err)
+			}
+			if err := s.checkPoolCapacity(ctx, poolAncestors, req.Quota, nil); err == nil {
+				newReq.Status = common.ProjectStatusApproved
+				autoApprovalEntry := newHistoryEntry("approved", "system:auto-approval", common.ProjectStatusApproved)
+				autoApprovalEntry.Group = &fundingDelegation.ID
+				autoApprovalEntry.StatusFrom = ptr(common.ProjectStatusPending)
+				autoApprovalEntry.Reason = ptr("Auto-approved (per-user allowance)")
+				newReq.History = append(newReq.History, autoApprovalEntry)
+			}
 		}
 	}
 
@@ -244,6 +259,17 @@ func (s *Service) UpdateProject(id string, req webserver.UpdateProjectRequest, a
 	// Authorization: only the project's requester (or a root admin) may propose changes.
 	if !isProjectRequester(userTokens, current) && !s.rootAdminTokens.ContainsAny(userTokens) {
 		return common.Project{}, common.ErrForbidden
+	}
+
+	// Lifecycle: a terminal project (released/rejected/change_rejected) must not be
+	// revived into change_pending.
+	if isTerminalProjectStatus(current.Status) {
+		return common.Project{}, fmt.Errorf("cannot modify project in status %q", current.Status)
+	}
+	if req.Quota != nil {
+		if err := s.validateProjectQuota(*req.Quota); err != nil {
+			return common.Project{}, err
+		}
 	}
 
 	quotaTo := current.Quota
@@ -290,6 +316,15 @@ func (s *Service) ApproveProject(id string, req webserver.ApproveProjectRequest,
 	if userEmail == "" || len(userTokens) == 0 {
 		return common.Project{}, common.ErrForbidden
 	}
+	if req.ModifiedQuota != nil {
+		if err := s.validateProjectQuota(*req.ModifiedQuota); err != nil {
+			return common.Project{}, err
+		}
+	}
+
+	// Serialize with the other capacity-affecting approval paths (see approvalMu).
+	s.approvalMu.Lock()
+	defer s.approvalMu.Unlock()
 
 	ctx, cancel := s.newCtx()
 	defer cancel()
@@ -306,6 +341,13 @@ func (s *Service) ApproveProject(id string, req webserver.ApproveProjectRequest,
 		return common.Project{}, fmt.Errorf("openstack_only resources are read-only and cannot be approved: %w", common.ErrForbidden)
 	}
 
+	// Lifecycle: only pending or change_pending projects may be approved — prevents
+	// re-approving an already-approved or terminal (released/rejected) project,
+	// which would re-add its quota and make the reconciler recreate it.
+	if current.Status != common.ProjectStatusPending && current.Status != common.ProjectStatusChangePending {
+		return common.Project{}, fmt.Errorf("cannot approve project in status %q", current.Status)
+	}
+
 	group, err := s.store.GetDelegationByID(ctx, req.DelegationID)
 	if err != nil {
 		return common.Project{}, fmt.Errorf("load delegation: %w", err)
@@ -316,6 +358,13 @@ func (s *Service) ApproveProject(id string, req webserver.ApproveProjectRequest,
 
 	if !common.NewTokenSet(userTokens).ContainsAny(group.AdminScope) {
 		return common.Project{}, common.ErrForbidden
+	}
+
+	// For a change re-approval the project's resources are already committed under
+	// its current funder; the approval must target that same delegation, otherwise
+	// the "subtract current quota" capacity math below is applied to the wrong pool.
+	if current.Status == common.ProjectStatusChangePending && current.FundedBy != nil && req.DelegationID != *current.FundedBy {
+		return common.Project{}, fmt.Errorf("change approval must use the project's current funding delegation %q", *current.FundedBy)
 	}
 
 	finalQuota := current.Quota
@@ -409,6 +458,13 @@ func (s *Service) RejectProject(id string, req webserver.RejectProjectRequest, a
 		return common.Project{}, common.ErrForbidden
 	}
 
+	// Lifecycle: only pending / change_pending may be rejected. Rejecting an
+	// approved project would leave its OpenStack resources orphaned — the
+	// reconciler only deprovisions released projects, not rejected ones.
+	if current.Status != common.ProjectStatusPending && current.Status != common.ProjectStatusChangePending {
+		return common.Project{}, fmt.Errorf("cannot reject project in status %q", current.Status)
+	}
+
 	statusTo := common.ProjectStatusRejected
 	if current.Status == common.ProjectStatusChangePending {
 		statusTo = common.ProjectStatusChangeRejected
@@ -444,6 +500,15 @@ func (s *Service) MarkProjectForPromotion(id string, req webserver.PromoteProjec
 	if !s.rootAdminTokens.ContainsAny(userTokens) {
 		return common.Project{}, fmt.Errorf("only root admins may promote openstack_only projects: %w", common.ErrForbidden)
 	}
+	if len(req.Quota) > 0 {
+		if err := s.validateProjectQuota(req.Quota); err != nil {
+			return common.Project{}, err
+		}
+	}
+
+	// Serialize with the other capacity-affecting approval paths (see approvalMu).
+	s.approvalMu.Lock()
+	defer s.approvalMu.Unlock()
 
 	ctx, cancel := s.newCtx()
 	defer cancel()

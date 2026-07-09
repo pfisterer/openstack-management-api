@@ -44,19 +44,39 @@ func setupRouter(t *testing.T) http.Handler { return setupRouterWith(t, nil) }
 // (nil = reconciler disabled → 503 on the admin endpoints).
 func setupRouterWith(t *testing.T, rec webserver.ReconcilerAPI) http.Handler {
 	t.Helper()
+	store, sugar := newTestStore(t)
+	ids, delegations, projects, rules := mockdata.DefaultMockResourceState()
+	if err := store.SeedProjectState(context.Background(), ids, delegations, projects, rules); err != nil {
+		t.Fatalf("seed mock state: %v", err)
+	}
+	return routerFromStore(sugar, store, rec)
+}
 
+// setupRouterSeeded builds the router with a CUSTOM store seed (own delegation
+// tree) — used by the end-to-end scenario suite. Identities still come from
+// DefaultMockResourceState because the DummyAuthMiddleware resolves the caller's
+// tokens from there.
+func setupRouterSeeded(t *testing.T, delegations []common.Delegation, projects []common.Project, rules []common.TokenEligibilityRule) http.Handler {
+	t.Helper()
+	store, sugar := newTestStore(t)
+	ids, _, _, _ := mockdata.DefaultMockResourceState()
+	if err := store.SeedProjectState(context.Background(), ids, delegations, projects, rules); err != nil {
+		t.Fatalf("seed scenario state: %v", err)
+	}
+	return routerFromStore(sugar, store, nil)
+}
+
+func newTestStore(t *testing.T) (applogic.ProjectStore, *zap.SugaredLogger) {
+	t.Helper()
 	log, err := zap.NewDevelopment()
 	if err != nil {
 		t.Fatalf("init logger: %v", err)
 	}
 	sugar := log.Sugar()
+	return storage.NewInMemoryProjectStore(sugar), sugar
+}
 
-	store := storage.NewInMemoryProjectStore(sugar)
-	ids, delegations, projects, rules := mockdata.DefaultMockResourceState()
-	if err := store.SeedProjectState(context.Background(), ids, delegations, projects, rules); err != nil {
-		t.Fatalf("seed mock state: %v", err)
-	}
-
+func routerFromStore(sugar *zap.SugaredLogger, store applogic.ProjectStore, rec webserver.ReconcilerAPI) http.Handler {
 	svc := applogic.NewService(
 		store,
 		roleprovider.NewMockRoleProvider(),
@@ -65,7 +85,6 @@ func setupRouterWith(t *testing.T, rec webserver.ReconcilerAPI) http.Handler {
 		10*time.Second,
 		sugar,
 	)
-
 	return webserver.SetupGinWebserver(webserver.SetupConfig{
 		DevMode:      true,
 		Log:          sugar,

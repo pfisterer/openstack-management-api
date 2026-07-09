@@ -38,7 +38,11 @@ var rootAdminTokens = common.TokenList{"group:root_uni", "user:root.admin@uni.ex
 //   - In-memory store seeded from DefaultMockResourceState
 //   - MockRoleProvider
 //   - No reconciler (reconciler endpoints return 503)
-func setupRouter(t *testing.T) http.Handler {
+func setupRouter(t *testing.T) http.Handler { return setupRouterWith(t, nil) }
+
+// setupRouterWith builds the test router with an injectable ReconcilerAPI
+// (nil = reconciler disabled → 503 on the admin endpoints).
+func setupRouterWith(t *testing.T, rec webserver.ReconcilerAPI) http.Handler {
 	t.Helper()
 
 	log, err := zap.NewDevelopment()
@@ -68,8 +72,12 @@ func setupRouter(t *testing.T) http.Handler {
 		StaticConfig: webserver.StaticConfig{},
 		ProjectAPI: webserver.ProjectAPIConfig{
 			Service: svc,
+			// Role-switch allowlist must be strictly group tokens (canUseRoleSwitch
+			// rejects a list containing any user: token). group:root_uni is the
+			// root admin group, so only root may role-switch.
+			RoleSwitchGroups: common.TokenList{"group:root_uni"},
 		},
-		Reconciler:      nil,
+		Reconciler:      rec,
 		RootAdminTokens: rootAdminTokens,
 		AuthMiddleware:  webserver.DummyAuthMiddleware(),
 	})

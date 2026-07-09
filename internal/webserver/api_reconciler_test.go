@@ -9,7 +9,19 @@ package webserver_test
 import (
 	"net/http"
 	"testing"
+
+	"github.com/pfisterer/openstack-management-api/internal/reconciler"
 )
+
+// fakeReconciler is a stub ReconcilerAPI for the happy-path tests: it records
+// Trigger() calls and returns a canned Status, without touching OpenStack.
+type fakeReconciler struct {
+	status    reconciler.Status
+	triggered int
+}
+
+func (f *fakeReconciler) Trigger()                     { f.triggered++ }
+func (f *fakeReconciler) GetStatus() reconciler.Status { return f.status }
 
 // ── GET /v1/admin/reconcile/status ────────────────────────────────────────────
 
@@ -57,4 +69,29 @@ func TestReconcileTrigger_StudentGetsForbidden(t *testing.T) {
 	h := setupRouter(t)
 	rr := do(t, h, http.MethodPost, "/v1/admin/reconcile/trigger", userStudent, nil)
 	assertStatus(t, rr, http.StatusForbidden)
+}
+
+// ── Happy path: reconciler enabled + root admin (o28) ─────────────────────────
+
+func TestReconcileStatus_RootAdminGetsStatusWhenEnabled(t *testing.T) {
+	fake := &fakeReconciler{status: reconciler.Status{ProjectsSynced: 7, ProjectsCreated: 2}}
+	h := setupRouterWith(t, fake)
+	rr := do(t, h, http.MethodGet, "/v1/admin/reconcile/status", userRoot, nil)
+	assertStatus(t, rr, http.StatusOK)
+
+	var got reconciler.Status
+	mustDecode(t, rr, &got)
+	if got.ProjectsSynced != 7 || got.ProjectsCreated != 2 {
+		t.Errorf("status body = %+v, want ProjectsSynced=7, ProjectsCreated=2", got)
+	}
+}
+
+func TestReconcileTrigger_RootAdminTriggersWhenEnabled(t *testing.T) {
+	fake := &fakeReconciler{}
+	h := setupRouterWith(t, fake)
+	rr := do(t, h, http.MethodPost, "/v1/admin/reconcile/trigger", userRoot, nil)
+	assertStatus(t, rr, http.StatusAccepted)
+	if fake.triggered != 1 {
+		t.Errorf("Trigger() called %d times, want 1", fake.triggered)
+	}
 }

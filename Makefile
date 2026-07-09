@@ -25,7 +25,7 @@ RP_SWAGGER_SRC    := ../role-provider-service/internal/generated_docs/swagger.js
 
 .PHONY: all build clean doc convert client bundle check swag run help install-npm bundle-deps docker docker-login docker-build multi-arch-build dev helm-update test generate-role-provider-client
 
-all: bundle build bundle-deps
+all: test bundle build bundle-deps
 
 # Start development server with live reload
 dev:

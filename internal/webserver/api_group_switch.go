@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	goset "github.com/hashicorp/go-set"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 )
 
@@ -51,56 +50,17 @@ func NormalizeGroupToken(raw string) string {
 	return groupTokenPrefix + value
 }
 
-// strictGroupTokenSet builds a set from configuration values and enforces strict
-// canonical shape. Any non-empty non-group token is treated as invalid input.
-func strictGroupTokenSet(values common.TokenList) (*goset.Set[string], bool) {
-	set := goset.New[string](len(values))
-	for _, value := range values {
-		normalized := strings.TrimSpace(value)
-		if normalized == "" || !strings.HasPrefix(normalized, groupTokenPrefix) {
-			return nil, false
-		}
-		if normalized == groupTokenPrefix {
-			return nil, false
-		}
-		set.Insert(normalized)
-	}
-	return set, true
-}
-
-// userGroupTokenSet builds a set of valid group tokens from user tokens.
-// Non-group tokens are ignored.
-func userGroupTokenSet(values common.TokenList) *goset.Set[string] {
-	set := goset.New[string](len(values))
-	for _, value := range values {
-		normalized := strings.TrimSpace(value)
-		if strings.HasPrefix(normalized, groupTokenPrefix) && normalized != groupTokenPrefix {
-			set.Insert(normalized)
-		}
-	}
-	return set
-}
-
-// canUseRoleSwitch checks whether any user token matches configured role-switch groups.
-//
-// Parameters:
-// - userTokens: Effective or original tokens resolved for the authenticated user.
-// - allowedGroups: Role-switch allowlist from configuration.
-//
-// Returns:
-// - true when a user group token exactly matches an allowed group token.
-// - false when no match exists, inputs are empty, or allowedGroups contain invalid entries.
-func canUseRoleSwitch(userTokens common.TokenList, allowedGroups common.TokenList) bool {
-	if len(allowedGroups) == 0 || len(userTokens) == 0 {
+// canUseRoleSwitch reports whether the caller may perform a role switch: they must
+// hold one of the configured role-switch tokens. Consistent with the other
+// root-admin gates (requireRootAdmin / rootAdminTokens.ContainsAny), this matches
+// ANY token type — user: or group: — via plain set membership, not group
+// membership only. So a user granted the privilege by a bare user: token works,
+// and a mixed allowlist no longer silently disables the feature.
+func canUseRoleSwitch(userTokens common.TokenList, allowed common.TokenList) bool {
+	if len(allowed) == 0 || len(userTokens) == 0 {
 		return false
 	}
-
-	allowedKeys, ok := strictGroupTokenSet(allowedGroups)
-	if ok {
-		userKeys := userGroupTokenSet(userTokens)
-		return !allowedKeys.Intersect(userKeys).Empty()
-	}
-	return false
+	return common.NewTokenSet(allowed).ContainsAny(userTokens)
 }
 
 // requireRoleSwitch resolves the original auth context and checks the role-switch

@@ -10,7 +10,6 @@ require (
 	github.com/go-playground/validator/v10 v10.30.3
 	github.com/google/uuid v1.6.0
 	github.com/gophercloud/gophercloud v1.14.1
-	github.com/hashicorp/go-set v0.1.14
 	github.com/joho/godotenv v1.5.1
 	github.com/oapi-codegen/runtime v1.4.2
 	go.uber.org/zap v1.28.0

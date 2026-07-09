@@ -112,7 +112,7 @@ generate-role-provider-client: install-npm
 # Run Go tests
 test: check-modules
 	@echo "🧪 Running Go tests..."
-	@go test ./...
+	@go test -cover -coverpkg=./... ./...
 	@echo "✅ Tests complete"
 
 # Build Go binary

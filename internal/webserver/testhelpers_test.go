@@ -72,10 +72,9 @@ func setupRouterWith(t *testing.T, rec webserver.ReconcilerAPI) http.Handler {
 		StaticConfig: webserver.StaticConfig{},
 		ProjectAPI: webserver.ProjectAPIConfig{
 			Service: svc,
-			// Role-switch allowlist must be strictly group tokens (canUseRoleSwitch
-			// rejects a list containing any user: token). group:root_uni is the
-			// root admin group, so only root may role-switch.
-			RoleSwitchGroups: common.TokenList{"group:root_uni"},
+			// Role-switch allowlist = the (mixed user+group) root admin tokens,
+			// exactly as app.go wires it. canUseRoleSwitch accepts either kind.
+			RoleSwitchGroups: rootAdminTokens,
 		},
 		Reconciler:      rec,
 		RootAdminTokens: rootAdminTokens,

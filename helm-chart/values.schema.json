@@ -18,6 +18,14 @@
         "rootAdminTokens": { "type": "string" },
         "serviceTimeoutSeconds": { "type": "integer", "minimum": 1 },
         "existingSecret": { "type": "string" },
+        "roleProvider": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": { "type": "string", "enum": ["mock", "http"] },
+            "url": { "type": "string" }
+          }
+        },
         "db": {
           "type": "object",
           "additionalProperties": false,

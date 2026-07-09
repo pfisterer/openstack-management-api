@@ -226,7 +226,7 @@ func (s *Service) CreateProject(req webserver.CreateProjectRequest, actor string
 }
 
 // UpdateProject records requested changes and transitions the project to change_pending.
-func (s *Service) UpdateProject(id string, req webserver.UpdateProjectRequest, actor string) (common.Project, error) {
+func (s *Service) UpdateProject(id string, req webserver.UpdateProjectRequest, actor string, userTokens common.TokenList) (common.Project, error) {
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
@@ -239,6 +239,11 @@ func (s *Service) UpdateProject(id string, req webserver.UpdateProjectRequest, a
 	}
 	if current.Status == common.ProjectStatusOpenStackOnly {
 		return common.Project{}, fmt.Errorf("openstack_only resources are read-only and cannot be modified: %w", common.ErrForbidden)
+	}
+
+	// Authorization: only the project's requester (or a root admin) may propose changes.
+	if !isProjectRequester(userTokens, current) && !s.rootAdminTokens.ContainsAny(userTokens) {
+		return common.Project{}, common.ErrForbidden
 	}
 
 	quotaTo := current.Quota
@@ -382,7 +387,7 @@ func (s *Service) ApproveProject(id string, req webserver.ApproveProjectRequest,
 }
 
 // RejectProject transitions a project into a rejected state and appends audit history.
-func (s *Service) RejectProject(id string, req webserver.RejectProjectRequest, actor string) (common.Project, error) {
+func (s *Service) RejectProject(id string, req webserver.RejectProjectRequest, actor string, userTokens common.TokenList) (common.Project, error) {
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
@@ -395,6 +400,13 @@ func (s *Service) RejectProject(id string, req webserver.RejectProjectRequest, a
 	}
 	if current.Status == common.ProjectStatusOpenStackOnly {
 		return common.Project{}, fmt.Errorf("openstack_only resources are read-only and cannot be rejected: %w", common.ErrForbidden)
+	}
+
+	// Authorization: only a manager of the funding delegation (or root) may reject.
+	if allowed, err := s.canManageProjectFunding(ctx, userTokens, current); err != nil {
+		return common.Project{}, err
+	} else if !allowed {
+		return common.Project{}, common.ErrForbidden
 	}
 
 	statusTo := common.ProjectStatusRejected
@@ -503,7 +515,7 @@ func (s *Service) MarkProjectForPromotion(id string, req webserver.PromoteProjec
 }
 
 // ReleaseProject marks approved projects as released to return allocated capacity.
-func (s *Service) ReleaseProject(id string, actor string) (common.Project, error) {
+func (s *Service) ReleaseProject(id string, actor string, userTokens common.TokenList) (common.Project, error) {
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
@@ -516,6 +528,16 @@ func (s *Service) ReleaseProject(id string, actor string) (common.Project, error
 	}
 	if current.Status == common.ProjectStatusOpenStackOnly {
 		return common.Project{}, fmt.Errorf("openstack_only resources are read-only and cannot be released: %w", common.ErrForbidden)
+	}
+
+	// Authorization: the requester or a manager of the funding delegation (or root)
+	// may release — releasing drives OpenStack deprovisioning on the next reconcile.
+	managed, err := s.canManageProjectFunding(ctx, userTokens, current)
+	if err != nil {
+		return common.Project{}, err
+	}
+	if !managed && !isProjectRequester(userTokens, current) {
+		return common.Project{}, common.ErrForbidden
 	}
 
 	if current.Status != common.ProjectStatusApproved {

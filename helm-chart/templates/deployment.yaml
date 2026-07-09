@@ -130,6 +130,22 @@ spec:
             - name: SERVICE_TIMEOUT_SECONDS
               value: {{ .Values.openstackManagementApi.serviceTimeoutSeconds | toString | quote }}
 
+            # ── Role Provider (group/token resolution + group search) ────────
+            # "mock" = built-in demo identities; "http" = role-provider-service
+            # (real transitive group tokens + group search). For http, set
+            # roleProvider.url and provide `role-provider-api-token` in the Secret.
+            - name: ROLE_PROVIDER
+              value: {{ .Values.openstackManagementApi.roleProvider.type | quote }}
+            - name: ROLE_PROVIDER_URL
+              value: {{ .Values.openstackManagementApi.roleProvider.url | quote }}
+            - name: ROLE_PROVIDER_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: role-provider-api-token
+                  # optional so mock deployments (no token) don't fail to start.
+                  optional: true
+
 ---
 apiVersion: v1
 kind: Service

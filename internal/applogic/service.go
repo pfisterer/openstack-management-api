@@ -68,6 +68,56 @@ func NewService(store ProjectStore, roles common.RoleProvider, quotaResourceIDs 
 	return svc
 }
 
+// ── Authorization helpers ─────────────────────────────────────────────────────
+// Shared by the delegation/project mutation methods so authorization is enforced
+// consistently (mirrors the read-side chain walk in GetProjectByID).
+
+// callerInAdminScopeChain reports whether any of the caller's tokens is in the
+// AdminScope of the delegation identified by startID or any of its ancestors.
+func (s *Service) callerInAdminScopeChain(ctx context.Context, callerSet common.TokenSet, startID *string) (bool, error) {
+	for delegID := startID; delegID != nil; {
+		deleg, err := s.store.GetDelegationByID(ctx, *delegID)
+		if err != nil {
+			return false, fmt.Errorf("load delegation for auth check: %w", err)
+		}
+		if deleg == nil {
+			return false, nil
+		}
+		if callerSet.ContainsAny(deleg.AdminScope) {
+			return true, nil
+		}
+		delegID = deleg.ParentID
+	}
+	return false, nil
+}
+
+// canManageDelegation reports whether the caller may create-under / edit / delete
+// the given delegation: root admins, or holders of a token in the delegation's own
+// AdminScope or that of any ancestor (the owning parent chain).
+func (s *Service) canManageDelegation(ctx context.Context, userTokens common.TokenList, deleg *common.Delegation) (bool, error) {
+	if s.rootAdminTokens.ContainsAny(userTokens) {
+		return true, nil
+	}
+	return s.callerInAdminScopeChain(ctx, common.NewTokenSet(userTokens), &deleg.ID)
+}
+
+// canManageProjectFunding reports whether the caller administers the delegation
+// funding the project (or any ancestor), or is a root admin.
+func (s *Service) canManageProjectFunding(ctx context.Context, userTokens common.TokenList, p *common.Project) (bool, error) {
+	if s.rootAdminTokens.ContainsAny(userTokens) {
+		return true, nil
+	}
+	if p.FundedBy == nil {
+		return false, nil
+	}
+	return s.callerInAdminScopeChain(ctx, common.NewTokenSet(userTokens), p.FundedBy)
+}
+
+// isProjectRequester reports whether the caller holds one of the project's requester tokens.
+func isProjectRequester(userTokens common.TokenList, p *common.Project) bool {
+	return common.NewTokenSet(userTokens).ContainsAny(p.RequesterTokens)
+}
+
 // InitializeState seeds storage with mock data when requested and when storage is empty.
 func (s *Service) InitializeState(ctx context.Context, addMockData bool) error {
 

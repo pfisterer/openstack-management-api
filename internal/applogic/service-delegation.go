@@ -105,7 +105,7 @@ func (s *Service) ListDelegationsEligibleForMe(userTokens common.TokenList, limi
 }
 
 // CreateDelegation creates a new child delegation after parent and permission checks.
-func (s *Service) CreateDelegation(req webserver.CreateDelegationRequest, userEmail string) (common.Delegation, error) {
+func (s *Service) CreateDelegation(req webserver.CreateDelegationRequest, userEmail string, userTokens common.TokenList) (common.Delegation, error) {
 	if req.ParentID == nil || strings.TrimSpace(*req.ParentID) == "" {
 		return common.Delegation{}, fmt.Errorf("parent delegation ID is required")
 	}
@@ -124,6 +124,15 @@ func (s *Service) CreateDelegation(req webserver.CreateDelegationRequest, userEm
 	if parent == nil {
 		return common.Delegation{}, fmt.Errorf("parent delegation not found")
 	}
+
+	// Authorization: only holders of a token in the parent's admin_scope chain
+	// (or root admins) may carve a sub-delegation from someone else's budget.
+	if allowed, err := s.canManageDelegation(ctx, userTokens, parent); err != nil {
+		return common.Delegation{}, err
+	} else if !allowed {
+		return common.Delegation{}, common.ErrForbidden
+	}
+
 	if parent.DelegationStrategy == common.DelegationStrategyAllowance {
 		return common.Delegation{}, fmt.Errorf("allowance delegations cannot be further delegated")
 	}
@@ -164,7 +173,7 @@ func (s *Service) CreateDelegation(req webserver.CreateDelegationRequest, userEm
 }
 
 // UpdateDelegation applies editable delegation changes after authorization checks.
-func (s *Service) UpdateDelegation(id string, req webserver.UpdateDelegationRequest, userEmail string) (common.Delegation, error) {
+func (s *Service) UpdateDelegation(id string, req webserver.UpdateDelegationRequest, userEmail string, userTokens common.TokenList) (common.Delegation, error) {
 	if userEmail == "" {
 		return common.Delegation{}, common.ErrForbidden
 	}
@@ -178,6 +187,14 @@ func (s *Service) UpdateDelegation(id string, req webserver.UpdateDelegationRequ
 	}
 	if current == nil {
 		return common.Delegation{}, fmt.Errorf("group %w", common.ErrNotFound)
+	}
+
+	// Authorization: only managers of this delegation (own or ancestor admin_scope)
+	// or root admins may edit it.
+	if allowed, err := s.canManageDelegation(ctx, userTokens, current); err != nil {
+		return common.Delegation{}, err
+	} else if !allowed {
+		return common.Delegation{}, common.ErrForbidden
 	}
 
 	updated := *current
@@ -220,7 +237,7 @@ func (s *Service) UpdateDelegation(id string, req webserver.UpdateDelegationRequ
 }
 
 // DeleteDelegation removes a delegation subtree and clears linked project funding.
-func (s *Service) DeleteDelegation(id string, userEmail string) error {
+func (s *Service) DeleteDelegation(id string, userEmail string, userTokens common.TokenList) error {
 	if userEmail == "" {
 		return common.ErrForbidden
 	}
@@ -234,6 +251,14 @@ func (s *Service) DeleteDelegation(id string, userEmail string) error {
 	}
 	if targetDelegation == nil {
 		return fmt.Errorf("group %w", common.ErrNotFound)
+	}
+
+	// Authorization: deleting a subtree (and unfunding its projects) is destructive —
+	// require a manager of this delegation (own or ancestor admin_scope) or root.
+	if allowed, err := s.canManageDelegation(ctx, userTokens, targetDelegation); err != nil {
+		return err
+	} else if !allowed {
+		return common.ErrForbidden
 	}
 
 	// BFS: collect the target and all its descendants.

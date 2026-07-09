@@ -10,11 +10,23 @@ openstackManagementApi:
   replicas: 1
 
   # Name of an existing Secret providing the keys `db-connection-string`,
-  # `openstack-application-credential-secret` and `root-admin-tokens`. When set,
-  # the chart does NOT create its own Secret and the corresponding plaintext
-  # values below (db.connectionString, openstack.applicationCredentialSecret,
+  # `openstack-application-credential-secret`, `root-admin-tokens` and (optional,
+  # only for roleProvider.type=http) `role-provider-api-token`. When set, the
+  # chart does NOT create its own Secret and the corresponding plaintext values
+  # below (db.connectionString, openstack.applicationCredentialSecret,
   # rootAdminTokens) are ignored.
   existingSecret: ""
+
+  #------------------------------------
+  # Role Provider (group/token resolution + group search)
+  #------------------------------------
+  # "mock": built-in demo identities (no external dependency).
+  # "http": call role-provider-service for real transitive group tokens and
+  #         group search. Set url and provide `role-provider-api-token` in the
+  #         Secret above (must be one of the role-provider's API_TOKENS).
+  roleProvider:
+    type: "mock"
+    url: ""
 
   #------------------------------------
   # Database

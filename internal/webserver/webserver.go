@@ -65,10 +65,10 @@ type ProjectAPIService interface {
 	ListProjectsManagedBy(userEmail string, userTokens common.TokenList, limit, offset int) ([]common.Project, error)
 
 	CreateProject(req CreateProjectRequest, actor string, userEmail string, userTokens common.TokenList) (common.Project, error)
-	UpdateProject(id string, req UpdateProjectRequest, actor string) (common.Project, error)
+	UpdateProject(id string, req UpdateProjectRequest, actor string, userTokens common.TokenList) (common.Project, error)
 	ApproveProject(id string, req ApproveProjectRequest, actor string, userEmail string, userTokens common.TokenList) (common.Project, error)
-	RejectProject(id string, req RejectProjectRequest, actor string) (common.Project, error)
-	ReleaseProject(id string, actor string) (common.Project, error)
+	RejectProject(id string, req RejectProjectRequest, actor string, userTokens common.TokenList) (common.Project, error)
+	ReleaseProject(id string, actor string, userTokens common.TokenList) (common.Project, error)
 	MarkProjectForPromotion(id string, req PromoteProjectRequest, actor string, userTokens common.TokenList) (common.Project, error)
 
 	// Delegation management operations
@@ -76,9 +76,9 @@ type ProjectAPIService interface {
 	GetDelegationsDelegatedToMe(userTokens common.TokenList, limit, offset int) ([]common.Delegation, error)
 	ListDelegationsEligibleForMe(userTokens common.TokenList, limit, offset int) ([]common.Delegation, error)
 	ListDelegationsEligibleForOwner(callerTokens common.TokenList, ownerTokens common.TokenList, limit, offset int) ([]common.Delegation, error)
-	CreateDelegation(req CreateDelegationRequest, userEmail string) (common.Delegation, error)
-	UpdateDelegation(id string, req UpdateDelegationRequest, userEmail string) (common.Delegation, error)
-	DeleteDelegation(id string, userEmail string) error
+	CreateDelegation(req CreateDelegationRequest, userEmail string, userTokens common.TokenList) (common.Delegation, error)
+	UpdateDelegation(id string, req UpdateDelegationRequest, userEmail string, userTokens common.TokenList) (common.Delegation, error)
+	DeleteDelegation(id string, userEmail string, userTokens common.TokenList) error
 
 	// Token eligibility rule operations
 	GetMyEligibilityRules(userTokens common.TokenList) ([]common.TokenEligibilityRule, error)

@@ -20,7 +20,6 @@ import (
 	"go.uber.org/zap"
 )
 
-
 func configureStores(cfg *common.StorageConfiguration, log *zap.SugaredLogger) (applogic.ProjectStore, common.TokenLookupFunc, error) {
 	storageType := strings.ToLower(strings.TrimSpace(cfg.Type))
 
@@ -87,6 +86,12 @@ func RunApplication() {
 	logger.Info("Starting OpenStack Management Application")
 	logAppConfig(config, logger)
 
+	// Fail closed: the dummy-auth bypass (identity from an unverified header, with an
+	// unknown user resolving to root tokens) must never run outside development.
+	if config.WebServer.DummyAuth && !config.DevMode {
+		logger.Fatal("API_DUMMY_AUTH=true is not allowed when API_MODE=production — refusing to start with an authentication bypass")
+	}
+
 	// Configure resource storage and token lookup
 	resourceStore, tokenLookup, err := configureStores(&config.Storage, logger)
 	if err != nil {
@@ -99,7 +104,7 @@ func RunApplication() {
 		resourceTypeIDs = append(resourceTypeIDs, definition.ID)
 	}
 
-	// Create role provider based on ROLE_PROVIDER env var ("mock" or "http").
+	// Create role provider based on ROLE_PROVIDER env var ("http" or "mock").
 	var roleProvider common.RoleProvider
 	switch strings.ToLower(strings.TrimSpace(config.RoleProvider.Type)) {
 	case "http":
@@ -114,9 +119,16 @@ func RunApplication() {
 			logger.Fatalw("Failed to create HttpRoleProvider", zap.Error(err))
 		}
 		roleProvider = rp
-	default:
-		logger.Info("Using MockRoleProvider")
+	case "mock", "":
+		// Built-in demo identities — for local/offline dev (pairs with dummy-auth).
+		// NOT for production: it silently grants fake group memberships. Warn so an
+		// accidental selection is visible in the logs (production sets ROLE_PROVIDER=http).
+		logger.Warn("Using MockRoleProvider (built-in demo identities) — do not use in production")
 		roleProvider = roleprovider.NewMockRoleProvider()
+	default:
+		// Fail loud on a typo (e.g. "htpp") instead of silently falling back to the
+		// mock, which in production would run with wrong authorization data.
+		logger.Fatalw("invalid ROLE_PROVIDER: must be 'http' or 'mock'", "value", config.RoleProvider.Type)
 	}
 
 	requestTimeout := time.Duration(config.ServiceTimeoutSeconds) * time.Second
@@ -196,10 +208,10 @@ func RunApplication() {
 			OIDCClientID:  config.WebServer.OIDCClientID,
 		},
 		ProjectAPI: webserver.ProjectAPIConfig{
-			RoleSwitchGroups:    config.RoleSwitchGroups,
+			RoleSwitchGroups:   config.RoleSwitchGroups,
 			ProjectDefinitions: config.ProjectDefinitions,
-			Service:             resourceSvc,
-			DummyDevUsers:       dummyDevUsers,
+			Service:            resourceSvc,
+			DummyDevUsers:      dummyDevUsers,
 		},
 		Reconciler:      reconcilerAPI,
 		RootAdminTokens: config.RoleSwitchGroups,

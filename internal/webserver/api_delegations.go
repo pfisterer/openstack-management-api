@@ -225,7 +225,7 @@ func createDelegation(cfg ProjectAPIConfig) gin.HandlerFunc {
 			return
 		}
 
-		delegation, err := svc.CreateDelegation(req, auth.UserEmail)
+		delegation, err := svc.CreateDelegation(req, auth.UserEmail, auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -268,7 +268,7 @@ func updateDelegation(cfg ProjectAPIConfig) gin.HandlerFunc {
 			return
 		}
 
-		updated, err := svc.UpdateDelegation(id, req, auth.UserEmail)
+		updated, err := svc.UpdateDelegation(id, req, auth.UserEmail, auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -301,7 +301,7 @@ func deleteDelegation(cfg ProjectAPIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		err = svc.DeleteDelegation(id, auth.UserEmail)
+		err = svc.DeleteDelegation(id, auth.UserEmail, auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return

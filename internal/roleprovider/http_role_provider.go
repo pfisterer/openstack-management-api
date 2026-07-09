@@ -4,12 +4,16 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/roleprovider/api"
 	"go.uber.org/zap"
 )
+
+// userPrefix is the token prefix identifying a user subject ("user:alice@x").
+const userPrefix = "user:"
 
 // HttpRoleProvider implements common.RoleProvider by calling the role-provider-service REST API.
 type HttpRoleProvider struct {
@@ -50,11 +54,11 @@ func (h *HttpRoleProvider) GetUserTokens(ctx context.Context, claims *common.Use
 	resp, err := h.client.GetUserTokensWithResponse(ctx, email)
 	if err != nil {
 		h.log.Warnw("HttpRoleProvider.GetUserTokens failed", "email", email, zap.Error(err))
-		return common.TokenList{UserPrefix + email}, nil
+		return common.TokenList{userPrefix + email}, nil
 	}
 	if resp.JSON200 == nil {
 		h.log.Warnw("HttpRoleProvider.GetUserTokens: unexpected status", "email", email, "status", resp.StatusCode())
-		return common.TokenList{UserPrefix + email}, nil
+		return common.TokenList{userPrefix + email}, nil
 	}
 
 	return common.TokenList(*resp.JSON200), nil
@@ -96,11 +100,9 @@ func (h *HttpRoleProvider) GetGroupUsers(ctx context.Context, groupToken string)
 
 	var emails []string
 	for _, m := range *resp.JSON200 {
-		if len(m) > len(UserPrefix) && m[:len(UserPrefix)] == UserPrefix {
-			emails = append(emails, m[len(UserPrefix):])
+		if email, ok := strings.CutPrefix(m, userPrefix); ok {
+			emails = append(emails, email)
 		}
 	}
 	return emails, nil
 }
-
-const UserPrefix = "user:"

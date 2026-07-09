@@ -243,7 +243,7 @@ func updateProject(cfg ProjectAPIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		updated, err := svc.UpdateProject(id, req, auth.UserEmail)
+		updated, err := svc.UpdateProject(id, req, auth.UserEmail, auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -326,7 +326,7 @@ func rejectProject(cfg ProjectAPIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		updated, err := svc.RejectProject(id, req, auth.UserEmail)
+		updated, err := svc.RejectProject(id, req, auth.UserEmail, auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -402,7 +402,7 @@ func releaseProject(cfg ProjectAPIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		updated, err := svc.ReleaseProject(id, auth.UserEmail)
+		updated, err := svc.ReleaseProject(id, auth.UserEmail, auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return

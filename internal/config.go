@@ -234,12 +234,26 @@ func loadProjectDefinitionsOrDefaults() []common.ManagedProject {
 	}
 }
 
+// redactSecret masks a secret for logging, showing at most the first 4 characters
+// as a hint. Safe for empty/short strings (the old first-5 slice panicked on those).
+func redactSecret(s string) string {
+	if s == "" {
+		return ""
+	}
+	if len(s) <= 4 {
+		return "****"
+	}
+	return s[:4] + "****"
+}
+
 func logAppConfig(appConfig AppConfiguration, log *zap.SugaredLogger) {
 	var appConfigJson []byte
 	var err error
 
-	// Redact sensitive information (print first 5 characters of the secret)
-	appConfig.Openstack.ApplicationCredentialSecret = fmt.Sprintf("%s**********", appConfig.Openstack.ApplicationCredentialSecret[:5])
+	// Redact ALL secrets before marshalling — the whole config is logged below.
+	appConfig.Openstack.ApplicationCredentialSecret = redactSecret(appConfig.Openstack.ApplicationCredentialSecret)
+	appConfig.RoleProvider.APIToken = redactSecret(appConfig.RoleProvider.APIToken)
+	appConfig.Storage.ConnectionString = redactSecret(appConfig.Storage.ConnectionString)
 
 	if appConfig.DevMode {
 		appConfigJson, err = json.MarshalIndent(appConfig, "", "  ")

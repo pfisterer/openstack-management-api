@@ -21,6 +21,10 @@ type ProjectStore interface {
 	// Seeds the resource state with provided identities, delegations, projects, and eligibility rules. Used for tests or initial setup.
 	SeedProjectState(ctx context.Context, identities []common.Identity, delegations []common.Delegation, projects []common.Project, eligibilityRules []common.TokenEligibilityRule) error
 
+	// Returns all seeded identities. Used to populate the role-switch
+	// impersonation picker and to validate impersonation targets.
+	ListIdentities(ctx context.Context) ([]common.Identity, error)
+
 	///-------------------------------------------------------------
 	///-------------- Delegation operations --------------
 	///-------------------------------------------------------------

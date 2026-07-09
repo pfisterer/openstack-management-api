@@ -21,7 +21,14 @@ const authContextKey = "__api_authContext"
 
 // AuthContext holds the resolved identity for a single request, set once by
 // EffectiveAuthMiddleware and read by handlers via mustGetAuthContext.
+//
+// ActorEmail is the real authenticated caller (used for role-switch override
+// bookkeeping). UserEmail is the EFFECTIVE identity used for scoping — it equals
+// ActorEmail normally, but becomes the impersonated identity while an identity
+// role switch is active, so email-scoped views ("my projects", created-by, …)
+// reflect the assumed user.
 type AuthContext struct {
+	ActorEmail      string
 	UserEmail       string
 	OriginalTokens  common.TokenList
 	EffectiveTokens common.TokenList
@@ -32,14 +39,16 @@ type AuthContext struct {
 // middleware that populates userDataKey / userTokensKey.
 func EffectiveAuthMiddleware(svc ProjectAPIService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userEmail, originalTokens, err := ResolveOriginalAuthContext(c)
+		actorEmail, originalTokens, err := ResolveOriginalAuthContext(c)
 		if err != nil {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		effectiveTokens := svc.ResolveEffectiveUserTokens(userEmail, originalTokens)
+		effectiveTokens := svc.ResolveEffectiveUserTokens(actorEmail, originalTokens)
+		effectiveEmail := svc.ResolveEffectiveEmail(actorEmail)
 		c.Set(authContextKey, AuthContext{
-			UserEmail:       userEmail,
+			ActorEmail:      actorEmail,
+			UserEmail:       effectiveEmail,
 			OriginalTokens:  originalTokens,
 			EffectiveTokens: effectiveTokens,
 		})

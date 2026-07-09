@@ -202,20 +202,68 @@ func (s *Service) InitializeState(ctx context.Context, addMockData bool) error {
 	return nil
 }
 
-// ResolveEffectiveUserTokens applies a temporary actor-specific group override.
+// userTokenPrefix marks an impersonation override: the actor fully assumes the
+// identity with this email (see ResolveEffectiveUserTokens).
+const userTokenPrefix = "user:"
+
+// ResolveEffectiveUserTokens applies a temporary actor-specific role-switch
+// override. Two modes, distinguished by the stored override value:
+//   - group override ("group:…"): swap group tokens, preserve everything else —
+//     the actor keeps their own user/root identity and acts within the group.
+//   - identity override ("user:…"): replace the ENTIRE token set with the target
+//     identity's tokens, so the actor fully impersonates that user, including
+//     dropping their own root-admin grant.
+//
 // It keeps authentication and base role resolution in webserver auth context.
 func (s *Service) ResolveEffectiveUserTokens(actorEmail string, originalTokens common.TokenList) common.TokenList {
 	canonicalActor := canonicalActorEmail(actorEmail)
 	if canonicalActor == "" {
 		s.log.Warnf("ResolveEffectiveUserTokens called with empty actorEmail, returning original tokens")
-		return webserver.ApplyRoleSwitchOverride(originalTokens, nil)
+		return originalTokens
 	}
 
-	var overrideGroupToken *string
-	if override := s.currentGroupOverrides()[canonicalActor]; override != "" {
-		overrideGroupToken = ptr(override)
+	override := s.currentGroupOverrides()[canonicalActor]
+	if override == "" {
+		return originalTokens
 	}
-	return webserver.ApplyRoleSwitchOverride(originalTokens, overrideGroupToken)
+
+	if email, ok := strings.CutPrefix(override, userTokenPrefix); ok {
+		ctx, cancel := s.newCtx()
+		defer cancel()
+		tokens, err := s.roles.GetUserTokens(ctx, &common.UserClaims{Email: email})
+		if err != nil || len(tokens) == 0 {
+			s.log.Warnf("ResolveEffectiveUserTokens: impersonation of %q failed (err=%v, tokens=%d); using original tokens", email, err, len(tokens))
+			return originalTokens
+		}
+		return tokens
+	}
+
+	return webserver.ApplyRoleSwitchOverride(originalTokens, ptr(override))
+}
+
+// ResolveEffectiveEmail returns the email the actor is acting AS. It equals the
+// actor's own email unless an identity impersonation override is active, in which
+// case it returns the impersonated identity's email (so email-scoped views follow
+// the assumed user). Group overrides do not change the acting email.
+func (s *Service) ResolveEffectiveEmail(actorEmail string) string {
+	canonical := canonicalActorEmail(actorEmail)
+	if canonical == "" {
+		return actorEmail
+	}
+	if override := s.currentGroupOverrides()[canonical]; override != "" {
+		if email, ok := strings.CutPrefix(override, userTokenPrefix); ok {
+			return email
+		}
+	}
+	return actorEmail
+}
+
+// ListAssumableIdentities returns the identities a root admin may impersonate via
+// role switch. Used to populate the UI picker and to validate impersonation targets.
+func (s *Service) ListAssumableIdentities() ([]common.Identity, error) {
+	ctx, cancel := s.newCtx()
+	defer cancel()
+	return s.store.ListIdentities(ctx)
 }
 
 // SetUserGroupSwitchForActor stores a temporary effective group for one actor.
@@ -239,6 +287,48 @@ func (s *Service) SetUserGroupSwitchForActor(actorEmail, groupToken string) erro
 	current := s.currentGroupOverrides()
 	next := cloneGroupOverrides(current, 1)
 	next[normalizedActor] = normalizedGroup
+	s.groupOverrides.Store(next)
+	return nil
+}
+
+// SetUserImpersonationForActor makes the actor fully assume the given identity
+// (see ResolveEffectiveUserTokens, identity mode). The target must be one of the
+// known assumable identities. Stored in the same per-actor override slot, so it
+// replaces any active group override and vice versa.
+func (s *Service) SetUserImpersonationForActor(actorEmail, targetEmail string) error {
+	normalizedActor := canonicalActorEmail(actorEmail)
+	if normalizedActor == "" {
+		return fmt.Errorf("actor email must not be empty")
+	}
+	target := canonicalActorEmail(targetEmail)
+	if target == "" {
+		return fmt.Errorf("impersonate_user must not be empty")
+	}
+
+	// Only a known identity may be assumed.
+	ctx, cancel := s.newCtx()
+	defer cancel()
+	identities, err := s.store.ListIdentities(ctx)
+	if err != nil {
+		return fmt.Errorf("list identities: %w", err)
+	}
+	matched := ""
+	for _, ident := range identities {
+		if strings.EqualFold(ident.Email, target) {
+			matched = ident.Email
+			break
+		}
+	}
+	if matched == "" {
+		return fmt.Errorf("unknown identity: %s", targetEmail)
+	}
+
+	s.overridesWriteMu.Lock()
+	defer s.overridesWriteMu.Unlock()
+
+	current := s.currentGroupOverrides()
+	next := cloneGroupOverrides(current, 1)
+	next[normalizedActor] = userTokenPrefix + matched
 	s.groupOverrides.Store(next)
 	return nil
 }

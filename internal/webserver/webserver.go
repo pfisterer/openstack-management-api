@@ -88,8 +88,11 @@ type ProjectAPIService interface {
 	//Role switch related operations
 	GetUserGroupSwitchForActor(actorEmail string) *string
 	SetUserGroupSwitchForActor(actorEmail, groupToken string) error
+	SetUserImpersonationForActor(actorEmail, targetEmail string) error
 	ClearUserGroupSwitchForActor(actorEmail string)
 	ResolveEffectiveUserTokens(actorEmail string, originalTokens common.TokenList) common.TokenList
+	ResolveEffectiveEmail(actorEmail string) string
+	ListAssumableIdentities() ([]common.Identity, error)
 }
 
 // ProjectAPIConfig configures resource API route registration.
@@ -161,6 +164,7 @@ func RegisterProjectApiRoutes(v1 *gin.RouterGroup, cfg ProjectAPIConfig, log *za
 		roleSwitch.GET("", getRoleSwitch(cfg))
 		roleSwitch.PUT("", setRoleSwitch(cfg))
 		roleSwitch.DELETE("", clearRoleSwitch(cfg))
+		roleSwitch.GET("/identities", listRoleSwitchIdentities(cfg))
 	}
 
 	delegations := v1.Group("/delegations")

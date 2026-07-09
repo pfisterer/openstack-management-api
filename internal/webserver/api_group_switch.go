@@ -10,9 +10,24 @@ import (
 
 const groupTokenPrefix = "group:"
 
-// setRoleSwitchGroupRequest defines the payload for selecting a temporary group override.
+// setRoleSwitchGroupRequest defines the payload for a role switch. Exactly one of
+// the fields is used: group_token assumes a group's context (the caller keeps
+// their own user/root identity); impersonate_user fully assumes another identity.
 type setRoleSwitchGroupRequest struct {
-	GroupToken string `json:"group_token" binding:"required"`
+	GroupToken      string `json:"group_token"`
+	ImpersonateUser string `json:"impersonate_user"`
+}
+
+// identitySummary is a non-sensitive view of an assumable identity (no tokens).
+type identitySummary struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Email string `json:"email"`
+}
+
+// assumableIdentitiesResponse lists the identities a caller may impersonate.
+type assumableIdentitiesResponse struct {
+	Identities []identitySummary `json:"identities"`
 }
 
 // roleSwitchStateResponse describes the current role switch context.
@@ -23,6 +38,7 @@ type roleSwitchStateResponse struct {
 	OriginalTokens     common.TokenList `json:"original_tokens"`
 	EffectiveTokens    common.TokenList `json:"effective_tokens"`
 	OverrideGroupToken *string          `json:"override_group_token"`
+	ImpersonatedUser   *string          `json:"impersonated_user"`
 }
 
 // NormalizeGroupToken normalizes a raw group token into canonical `group:<name>` form.
@@ -76,7 +92,9 @@ func requireRoleSwitch(c *gin.Context, cfg ProjectAPIConfig) (string, common.Tok
 		c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 		return "", nil, false
 	}
-	return auth.UserEmail, auth.OriginalTokens, true
+	// Role-switch bookkeeping is keyed by the real actor, not the (possibly
+	// impersonated) effective identity.
+	return auth.ActorEmail, auth.OriginalTokens, true
 }
 
 func buildRoleSwitchStateResponse(c *gin.Context, cfg ProjectAPIConfig, allowed bool) (roleSwitchStateResponse, error) {
@@ -93,8 +111,15 @@ func buildRoleSwitchStateResponse(c *gin.Context, cfg ProjectAPIConfig, allowed 
 	}
 
 	var overrideGroupToken *string
-	if override := cfg.Service.GetUserGroupSwitchForActor(auth.UserEmail); override != nil {
-		overrideGroupToken = override
+	var impersonatedUser *string
+	if override := cfg.Service.GetUserGroupSwitchForActor(auth.ActorEmail); override != nil {
+		if email, ok := strings.CutPrefix(*override, "user:"); ok {
+			// Identity impersonation: activeIdentity already reflects the assumed
+			// user via UserEmail (the effective email); just surface the flag.
+			impersonatedUser = &email
+		} else {
+			overrideGroupToken = override
+		}
 	}
 
 	return roleSwitchStateResponse{
@@ -104,6 +129,7 @@ func buildRoleSwitchStateResponse(c *gin.Context, cfg ProjectAPIConfig, allowed 
 		OriginalTokens:     auth.OriginalTokens,
 		EffectiveTokens:    auth.EffectiveTokens,
 		OverrideGroupToken: overrideGroupToken,
+		ImpersonatedUser:   impersonatedUser,
 	}, nil
 }
 
@@ -162,8 +188,18 @@ func setRoleSwitch(cfg ProjectAPIConfig) gin.HandlerFunc {
 			return
 		}
 
-		if err := svc.SetUserGroupSwitchForActor(actorEmail, req.GroupToken); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		var setErr error
+		switch {
+		case strings.TrimSpace(req.ImpersonateUser) != "":
+			setErr = svc.SetUserImpersonationForActor(actorEmail, req.ImpersonateUser)
+		case strings.TrimSpace(req.GroupToken) != "":
+			setErr = svc.SetUserGroupSwitchForActor(actorEmail, req.GroupToken)
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": "either group_token or impersonate_user is required"})
+			return
+		}
+		if setErr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": setErr.Error()})
 			return
 		}
 
@@ -202,5 +238,42 @@ func clearRoleSwitch(cfg ProjectAPIConfig) gin.HandlerFunc {
 			return
 		}
 		c.JSON(http.StatusOK, response)
+	}
+}
+
+// listRoleSwitchIdentities returns the identities the caller may fully impersonate.
+//
+//	@Summary		List assumable identities
+//	@Description	Returns the identities a role-switch-enabled (root admin) caller may fully impersonate via PUT /v1/role-switch with impersonate_user.
+//	@Tags			role-switch
+//	@Produce		json
+//	@Security		Bearer
+//	@Success		200	{object}	assumableIdentitiesResponse	"Assumable identities."
+//	@Failure		403	{object}	map[string]any	"Forbidden."
+//	@ID				listRoleSwitchIdentities
+//	@Router			/v1/role-switch/identities [get]
+func listRoleSwitchIdentities(cfg ProjectAPIConfig) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		auth, err := mustGetAuthContext(c)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
+			return
+		}
+		if !canUseRoleSwitch(auth.OriginalTokens, cfg.RoleSwitchGroups) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+			return
+		}
+
+		identities, err := cfg.Service.ListAssumableIdentities()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		out := make([]identitySummary, 0, len(identities))
+		for _, ident := range identities {
+			out = append(out, identitySummary{ID: ident.ID, Label: ident.Label, Email: ident.Email})
+		}
+		c.JSON(http.StatusOK, assumableIdentitiesResponse{Identities: out})
 	}
 }

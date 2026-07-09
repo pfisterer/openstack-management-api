@@ -57,6 +57,15 @@ func (s *InMemoryProjectStore) SeedProjectState(_ context.Context, identities []
 	return nil
 }
 
+func (s *InMemoryProjectStore) ListIdentities(_ context.Context) ([]common.Identity, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make([]common.Identity, len(s.identities))
+	copy(out, s.identities)
+	return out, nil
+}
+
 func (s *InMemoryProjectStore) GetDelegationByID(_ context.Context, id string) (*common.Delegation, error) {
 	// Lock for reading state
 	s.mu.RLock()

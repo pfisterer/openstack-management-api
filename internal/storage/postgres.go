@@ -230,6 +230,22 @@ func (s *PostgresProjectStore) SeedProjectState(ctx context.Context, identities 
 	})
 }
 
+func (s *PostgresProjectStore) ListIdentities(ctx context.Context) ([]common.Identity, error) {
+	var rows []identityRow
+	if err := s.db.WithContext(ctx).Order("id").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]common.Identity, 0, len(rows))
+	for _, r := range rows {
+		var ident common.Identity
+		if err := json.Unmarshal(r.DataJSON, &ident); err != nil {
+			return nil, err
+		}
+		out = append(out, ident)
+	}
+	return out, nil
+}
+
 // ── Delegation operations ──────────────────────────────────────────────────────
 
 func (s *PostgresProjectStore) GetDelegationByID(ctx context.Context, id string) (*common.Delegation, error) {

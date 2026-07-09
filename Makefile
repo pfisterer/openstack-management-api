@@ -23,9 +23,13 @@ RP_SWAGGER_SRC    := ../role-provider-service/internal/generated_docs/swagger.js
 
 .DEFAULT_GOAL := all
 
-.PHONY: all build clean doc convert client bundle check swag run help install-npm bundle-deps docker docker-login docker-build multi-arch-build dev helm-update test generate-role-provider-client
+.PHONY: all image build clean doc convert client bundle check swag run help install-npm bundle-deps docker docker-login docker-build multi-arch-build dev helm-update test generate-role-provider-client
 
 all: test bundle build bundle-deps
+
+# Like `all` but WITHOUT the test suite — used by the Docker image build so the
+# CI image build stays fast and deterministic. Run tests locally via `make test`.
+image: bundle build bundle-deps
 
 # Start development server with live reload
 dev:

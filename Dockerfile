@@ -16,7 +16,10 @@ COPY VERSION ./
 COPY cmd/ ./cmd/
 COPY internal/ ./internal/
 
-RUN make all
+# `image` builds the bundle + binary WITHOUT running the Go test suite.
+# Tests are a local/dev concern (`make all`) and are intentionally not run
+# during the image build.
+RUN make image
 
 ## Stage 2: Production image
 FROM alpine:latest AS final

@@ -1,7 +1,6 @@
 package webserver
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -17,14 +16,6 @@ type CreateDelegationRequest struct {
 	EndDate            *string                 `json:"end_date"`
 	ParentID           *string                 `json:"parent_id"`
 	CanDelegate        bool                    `json:"can_delegate"`
-}
-
-// Validate checks if the delegation strategy is valid.
-func (r *CreateDelegationRequest) Validate() error {
-	if r.DelegationStrategy != common.DelegationStrategyPool && r.DelegationStrategy != common.DelegationStrategyAllowance {
-		return fmt.Errorf("delegation_strategy must be '%s' or '%s'", common.DelegationStrategyPool, common.DelegationStrategyAllowance)
-	}
-	return nil
 }
 
 // UpdateDelegationRequest contains fields for updating a delegation.

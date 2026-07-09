@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -43,18 +42,6 @@ func InitLogger(dev_mode bool) (logger *zap.Logger, log *zap.SugaredLogger) {
 	log = logger.Sugar()
 
 	return logger, log
-}
-
-const (
-	LoggerKey = "logger"
-)
-
-// InjectLoggerInContextMiddleware injects the Zap logger into the Gin context.
-func InjectLoggerInContextMiddleware(logger *zap.SugaredLogger) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Set(LoggerKey, logger)
-		c.Next()
-	}
 }
 
 func customMethodNameEncoder(caller zapcore.EntryCaller, enc zapcore.PrimitiveArrayEncoder) {

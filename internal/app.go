@@ -132,7 +132,7 @@ func RunApplication() {
 	}
 
 	requestTimeout := time.Duration(config.ServiceTimeoutSeconds) * time.Second
-	resourceSvc := applogic.NewService(resourceStore, roleProvider, resourceTypeIDs, config.RoleSwitchGroups, requestTimeout, logger)
+	resourceSvc := applogic.NewService(resourceStore, roleProvider, resourceTypeIDs, config.RootAdminTokens, requestTimeout, logger)
 	if err := resourceSvc.InitializeState(context.Background(), config.Storage.AddMockData); err != nil {
 		logger.Fatal("Failed to initialize resource state storage", zap.Error(err))
 	}
@@ -180,6 +180,7 @@ func RunApplication() {
 				ProjectPrefix:            config.Reconciler.ProjectPrefix,
 				ScopeParentID:            config.Reconciler.ScopeParentID,
 				DryRun:                   config.Reconciler.DryRun,
+				NoDelete:                 config.Reconciler.NoDelete,
 				DeleteReleasedProjects:   config.Reconciler.DeleteReleasedProjects,
 				PendingDeletionGraceDays: config.Reconciler.PendingDeletionGraceDays,
 				PendingDeletionTagPrefix: config.Reconciler.PendingDeletionTagPrefix,
@@ -208,13 +209,13 @@ func RunApplication() {
 			OIDCClientID:  config.WebServer.OIDCClientID,
 		},
 		ProjectAPI: webserver.ProjectAPIConfig{
-			RoleSwitchGroups:   config.RoleSwitchGroups,
+			RoleSwitchGroups:   config.RootAdminTokens,
 			ProjectDefinitions: config.ProjectDefinitions,
 			Service:            resourceSvc,
 			DummyDevUsers:      dummyDevUsers,
 		},
 		Reconciler:      reconcilerAPI,
-		RootAdminTokens: config.RoleSwitchGroups,
+		RootAdminTokens: config.RootAdminTokens,
 		AuthMiddleware:  authMiddleware,
 	})
 

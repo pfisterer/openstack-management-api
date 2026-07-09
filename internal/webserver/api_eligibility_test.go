@@ -4,7 +4,7 @@ package webserver_test
 //
 //	group:root_uni      → eligible: [group:root_uni, user:root.admin@uni.example, group:dept_cs_admin, group:dept_bio]
 //	group:dept_cs_admin → eligible: [group:dept_cs_faculty, user:faculty@cs.example, user:admin@cs.example]
-//	group:dept_cs_faculty → eligible: [group:cs-student, user:student@cs.example]
+//	group:dept_cs_faculty → eligible: [group:cs-student, user:cs-student@cs.com]
 //	group:dept_bio      → eligible: [group:dept_bio, user:faculty@bio.example]
 //
 // SetEligibilityRule requires the caller to hold ownerToken in their effective token set.

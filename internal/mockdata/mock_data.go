@@ -174,19 +174,19 @@ func DefaultMockResourceState() ([]common.Identity, []common.Delegation, []commo
 		{
 			ID:              "req_002",
 			Status:          common.ProjectStatusPending,
-			RequesterTokens: common.TokenList{"user:student@cs.example", csStudentGroup},
+			RequesterTokens: common.TokenList{"user:cs-student@cs.com", csStudentGroup},
 			Quota:           common.ProjectQuota{"cores": 2, "ram": 8, "storage": 50, "gpu": 0},
 			Reason:          "Student course project",
 			FundedBy:        &deptCSFaculty,
 			Pending:         nil,
 			TerminationDate: now.Add(30 * 24 * time.Hour).Format(time.RFC3339),
 			AuthorizedUsers: []common.AuthorizedUser{
-				{Token: "user:student@cs.example", OpenstackRole: "admin"},
+				{Token: "user:cs-student@cs.com", OpenstackRole: "admin"},
 			},
 			History: []common.HistoryEntry{{
 				Timestamp:       "2026-01-23T08:00:00Z",
 				Event:           "created",
-				Actor:           "user:student@cs.example",
+				Actor:           "user:cs-student@cs.com",
 				StatusFrom:      nil,
 				StatusTo:        common.ProjectStatusPending,
 				QuotaTo:         &common.ProjectQuota{"cores": 2, "ram": 8, "storage": 50, "gpu": 0},
@@ -341,7 +341,7 @@ func DefaultMockResourceState() ([]common.Identity, []common.Delegation, []commo
 		{
 			// CS faculty allow students to request from the faculty pool.
 			OwnerToken:         deptCSFaculty,
-			EligibleRequesters: common.TokenList{csStudentGroup, "user:student@cs.example"},
+			EligibleRequesters: common.TokenList{csStudentGroup, "user:cs-student@cs.com"},
 			CreatedBy:          "faculty@cs.example",
 			UpdatedAt:          "2025-08-01T09:00:00Z",
 		},

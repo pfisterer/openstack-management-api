@@ -79,6 +79,9 @@ openstackManagementApi:
     # Limit OS-only import to children of this parent project; empty = no scope
     scopeParentId: ""
     dryRun: false
+    # Safety mode: never perform destructive OpenStack operations (project/user
+    # removal, released-project deletion) while still syncing/creating.
+    noDelete: false
     managedProjectTag: "managed"
     resourceIdTagPrefix: "managed-resource-id:"
     # When false, released projects are tagged for pending deletion instead of deleted

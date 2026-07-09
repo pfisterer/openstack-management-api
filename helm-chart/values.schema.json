@@ -78,6 +78,7 @@
             "projectPrefix": { "type": "string" },
             "scopeParentId": { "type": "string" },
             "dryRun": { "type": "boolean" },
+            "noDelete": { "type": "boolean" },
             "managedProjectTag": { "type": "string" },
             "resourceIdTagPrefix": { "type": "string" },
             "deleteReleasedProjects": { "type": "boolean" },

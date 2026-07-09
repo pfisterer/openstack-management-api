@@ -37,6 +37,10 @@ type ReconcilerConfiguration struct {
 	ScopeParentID string `json:"scope_parent_id"`
 	// DryRun runs reconciliation logic without making any writes. Useful for testing.
 	DryRun bool `json:"dry_run"`
+	// NoDelete disables all destructive reconciler operations (project/user removal,
+	// released-project deletion) while still syncing/creating. A safety mode for
+	// initial rollout; wired from RECONCILER_NO_DELETE (default false).
+	NoDelete bool `json:"no_delete"`
 	// ManagedProjectTag is the OpenStack project tag used to identify projects created by
 	// this system. Default: "dhbw-managed".
 	ManagedProjectTag string `json:"managed_project_tag"`
@@ -73,12 +77,6 @@ type WebServerConfig struct {
 	OIDCClientID string `json:"oidc_client_id" validate:"required"`
 	// The bind string for the Gin web server (e.g., ":8082")
 	GinBindString string `json:"gin_bind_string" validate:"required"`
-	// The base URL for the web server (e.g., "http://localhost:8082")
-	WebserverBaseUrl string `json:"webserver_base_url" validate:"required,url"`
-	// The TTL (in hours) for API tokens
-	ApiTokenTTLHours int `json:"api_token_ttl_hours"`
-	// The version of the external DNS image to use
-	ExternalDnsVersion string `json:"external_dns_version" validate:"required"`
 }
 
 // RoleProviderConfig selects which RoleProvider implementation to use.
@@ -93,15 +91,18 @@ type RoleProviderConfig struct {
 
 // AppConfiguration is the top-level application configuration.
 type AppConfiguration struct {
-	Storage               common.StorageConfiguration `json:"storage" validate:"required"`
-	Openstack             OpenstackConfiguration      `json:"openstack" validate:"required"`
-	Reconciler            ReconcilerConfiguration     `json:"reconciler"`
-	WebServer             WebServerConfig             `json:"web_server" validate:"required"`
-	RoleProvider          RoleProviderConfig          `json:"role_provider"`
-	DevMode               bool                        `json:"dev_mode"`
-	RoleSwitchGroups      common.TokenList            `json:"role_switch_groups"`
-	ProjectDefinitions    []common.ManagedProject     `json:"resource_definitions" validate:"required,min=1,dive"`
-	ServiceTimeoutSeconds int                         `json:"service_timeout_seconds"`
+	Storage      common.StorageConfiguration `json:"storage" validate:"required"`
+	Openstack    OpenstackConfiguration      `json:"openstack" validate:"required"`
+	Reconciler   ReconcilerConfiguration     `json:"reconciler"`
+	WebServer    WebServerConfig             `json:"web_server" validate:"required"`
+	RoleProvider RoleProviderConfig          `json:"role_provider"`
+	DevMode      bool                        `json:"dev_mode"`
+	// RootAdminTokens (from ROOT_ADMIN_TOKENS) are the system-wide admin tokens.
+	// They gate three surfaces: the service's root-admin checks, the reconciler
+	// admin endpoints, and the role-switch allowlist.
+	RootAdminTokens       common.TokenList        `json:"root_admin_tokens"`
+	ProjectDefinitions    []common.ManagedProject `json:"resource_definitions" validate:"required,min=1,dive"`
+	ServiceTimeoutSeconds int                     `json:"service_timeout_seconds"`
 }
 
 // loadAppConfiguration loads configuration from an optional .env file and environment variables.
@@ -133,13 +134,10 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			Insecure:                    getEnvBool("OPENSTACK_INSECURE", "OS_INSECURE", false),
 		},
 		WebServer: WebServerConfig{
-			ApiTokenTTLHours:   helper.GetEnvInt("API_TOKEN_TTL_HOURS", 24),
-			DummyAuth:          getEnvBool("API_DUMMY_AUTH", "API_DUMMY_AUTH", false),
-			OIDCIssuerURL:      helper.GetEnvString("OIDC_ISSUER_URL", ""),
-			OIDCClientID:       helper.GetEnvString("OIDC_CLIENT_ID", ""),
-			GinBindString:      helper.GetEnvString("API_BIND", ":8083"),
-			WebserverBaseUrl:   helper.GetEnvString("API_BASE_URL", "http://localhost:8083"),
-			ExternalDnsVersion: helper.GetEnvString("EXTERNAL_DNS_IMAGE_VERSION", "v0.19.0"),
+			DummyAuth:     getEnvBool("API_DUMMY_AUTH", "API_DUMMY_AUTH", false),
+			OIDCIssuerURL: helper.GetEnvString("OIDC_ISSUER_URL", ""),
+			OIDCClientID:  helper.GetEnvString("OIDC_CLIENT_ID", ""),
+			GinBindString: helper.GetEnvString("API_BIND", ":8083"),
 		},
 
 		Reconciler: ReconcilerConfiguration{
@@ -148,6 +146,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			ProjectPrefix:            helper.GetEnvString("RECONCILER_PROJECT_PREFIX", "managed-"),
 			ScopeParentID:            helper.GetEnvString("RECONCILER_SCOPE_PARENT_ID", ""),
 			DryRun:                   helper.GetEnvBool("RECONCILER_DRY_RUN", false),
+			NoDelete:                 helper.GetEnvBool("RECONCILER_NO_DELETE", false),
 			ManagedProjectTag:        helper.GetEnvString("RECONCILER_MANAGED_PROJECT_TAG", "managed"),
 			ResourceIDTagPrefix:      helper.GetEnvString("RECONCILER_RESOURCE_ID_TAG_PREFIX", "managed-resource-id:"),
 			DeleteReleasedProjects:   helper.GetEnvBool("RECONCILER_DELETE_RELEASED_PROJECTS", false),
@@ -161,7 +160,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			APIToken: helper.GetEnvString("ROLE_PROVIDER_API_TOKEN", ""),
 		},
 		DevMode:               getEnvString("API_MODE", "API_MODE", "production") == "development",
-		RoleSwitchGroups:      parseCSVEnv(helper.GetEnvString("ROOT_ADMIN_TOKENS", "")),
+		RootAdminTokens:       parseCSVEnv(helper.GetEnvString("ROOT_ADMIN_TOKENS", "")),
 		ProjectDefinitions:    loadProjectDefinitionsOrDefaults(),
 		ServiceTimeoutSeconds: helper.GetEnvInt("SERVICE_TIMEOUT_SECONDS", 30),
 	}

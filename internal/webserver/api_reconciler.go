@@ -8,23 +8,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// ReconcileStatusResponse is returned by the reconcile status endpoint.
-type ReconcileStatusResponse struct {
-	LastRunAt            string `json:"last_run_at"`
-	LastError            string `json:"last_error,omitempty"`
-	ProjectsSynced       int    `json:"projects_synced"`
-	ProjectsCreated      int    `json:"projects_created"`
-	OSOnlyImported       int    `json:"os_only_imported"`
-	OSOnlyRemoved        int    `json:"os_only_removed"`
-	OrphanedUsersRemoved int    `json:"orphaned_users_removed"`
-	Running              bool   `json:"running"`
-}
-
-// ReconcileTriggerResponse is returned by the trigger endpoint.
-type ReconcileTriggerResponse struct {
-	Message string `json:"message"`
-}
-
 // RegisterReconcilerRoutes mounts the admin reconciler endpoints under /v1/admin/reconcile.
 // All routes are guarded by a middleware that rejects callers whose token set does not
 // contain at least one of the rootAdminTokens.
@@ -74,7 +57,7 @@ func requireRootAdmin(rootAdminTokens common.TokenList, log *zap.SugaredLogger) 
 //	@Tags			admin
 //	@Produce		json
 //	@Security		Bearer
-//	@Success		200	{object}	ReconcileStatusResponse	"Last reconciliation status."
+//	@Success		200	{object}	map[string]any	"Last reconciliation status (reconciler.Status)."
 //	@Failure		401	{object}	map[string]any			"Unauthorized."
 //	@Failure		403	{object}	map[string]any			"Forbidden."
 //	@ID				getAdminReconcileStatus
@@ -96,7 +79,7 @@ func getReconcilerStatus(rec ReconcilerAPI) gin.HandlerFunc {
 //	@Tags			admin
 //	@Produce		json
 //	@Security		Bearer
-//	@Success		202	{object}	ReconcileTriggerResponse	"Reconciliation triggered."
+//	@Success		202	{object}	map[string]any	"Reconciliation triggered."
 //	@Failure		401	{object}	map[string]any				"Unauthorized."
 //	@Failure		403	{object}	map[string]any				"Forbidden."
 //	@ID				triggerAdminReconcile

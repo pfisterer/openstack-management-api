@@ -319,18 +319,6 @@ func normalizePagination(limit, offset int) (int, int) {
 	return limit, offset
 }
 
-// paginateSlice applies offset and limit to a slice, returning the requested page.
-func paginateSlice[T any](s []T, offset, limit int) []T {
-	if offset >= len(s) {
-		return s[:0]
-	}
-	s = s[offset:]
-	if limit > 0 && len(s) > limit {
-		s = s[:limit]
-	}
-	return s
-}
-
 // normalizeOpenstackRoleOrEmpty validates OpenStack role input.
 func normalizeOpenstackRoleOrEmpty(role string) string {
 	r := strings.ToLower(strings.TrimSpace(role))

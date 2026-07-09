@@ -92,6 +92,11 @@ spec:
               value: {{ .Values.openstackManagementApi.reconciler.scopeParentId | quote }}
             - name: RECONCILER_DRY_RUN
               value: {{ .Values.openstackManagementApi.reconciler.dryRun | toString | quote }}
+            # Safety mode: when true the reconciler never performs destructive
+            # OpenStack operations (no project/user removal, no released-project
+            # deletion) while still syncing/creating. Recommended during rollout.
+            - name: RECONCILER_NO_DELETE
+              value: {{ .Values.openstackManagementApi.reconciler.noDelete | default false | toString | quote }}
             - name: RECONCILER_MANAGED_PROJECT_TAG
               value: {{ .Values.openstackManagementApi.reconciler.managedProjectTag | quote }}
             - name: RECONCILER_RESOURCE_ID_TAG_PREFIX

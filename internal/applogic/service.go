@@ -20,6 +20,7 @@ type Service struct {
 	roles            common.RoleProvider
 	quotaResourceIDs []string
 	rootAdminTokens  common.TokenSet
+	rootAdminList    common.TokenList // original order, for the root-delegation admin_scope
 	requestTimeout   time.Duration
 
 	overridesWriteMu sync.Mutex
@@ -67,6 +68,7 @@ func NewService(store ProjectStore, roles common.RoleProvider, quotaResourceIDs 
 		roles:            roles,
 		quotaResourceIDs: quotaResourceIDs,
 		rootAdminTokens:  common.NewTokenSet(rootAdminTokens),
+		rootAdminList:    rootAdminTokens,
 		requestTimeout:   requestTimeout,
 		log:              log,
 	}
@@ -189,16 +191,64 @@ func (s *Service) InitializeState(ctx context.Context, addMockData bool) error {
 		return fmt.Errorf("resource service: check state emptiness: %w", err)
 	}
 
-	if !empty || !addMockData {
+	if addMockData {
+		// Mock seed (dev/testing) into an empty store; it carries its own root
+		// delegation, so the real-mode bootstrap below is not needed here.
+		if empty {
+			identities, delegations, requests, eligibilityRules := mockdata.DefaultMockResourceState()
+			if err := s.store.SeedProjectState(ctx, identities, delegations, requests, eligibilityRules); err != nil {
+				return fmt.Errorf("resource service: seed mock state: %w", err)
+			}
+		}
 		return nil
 	}
 
-	//Add mock data for initial application state and testing.
-	identities, delegations, requests, eligibilityRules := mockdata.DefaultMockResourceState()
-	if err := s.store.SeedProjectState(ctx, identities, delegations, requests, eligibilityRules); err != nil {
-		return fmt.Errorf("resource service: seed mock state: %w", err)
+	// Real mode: ensure the configured root admins have an unlimited top-level pool
+	// to delegate from (the equivalent of the mock's System-created root).
+	return s.ensureRootDelegation(ctx)
+}
+
+// rootDelegationID is the stable ID of the bootstrapped top-level pool.
+const rootDelegationID = "root"
+
+// ensureRootDelegation creates a single unlimited top-level pool owned by the
+// configured root admins if none exists. Idempotent — safe on every startup, and
+// self-healing if the root is deleted. Without it root admins would have full
+// privileges but no budget to delegate from (CreateDelegation always requires a
+// parent, so a root can't be created through the API).
+func (s *Service) ensureRootDelegation(ctx context.Context) error {
+	if len(s.rootAdminList) == 0 {
+		return nil // no root admins configured → no implicit root pool
 	}
 
+	existing, err := s.store.GetDelegationByID(ctx, rootDelegationID)
+	if err != nil {
+		return fmt.Errorf("check root delegation: %w", err)
+	}
+	if existing != nil {
+		return nil
+	}
+
+	limit := make(common.ProjectQuota, len(s.quotaResourceIDs))
+	for _, id := range s.quotaResourceIDs {
+		limit[id] = common.UnlimitedQuota
+	}
+
+	root := common.Delegation{
+		ID:                 rootDelegationID,
+		Name:               "Organization Root",
+		ParentID:           nil,
+		CanDelegate:        true,
+		DelegationStrategy: common.DelegationStrategyPool,
+		AdminScope:         append(common.TokenList{}, s.rootAdminList...),
+		Quota:              common.ProjectResources{Limit: limit},
+		CreatedBy:          "System",
+		CreatedAt:          time.Now().UTC().Format(time.RFC3339),
+	}
+	if err := s.store.UpsertDelegation(ctx, root); err != nil {
+		return fmt.Errorf("bootstrap root delegation: %w", err)
+	}
+	s.log.Infow("bootstrapped unlimited root delegation for root admins", "admin_scope", root.AdminScope)
 	return nil
 }
 

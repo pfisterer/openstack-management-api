@@ -25,6 +25,12 @@ type ProjectStore interface {
 	// impersonation picker and to validate impersonation targets.
 	ListIdentities(ctx context.Context) ([]common.Identity, error)
 
+	// Returns the distinct email addresses of all users who appear as a requester
+	// or authorized user on any project. Used to derive assumable role-switch
+	// identities for users who already have projects — the only way pattern-covered
+	// members (e.g. students) surface, since a glob membership has no rows to list.
+	ListProjectParticipants(ctx context.Context) ([]string, error)
+
 	///-------------------------------------------------------------
 	///-------------- Delegation operations --------------
 	///-------------------------------------------------------------

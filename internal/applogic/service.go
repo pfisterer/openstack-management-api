@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -308,12 +309,103 @@ func (s *Service) ResolveEffectiveEmail(actorEmail string) string {
 	return actorEmail
 }
 
+// identityPickerGroupLimit bounds how many groups we expand to enumerate staff
+// principals from the role provider. The provider has no user-search endpoint
+// (only group search + group→members), so we enumerate the members of the known
+// groups. Fine at the current scale; if the directory grows large this is the
+// point to materialize a searchable principals table or add a subject-search
+// endpoint upstream (see __TODOS os2).
+const identityPickerGroupLimit = 200
+
 // ListAssumableIdentities returns the identities a root admin may impersonate via
-// role switch. Used to populate the UI picker and to validate impersonation targets.
+// role switch. It fuses three sources, deduped case-insensitively by email:
+//  1. seeded identities (mock/dev data), which carry richer labels + tokens;
+//  2. staff principals enumerated from the role provider's known groups;
+//  3. users who already have projects (requester/authorized tokens) — the only
+//     way pattern-covered members such as students surface, since a glob
+//     membership has no enumerable rows.
+//
+// Role-provider lookups are best-effort: if the provider is unreachable the picker
+// degrades to the locally known identities rather than failing outright. Used both
+// to populate the UI picker and to validate impersonation targets, so the two can
+// never disagree.
 func (s *Service) ListAssumableIdentities() ([]common.Identity, error) {
 	ctx, cancel := s.newCtx()
 	defer cancel()
-	return s.store.ListIdentities(ctx)
+
+	byEmail := map[string]common.Identity{}
+	add := func(id common.Identity) {
+		email := strings.TrimSpace(id.Email)
+		if email == "" {
+			return
+		}
+		key := strings.ToLower(email)
+		if existing, ok := byEmail[key]; ok {
+			// Enrich an existing (leaner) entry with a label/tokens if we have them.
+			if existing.Label == "" && id.Label != "" {
+				existing.Label = id.Label
+			}
+			if len(existing.Tokens) == 0 && len(id.Tokens) > 0 {
+				existing.Tokens = id.Tokens
+			}
+			byEmail[key] = existing
+			return
+		}
+		if id.ID == "" {
+			id.ID = email
+		}
+		byEmail[key] = id
+	}
+
+	// 1. Seeded identities first, so their richer label/tokens win on dedupe.
+	seeded, err := s.store.ListIdentities(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list seeded identities: %w", err)
+	}
+	for _, id := range seeded {
+		add(id)
+	}
+
+	// 2. Staff principals from the role provider's known groups (best-effort).
+	if groups, err := s.roles.SearchGroupTokens(ctx, "", identityPickerGroupLimit); err != nil {
+		s.log.Warnw("identity picker: group search failed, degrading to local identities", "error", err)
+	} else {
+		for _, group := range groups {
+			emails, err := s.roles.GetGroupUsers(ctx, group)
+			if err != nil {
+				s.log.Warnw("identity picker: group member lookup failed", "group", group, "error", err)
+				continue
+			}
+			for _, email := range emails {
+				add(common.Identity{Email: email})
+			}
+		}
+	}
+
+	// 3. Users who already have projects (surfaces pattern-covered members).
+	if participants, err := s.store.ListProjectParticipants(ctx); err != nil {
+		s.log.Warnw("identity picker: project participant lookup failed", "error", err)
+	} else {
+		for _, email := range participants {
+			add(common.Identity{Email: email})
+		}
+	}
+
+	out := make([]common.Identity, 0, len(byEmail))
+	for _, id := range byEmail {
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		li, lj := out[i].Label, out[j].Label
+		if li == "" {
+			li = out[i].Email
+		}
+		if lj == "" {
+			lj = out[j].Email
+		}
+		return strings.ToLower(li) < strings.ToLower(lj)
+	})
+	return out, nil
 }
 
 // SetUserGroupSwitchForActor stores a temporary effective group for one actor.
@@ -355,12 +447,12 @@ func (s *Service) SetUserImpersonationForActor(actorEmail, targetEmail string) e
 		return fmt.Errorf("impersonate_user must not be empty")
 	}
 
-	// Only a known identity may be assumed.
-	ctx, cancel := s.newCtx()
-	defer cancel()
-	identities, err := s.store.ListIdentities(ctx)
+	// Only a known assumable identity may be assumed — validate against the same
+	// fused set the picker shows (seeded ∪ role-provider staff ∪ project owners),
+	// so a badge shown in the UI can never be rejected here.
+	identities, err := s.ListAssumableIdentities()
 	if err != nil {
-		return fmt.Errorf("list identities: %w", err)
+		return fmt.Errorf("list assumable identities: %w", err)
 	}
 	matched := ""
 	for _, ident := range identities {

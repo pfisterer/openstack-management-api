@@ -66,6 +66,13 @@ func (s *InMemoryProjectStore) ListIdentities(_ context.Context) ([]common.Ident
 	return out, nil
 }
 
+func (s *InMemoryProjectStore) ListProjectParticipants(_ context.Context) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return common.ParticipantEmails(s.projects), nil
+}
+
 func (s *InMemoryProjectStore) GetDelegationByID(_ context.Context, id string) (*common.Delegation, error) {
 	// Lock for reading state
 	s.mu.RLock()

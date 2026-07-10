@@ -246,6 +246,23 @@ func (s *PostgresProjectStore) ListIdentities(ctx context.Context) ([]common.Ide
 	return out, nil
 }
 
+// ListProjectParticipants loads every project and derives the distinct participant
+// emails in Go. Participants live inside the JSONB `data` blob (requester +
+// authorized-user tokens), so there is no cheap column to DISTINCT on; at the
+// current scale a full scan is fine. This is the natural spot to later back with a
+// materialized, searchable principals table (see __TODOS os2).
+func (s *PostgresProjectStore) ListProjectParticipants(ctx context.Context) ([]string, error) {
+	var rows []projectRow
+	if err := s.db.WithContext(ctx).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	projects, err := fromProjectRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	return common.ParticipantEmails(projects), nil
+}
+
 // ── Delegation operations ──────────────────────────────────────────────────────
 
 func (s *PostgresProjectStore) GetDelegationByID(ctx context.Context, id string) (*common.Delegation, error) {

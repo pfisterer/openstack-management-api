@@ -130,6 +130,15 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 	// Setup static file serving routes
 	staticGroup := router.Group("/")
 	staticGroup.Use(cors.Default())
+	// The generated API client (client/*.gen.mjs) is imported by the SPA at runtime.
+	// It MUST never be served stale: when the API grows an operation, a browser holding
+	// a cached older SDK silently lacks the new method and the UI feature no-ops (this
+	// masked the role-switch impersonation picker). In DevMode the whole router already
+	// gets this; in production only the static assets need it (API responses set their
+	// own no-store where relevant), so force revalidation on this group unconditionally.
+	if !cfg.DevMode {
+		staticGroup.Use(disableCachingMiddleware())
+	}
 	RegisterStaticRoutes(staticGroup, cfg.StaticConfig)
 
 	// Setup API v1 routes

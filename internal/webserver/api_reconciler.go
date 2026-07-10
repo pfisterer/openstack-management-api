@@ -33,19 +33,23 @@ func requireRootAdmin(rootAdminTokens common.TokenList, log *zap.SugaredLogger) 
 		allowed[t] = struct{}{}
 	}
 	return func(c *gin.Context) {
-		_, userTokens, err := ResolveOriginalAuthContext(c)
+		// Gate on the EFFECTIVE tokens, not the real caller's, so impersonation is
+		// faithful: while a root admin impersonates a non-root user, admin actions are
+		// denied (they must Reset first). Group override keeps root in the effective set,
+		// so it is unaffected. Actions therefore always match the identity on screen.
+		auth, err := mustGetAuthContext(c)
 		if err != nil {
 			log.Warnw("Reconciler admin: failed to resolve auth context", "error", err)
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			return
 		}
-		for _, t := range userTokens {
+		for _, t := range auth.EffectiveTokens {
 			if _, ok := allowed[t]; ok {
 				c.Next()
 				return
 			}
 		}
-		log.Warnw("Reconciler admin: access denied (not a root admin)", "tokens", userTokens)
+		log.Warnw("Reconciler admin: access denied (not a root admin)", "effective_tokens", auth.EffectiveTokens, "actor", auth.ActorEmail)
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
 	}
 }

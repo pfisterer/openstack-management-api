@@ -95,3 +95,36 @@ func TestReconcileTrigger_RootAdminTriggersWhenEnabled(t *testing.T) {
 		t.Errorf("Trigger() called %d times, want 1", fake.triggered)
 	}
 }
+
+// ── Faithful impersonation: the effective identity governs admin access ────────
+
+// TestReconcileAdmin_ImpersonationDropsAdmin verifies that while a root admin
+// impersonates a non-root user, reconciler admin access is denied (the gate reads
+// the effective tokens, not the real caller's), and clearing the switch restores it.
+func TestReconcileAdmin_ImpersonationDropsAdmin(t *testing.T) {
+	fake := &fakeReconciler{}
+	h := setupRouterWith(t, fake)
+
+	// Baseline: root is authorised (reconciler enabled → 200).
+	rr := do(t, h, http.MethodGet, "/v1/admin/reconcile/status", userRoot, nil)
+	assertStatus(t, rr, http.StatusOK)
+
+	// Root impersonates a non-root user; the override is keyed to the real caller.
+	rr = do(t, h, http.MethodPut, "/v1/role-switch", userRoot, map[string]string{"impersonate_user": userFaculty})
+	assertStatus(t, rr, http.StatusOK)
+
+	// Same caller, now effectively faculty (not root) → admin denied on both routes.
+	rr = do(t, h, http.MethodGet, "/v1/admin/reconcile/status", userRoot, nil)
+	assertStatus(t, rr, http.StatusForbidden)
+	rr = do(t, h, http.MethodPost, "/v1/admin/reconcile/trigger", userRoot, nil)
+	assertStatus(t, rr, http.StatusForbidden)
+	if fake.triggered != 0 {
+		t.Errorf("impersonated non-root must not trigger reconcile; got %d calls", fake.triggered)
+	}
+
+	// Clearing the switch restores root admin access.
+	rr = do(t, h, http.MethodDelete, "/v1/role-switch", userRoot, nil)
+	assertStatus(t, rr, http.StatusOK)
+	rr = do(t, h, http.MethodGet, "/v1/admin/reconcile/status", userRoot, nil)
+	assertStatus(t, rr, http.StatusOK)
+}

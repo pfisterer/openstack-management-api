@@ -67,8 +67,12 @@ func TestRoleSwitchImpersonation(t *testing.T) {
 		}
 	}
 
-	// Impersonating an unknown identity is rejected.
+	// A root admin may assume ANY user by email (the picker list is only quick-picks,
+	// not a whitelist); an unknown email just yields an empty effective view.
 	rr = do(t, h, http.MethodPut, "/v1/role-switch", userRoot, map[string]string{"impersonate_user": "nobody@nowhere.example"})
+	assertStatus(t, rr, http.StatusOK)
+	// An empty target is still rejected.
+	rr = do(t, h, http.MethodPut, "/v1/role-switch", userRoot, map[string]string{"impersonate_user": ""})
 	assertStatus(t, rr, http.StatusBadRequest)
 
 	// Clearing restores the root context (no owned projects again).

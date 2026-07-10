@@ -434,9 +434,14 @@ func (s *Service) SetUserGroupSwitchForActor(actorEmail, groupToken string) erro
 }
 
 // SetUserImpersonationForActor makes the actor fully assume the given identity
-// (see ResolveEffectiveUserTokens, identity mode). The target must be one of the
-// known assumable identities. Stored in the same per-actor override slot, so it
-// replaces any active group override and vice versa.
+// (see ResolveEffectiveUserTokens, identity mode). A root admin may assume ANY
+// user by email — the endpoint is already root-gated, and the effective tokens are
+// resolved live from the role provider, so an unknown email simply yields an empty
+// view. The picker's fused identity list (ListAssumableIdentities) is therefore
+// only quick-pick suggestions, not a whitelist; this is what lets a super-admin
+// impersonate e.g. a pattern-covered student who is otherwise not enumerable.
+// Stored in the same per-actor override slot, so it replaces any active group
+// override and vice versa.
 func (s *Service) SetUserImpersonationForActor(actorEmail, targetEmail string) error {
 	normalizedActor := canonicalActorEmail(actorEmail)
 	if normalizedActor == "" {
@@ -447,30 +452,12 @@ func (s *Service) SetUserImpersonationForActor(actorEmail, targetEmail string) e
 		return fmt.Errorf("impersonate_user must not be empty")
 	}
 
-	// Only a known assumable identity may be assumed — validate against the same
-	// fused set the picker shows (seeded ∪ role-provider staff ∪ project owners),
-	// so a badge shown in the UI can never be rejected here.
-	identities, err := s.ListAssumableIdentities()
-	if err != nil {
-		return fmt.Errorf("list assumable identities: %w", err)
-	}
-	matched := ""
-	for _, ident := range identities {
-		if strings.EqualFold(ident.Email, target) {
-			matched = ident.Email
-			break
-		}
-	}
-	if matched == "" {
-		return fmt.Errorf("unknown identity: %s", targetEmail)
-	}
-
 	s.overridesWriteMu.Lock()
 	defer s.overridesWriteMu.Unlock()
 
 	current := s.currentGroupOverrides()
 	next := cloneGroupOverrides(current, 1)
-	next[normalizedActor] = userTokenPrefix + matched
+	next[normalizedActor] = userTokenPrefix + target
 	s.groupOverrides.Store(next)
 	return nil
 }

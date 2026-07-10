@@ -132,7 +132,12 @@ func TestImpersonationAcceptsDerivedIdentity(t *testing.T) {
 	if err := svc.SetUserImpersonationForActor("root@dhbw.de", "alice@dhbw.de"); err != nil {
 		t.Errorf("expected participant alice to be assumable, got %v", err)
 	}
-	if err := svc.SetUserImpersonationForActor("root@dhbw.de", "nobody@dhbw.de"); err == nil {
-		t.Errorf("expected unknown identity to be rejected")
+	// A root admin may assume ANY email (not just enumerated ones) — the fused list
+	// is quick-picks, not a whitelist. Only an empty target is rejected.
+	if err := svc.SetUserImpersonationForActor("root@dhbw.de", "nobody@dhbw.de"); err != nil {
+		t.Errorf("a root admin may assume any email; got %v", err)
+	}
+	if err := svc.SetUserImpersonationForActor("root@dhbw.de", ""); err == nil {
+		t.Errorf("expected empty impersonate target to be rejected")
 	}
 }

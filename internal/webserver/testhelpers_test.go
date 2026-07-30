@@ -9,16 +9,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pfisterer/openstack-management-api/internal/applogic"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/mockdata"
 	"github.com/pfisterer/openstack-management-api/internal/roleprovider"
-	"github.com/pfisterer/openstack-management-api/internal/storage"
+	"github.com/pfisterer/openstack-management-api/internal/tree"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 	"go.uber.org/zap"
 )
 
-// Mock users from DefaultMockResourceState.
+// Mock users from DefaultMockTreeState.
 const (
 	userRoot    = "root.admin@uni.example"
 	userCSAdmin = "admin@cs.example"
@@ -27,7 +26,7 @@ const (
 	userStudent = "cs-student@cs.com"
 )
 
-// quotaResourceIDs matches the resource IDs used in mock quota data.
+// quotaResourceIDs matches the resource IDs used in mock data.
 var quotaResourceIDs = []string{"cores", "ram", "storage", "gpu"}
 
 // rootAdminTokens mirrors the root-level tokens in mock data.
@@ -35,7 +34,7 @@ var rootAdminTokens = common.TokenList{"group:root_uni", "user:root.admin@uni.ex
 
 // setupRouter builds a Gin engine wired with:
 //   - DummyAuthMiddleware (X-Dummy-Auth-User header)
-//   - In-memory store seeded from DefaultMockResourceState
+//   - In-memory store seeded from DefaultMockTreeState
 //   - MockRoleProvider
 //   - No reconciler (reconciler endpoints return 503)
 func setupRouter(t *testing.T) http.Handler { return setupRouterWith(t, nil) }
@@ -45,39 +44,41 @@ func setupRouter(t *testing.T) http.Handler { return setupRouterWith(t, nil) }
 func setupRouterWith(t *testing.T, rec webserver.ReconcilerAPI) http.Handler {
 	t.Helper()
 	store, sugar := newTestStore(t)
-	ids, delegations, projects, rules := mockdata.DefaultMockResourceState()
-	if err := store.SeedProjectState(context.Background(), ids, delegations, projects, rules); err != nil {
+	ids, nodes := mockdata.DefaultMockTreeState()
+	if err := store.Seed(context.Background(), ids, nodes); err != nil {
 		t.Fatalf("seed mock state: %v", err)
 	}
-	return routerFromStore(sugar, store, rec)
+	return routerFromStore(t, sugar, store, rec)
 }
 
-// setupRouterSeeded builds the router with a CUSTOM store seed (own delegation
-// tree) — used by the end-to-end scenario suite. Identities still come from
-// DefaultMockResourceState because the DummyAuthMiddleware resolves the caller's
-// tokens from there.
-func setupRouterSeeded(t *testing.T, delegations []common.Delegation, projects []common.Project, rules []common.TokenEligibilityRule) http.Handler {
+// setupRouterSeeded builds the router with a CUSTOM node seed — used by the
+// end-to-end scenario suite. Identities still come from DefaultMockTreeState
+// because the DummyAuthMiddleware resolves the caller's tokens from there.
+// The service bootstrap runs afterwards, so the structural root/unassigned nodes
+// always exist and the root admin scope is synced to rootAdminTokens.
+func setupRouterSeeded(t *testing.T, nodes []tree.Node) http.Handler {
 	t.Helper()
 	store, sugar := newTestStore(t)
-	ids, _, _, _ := mockdata.DefaultMockResourceState()
-	if err := store.SeedProjectState(context.Background(), ids, delegations, projects, rules); err != nil {
+	ids, _ := mockdata.DefaultMockTreeState()
+	if err := store.Seed(context.Background(), ids, nodes); err != nil {
 		t.Fatalf("seed scenario state: %v", err)
 	}
-	return routerFromStore(sugar, store, nil)
+	return routerFromStore(t, sugar, store, nil)
 }
 
-func newTestStore(t *testing.T) (applogic.ProjectStore, *zap.SugaredLogger) {
+func newTestStore(t *testing.T) (tree.Store, *zap.SugaredLogger) {
 	t.Helper()
 	log, err := zap.NewDevelopment()
 	if err != nil {
 		t.Fatalf("init logger: %v", err)
 	}
 	sugar := log.Sugar()
-	return storage.NewInMemoryProjectStore(sugar), sugar
+	return tree.NewInMemoryStore(sugar), sugar
 }
 
-func routerFromStore(sugar *zap.SugaredLogger, store applogic.ProjectStore, rec webserver.ReconcilerAPI) http.Handler {
-	svc := applogic.NewService(
+func routerFromStore(t *testing.T, sugar *zap.SugaredLogger, store tree.Store, rec webserver.ReconcilerAPI) http.Handler {
+	t.Helper()
+	svc := tree.NewService(
 		store,
 		roleprovider.NewMockRoleProvider(),
 		quotaResourceIDs,
@@ -85,11 +86,16 @@ func routerFromStore(sugar *zap.SugaredLogger, store applogic.ProjectStore, rec 
 		10*time.Second,
 		sugar,
 	)
+	// Same as app.go: ensure the structural nodes exist and the root admin scope
+	// is synced from the configured tokens.
+	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
+		t.Fatalf("bootstrap tree: %v", err)
+	}
 	return webserver.SetupGinWebserver(webserver.SetupConfig{
 		DevMode:      true,
 		Log:          sugar,
 		StaticConfig: webserver.StaticConfig{},
-		ProjectAPI: webserver.ProjectAPIConfig{
+		API: webserver.APIConfig{
 			Service: svc,
 			// Role-switch allowlist = the (mixed user+group) root admin tokens,
 			// exactly as app.go wires it. canUseRoleSwitch accepts either kind.
@@ -148,11 +154,11 @@ func futureDate(days int) string {
 	return time.Now().UTC().Add(time.Duration(days) * 24 * time.Hour).Format(time.RFC3339)
 }
 
-// projectIDs extracts IDs from a project slice for use in error messages.
-func projectIDs(ps []common.Project) []string {
-	ids := make([]string, len(ps))
-	for i, p := range ps {
-		ids[i] = p.ID
+// nodeIDs extracts IDs from a node slice for use in error messages.
+func nodeIDs(ns []tree.Node) []string {
+	ids := make([]string, len(ns))
+	for i, n := range ns {
+		ids[i] = n.ID
 	}
 	return ids
 }

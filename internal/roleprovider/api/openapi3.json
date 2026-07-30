@@ -1,9 +1,10 @@
 {
     "openapi": "3.0.0",
     "info": {
+        "description": "Zanzibar-style group membership and token resolution service.",
+        "title": "role-provider-service API",
         "contact": {},
-        "title": "",
-        "version": ""
+        "version": "1.0"
     },
     "paths": {
         "/v1/admin/health": {
@@ -1343,6 +1344,14 @@
         }
     },
     "components": {
+        "securitySchemes": {
+            "Bearer": {
+                "description": "Bearer token — value: \"Bearer <token>\"",
+                "type": "apiKey",
+                "name": "Authorization",
+                "in": "header"
+            }
+        },
         "schemas": {
             "common.Group": {
                 "type": "object",

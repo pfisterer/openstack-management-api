@@ -1,7 +1,10 @@
 {
     "swagger": "2.0",
     "info": {
-        "contact": {}
+        "description": "Zanzibar-style group membership and token resolution service.",
+        "title": "role-provider-service API",
+        "contact": {},
+        "version": "1.0"
     },
     "paths": {
         "/v1/admin/health": {
@@ -1260,6 +1263,14 @@
                     "type": "string"
                 }
             }
+        }
+    },
+    "securityDefinitions": {
+        "Bearer": {
+            "description": "Bearer token — value: \"Bearer \u003ctoken\u003e\"",
+            "type": "apiKey",
+            "name": "Authorization",
+            "in": "header"
         }
     }
 }

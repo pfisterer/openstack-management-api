@@ -1,76 +1,138 @@
 package webserver_test
 
-// o24: /v1/role-switch GET/PUT/DELETE. The allowlist is rootAdminTokens, so only
-// userRoot may set/clear an override. Setting one replaces group tokens in
-// effective_tokens; clearing restores the originals.
+// Role-switch and impersonation tests. The allowlist is rootAdminTokens, exactly
+// as app.go wires it.
 
 import (
 	"net/http"
-	"slices"
 	"testing"
+
+	"github.com/pfisterer/openstack-management-api/internal/tree"
 )
 
-// local mirror of the (unexported) roleSwitchStateResponse for decoding.
 type roleSwitchState struct {
+	Enabled            bool     `json:"enabled"`
 	Allowed            bool     `json:"allowed"`
 	EffectiveTokens    []string `json:"effective_tokens"`
 	OverrideGroupToken *string  `json:"override_group_token"`
+	ImpersonatedUser   *string  `json:"impersonated_user"`
 }
 
-func TestRoleSwitch_GetAllowedReflectsRootAdmin(t *testing.T) {
+func TestRoleSwitch_OnlyAllowlistedUsers(t *testing.T) {
 	h := setupRouter(t)
 
-	rr := do(t, h, http.MethodGet, "/v1/role-switch", userRoot, nil)
+	// A non-root user may read the state but not switch.
+	rr := do(t, h, http.MethodGet, "/v1/role-switch", userFaculty, nil)
 	assertStatus(t, rr, http.StatusOK)
 	var st roleSwitchState
-	mustDecode(t, rr, &st)
-	if !st.Allowed {
-		t.Error("root admin should be allowed to role-switch")
-	}
-
-	rr = do(t, h, http.MethodGet, "/v1/role-switch", userFaculty, nil)
-	assertStatus(t, rr, http.StatusOK)
 	mustDecode(t, rr, &st)
 	if st.Allowed {
-		t.Error("non-root user must not be allowed to role-switch")
+		t.Errorf("faculty should not be allowed to role-switch")
 	}
+	assertStatus(t, do(t, h, http.MethodPut, "/v1/role-switch", userFaculty,
+		map[string]string{"group_token": "group:root_uni"}), http.StatusForbidden)
+	assertStatus(t, do(t, h, http.MethodGet, "/v1/role-switch/identities", userFaculty, nil), http.StatusForbidden)
 }
 
-func TestRoleSwitch_SetForbiddenForNonRoot(t *testing.T) {
-	h := setupRouter(t)
-	rr := do(t, h, http.MethodPut, "/v1/role-switch", userFaculty,
-		map[string]string{"group_token": "group:dept_bio"})
-	assertStatus(t, rr, http.StatusForbidden)
-}
-
-func TestRoleSwitch_SetThenClearForRoot(t *testing.T) {
+func TestRoleSwitch_GroupOverride(t *testing.T) {
 	h := setupRouter(t)
 
-	// set override
+	// Root switches into the faculty group…
 	rr := do(t, h, http.MethodPut, "/v1/role-switch", userRoot,
-		map[string]string{"group_token": "group:dept_bio"})
+		map[string]string{"group_token": "group:dept_cs_faculty"})
 	assertStatus(t, rr, http.StatusOK)
 
-	// GET shows the override applied to effective_tokens
-	rr = do(t, h, http.MethodGet, "/v1/role-switch", userRoot, nil)
+	// …and now manages the faculty pool but no longer the whole tree — BUT the
+	// user token survives a group override, so the root user token still grants
+	// root rights. Verify the effective tokens contain the switched group.
 	var st roleSwitchState
+	rr = do(t, h, http.MethodGet, "/v1/role-switch", userRoot, nil)
+	assertStatus(t, rr, http.StatusOK)
 	mustDecode(t, rr, &st)
-	if st.OverrideGroupToken == nil || *st.OverrideGroupToken != "group:dept_bio" {
-		t.Fatalf("override_group_token = %v, want group:dept_bio", st.OverrideGroupToken)
+	found := false
+	for _, tok := range st.EffectiveTokens {
+		if tok == "group:dept_cs_faculty" {
+			found = true
+		}
+		if tok == "group:root_uni" {
+			t.Errorf("group override should drop the original group tokens, got %v", st.EffectiveTokens)
+		}
 	}
-	if !slices.Contains(st.EffectiveTokens, "group:dept_bio") {
-		t.Errorf("effective_tokens should contain the override group:dept_bio; got %v", st.EffectiveTokens)
+	if !found {
+		t.Errorf("effective tokens should contain the override group, got %v", st.EffectiveTokens)
 	}
 
-	// clear restores originals
-	rr = do(t, h, http.MethodDelete, "/v1/role-switch", userRoot, nil)
-	assertStatus(t, rr, http.StatusOK)
+	// Clear restores the original state.
+	assertStatus(t, do(t, h, http.MethodDelete, "/v1/role-switch", userRoot, nil), http.StatusOK)
 	rr = do(t, h, http.MethodGet, "/v1/role-switch", userRoot, nil)
 	mustDecode(t, rr, &st)
-	if st.OverrideGroupToken != nil {
-		t.Errorf("override should be cleared; got %v", *st.OverrideGroupToken)
+	if st.OverrideGroupToken != nil || st.ImpersonatedUser != nil {
+		t.Errorf("override should be cleared, got %+v", st)
 	}
-	if !slices.Contains(st.EffectiveTokens, "group:root_uni") {
-		t.Errorf("effective_tokens should be restored to originals (group:root_uni); got %v", st.EffectiveTokens)
+}
+
+func TestRoleSwitch_ImpersonationDropsRoot(t *testing.T) {
+	h := setupRouter(t)
+
+	// Root fully impersonates the student.
+	rr := do(t, h, http.MethodPut, "/v1/role-switch", userRoot,
+		map[string]string{"impersonate_user": userStudent})
+	assertStatus(t, rr, http.StatusOK)
+
+	// Email-scoped views follow the assumed user: "mine" shows the student's
+	// leaves (p_002 in the mock seed).
+	rr = do(t, h, http.MethodGet, "/v1/nodes/mine", userRoot, nil)
+	assertStatus(t, rr, http.StatusOK)
+	var mine []tree.Node
+	mustDecode(t, rr, &mine)
+	if len(mine) != 1 || mine[0].ID != "p_002" {
+		t.Errorf("impersonated student should own exactly [p_002], got %v", nodeIDs(mine))
+	}
+
+	// Faithful impersonation: the actor LOSES root management rights — the
+	// student cannot decide the pending leaf, so neither can root-as-student.
+	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/approve", userRoot, tree.ApproveNodeRequest{}), http.StatusForbidden)
+
+	// But auto-approve self-service works exactly as it would for the student.
+	rr = do(t, h, http.MethodPost, "/v1/nodes", userRoot, tree.CreateNodeRequest{
+		ParentID: "b_cs_students", Kind: tree.KindProject, Reason: "impersonated request",
+		Limit: cores(1),
+	})
+	assertStatus(t, rr, http.StatusCreated)
+	var n tree.Node
+	mustDecode(t, rr, &n)
+	if n.Status != tree.StatusApproved {
+		t.Errorf("impersonated self-service request should auto-approve, got %q", n.Status)
+	}
+	if n.Owner != "user:"+userStudent {
+		t.Errorf("owner should be the impersonated student, got %q", n.Owner)
+	}
+
+	// Clearing the switch restores root rights.
+	assertStatus(t, do(t, h, http.MethodDelete, "/v1/role-switch", userRoot, nil), http.StatusOK)
+	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/approve", userRoot, tree.ApproveNodeRequest{}), http.StatusOK)
+}
+
+func TestRoleSwitch_IdentityPicker(t *testing.T) {
+	h := setupRouter(t)
+	rr := do(t, h, http.MethodGet, "/v1/role-switch/identities", userRoot, nil)
+	assertStatus(t, rr, http.StatusOK)
+	var resp struct {
+		Identities []struct {
+			Email string `json:"email"`
+		} `json:"identities"`
+	}
+	mustDecode(t, rr, &resp)
+	// All five mock identities must be present (fused from seed + provider + participants).
+	want := map[string]bool{userRoot: false, userCSAdmin: false, userFaculty: false, userBio: false, userStudent: false}
+	for _, id := range resp.Identities {
+		if _, ok := want[id.Email]; ok {
+			want[id.Email] = true
+		}
+	}
+	for email, seen := range want {
+		if !seen {
+			t.Errorf("identity picker is missing %s", email)
+		}
 	}
 }

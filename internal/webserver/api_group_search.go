@@ -26,7 +26,7 @@ type TokenListResponse struct {
 //	@Failure		500	{object}	map[string]any	"Internal server error."
 //	@ID				searchGroups
 //	@Router			/v1/groups/search [get]
-func searchGroups(cfg ProjectAPIConfig) gin.HandlerFunc {
+func searchGroups(cfg APIConfig) gin.HandlerFunc {
 	svc := cfg.Service
 	return func(c *gin.Context) {
 		limit, _, err := parsePagination(c)
@@ -59,7 +59,7 @@ func searchGroups(cfg ProjectAPIConfig) gin.HandlerFunc {
 //	@Failure		401	{object}	map[string]any	"Unauthorized."
 //	@ID				listMyGroups
 //	@Router			/v1/groups/mine [get]
-func listMyGroups(cfg ProjectAPIConfig) gin.HandlerFunc {
+func listMyGroups(_ APIConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		auth, err := mustGetAuthContext(c)
 		if err != nil {

@@ -2,4 +2,5 @@ package: roleclient
 generate:
   - types
   - client
-output: client.gen.go
+# Path is relative to the Makefile invocation (repo root).
+output: internal/roleprovider/api/client.gen.go

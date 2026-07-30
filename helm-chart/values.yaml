@@ -78,6 +78,9 @@ openstackManagementApi:
     projectPrefix: "managed-"
     # Limit OS-only import to children of this parent project; empty = no scope
     scopeParentId: ""
+    # Name-based alternative to scopeParentId: the reconciler resolves the project
+    # by name and creates it if missing. Ignored when scopeParentId is set.
+    scopeParentName: ""
     dryRun: false
     # Safety mode: never perform destructive OpenStack operations (project/user
     # removal, released-project deletion) while still syncing/creating.

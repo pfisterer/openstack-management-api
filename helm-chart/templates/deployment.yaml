@@ -90,6 +90,8 @@ spec:
               value: {{ .Values.openstackManagementApi.reconciler.projectPrefix | quote }}
             - name: RECONCILER_SCOPE_PARENT_ID
               value: {{ .Values.openstackManagementApi.reconciler.scopeParentId | quote }}
+            - name: RECONCILER_SCOPE_PARENT_NAME
+              value: {{ .Values.openstackManagementApi.reconciler.scopeParentName | default "" | quote }}
             - name: RECONCILER_DRY_RUN
               value: {{ .Values.openstackManagementApi.reconciler.dryRun | toString | quote }}
             # Safety mode: when true the reconciler never performs destructive

@@ -22,6 +22,17 @@ type OpenstackConfiguration struct {
 	ProjectID                   string `json:"project_id" validate:"required"`
 	Region                      string `json:"region" validate:"required"`
 	Insecure                    bool   `json:"insecure"`
+	// FederatedProvisioning makes pre-created users federated shadow users instead of plain
+	// local users. Required on clouds whose OIDC mapping is ephemeral (the Keystone default
+	// when the mapping sets no user "type"): there a plain local user is ignored on SSO login
+	// and the role assignment is orphaned. Leave off for type:local mappings, where a local
+	// user binds by name. Wired from OPENSTACK_FEDERATED_PROVISIONING (default false).
+	FederatedProvisioning bool `json:"federated_provisioning"`
+	// FederatedIdPID is the Keystone identity-provider id a pre-created federated user is bound
+	// to; it must match the IdP the user logs in through. Default "keycloak".
+	FederatedIdPID string `json:"federated_idp_id"`
+	// FederatedProtocolID is the federation protocol id (e.g. "openid", "saml2"). Default "openid".
+	FederatedProtocolID string `json:"federated_protocol_id"`
 }
 
 // ReconcilerConfiguration controls the two-way sync with OpenStack.
@@ -35,6 +46,10 @@ type ReconcilerConfiguration struct {
 	// ScopeParentID, when set, scopes the OS-only import to children of this parent project.
 	// Projects outside this scope are ignored during the reverse-sync phase.
 	ScopeParentID string `json:"scope_parent_id"`
+	// ScopeParentName is the name-based alternative to ScopeParentID: the reconciler
+	// resolves the project by name and creates it if it does not exist yet.
+	// Ignored when ScopeParentID is set.
+	ScopeParentName string `json:"scope_parent_name"`
 	// DryRun runs reconciliation logic without making any writes. Useful for testing.
 	DryRun bool `json:"dry_run"`
 	// NoDelete disables all destructive reconciler operations (project/user removal,
@@ -132,6 +147,9 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			ProjectID:                   getEnvString("OPENSTACK_PROJECT_ID", "OS_PROJECT_ID", ""),
 			Region:                      getEnvString("OPENSTACK_REGION", "OS_REGION_NAME", "microstack"),
 			Insecure:                    getEnvBool("OPENSTACK_INSECURE", "OS_INSECURE", false),
+			FederatedProvisioning:       helper.GetEnvBool("OPENSTACK_FEDERATED_PROVISIONING", false),
+			FederatedIdPID:              helper.GetEnvString("OPENSTACK_FEDERATED_IDP_ID", "keycloak"),
+			FederatedProtocolID:         helper.GetEnvString("OPENSTACK_FEDERATED_PROTOCOL_ID", "openid"),
 		},
 		WebServer: WebServerConfig{
 			DummyAuth:     getEnvBool("API_DUMMY_AUTH", "API_DUMMY_AUTH", false),
@@ -145,6 +163,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			IntervalSeconds:          helper.GetEnvInt("RECONCILER_INTERVAL_SECONDS", 300),
 			ProjectPrefix:            helper.GetEnvString("RECONCILER_PROJECT_PREFIX", "managed-"),
 			ScopeParentID:            helper.GetEnvString("RECONCILER_SCOPE_PARENT_ID", ""),
+			ScopeParentName:          helper.GetEnvString("RECONCILER_SCOPE_PARENT_NAME", ""),
 			DryRun:                   helper.GetEnvBool("RECONCILER_DRY_RUN", false),
 			NoDelete:                 helper.GetEnvBool("RECONCILER_NO_DELETE", false),
 			ManagedProjectTag:        helper.GetEnvString("RECONCILER_MANAGED_PROJECT_TAG", "managed"),

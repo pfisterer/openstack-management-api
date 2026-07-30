@@ -1,0 +1,201 @@
+package tree_test
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/roleprovider"
+	"github.com/pfisterer/openstack-management-api/internal/tree"
+	"go.uber.org/zap"
+)
+
+var testResources = []string{"cores"}
+
+func newSvc(t *testing.T, rootAdmins common.TokenList) (*tree.Service, tree.Store) {
+	t.Helper()
+	log := zap.NewNop().Sugar()
+	store := tree.NewInMemoryStore(log)
+	svc := tree.NewService(store, roleprovider.NewMockRoleProvider(), testResources, rootAdmins, 5*time.Second, log)
+	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	return svc, store
+}
+
+func cores(n int) common.ProjectQuota { return common.ProjectQuota{"cores": n} }
+
+// TestBootstrap_SyncsRootAdminScope verifies the root node's admin scope follows
+// ROOT_ADMIN_TOKENS across restarts (the old model only set it on first creation,
+// letting removed admins keep — and new admins never gain — the top-level scope).
+func TestBootstrap_SyncsRootAdminScope(t *testing.T) {
+	log := zap.NewNop().Sugar()
+	store := tree.NewInMemoryStore(log)
+
+	svc1 := tree.NewService(store, roleprovider.NewMockRoleProvider(), testResources, common.TokenList{"group:admins-v1"}, 5*time.Second, log)
+	if err := svc1.Bootstrap(context.Background(), nil, nil); err != nil {
+		t.Fatalf("bootstrap v1: %v", err)
+	}
+
+	root, err := store.GetNode(context.Background(), tree.RootNodeID)
+	if err != nil || root == nil {
+		t.Fatalf("root node missing after bootstrap: %v", err)
+	}
+	if len(root.AdminScope) != 1 || root.AdminScope[0] != "group:admins-v1" {
+		t.Fatalf("root admin scope = %v, want [group:admins-v1]", root.AdminScope)
+	}
+	unassigned, err := store.GetNode(context.Background(), tree.UnassignedNodeID)
+	if err != nil || unassigned == nil {
+		t.Fatalf("unassigned node missing after bootstrap: %v", err)
+	}
+	if unassigned.Limit["cores"] != 0 {
+		t.Errorf("unassigned limit should be 0, got %d", unassigned.Limit["cores"])
+	}
+
+	// "Restart" with a changed configuration → the scope is synced, not preserved.
+	svc2 := tree.NewService(store, roleprovider.NewMockRoleProvider(), testResources, common.TokenList{"group:admins-v2"}, 5*time.Second, log)
+	if err := svc2.Bootstrap(context.Background(), nil, nil); err != nil {
+		t.Fatalf("bootstrap v2: %v", err)
+	}
+	root, _ = store.GetNode(context.Background(), tree.RootNodeID)
+	if len(root.AdminScope) != 1 || root.AdminScope[0] != "group:admins-v2" {
+		t.Fatalf("root admin scope after restart = %v, want [group:admins-v2]", root.AdminScope)
+	}
+}
+
+// TestAutoApprove_CountsPerOwnerNotPerGroup is the F-1 regression test: two
+// requesters sharing every group token each get their own per-requester budget,
+// and one requester's consumption never counts against the other.
+func TestAutoApprove_CountsPerOwnerNotPerGroup(t *testing.T) {
+	svc, _ := newSvc(t, common.TokenList{"group:root"})
+	rootTokens := common.TokenList{"user:root@x", "group:root"}
+
+	// Root creates a self-service budget: total 10, 2 per requester.
+	budget, err := svc.CreateNode(tree.CreateNodeRequest{
+		ParentID:           tree.RootNodeID,
+		Kind:               tree.KindBudget,
+		Name:               "Selfservice",
+		Reason:             "test",
+		Limit:              cores(10),
+		AdminScope:         common.TokenList{"group:root"},
+		EligibleRequesters: common.TokenList{"group:students"},
+		AutoApprove:        &tree.AutoApprove{PerRequesterLimit: cores(2)},
+	}, "root@x", "root@x", rootTokens)
+	if err != nil {
+		t.Fatalf("create budget: %v", err)
+	}
+
+	// Both students carry the SAME group tokens — only their email differs.
+	annaTokens := common.TokenList{"user:anna@x", "group:students"}
+	benTokens := common.TokenList{"user:ben@x", "group:students"}
+
+	req := func(email string, tokens common.TokenList, n int) (tree.Node, error) {
+		return svc.CreateNode(tree.CreateNodeRequest{
+			ParentID: budget.ID,
+			Kind:     tree.KindProject,
+			Reason:   "vm",
+			Limit:    cores(n),
+		}, email, email, tokens)
+	}
+
+	// Anna exhausts her cap.
+	n1, err := req("anna@x", annaTokens, 2)
+	if err != nil || n1.Status != tree.StatusApproved {
+		t.Fatalf("anna's first request should auto-approve, got %v / %v", n1.Status, err)
+	}
+	// Anna's next request exceeds HER cumulative cap.
+	n2, err := req("anna@x", annaTokens, 1)
+	if err != nil || n2.Status != tree.StatusPending {
+		t.Fatalf("anna's second request should stay pending, got %v / %v", n2.Status, err)
+	}
+	// Ben still gets his own full cap — Anna's usage must not count against him.
+	n3, err := req("ben@x", benTokens, 2)
+	if err != nil || n3.Status != tree.StatusApproved {
+		t.Fatalf("ben's request should auto-approve despite anna's usage, got %v / %v", n3.Status, err)
+	}
+
+	// And Ben cannot touch Anna's leaf: he is neither owner nor manager.
+	if _, err := svc.ReleaseNode(n1.ID, "ben@x", benTokens); err == nil {
+		t.Fatalf("ben releasing anna's leaf must fail")
+	}
+	if _, err := svc.RequestChange(n1.ID, tree.ChangeNodeRequest{Limit: ptrQuota(cores(1))}, "ben@x", benTokens); err == nil {
+		t.Fatalf("ben changing anna's leaf must fail")
+	}
+	// Anna herself can.
+	if _, err := svc.ReleaseNode(n1.ID, "anna@x", annaTokens); err != nil {
+		t.Fatalf("anna releasing her own leaf: %v", err)
+	}
+}
+
+// TestAutoApprove_BudgetTotalLimitCaps verifies the self-service budget's own
+// total limit is enforced even when every requester is within their personal cap
+// (the old model had no total for allowances at all).
+func TestAutoApprove_BudgetTotalLimitCaps(t *testing.T) {
+	svc, _ := newSvc(t, common.TokenList{"group:root"})
+	rootTokens := common.TokenList{"user:root@x", "group:root"}
+
+	budget, err := svc.CreateNode(tree.CreateNodeRequest{
+		ParentID:           tree.RootNodeID,
+		Kind:               tree.KindBudget,
+		Name:               "Small selfservice",
+		Reason:             "test",
+		Limit:              cores(3), // total for everyone
+		AdminScope:         common.TokenList{"group:root"},
+		EligibleRequesters: common.TokenList{"group:students"},
+		AutoApprove:        &tree.AutoApprove{PerRequesterLimit: cores(2)},
+	}, "root@x", "root@x", rootTokens)
+	if err != nil {
+		t.Fatalf("create budget: %v", err)
+	}
+
+	req := func(email string, n int) tree.Node {
+		t.Helper()
+		node, err := svc.CreateNode(tree.CreateNodeRequest{
+			ParentID: budget.ID, Kind: tree.KindProject, Reason: "vm", Limit: cores(n),
+		}, email, email, common.TokenList{"user:" + email, "group:students"})
+		if err != nil {
+			t.Fatalf("request by %s: %v", email, err)
+		}
+		return node
+	}
+
+	if n := req("a@x", 2); n.Status != tree.StatusApproved {
+		t.Fatalf("first 2 cores should auto-approve, got %q", n.Status)
+	}
+	// b is within their personal cap (2), but the budget only has 1 core left.
+	if n := req("b@x", 2); n.Status != tree.StatusPending {
+		t.Fatalf("request beyond the budget total should stay pending, got %q", n.Status)
+	}
+	// A fitting request still auto-approves.
+	if n := req("c@x", 1); n.Status != tree.StatusApproved {
+		t.Fatalf("1 core within the remaining total should auto-approve, got %q", n.Status)
+	}
+}
+
+// TestReparent_CycleGuard ensures a budget cannot be moved into its own subtree.
+func TestReparent_CycleGuard(t *testing.T) {
+	svc, _ := newSvc(t, common.TokenList{"group:root"})
+	rootTokens := common.TokenList{"user:root@x", "group:root"}
+
+	outer, err := svc.CreateNode(tree.CreateNodeRequest{
+		ParentID: tree.RootNodeID, Kind: tree.KindBudget, Name: "Outer", Reason: "t",
+		Limit: cores(10), AdminScope: common.TokenList{"group:root"},
+	}, "root@x", "root@x", rootTokens)
+	if err != nil {
+		t.Fatalf("create outer: %v", err)
+	}
+	inner, err := svc.CreateNode(tree.CreateNodeRequest{
+		ParentID: outer.ID, Kind: tree.KindBudget, Name: "Inner", Reason: "t",
+		Limit: cores(5), AdminScope: common.TokenList{"group:root"},
+	}, "root@x", "root@x", rootTokens)
+	if err != nil {
+		t.Fatalf("create inner: %v", err)
+	}
+
+	if _, err := svc.ReparentNode(outer.ID, tree.ReparentNodeRequest{NewParentID: inner.ID}, "root@x", rootTokens); err == nil {
+		t.Fatalf("moving a budget into its own subtree must fail")
+	}
+}
+
+func ptrQuota(q common.ProjectQuota) *common.ProjectQuota { return &q }

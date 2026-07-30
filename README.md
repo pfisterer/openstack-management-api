@@ -1,27 +1,43 @@
 # OpenStack Management API
 
 Self-service API for **delegated OpenStack resource management**. It lets an
-organisation hand out resource quota along a delegation tree, lets users request
-projects funded from those delegations, and reconciles approved projects into
-real OpenStack projects. It is the backend of the DHBW self-service UI.
+organisation hand out compute capacity along a **budget tree**, lets users
+request projects funded from those budgets, and reconciles approved projects
+into real OpenStack projects. It is the backend of the DHBW self-service UI.
+
+➡️ **Architecture:** see [`ARCHITECTURE.md`](ARCHITECTURE.md) — domain model,
+authorization rules, API surface, storage, reconciler, SDK pipeline.
 
 ## Core concepts
 
-- **Delegation** — a node in a budget-pool **tree**. A parent delegates a quota
-  slice to a child (child limit ≤ parent). Two strategies:
-  - `pool` — shared budget, projects need **manual approval**.
-  - `allowance` — per-user cap, projects auto-approve up to that cap.
-- **Project** — a resource request **funded by a delegation**. Lifecycle:
-  `pending → approved → released` (plus `change_pending` for quota changes).
-- **Usage rollup** — quota usage is aggregated live over the whole subtree, so
-  every level sees the resource consumption below it.
-- **Role switch** — a root admin can temporarily *assume a group identity* to
-  act on its behalf (see `ROOT_ADMIN_TOKENS`).
+The whole domain is **one tree of nodes** (`internal/tree`):
+
+- **Budget** — an inner node: a delegated capacity pool. Its `admin_scope`
+  tokens manage it (approve/reject children, edit, delegate further); its
+  `eligible_requesters` tokens may request child nodes under it. Delegation =
+  creating a sub-budget with someone else in `admin_scope`. A budget may carry
+  an `auto_approve.per_requester_limit` policy: requests within that
+  per-person cap are approved automatically (self-service).
+- **Project** — a leaf node: a concrete resource request with exactly one
+  `owner`. Lifecycle: `pending → approved → released`, with
+  `change_pending` for proposed changes (a rejected change simply returns the
+  node to `approved`). Budgets go through the same request/approval cycle.
+- **Usage rollup** — capacity is consumed only by active leaves and
+  aggregated live over every subtree; approving anything checks capacity
+  along the whole ancestor chain.
+- **Authorization walks the parent chain** — deciding on a node requires a
+  token in an *ancestor's* `admin_scope`; nobody approves their own request.
+  Root admins are simply the `admin_scope` of the `root` node (synchronized
+  from `ROOT_ADMIN_TOKENS` at startup).
+- **Role switch** — a root admin can temporarily act within a single group or
+  fully impersonate another identity (see `ARCHITECTURE.md` §4.3).
 - **Role provider** — pluggable source of a user's group tokens and group search:
   - `mock` — built-in test identities (no external dependency).
   - `http` — the external [role-provider-service](../role-provider-service).
-- **Reconciler** — optional background loop that materialises approved projects
-  into OpenStack (create/tag/quota) and cleans up released ones.
+- **Reconciler** — optional background loop that materialises approved leaves
+  into OpenStack (create/tag/quota/members), imports unknown OpenStack
+  projects as `imported` leaves under the `unassigned` node, and cleans up
+  released ones.
 
 ## Quick start
 
@@ -51,9 +67,9 @@ All configuration is via environment variables (`.env` is auto-loaded in dev).
 | `API_MODE` | `production` | `development` enables dummy auth + verbose mode |
 | `API_BIND` | `:8083` | Listen address |
 | `API_DUMMY_AUTH` | `false` | Dev-only auth bypass via `X-Dummy-Auth-User` (refused when `API_MODE=production`) |
-| `DB_TYPE` | `memory` | `memory` \| `sqlite` \| `postgres` |
-| `DB_CONNECTION_STRING` | — | DSN for `sqlite`/`postgres` |
-| `DB_ADD_MOCK_DATA` | `false` | Seed the mock delegation tree (only if the store is empty) |
+| `DB_TYPE` | `memory` | `memory` \| `postgres` |
+| `DB_CONNECTION_STRING` | — | DSN for `postgres` |
+| `DB_ADD_MOCK_DATA` | `false` | Seed the mock budget tree (only if the store is empty) |
 | `ROLE_PROVIDER` | `mock` | `mock` \| `http` |
 | `ROLE_PROVIDER_URL` / `ROLE_PROVIDER_API_TOKEN` | — | Required when `ROLE_PROVIDER=http` |
 | `ROOT_ADMIN_TOKENS` | — | Comma-separated `user:`/`group:` tokens granted root admin + role-switch |

@@ -1,362 +1,236 @@
+// Package mockdata provides the development/testing seed for the tree model:
+// a small university with a root budget, department budgets, a student
+// self-service budget (auto-approve) and example leaves in every lifecycle state.
 package mockdata
 
 import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/tree"
 )
 
-// DefaultMockResourceState returns the seed data used for development/testing.
-func DefaultMockResourceState() ([]common.Identity, []common.Delegation, []common.Project, []common.TokenEligibilityRule) {
-	now := time.Now().UTC()
-	plusDays := func(days int) *string {
-		t := now.Add(time.Duration(days) * 24 * time.Hour).Format(time.RFC3339)
-		return &t
-	}
+// Mock group tokens.
+const (
+	RootGroup      = "group:root_uni"
+	DeptCSAdmin    = "group:dept_cs_admin"
+	DeptCSFaculty  = "group:dept_cs_faculty"
+	DeptBioGroup   = "group:dept_bio"
+	CSStudentGroup = "group:cs-student"
+)
 
-	rootGroup := "group:root_uni"
-	deptCSAdmin := "group:dept_cs_admin"
-	deptCSFaculty := "group:dept_cs_faculty"
-	deptBioGroup := "group:dept_bio"
-	csStudentGroup := "group:cs-student"
+// DefaultMockTreeState returns the seed data used for development/testing.
+func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
+	now := time.Now().UTC()
+	iso := func(t time.Time) string { return t.Format(time.RFC3339) }
+	plusDays := func(days int) *string {
+		v := iso(now.Add(time.Duration(days) * 24 * time.Hour))
+		return &v
+	}
 
 	identities := []common.Identity{
 		{
 			ID:     "mock_root",
 			Label:  "Mock Root Admin (root_uni)",
 			Email:  "root.admin@uni.example",
-			Tokens: common.TokenList{"user:root.admin@uni.example", rootGroup},
+			Tokens: common.TokenList{"user:root.admin@uni.example", RootGroup},
 		},
 		{
 			ID:     "mock_cs_admin",
 			Label:  "Mock CS Admin (cs-admin)",
 			Email:  "admin@cs.example",
-			Tokens: common.TokenList{"user:admin@cs.example", deptCSAdmin},
+			Tokens: common.TokenList{"user:admin@cs.example", DeptCSAdmin},
 		},
 		{
 			ID:     "mock_cs_faculty",
 			Label:  "Mock Faculty (cs-faculty)",
 			Email:  "faculty@cs.example",
-			Tokens: common.TokenList{"user:faculty@cs.example", deptCSFaculty},
+			Tokens: common.TokenList{"user:faculty@cs.example", DeptCSFaculty},
 		},
 		{
 			ID:     "mock_bio_faculty",
 			Label:  "Mock Faculty (bio-faculty)",
 			Email:  "faculty@bio.example",
-			Tokens: common.TokenList{"user:faculty@bio.example", deptBioGroup},
+			Tokens: common.TokenList{"user:faculty@bio.example", DeptBioGroup},
 		},
 		{
 			ID:     "mock_cs_student",
 			Label:  "Mock Student (cs-student)",
 			Email:  "cs-student@cs.com",
-			Tokens: common.TokenList{"user:cs-student@cs.com", csStudentGroup},
+			Tokens: common.TokenList{"user:cs-student@cs.com", CSStudentGroup},
 		},
 	}
 
-	delegations := []common.Delegation{
+	rootID := tree.RootNodeID
+	unassignedID := tree.UnassignedNodeID
+	deptCSID := "b_dept_cs"
+	facultyID := "b_cs_faculty"
+	studentsID := "b_cs_students"
+	bioID := "b_dept_bio"
+
+	created := func(actor string, limit common.ProjectQuota, statusTo string) []tree.HistoryEntry {
+		e := tree.HistoryEntry{
+			Timestamp: "2026-01-01T00:00:00Z",
+			Event:     "created",
+			Actor:     actor,
+			StatusTo:  statusTo,
+			LimitTo:   &limit,
+		}
+		return []tree.HistoryEntry{e}
+	}
+
+	nodes := []tree.Node{
+		// ── Structural nodes (same IDs the bootstrap uses) ────────────────────
 		{
-			ID:                 rootGroup,
-			Name:               "University Root",
-			ParentID:           nil,
-			CanDelegate:        true,
-			DelegationStrategy: common.DelegationStrategyPool,
-			// Root admins manage this delegation.
-			// CS dept and Bio dept may request resources from the root pool.
-			AdminScope: common.TokenList{rootGroup},
-			Quota: common.ProjectResources{
-				Limit: common.ProjectQuota{"cores": common.UnlimitedQuota, "ram": common.UnlimitedQuota, "storage": common.UnlimitedQuota, "gpu": common.UnlimitedQuota},
-			},
-			CreatedBy: "System",
-			CreatedAt: "2025-01-01T00:00:00Z",
-			EndDate:   nil,
+			ID: rootID, Kind: tree.KindBudget, ParentID: nil, Status: tree.StatusApproved,
+			Name:       "University Root",
+			AdminScope: common.TokenList{RootGroup},
+			// Departments may request budgets directly under root.
+			EligibleRequesters: common.TokenList{DeptCSAdmin, DeptBioGroup},
+			Limit:              common.ProjectQuota{"cores": common.UnlimitedQuota, "ram": common.UnlimitedQuota, "storage": common.UnlimitedQuota, "gpu": common.UnlimitedQuota},
+			CreatedBy:          "System", CreatedAt: "2025-01-01T00:00:00Z",
 		},
 		{
-			ID:                 deptCSAdmin,
+			ID: unassignedID, Kind: tree.KindBudget, ParentID: &rootID, Status: tree.StatusApproved,
+			Name:      "Unassigned OpenStack Imports",
+			Limit:     common.ProjectQuota{"cores": 0, "ram": 0, "storage": 0, "gpu": 0},
+			CreatedBy: "System", CreatedAt: "2025-01-01T00:00:00Z",
+		},
+
+		// ── Budgets ───────────────────────────────────────────────────────────
+		{
+			ID: deptCSID, Kind: tree.KindBudget, ParentID: &rootID, Status: tree.StatusApproved,
 			Name:               "Computer Science Dept",
-			ParentID:           &rootGroup,
-			CanDelegate:        true,
-			DelegationStrategy: common.DelegationStrategyPool,
-			// CS admins manage this pool; CS admins may delegate a sub-pool to faculty.
-			AdminScope: common.TokenList{deptCSAdmin},
-			Quota: common.ProjectResources{
-				Limit: common.ProjectQuota{"cores": 30, "ram": 100, "storage": 600, "gpu": 4},
-			},
-			CreatedBy: "root.admin@uni.example",
-			CreatedAt: "2025-06-15T10:30:00Z",
-			EndDate:   plusDays(365),
+			AdminScope:         common.TokenList{DeptCSAdmin},
+			EligibleRequesters: common.TokenList{DeptCSFaculty, "user:faculty@cs.example", "user:admin@cs.example"},
+			Limit:              common.ProjectQuota{"cores": 30, "ram": 100, "storage": 600, "gpu": 4},
+			CreatedBy:          "root.admin@uni.example", CreatedAt: "2025-06-15T10:30:00Z",
+			TerminationDate: plusDays(365),
 		},
 		{
-			ID:                 deptCSFaculty,
+			ID: facultyID, Kind: tree.KindBudget, ParentID: &deptCSID, Status: tree.StatusApproved,
 			Name:               "CS Faculty Pool",
-			ParentID:           &deptCSAdmin,
-			CanDelegate:        true,
-			DelegationStrategy: common.DelegationStrategyPool,
-			// Faculty manage this sub-pool delegated from CS dept; faculty may further delegate to students.
-			AdminScope: common.TokenList{deptCSFaculty},
-			Quota: common.ProjectResources{
-				Limit: common.ProjectQuota{"cores": 20, "ram": 64, "storage": 400, "gpu": 2},
-			},
-			CreatedBy: "admin@cs.example",
-			CreatedAt: "2025-08-01T09:00:00Z",
-			EndDate:   plusDays(365),
+			AdminScope:         common.TokenList{DeptCSFaculty},
+			EligibleRequesters: common.TokenList{CSStudentGroup, "user:cs-student@cs.com", "user:faculty@cs.example"},
+			Limit:              common.ProjectQuota{"cores": 20, "ram": 64, "storage": 400, "gpu": 2},
+			CreatedBy:          "admin@cs.example", CreatedAt: "2025-08-01T09:00:00Z",
+			TerminationDate: plusDays(365),
 		},
 		{
-			ID:                 "dept_cs_students",
+			// Student self-service: managed by FACULTY (not by the students —
+			// consumers deliberately hold no admin scope), consumable by students
+			// up to 2 cores each, capped at 10 cores overall.
+			ID: studentsID, Kind: tree.KindBudget, ParentID: &facultyID, Status: tree.StatusApproved,
 			Name:               "CS Students (Small VM)",
-			ParentID:           &deptCSFaculty,
-			CanDelegate:        false,
-			DelegationStrategy: common.DelegationStrategyAllowance,
-			AdminScope:         common.TokenList{csStudentGroup},
-			Quota: common.ProjectResources{
-				Limit: common.ProjectQuota{"cores": 2, "ram": 4, "storage": 20, "gpu": 0},
-			},
-			CreatedBy: "faculty@cs.example",
-			CreatedAt: "2025-09-01T09:00:00Z",
-			EndDate:   nil,
+			AdminScope:         common.TokenList{DeptCSFaculty},
+			EligibleRequesters: common.TokenList{CSStudentGroup},
+			AutoApprove:        &tree.AutoApprove{PerRequesterLimit: common.ProjectQuota{"cores": 2, "ram": 4, "storage": 20, "gpu": 0}},
+			Limit:              common.ProjectQuota{"cores": 10, "ram": 20, "storage": 100, "gpu": 0},
+			CreatedBy:          "faculty@cs.example", CreatedAt: "2025-09-01T09:00:00Z",
 		},
 		{
-			ID:                 deptBioGroup,
+			ID: bioID, Kind: tree.KindBudget, ParentID: &rootID, Status: tree.StatusApproved,
 			Name:               "Biology Dept",
-			ParentID:           &rootGroup,
-			CanDelegate:        true,
-			DelegationStrategy: common.DelegationStrategyPool,
-			// Bio faculty manage and may request from this pool.
-			AdminScope: common.TokenList{deptBioGroup},
-			Quota: common.ProjectResources{
-				Limit: common.ProjectQuota{"cores": 300, "ram": 1000, "storage": 3000, "gpu": 20},
-			},
-			CreatedBy: "root.admin@uni.example",
-			CreatedAt: "2025-07-20T14:15:00Z",
-			EndDate:   nil,
+			AdminScope:         common.TokenList{DeptBioGroup},
+			EligibleRequesters: common.TokenList{DeptBioGroup, "user:faculty@bio.example"},
+			Limit:              common.ProjectQuota{"cores": 300, "ram": 1000, "storage": 3000, "gpu": 20},
+			CreatedBy:          "root.admin@uni.example", CreatedAt: "2025-07-20T14:15:00Z",
 		},
-	}
+		{
+			// A pending BUDGET request: the CS dept asks root for expansion capacity.
+			// (The old model had to fake this as a project request.)
+			ID: "b_cs_expansion", Kind: tree.KindBudget, ParentID: &rootID, Status: tree.StatusPending,
+			Name:       "CS Capacity Expansion",
+			Reason:     "Increased enrollment requires more compute capacity next semester",
+			AdminScope: common.TokenList{DeptCSAdmin},
+			Limit:      common.ProjectQuota{"cores": 50, "ram": 200, "storage": 1000, "gpu": 8},
+			CreatedBy:  "admin@cs.example", CreatedAt: "2026-03-01T10:00:00Z",
+			TerminationDate: plusDays(365),
+			History:         created("admin@cs.example", common.ProjectQuota{"cores": 50, "ram": 200, "storage": 1000, "gpu": 8}, tree.StatusPending),
+		},
 
-	fundedByFaculty := deptCSFaculty
-	fundedByBio := deptBioGroup
-	requests := []common.Project{
-		// req_001: approved faculty research sandbox (funded by CS dept)
+		// ── Project leaves ────────────────────────────────────────────────────
 		{
-			ID:              "req_001",
-			Status:          common.ProjectStatusApproved,
-			RequesterTokens: common.TokenList{"user:faculty@cs.example", deptCSFaculty},
-			Quota:           common.ProjectQuota{"cores": 4, "ram": 16, "storage": 100, "gpu": 0},
-			Reason:          "Faculty research sandbox",
-			FundedBy:        &fundedByFaculty,
-			Pending:         nil,
-			TerminationDate: now.Add(90 * 24 * time.Hour).Format(time.RFC3339),
+			ID: "p_001", Kind: tree.KindProject, ParentID: &facultyID, Status: tree.StatusApproved,
+			Name:   "Faculty research sandbox",
+			Reason: "Faculty research sandbox",
+			Owner:  "user:faculty@cs.example",
+			Limit:  common.ProjectQuota{"cores": 4, "ram": 16, "storage": 100, "gpu": 0},
 			AuthorizedUsers: []common.AuthorizedUser{
-				{Token: "user:faculty@cs.example", OpenstackRole: "admin"},
-				{Token: deptCSFaculty, OpenstackRole: "member"},
+				{Token: DeptCSFaculty, OpenstackRole: "member"},
 			},
-			History: []common.HistoryEntry{
-				{
-					Timestamp:       "2026-01-20T10:00:00Z",
-					Event:           "created",
-					Actor:           "user:faculty@cs.example",
-					StatusFrom:      nil,
-					StatusTo:        common.ProjectStatusPending,
-					QuotaTo:         &common.ProjectQuota{"cores": 4, "ram": 16, "storage": 100, "gpu": 0},
-					TerminationDate: mockStrPtr(now.Add(90 * 24 * time.Hour).Format(time.RFC3339)),
-					Reason:          mockStrPtr("Initial request for faculty research sandbox"),
-				},
-				{
-					Timestamp:  "2026-01-21T09:00:00Z",
-					Event:      "approved",
-					Actor:      "user:admin@cs.example",
-					Group:      &fundedByFaculty,
-					StatusFrom: mockStrPtr(common.ProjectStatusPending),
-					StatusTo:   common.ProjectStatusApproved,
-					Reason:     mockStrPtr("Approved by CS admin"),
-				},
-			},
+			TerminationDate: plusDays(90),
+			CreatedBy:       "faculty@cs.example", CreatedAt: "2026-01-20T10:00:00Z",
+			History: created("faculty@cs.example", common.ProjectQuota{"cores": 4, "ram": 16, "storage": 100, "gpu": 0}, tree.StatusPending),
 		},
-		// req_002: pending student course project — exceeds allowance, needs manual approval
 		{
-			ID:              "req_002",
-			Status:          common.ProjectStatusPending,
-			RequesterTokens: common.TokenList{"user:cs-student@cs.com", csStudentGroup},
-			Quota:           common.ProjectQuota{"cores": 2, "ram": 8, "storage": 50, "gpu": 0},
-			Reason:          "Student course project",
-			FundedBy:        &deptCSFaculty,
-			Pending:         nil,
-			TerminationDate: now.Add(30 * 24 * time.Hour).Format(time.RFC3339),
+			// Exceeds the student per-requester limit → stayed pending for a
+			// faculty decision.
+			ID: "p_002", Kind: tree.KindProject, ParentID: &facultyID, Status: tree.StatusPending,
+			Name:   "Student course project",
+			Reason: "Student course project needs compute (exceeds self-service limit)",
+			Owner:  "user:cs-student@cs.com",
+			Limit:  common.ProjectQuota{"cores": 2, "ram": 8, "storage": 50, "gpu": 0},
 			AuthorizedUsers: []common.AuthorizedUser{
 				{Token: "user:cs-student@cs.com", OpenstackRole: "admin"},
 			},
-			History: []common.HistoryEntry{{
-				Timestamp:       "2026-01-23T08:00:00Z",
-				Event:           "created",
-				Actor:           "user:cs-student@cs.com",
-				StatusFrom:      nil,
-				StatusTo:        common.ProjectStatusPending,
-				QuotaTo:         &common.ProjectQuota{"cores": 2, "ram": 8, "storage": 50, "gpu": 0},
-				TerminationDate: mockStrPtr(now.Add(30 * 24 * time.Hour).Format(time.RFC3339)),
-				Reason:          mockStrPtr("Student course project needs compute (exceeds allowance)"),
-			}},
+			TerminationDate: plusDays(30),
+			CreatedBy:       "cs-student@cs.com", CreatedAt: "2026-01-23T08:00:00Z",
+			History: created("cs-student@cs.com", common.ProjectQuota{"cores": 2, "ram": 8, "storage": 50, "gpu": 0}, tree.StatusPending),
 		},
-		// req_003: change_pending — faculty ML workload expansion (note: uses deptCSFaculty token, not "group:cs-faculty")
 		{
-			ID:              "req_003",
-			Status:          common.ProjectStatusChangePending,
-			RequesterTokens: common.TokenList{"user:faculty@cs.example", deptCSFaculty},
-			Quota:           common.ProjectQuota{"cores": 8, "ram": 32, "storage": 200, "gpu": 0},
-			Reason:          "Expanded faculty ML workload",
-			FundedBy:        &fundedByFaculty,
-			Pending: &common.PendingChanges{
-				Quota:           &common.ProjectQuota{"cores": 12, "ram": 48, "storage": 300, "gpu": 0},
-				TerminationDate: mockStrPtr(now.Add(180 * 24 * time.Hour).Format(time.RFC3339)),
+			ID: "p_003", Kind: tree.KindProject, ParentID: &facultyID, Status: tree.StatusChangePending,
+			Name:   "Faculty ML workload",
+			Reason: "Expanded faculty ML workload",
+			Owner:  "user:faculty@cs.example",
+			Limit:  common.ProjectQuota{"cores": 8, "ram": 32, "storage": 200, "gpu": 0},
+			Pending: &tree.PendingChanges{
+				Limit:           &common.ProjectQuota{"cores": 12, "ram": 48, "storage": 300, "gpu": 0},
+				TerminationDate: plusDays(180),
 				AuthorizedUsers: &[]common.AuthorizedUser{
-					{Token: "user:faculty@cs.example", OpenstackRole: "admin"},
-					{Token: deptCSFaculty, OpenstackRole: "member"},
+					{Token: DeptCSFaculty, OpenstackRole: "member"},
 					{Token: "user:newuser@cs.example", OpenstackRole: "reader"},
 				},
 			},
-			TerminationDate: now.Add(60 * 24 * time.Hour).Format(time.RFC3339),
+			AuthorizedUsers: []common.AuthorizedUser{
+				{Token: DeptCSFaculty, OpenstackRole: "member"},
+			},
+			TerminationDate: plusDays(60),
+			CreatedBy:       "faculty@cs.example", CreatedAt: "2026-01-15T10:00:00Z",
+			History: created("faculty@cs.example", common.ProjectQuota{"cores": 8, "ram": 32, "storage": 200, "gpu": 0}, tree.StatusPending),
+		},
+		{
+			ID: "p_004", Kind: tree.KindProject, ParentID: &bioID, Status: tree.StatusApproved,
+			Name:   "Genomics pipeline cluster",
+			Reason: "Genomics pipeline cluster",
+			Owner:  "user:faculty@bio.example",
+			Limit:  common.ProjectQuota{"cores": 16, "ram": 64, "storage": 800, "gpu": 8},
+			AuthorizedUsers: []common.AuthorizedUser{
+				{Token: DeptBioGroup, OpenstackRole: "member"},
+			},
+			TerminationDate: plusDays(180),
+			CreatedBy:       "faculty@bio.example", CreatedAt: "2026-02-01T09:00:00Z",
+			History: created("faculty@bio.example", common.ProjectQuota{"cores": 16, "ram": 64, "storage": 800, "gpu": 8}, tree.StatusApproved),
+		},
+		{
+			// Imported by the reconciler: an OpenStack project unknown to the
+			// system, parked under "unassigned" until a root admin promotes it.
+			ID: "p_imported_001", Kind: tree.KindProject, ParentID: &unassignedID, Status: tree.StatusImported,
+			Name:          "legacy-ml-workload",
+			Reason:        "OpenStack project: legacy-ml-workload (os-project-abc-123)",
+			OSProjectID:   "os-project-abc-123",
+			OSProjectName: "legacy-ml-workload",
+			Limit:         common.ProjectQuota{"cores": 9, "ram": 16, "storage": 100, "gpu": 0},
 			AuthorizedUsers: []common.AuthorizedUser{
 				{Token: "user:faculty@cs.example", OpenstackRole: "admin"},
-				{Token: deptCSFaculty, OpenstackRole: "member"},
-			},
-			History: []common.HistoryEntry{
-				{
-					Timestamp:       "2026-01-15T10:00:00Z",
-					Event:           "created",
-					Actor:           "user:faculty@cs.example",
-					StatusFrom:      nil,
-					StatusTo:        common.ProjectStatusPending,
-					QuotaTo:         &common.ProjectQuota{"cores": 8, "ram": 32, "storage": 200, "gpu": 0},
-					TerminationDate: mockStrPtr(now.Add(60 * 24 * time.Hour).Format(time.RFC3339)),
-					Reason:          mockStrPtr("Initial ML workload request"),
-				},
-				{
-					Timestamp:  "2026-01-16T14:00:00Z",
-					Event:      "approved",
-					Actor:      "user:admin@cs.example",
-					Group:      &fundedByFaculty,
-					StatusFrom: mockStrPtr(common.ProjectStatusPending),
-					StatusTo:   common.ProjectStatusApproved,
-					Reason:     mockStrPtr("Approved by CS admin"),
-				},
-				{
-					Timestamp:           "2026-01-25T11:30:00Z",
-					Event:               "change_requested",
-					Actor:               "user:faculty@cs.example",
-					StatusFrom:          mockStrPtr(common.ProjectStatusApproved),
-					StatusTo:            common.ProjectStatusChangePending,
-					QuotaFrom:           &common.ProjectQuota{"cores": 8, "ram": 32, "storage": 200, "gpu": 0},
-					QuotaTo:             &common.ProjectQuota{"cores": 12, "ram": 48, "storage": 300, "gpu": 0},
-					TerminationDateFrom: mockStrPtr(now.Add(60 * 24 * time.Hour).Format(time.RFC3339)),
-					TerminationDateTo:   mockStrPtr(now.Add(180 * 24 * time.Hour).Format(time.RFC3339)),
-					Reason:              mockStrPtr("Need more resources for larger dataset"),
-				},
-			},
-		},
-		// req_004: approved bio genomics cluster (funded by bio dept)
-		{
-			ID:              "req_004",
-			Status:          common.ProjectStatusApproved,
-			RequesterTokens: common.TokenList{"user:faculty@bio.example", deptBioGroup},
-			Quota:           common.ProjectQuota{"cores": 16, "ram": 64, "storage": 800, "gpu": 8},
-			Reason:          "Genomics pipeline cluster",
-			FundedBy:        &fundedByBio,
-			Pending:         nil,
-			TerminationDate: now.Add(180 * 24 * time.Hour).Format(time.RFC3339),
-			AuthorizedUsers: []common.AuthorizedUser{
-				{Token: "user:faculty@bio.example", OpenstackRole: "admin"},
-				{Token: deptBioGroup, OpenstackRole: "member"},
-			},
-			History: []common.HistoryEntry{{
-				Timestamp:       "2026-02-01T09:00:00Z",
-				Event:           "created",
-				Actor:           "user:faculty@bio.example",
-				StatusFrom:      nil,
-				StatusTo:        common.ProjectStatusApproved,
-				QuotaTo:         &common.ProjectQuota{"cores": 16, "ram": 64, "storage": 800, "gpu": 8},
-				TerminationDate: mockStrPtr(now.Add(180 * 24 * time.Hour).Format(time.RFC3339)),
-				Reason:          mockStrPtr("Genomics pipeline cluster"),
-			}},
-		},
-		// osonly_001: openstack_only — discovered by reconciler, not yet managed.
-		// Quota is 9 cores: fits dept_cs_admin (18 free) but exceeds dept_cs_faculty (8 free).
-		// Has one external group (a legacy LDAP group not in the delegation system) and one
-		// managed group (dept_cs_faculty, which will appear in the promote modal as group: token).
-		{
-			ID:              "osonly_001",
-			Status:          common.ProjectStatusOpenStackOnly,
-			OSProjectID:     "os-project-abc-123",
-			OSProjectName:   "legacy-ml-workload",
-			Reason:          "OpenStack project: legacy-ml-workload (os-project-abc-123)",
-			RequesterTokens: common.TokenList{"user:faculty@cs.example"},
-			AuthorizedUsers: []common.AuthorizedUser{
-				{Token: deptCSFaculty, OpenstackRole: "member"},
+				{Token: DeptCSFaculty, OpenstackRole: "member"},
 			},
 			ExternalGroupAssignments: []common.ExternalGroupAssignment{
 				{GroupID: "os-group-ldap-001", GroupName: "legacy-ldap-researchers", Role: "member"},
 			},
-			Quota:   common.ProjectQuota{"cores": 9, "ram": 16, "storage": 100, "gpu": 0},
-			History: []common.HistoryEntry{},
-		},
-		// req_005: pending — CS dept requests extra resources from root (for root admin to manage)
-		{
-			ID:              "req_005",
-			Status:          common.ProjectStatusPending,
-			RequesterTokens: common.TokenList{"user:admin@cs.example", deptCSAdmin},
-			Quota:           common.ProjectQuota{"cores": 50, "ram": 200, "storage": 1000, "gpu": 8},
-			Reason:          "CS dept capacity expansion for next semester",
-			FundedBy:        &rootGroup,
-			Pending:         nil,
-			TerminationDate: now.Add(365 * 24 * time.Hour).Format(time.RFC3339),
-			AuthorizedUsers: []common.AuthorizedUser{
-				{Token: "user:admin@cs.example", OpenstackRole: "admin"},
-				{Token: deptCSAdmin, OpenstackRole: "member"},
-			},
-			History: []common.HistoryEntry{{
-				Timestamp:       "2026-03-01T10:00:00Z",
-				Event:           "created",
-				Actor:           "user:admin@cs.example",
-				StatusFrom:      nil,
-				StatusTo:        common.ProjectStatusPending,
-				QuotaTo:         &common.ProjectQuota{"cores": 50, "ram": 200, "storage": 1000, "gpu": 8},
-				TerminationDate: mockStrPtr(now.Add(365 * 24 * time.Hour).Format(time.RFC3339)),
-				Reason:          mockStrPtr("Increased enrollment requires more compute capacity"),
-			}},
+			CreatedBy: "System", CreatedAt: "2026-02-15T00:00:00Z",
 		},
 	}
 
-	eligibilityRules := []common.TokenEligibilityRule{
-		{
-			// Root admins allow CS and Bio depts to request from the university pool.
-			// Root itself is also eligible so root admins can request directly from the root pool.
-			OwnerToken:         rootGroup,
-			EligibleRequesters: common.TokenList{rootGroup, "user:root.admin@uni.example", deptCSAdmin, deptBioGroup},
-			CreatedBy:          "root.admin@uni.example",
-			UpdatedAt:          "2025-01-01T00:00:00Z",
-		},
-		{
-			// CS admins allow faculty to request from the CS dept pool.
-			OwnerToken:         deptCSAdmin,
-			EligibleRequesters: common.TokenList{deptCSFaculty, "user:faculty@cs.example", "user:admin@cs.example"},
-			CreatedBy:          "admin@cs.example",
-			UpdatedAt:          "2025-06-15T10:30:00Z",
-		},
-		{
-			// CS faculty allow students to request from the faculty pool.
-			OwnerToken:         deptCSFaculty,
-			EligibleRequesters: common.TokenList{csStudentGroup, "user:cs-student@cs.com"},
-			CreatedBy:          "faculty@cs.example",
-			UpdatedAt:          "2025-08-01T09:00:00Z",
-		},
-		{
-			// Bio dept allows its own members to request from the bio pool.
-			OwnerToken:         deptBioGroup,
-			EligibleRequesters: common.TokenList{deptBioGroup, "user:faculty@bio.example"},
-			CreatedBy:          "root.admin@uni.example",
-			UpdatedAt:          "2025-07-20T14:15:00Z",
-		},
-	}
-
-	return identities, delegations, requests, eligibilityRules
-}
-
-func mockStrPtr(s string) *string {
-	return &s
+	return identities, nodes
 }

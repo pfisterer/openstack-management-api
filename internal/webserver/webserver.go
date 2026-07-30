@@ -13,6 +13,7 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/helper"
 	"github.com/pfisterer/openstack-management-api/internal/reconciler"
+	"github.com/pfisterer/openstack-management-api/internal/tree"
 	"go.uber.org/zap"
 )
 
@@ -32,7 +33,7 @@ type SetupConfig struct {
 	DevMode      bool
 	Log          *zap.SugaredLogger
 	StaticConfig StaticConfig
-	ProjectAPI   ProjectAPIConfig
+	API          APIConfig
 	// Reconciler is optional; when nil the /v1/admin/reconcile endpoints are omitted.
 	Reconciler ReconcilerAPI
 	// RootAdminTokens is the set of tokens whose holders may access the reconciler admin endpoints.
@@ -41,51 +42,42 @@ type SetupConfig struct {
 	AuthMiddleware  gin.HandlerFunc
 }
 
-type DelegationStrategy struct {
-	Value string `json:"value"`
-	Label string `json:"label"`
+// ConfigResponse contains system-wide resource configuration for the frontend.
+type ConfigResponse struct {
+	Resources      []common.ManagedProject `json:"resources"`
+	OpenstackRoles []string                `json:"openstackRoles"`
+	DummyDevUsers  []string                `json:"dummyDevUsers,omitempty"`
 }
 
-// ProjectConfigResponse contains system-wide project configuration.
-type ProjectConfigResponse struct {
-	Projects             []common.ManagedProject `json:"projects"`
-	OpenstackRoles       []string                `json:"openstackRoles"`
-	DelegationStrategies []DelegationStrategy    `json:"delegationStrategies"`
-	DummyDevUsers        []string                `json:"dummyDevUsers,omitempty"`
-}
-
-// ProjectAPIService provides business operations consumed by HTTP handlers.
-type ProjectAPIService interface {
+// APIService provides the business operations consumed by the HTTP handlers.
+// It is implemented by tree.Service (which embeds identity.Service for the
+// role-switch operations).
+type APIService interface {
 	// Group search operation
 	SearchGroupTokens(query string, limit int) (common.TokenList, error)
 
-	// Project management operations
-	GetProjectByID(id string, userTokens common.TokenList) (*common.Project, error)
-	ListProjectsBy(userEmail string, limit, offset int) ([]common.Project, error)
-	ListProjectsManagedBy(userEmail string, userTokens common.TokenList, limit, offset int) ([]common.Project, error)
+	// Node reads / views
+	GetNode(id string, userTokens common.TokenList) (*tree.Node, error)
+	ListChildren(parentID string, userTokens common.TokenList, limit, offset int) ([]tree.Node, error)
+	ListMine(userEmail string, limit, offset int) ([]tree.Node, error)
+	ListMyBudgets(userTokens common.TokenList, limit, offset int) ([]tree.Node, error)
+	ListEligibleForMe(userTokens common.TokenList, limit, offset int) ([]tree.Node, error)
+	ListEligibleForOwner(callerTokens common.TokenList, ownerTokens common.TokenList, limit, offset int) ([]tree.Node, error)
+	ListToManage(userTokens common.TokenList, limit, offset int) ([]tree.Node, error)
 
-	CreateProject(req CreateProjectRequest, actor string, userEmail string, userTokens common.TokenList) (common.Project, error)
-	UpdateProject(id string, req UpdateProjectRequest, actor string, userTokens common.TokenList) (common.Project, error)
-	ApproveProject(id string, req ApproveProjectRequest, actor string, userEmail string, userTokens common.TokenList) (common.Project, error)
-	RejectProject(id string, req RejectProjectRequest, actor string, userTokens common.TokenList) (common.Project, error)
-	ReleaseProject(id string, actor string, userTokens common.TokenList) (common.Project, error)
-	MarkProjectForPromotion(id string, req PromoteProjectRequest, actor string, userTokens common.TokenList) (common.Project, error)
+	// Node lifecycle
+	CreateNode(req tree.CreateNodeRequest, actor string, userEmail string, userTokens common.TokenList) (tree.Node, error)
+	UpdateNode(id string, req tree.UpdateNodeRequest, actor string, userTokens common.TokenList) (tree.Node, error)
+	RequestChange(id string, req tree.ChangeNodeRequest, actor string, userTokens common.TokenList) (tree.Node, error)
+	ApproveNode(id string, req tree.ApproveNodeRequest, actor string, userTokens common.TokenList) (tree.Node, error)
+	RejectNode(id string, req tree.RejectNodeRequest, actor string, userTokens common.TokenList) (tree.Node, error)
+	ReleaseNode(id string, actor string, userTokens common.TokenList) (tree.Node, error)
+	ReparentNode(id string, req tree.ReparentNodeRequest, actor string, userTokens common.TokenList) (tree.Node, error)
+	TransferOwner(id string, req tree.TransferOwnerRequest, actor string, userTokens common.TokenList) (tree.Node, error)
+	PromoteNode(id string, req tree.PromoteNodeRequest, actor string, userTokens common.TokenList) (tree.Node, error)
+	DeleteNode(id string, actor string, userTokens common.TokenList) error
 
-	// Delegation management operations
-	GetDelegationsByAdminScope(userTokens common.TokenList, limit, offset int) ([]common.Delegation, error)
-	GetDelegationsDelegatedToMe(userTokens common.TokenList, limit, offset int) ([]common.Delegation, error)
-	ListDelegationsEligibleForMe(userTokens common.TokenList, limit, offset int) ([]common.Delegation, error)
-	ListDelegationsEligibleForOwner(callerTokens common.TokenList, ownerTokens common.TokenList, limit, offset int) ([]common.Delegation, error)
-	CreateDelegation(req CreateDelegationRequest, userEmail string, userTokens common.TokenList) (common.Delegation, error)
-	UpdateDelegation(id string, req UpdateDelegationRequest, userEmail string, userTokens common.TokenList) (common.Delegation, error)
-	DeleteDelegation(id string, userEmail string, userTokens common.TokenList) error
-
-	// Token eligibility rule operations
-	GetMyEligibilityRules(userTokens common.TokenList) ([]common.TokenEligibilityRule, error)
-	SetEligibilityRule(ownerToken string, eligibleRequesters common.TokenList, actorEmail string, userTokens common.TokenList) (common.TokenEligibilityRule, error)
-	DeleteEligibilityRule(ownerToken string, actorEmail string, userTokens common.TokenList) error
-
-	//Role switch related operations
+	// Role switch related operations
 	GetUserGroupSwitchForActor(actorEmail string) *string
 	SetUserGroupSwitchForActor(actorEmail, groupToken string) error
 	SetUserImpersonationForActor(actorEmail, targetEmail string) error
@@ -95,11 +87,11 @@ type ProjectAPIService interface {
 	ListAssumableIdentities() ([]common.Identity, error)
 }
 
-// ProjectAPIConfig configures resource API route registration.
-type ProjectAPIConfig struct {
+// APIConfig configures API route registration.
+type APIConfig struct {
 	RoleSwitchGroups   common.TokenList
 	ProjectDefinitions []common.ManagedProject
-	Service            ProjectAPIService
+	Service            APIService
 	DummyDevUsers      []string
 }
 
@@ -152,8 +144,8 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 		apiV1Group.Use(cfg.AuthMiddleware)
 	}
 
-	// Register API routes with the provided resource service and role switch groups configuration
-	RegisterProjectApiRoutes(apiV1Group, cfg.ProjectAPI, cfg.Log)
+	// Register API routes with the provided tree service and role switch groups configuration
+	RegisterApiRoutes(apiV1Group, cfg.API, cfg.Log)
 
 	// Always register reconciler admin endpoints so CORS headers are present even
 	// when the reconciler is disabled. Handlers return 503 when Reconciler is nil.
@@ -162,8 +154,8 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 	return router
 }
 
-// RegisterProjectApiRoutes wires all resource-management API endpoints.
-func RegisterProjectApiRoutes(v1 *gin.RouterGroup, cfg ProjectAPIConfig, log *zap.SugaredLogger) *gin.RouterGroup {
+// RegisterApiRoutes wires all resource-management API endpoints.
+func RegisterApiRoutes(v1 *gin.RouterGroup, cfg APIConfig, log *zap.SugaredLogger) *gin.RouterGroup {
 	v1.Use(EffectiveAuthMiddleware(cfg.Service))
 
 	v1.GET("/config", getConfig(cfg))
@@ -176,41 +168,31 @@ func RegisterProjectApiRoutes(v1 *gin.RouterGroup, cfg ProjectAPIConfig, log *za
 		roleSwitch.GET("/identities", listRoleSwitchIdentities(cfg))
 	}
 
-	delegations := v1.Group("/delegations")
-	{
-		delegations.GET("/delegated-to-me", listDelegationsToMe(cfg))
-		delegations.GET("/made-by-me", listDelegationsMadeByMe(cfg))
-		delegations.GET("/eligible-for-me", listDelegationsEligibleForMe(cfg))
-		delegations.GET("/eligible-for-owner", listDelegationsEligibleForOwner(cfg))
-		delegations.POST("", createDelegation(cfg))
-		delegations.PUT("/:id", updateDelegation(cfg))
-		delegations.DELETE("/:id", deleteDelegation(cfg))
-	}
-
 	groups := v1.Group("/groups")
 	{
 		groups.GET("/search", searchGroups(cfg))
 		groups.GET("/mine", listMyGroups(cfg))
 	}
 
-	projects := v1.Group("/projects")
+	nodes := v1.Group("/nodes")
 	{
-		projects.GET("/mine", listMyProjects(cfg))
-		projects.GET("/manage", listProjectsToManage(cfg))
-		projects.GET("/:id", getProject(cfg))
-		projects.POST("", createProject(cfg))
-		projects.PUT("/:id", updateProject(cfg))
-		projects.POST("/:id/approve", approveProject(cfg))
-		projects.POST("/:id/reject", rejectProject(cfg))
-		projects.POST("/:id/release", releaseProject(cfg))
-		projects.POST("/:id/promote", markProjectForPromotion(cfg))
-	}
-
-	eligibility := v1.Group("/eligibility")
-	{
-		eligibility.GET("", listMyEligibilityRules(cfg))
-		eligibility.PUT("/:token", setEligibilityRule(cfg))
-		eligibility.DELETE("/:token", deleteEligibilityRule(cfg))
+		nodes.GET("/mine", listMyNodes(cfg))
+		nodes.GET("/to-manage", listNodesToManage(cfg))
+		nodes.GET("/my-budgets", listMyBudgets(cfg))
+		nodes.GET("/eligible-for-me", listEligibleBudgets(cfg))
+		nodes.GET("/eligible-for-owner", listEligibleBudgetsForOwner(cfg))
+		nodes.GET("/:id", getNode(cfg))
+		nodes.GET("/:id/children", listNodeChildren(cfg))
+		nodes.POST("", createNode(cfg))
+		nodes.PUT("/:id", updateNode(cfg))
+		nodes.DELETE("/:id", deleteNode(cfg))
+		nodes.POST("/:id/request-change", requestNodeChange(cfg))
+		nodes.POST("/:id/approve", approveNode(cfg))
+		nodes.POST("/:id/reject", rejectNode(cfg))
+		nodes.POST("/:id/release", releaseNode(cfg))
+		nodes.POST("/:id/reparent", reparentNode(cfg))
+		nodes.POST("/:id/transfer-owner", transferNodeOwner(cfg))
+		nodes.POST("/:id/promote", promoteNode(cfg))
 	}
 
 	return v1
@@ -219,14 +201,14 @@ func RegisterProjectApiRoutes(v1 *gin.RouterGroup, cfg ProjectAPIConfig, log *za
 // getConfig returns the system-wide resource configuration.
 //
 //	@Summary		Get resource configuration
-//	@Description	Retrieves system-wide configuration including resource types and roles.
+//	@Description	Retrieves system-wide configuration including resource types and OpenStack roles.
 //	@Tags			config
 //	@Produce		json
 //	@Security		Bearer
-//	@Success		200	{ProjectConfigResponse}	resourceConfig	"Resource configuration."
+//	@Success		200	{object}	ConfigResponse	"Resource configuration."
 //	@ID				getConfig
 //	@Router			/v1/config [get]
-func getConfig(cfg ProjectAPIConfig) gin.HandlerFunc {
+func getConfig(cfg APIConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		resources := make([]common.ManagedProject, 0, len(cfg.ProjectDefinitions))
 		for _, r := range cfg.ProjectDefinitions {
@@ -235,20 +217,12 @@ func getConfig(cfg ProjectAPIConfig) gin.HandlerFunc {
 			}
 		}
 
-		// Set default delegation strategies
-		delegationStrategies := []DelegationStrategy{
-			{Value: common.DelegationStrategyPool, Label: "Pool (Shared, manual approval)"},
-			{Value: common.DelegationStrategyAllowance, Label: "Allowance (Per-user, auto-approve)"},
-		}
-
 		// Default OpenStack roles to be used in the frontend
 		openstackRoles := []string{"admin", "member", "reader"}
 
-		// Return the static configuration
-		config := ProjectConfigResponse{
-			Projects:             resources,
-			DelegationStrategies: delegationStrategies,
-			OpenstackRoles:       openstackRoles,
+		config := ConfigResponse{
+			Resources:      resources,
+			OpenstackRoles: openstackRoles,
 		}
 
 		// Include dummy dev users in config if set, to inform frontend of available users for testing.

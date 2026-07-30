@@ -8,8 +8,6 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/common"
 )
 
-const groupTokenPrefix = "group:"
-
 // setRoleSwitchGroupRequest defines the payload for a role switch. Exactly one of
 // the fields is used: group_token assumes a group's context (the caller keeps
 // their own user/root identity); impersonate_user fully assumes another identity.
@@ -41,31 +39,6 @@ type roleSwitchStateResponse struct {
 	ImpersonatedUser   *string          `json:"impersonated_user"`
 }
 
-// NormalizeGroupToken normalizes a raw group token into canonical `group:<name>` form.
-//
-// Parameter:
-// - raw: Input token value from config, claim, or project.
-//
-// Returns:
-// - Canonical `group:<name>` token when input is valid.
-// - Empty string when input is blank or has an unsupported token shape.
-func NormalizeGroupToken(raw string) string {
-	value := strings.TrimSpace(raw)
-	if value == "" {
-		return ""
-	}
-
-	if strings.HasPrefix(value, groupTokenPrefix) {
-		return value
-	}
-
-	if strings.Contains(value, ":") {
-		return ""
-	}
-
-	return groupTokenPrefix + value
-}
-
 // canUseRoleSwitch reports whether the caller may perform a role switch: they must
 // hold one of the configured role-switch tokens. Consistent with the other
 // root-admin gates (requireRootAdmin / rootAdminTokens.ContainsAny), this matches
@@ -82,7 +55,7 @@ func canUseRoleSwitch(userTokens common.TokenList, allowed common.TokenList) boo
 // requireRoleSwitch resolves the original auth context and checks the role-switch
 // allowlist. Returns the actor email, original tokens, and true when the caller is
 // permitted. Writes a 401/403 response and returns false when not permitted.
-func requireRoleSwitch(c *gin.Context, cfg ProjectAPIConfig) (string, common.TokenList, bool) {
+func requireRoleSwitch(c *gin.Context, cfg APIConfig) (string, common.TokenList, bool) {
 	auth, err := mustGetAuthContext(c)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
@@ -97,7 +70,7 @@ func requireRoleSwitch(c *gin.Context, cfg ProjectAPIConfig) (string, common.Tok
 	return auth.ActorEmail, auth.OriginalTokens, true
 }
 
-func buildRoleSwitchStateResponse(c *gin.Context, cfg ProjectAPIConfig, allowed bool) (roleSwitchStateResponse, error) {
+func buildRoleSwitchStateResponse(c *gin.Context, cfg APIConfig, allowed bool) (roleSwitchStateResponse, error) {
 	auth, err := mustGetAuthContext(c)
 	if err != nil {
 		return roleSwitchStateResponse{}, err
@@ -143,7 +116,7 @@ func buildRoleSwitchStateResponse(c *gin.Context, cfg ProjectAPIConfig, allowed 
 //	@Success		200	{object}	roleSwitchStateResponse	"Current role-switch context."
 //	@ID				getRoleSwitch
 //	@Router			/v1/role-switch [get]
-func getRoleSwitch(cfg ProjectAPIConfig) gin.HandlerFunc {
+func getRoleSwitch(cfg APIConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		auth, err := mustGetAuthContext(c)
 		if err != nil {
@@ -174,7 +147,7 @@ func getRoleSwitch(cfg ProjectAPIConfig) gin.HandlerFunc {
 //	@Failure		403		{object}	map[string]any	"Forbidden."
 //	@ID				setRoleSwitch
 //	@Router			/v1/role-switch [put]
-func setRoleSwitch(cfg ProjectAPIConfig) gin.HandlerFunc {
+func setRoleSwitch(cfg APIConfig) gin.HandlerFunc {
 	svc := cfg.Service
 	return func(c *gin.Context) {
 		actorEmail, _, ok := requireRoleSwitch(c, cfg)
@@ -223,7 +196,7 @@ func setRoleSwitch(cfg ProjectAPIConfig) gin.HandlerFunc {
 //	@Failure		403	{object}	map[string]any	"Forbidden."
 //	@ID				clearRoleSwitch
 //	@Router			/v1/role-switch [delete]
-func clearRoleSwitch(cfg ProjectAPIConfig) gin.HandlerFunc {
+func clearRoleSwitch(cfg APIConfig) gin.HandlerFunc {
 	svc := cfg.Service
 	return func(c *gin.Context) {
 		actorEmail, _, ok := requireRoleSwitch(c, cfg)
@@ -252,7 +225,7 @@ func clearRoleSwitch(cfg ProjectAPIConfig) gin.HandlerFunc {
 //	@Failure		403	{object}	map[string]any	"Forbidden."
 //	@ID				listRoleSwitchIdentities
 //	@Router			/v1/role-switch/identities [get]
-func listRoleSwitchIdentities(cfg ProjectAPIConfig) gin.HandlerFunc {
+func listRoleSwitchIdentities(cfg APIConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		auth, err := mustGetAuthContext(c)
 		if err != nil {

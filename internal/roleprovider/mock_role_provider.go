@@ -29,7 +29,7 @@ func (m *MockRoleProvider) GetUserTokens(ctx context.Context, claims *common.Use
 		return common.TokenList{}, nil
 	}
 	// Use mockdata identities for token lookup
-	identities, _, _, _ := mockdata.DefaultMockResourceState()
+	identities, _ := mockdata.DefaultMockTreeState()
 	for _, ident := range identities {
 		if strings.EqualFold(ident.Email, userEmail) {
 			return ident.Tokens, nil
@@ -40,7 +40,7 @@ func (m *MockRoleProvider) GetUserTokens(ctx context.Context, claims *common.Use
 
 // GetGroupUsers returns the emails of all mock identities that carry the given group token.
 func (m *MockRoleProvider) GetGroupUsers(_ context.Context, groupToken string) ([]string, error) {
-	identities, _, _, _ := mockdata.DefaultMockResourceState()
+	identities, _ := mockdata.DefaultMockTreeState()
 	var emails []string
 	for _, ident := range identities {
 		for _, token := range ident.Tokens {
@@ -55,7 +55,7 @@ func (m *MockRoleProvider) GetGroupUsers(_ context.Context, groupToken string) (
 
 // SearchGroupTokens returns mock group tokens from mockdata identities.
 func (m *MockRoleProvider) SearchGroupTokens(_ context.Context, query string, limit int) (common.TokenList, error) {
-	identities, _, _, _ := mockdata.DefaultMockResourceState()
+	identities, _ := mockdata.DefaultMockTreeState()
 	groupSet := map[string]struct{}{}
 	for _, ident := range identities {
 		for _, token := range ident.Tokens {

@@ -23,6 +23,10 @@ type OpenStackClient struct {
 
 	managedProjectTag   string
 	resourceIDTagPrefix string
+
+	federatedProvisioning bool
+	federatedIdPID        string
+	federatedProtocolID   string
 }
 
 // SetTagConfig sets the managed-project tag and resource-ID tag prefix from config.
@@ -30,6 +34,15 @@ type OpenStackClient struct {
 func (c *OpenStackClient) SetTagConfig(managedProjectTag, resourceIDTagPrefix string) {
 	c.managedProjectTag = managedProjectTag
 	c.resourceIDTagPrefix = resourceIDTagPrefix
+}
+
+// SetFederationConfig enables federated pre-provisioning and sets the IdP/protocol that a
+// pre-created user is bound to. See FindOrCreateUser for why this matters on ephemeral OIDC
+// mappings. When enabled is false, FindOrCreateUser creates plain local accounts.
+func (c *OpenStackClient) SetFederationConfig(enabled bool, idpID, protocolID string) {
+	c.federatedProvisioning = enabled
+	c.federatedIdPID = idpID
+	c.federatedProtocolID = protocolID
 }
 
 // NewOSAdmin creates a new OpenStack administrative client with default region.

@@ -77,6 +77,7 @@
             "intervalSeconds": { "type": "integer", "minimum": 1 },
             "projectPrefix": { "type": "string" },
             "scopeParentId": { "type": "string" },
+            "scopeParentName": { "type": "string" },
             "dryRun": { "type": "boolean" },
             "noDelete": { "type": "boolean" },
             "managedProjectTag": { "type": "string" },

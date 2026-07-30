@@ -37,7 +37,7 @@ type AuthContext struct {
 // EffectiveAuthMiddleware resolves both the original and effective token sets
 // once per request and stores them in the Gin context. Must run after the auth
 // middleware that populates userDataKey / userTokensKey.
-func EffectiveAuthMiddleware(svc ProjectAPIService) gin.HandlerFunc {
+func EffectiveAuthMiddleware(svc APIService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		actorEmail, originalTokens, err := ResolveOriginalAuthContext(c)
 		if err != nil {
@@ -142,23 +142,6 @@ func ResolveOriginalAuthContext(c *gin.Context) (string, common.TokenList, error
 	}
 
 	return userEmail, tokens, nil
-}
-
-// ApplyRoleSwitchOverride returns effective tokens by replacing all group tokens
-// with the provided override group token, while preserving non-group tokens.
-func ApplyRoleSwitchOverride(originalTokens common.TokenList, overrideGroupToken *string) common.TokenList {
-	if overrideGroupToken == nil || *overrideGroupToken == "" {
-		return originalTokens
-	}
-
-	override := *overrideGroupToken
-	out := make(common.TokenList, 0, len(originalTokens)+1)
-	for _, token := range originalTokens {
-		if !strings.HasPrefix(token, groupTokenPrefix) {
-			out = append(out, token)
-		}
-	}
-	return append(out, override)
 }
 
 func (m *oidcAuthVerifier) verifyBearerToken(ctx context.Context, rawIDToken string) (*common.UserClaims, error) {
@@ -295,7 +278,7 @@ func DummyAuthMiddleware() gin.HandlerFunc {
 		}
 
 		//Resolve the tokens from the identies for the email given
-		identities, _, _, _ := mockdata.DefaultMockResourceState()
+		identities, _ := mockdata.DefaultMockTreeState()
 		var userTokens common.TokenList = []string{}
 		for _, identity := range identities {
 			if identity.Email == dev_user {

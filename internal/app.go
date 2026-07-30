@@ -8,37 +8,35 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/pfisterer/openstack-management-api/internal/applogic"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/helper"
 	"github.com/pfisterer/openstack-management-api/internal/mockdata"
 	osclient "github.com/pfisterer/openstack-management-api/internal/openstack/client"
 	"github.com/pfisterer/openstack-management-api/internal/reconciler"
 	"github.com/pfisterer/openstack-management-api/internal/roleprovider"
-	"github.com/pfisterer/openstack-management-api/internal/storage"
+	"github.com/pfisterer/openstack-management-api/internal/tree"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 	"go.uber.org/zap"
 )
 
-func configureStores(cfg *common.StorageConfiguration, log *zap.SugaredLogger) (applogic.ProjectStore, common.TokenLookupFunc, error) {
+func configureStores(cfg *common.StorageConfiguration, log *zap.SugaredLogger) (tree.Store, common.TokenLookupFunc, error) {
 	storageType := strings.ToLower(strings.TrimSpace(cfg.Type))
+
+	// API-token auth is a placeholder in both modes; real auth is OIDC.
+	tokenLookup := func(_ context.Context, _ string) (common.TokenLookupResult, error) {
+		return common.TokenLookupResult{Found: false}, nil
+	}
 
 	switch storageType {
 
 	case "memory":
 		// Memory mode is intended for local development and tests.
-		tokenLookup := func(_ context.Context, _ string) (common.TokenLookupResult, error) {
-			return common.TokenLookupResult{Found: false}, nil
-		}
-		return storage.NewInMemoryProjectStore(log), tokenLookup, nil
+		return tree.NewInMemoryStore(log), tokenLookup, nil
 
 	case "postgres":
-		store, err := storage.NewPostgresProjectStore(cfg.ConnectionString, log)
+		store, err := tree.NewPostgresStore(cfg.ConnectionString, log)
 		if err != nil {
 			return nil, nil, fmt.Errorf("postgres storage: %w", err)
-		}
-		tokenLookup := func(_ context.Context, _ string) (common.TokenLookupResult, error) {
-			return common.TokenLookupResult{Found: false}, nil
 		}
 		return store, tokenLookup, nil
 
@@ -93,7 +91,7 @@ func RunApplication() {
 	}
 
 	// Configure resource storage and token lookup
-	resourceStore, tokenLookup, err := configureStores(&config.Storage, logger)
+	nodeStore, tokenLookup, err := configureStores(&config.Storage, logger)
 	if err != nil {
 		logger.Fatal("Failed to initialize storage", zap.Error(err))
 	}
@@ -132,9 +130,17 @@ func RunApplication() {
 	}
 
 	requestTimeout := time.Duration(config.ServiceTimeoutSeconds) * time.Second
-	resourceSvc := applogic.NewService(resourceStore, roleProvider, resourceTypeIDs, config.RootAdminTokens, requestTimeout, logger)
-	if err := resourceSvc.InitializeState(context.Background(), config.Storage.AddMockData); err != nil {
-		logger.Fatal("Failed to initialize resource state storage", zap.Error(err))
+	treeSvc := tree.NewService(nodeStore, roleProvider, resourceTypeIDs, config.RootAdminTokens, requestTimeout, logger)
+
+	// Bootstrap: optional mock seed into an empty store, then ensure the
+	// structural root/unassigned nodes (root admin scope is synced from config).
+	var mockIdentities []common.Identity
+	var mockNodes []tree.Node
+	if config.Storage.AddMockData {
+		mockIdentities, mockNodes = mockdata.DefaultMockTreeState()
+	}
+	if err := treeSvc.Bootstrap(context.Background(), mockIdentities, mockNodes); err != nil {
+		logger.Fatal("Failed to bootstrap resource tree", zap.Error(err))
 	}
 
 	//Create authentication middleware based on configuration.
@@ -146,7 +152,7 @@ func RunApplication() {
 	// Add dummy dev users from mock data if dummy auth is enabled
 	dummyDevUsers := []string{}
 	if config.WebServer.DummyAuth {
-		identities, _, _, _ := mockdata.DefaultMockResourceState()
+		identities, _ := mockdata.DefaultMockTreeState()
 		for _, ident := range identities {
 			dummyDevUsers = append(dummyDevUsers, ident.Email)
 		}
@@ -174,11 +180,13 @@ func RunApplication() {
 			logger.Warnw("OpenStack API not reachable — reconciler will be disabled; restart to retry", zap.Error(osErr))
 		} else {
 			osClient.SetTagConfig(config.Reconciler.ManagedProjectTag, config.Reconciler.ResourceIDTagPrefix)
+			osClient.SetFederationConfig(config.Openstack.FederatedProvisioning, config.Openstack.FederatedIdPID, config.Openstack.FederatedProtocolID)
 
 			reconcilerCfg := reconciler.Config{
 				Interval:                 time.Duration(config.Reconciler.IntervalSeconds) * time.Second,
 				ProjectPrefix:            config.Reconciler.ProjectPrefix,
 				ScopeParentID:            config.Reconciler.ScopeParentID,
+				ScopeParentName:          config.Reconciler.ScopeParentName,
 				DryRun:                   config.Reconciler.DryRun,
 				NoDelete:                 config.Reconciler.NoDelete,
 				DeleteReleasedProjects:   config.Reconciler.DeleteReleasedProjects,
@@ -186,7 +194,7 @@ func RunApplication() {
 				PendingDeletionTagPrefix: config.Reconciler.PendingDeletionTagPrefix,
 				ContactTagPrefix:         config.Reconciler.ContactTagPrefix,
 			}
-			rec = reconciler.New(resourceStore, osClient, reconcilerCfg, config.ProjectDefinitions, roleProvider, logger)
+			rec = reconciler.New(nodeStore, osClient, reconcilerCfg, config.ProjectDefinitions, roleProvider, logger)
 			go rec.Start(ctx)
 		}
 	} else {
@@ -208,10 +216,10 @@ func RunApplication() {
 			OIDCIssuerURL: config.WebServer.OIDCIssuerURL,
 			OIDCClientID:  config.WebServer.OIDCClientID,
 		},
-		ProjectAPI: webserver.ProjectAPIConfig{
+		API: webserver.APIConfig{
 			RoleSwitchGroups:   config.RootAdminTokens,
 			ProjectDefinitions: config.ProjectDefinitions,
-			Service:            resourceSvc,
+			Service:            treeSvc,
 			DummyDevUsers:      dummyDevUsers,
 		},
 		Reconciler:      reconcilerAPI,

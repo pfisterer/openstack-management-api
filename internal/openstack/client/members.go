@@ -2,6 +2,7 @@ package osclient
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/gophercloud/gophercloud"
@@ -40,10 +41,24 @@ func looksLikeEmail(s string) bool {
 
 // FindOrCreateUser finds a Keystone user by name/email, creating them if not found.
 //
-// The new user is created with no password — they are expected to authenticate via
-// SSO (Keycloak OIDC or similar). Pre-creating accounts ensures project role
-// assignments are in place before the user's first login, regardless of whether
-// the deployment uses MicroStack (local Keystone) or OpenStack with Keycloak.
+// The new user is created with no password — they authenticate via SSO (Keycloak OIDC or
+// similar). How the account is created depends on the target Keystone's OIDC mapping, and
+// getting this wrong silently orphans the role assignment:
+//
+//   - Ephemeral mapping (Keystone's default when the mapping sets no user "type"): a plain
+//     local user is IGNORED on SSO login. Keystone creates a separate shadow user keyed by
+//     (idp_id, protocol_id, unique_id), so any role assigned to the pre-created local user
+//     never applies. To pre-seed roles here the account must itself be a federated user
+//     carrying those attributes, so the login reuses it. Enable via SetFederationConfig
+//     (OPENSTACK_FEDERATED_PROVISIONING=true).
+//   - type:local mapping: the login binds to an existing local user by name, so a plain
+//     local user is correct and federated provisioning is unnecessary.
+//
+// When federated provisioning is on, the unique_id is the URL-encoded value the IdP asserts
+// for the user — the preferred_username claim under the default DHBW mapping, which for these
+// accounts is the email (e.g. "s123%40example.edu"). If the IdP asserts something other than
+// the email, this account simply won't be matched and the login falls back to auto-creating
+// its own shadow user (no worse than not pre-creating at all).
 func (c *OpenStackClient) FindOrCreateUser(email string) (*users.User, error) {
 	existing, err := c.FindUserByName(email)
 	if err != nil {
@@ -52,12 +67,68 @@ func (c *OpenStackClient) FindOrCreateUser(email string) (*users.User, error) {
 	if existing != nil {
 		return existing, nil
 	}
+
+	if c.federatedProvisioning {
+		link := FederatedLink{
+			IdPID:      c.federatedIdPID,
+			ProtocolID: c.federatedProtocolID,
+			UniqueID:   url.QueryEscape(email),
+		}
+		created, err := c.CreateFederatedUser(email, email, link)
+		if err != nil {
+			return nil, fmt.Errorf("create federated user %q: %w", email, err)
+		}
+		return created, nil
+	}
+
 	// Password is intentionally empty — SSO-only login.
 	created, err := c.CreateUser(email, "", email, true)
 	if err != nil {
 		return nil, fmt.Errorf("create user %q: %w", email, err)
 	}
 	c.log.Infow("Created Keystone user", "email", email, "id", created.ID)
+	return created, nil
+}
+
+// FederatedLink binds a pre-created user to an IdP identity so that an SSO login on an
+// ephemeral-mapped Keystone reuses this account instead of spawning a separate shadow user.
+// UniqueID is the URL-encoded value the IdP asserts (the mapping's remote attribute —
+// preferred_username under the default DHBW mapping).
+type FederatedLink struct {
+	IdPID      string
+	ProtocolID string
+	UniqueID   string
+}
+
+// CreateFederatedUser creates a passwordless federated user carrying the given IdP link.
+// gophercloud's users.CreateOpts has no typed federated field, but ToUserCreateMap merges
+// the Extra map onto the user object, and "federated" is a first-class Keystone user
+// attribute — so passing it via Extra produces the same request body as the REST API's
+// native federated block. See FindOrCreateUser for when this path is used.
+func (c *OpenStackClient) CreateFederatedUser(name, email string, link FederatedLink) (*users.User, error) {
+	extra := map[string]any{
+		"federated": []map[string]any{{
+			"idp_id": link.IdPID,
+			"protocols": []map[string]any{{
+				"protocol_id": link.ProtocolID,
+				"unique_id":   link.UniqueID,
+			}},
+		}},
+	}
+	if email != "" {
+		extra["email"] = email
+	}
+	created, err := users.Create(c.Identity, users.CreateOpts{
+		Name:        name,
+		Enabled:     gophercloud.Enabled,
+		Description: ManagedUserDescription,
+		Extra:       extra,
+	}).Extract()
+	if err != nil {
+		return nil, err
+	}
+	c.log.Infow("Created federated Keystone user",
+		"email", email, "id", created.ID, "idp", link.IdPID, "protocol", link.ProtocolID)
 	return created, nil
 }
 

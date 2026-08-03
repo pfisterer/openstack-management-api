@@ -86,8 +86,8 @@ spec:
               value: {{ .Values.openstackManagementApi.reconciler.enabled | toString | quote }}
             - name: RECONCILER_INTERVAL_SECONDS
               value: {{ .Values.openstackManagementApi.reconciler.intervalSeconds | toString | quote }}
-            - name: RECONCILER_PROJECT_PREFIX
-              value: {{ .Values.openstackManagementApi.reconciler.projectPrefix | quote }}
+            - name: RECONCILER_GROUP_PREFIX
+              value: {{ .Values.openstackManagementApi.reconciler.groupPrefix | quote }}
             - name: RECONCILER_SCOPE_PARENT_ID
               value: {{ .Values.openstackManagementApi.reconciler.scopeParentId | quote }}
             - name: RECONCILER_SCOPE_PARENT_NAME

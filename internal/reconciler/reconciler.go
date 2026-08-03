@@ -30,6 +30,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/gophercloud/gophercloud/openstack/identity/v3/projects"
@@ -51,9 +53,11 @@ type ReconcilerStore interface {
 type Config struct {
 	// Interval between automatic reconciliation runs. Default: 5 minutes.
 	Interval time.Duration
-	// ProjectPrefix is prepended to the leaf ID when naming new OS projects.
-	// Example: "dhbw-" produces the project name "dhbw-p_1234567890".
-	ProjectPrefix string
+	// GroupPrefix is prepended to the group token when naming Keystone groups.
+	// Example: "managed-" produces the group name "managed-dept_cs_faculty".
+	// Projects are NOT prefixed — they carry the node's own name plus its ID
+	// (see buildProjectName) and are identified by tag, not by name.
+	GroupPrefix string
 	// ScopeParentID, when non-empty, makes the reconciler list ALL projects under this
 	// OpenStack parent project and import unknown ones as imported leaves.
 	// When empty only projects tagged with ManagedProjectTag are considered.
@@ -149,8 +153,8 @@ func New(
 	if cfg.Interval <= 0 {
 		cfg.Interval = 5 * time.Minute
 	}
-	if cfg.ProjectPrefix == "" {
-		cfg.ProjectPrefix = "managed-"
+	if cfg.GroupPrefix == "" {
+		cfg.GroupPrefix = "managed-"
 	}
 	return &Reconciler{
 		store:           store,
@@ -391,7 +395,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 			r.syncMembers(leaf, created.ID)
 			r.syncGroupAssignments(leaf, created.ID, groupTokenToOSID)
 		} else {
-			overcommitted, err := r.syncQuota(leaf, osProject.ID)
+			overcommitted, err := r.syncQuota(leaf, osProject)
 			if err != nil {
 				r.log.Warnw("Failed to sync quota for leaf", "node_id", leaf.ID, "os_project_id", osProject.ID, "error", err)
 				continue
@@ -738,23 +742,103 @@ func (r *Reconciler) ensureScopeParent() (string, error) {
 	return id, nil
 }
 
+// keystoneProjectNameMaxLen is Keystone's hard limit for project names: the API
+// schema caps "name" at 64 characters and rejects anything longer with 400.
+const keystoneProjectNameMaxLen = 64
+
+// managedDescriptionSuffix is appended to every managed project's description so a
+// project is recognisable as ours in Horizon, where tags are not shown. It carries
+// no meaning for the reconciler — identification runs on tags alone.
+const managedDescriptionSuffix = " (managed project)"
+
+// buildProjectName constructs the OS project name for a leaf: the node's own name
+// with its ID appended, e.g. "Cloud Computing WS26/27 [p_001]".
+//
+// The ID suffix is not decoration. Keystone enforces project-name uniqueness per
+// *domain*, not per parent — two leaves named "Cloud Computing" under different
+// budgets, or a name already taken by a foreign project elsewhere in the domain,
+// would otherwise collide with a 409. The suffix makes the name collision-free by
+// construction, so no retry-with-fallback logic is needed.
+//
+// Nothing parses the name back: a project is matched to its node via the
+// resource-id tag, so renaming a node is safe at any time.
+func buildProjectName(leaf tree.Node) string {
+	id := sanitizeProjectName(leaf.ID)
+	name := sanitizeProjectName(leaf.Name)
+
+	switch {
+	case id == "" && name == "":
+		return "unnamed project" // defensive: a node always has an ID
+	case id == "":
+		return truncateRunes(name, keystoneProjectNameMaxLen)
+	case name == "":
+		return truncateRunes(id, keystoneProjectNameMaxLen)
+	}
+
+	suffix := " [" + id + "]"
+	room := keystoneProjectNameMaxLen - utf8.RuneCountInString(suffix)
+	if room < 1 {
+		// Pathologically long ID: drop the name, keep the identifying part.
+		return truncateRunes(id, keystoneProjectNameMaxLen)
+	}
+	return truncateRunes(name, room) + suffix
+}
+
+// sanitizeProjectName makes an arbitrary node name safe for Keystone: it drops
+// non-BMP runes (the project table is utf8mb3 — an emoji makes Keystone answer
+// 500), drops control characters, and collapses whitespace runs to single spaces.
+// Everything else — spaces, umlauts, slashes, punctuation — Keystone accepts.
+// A name that is empty or all-whitespace is rejected with 400, so it comes back
+// empty here and the caller falls back to the node ID.
+func sanitizeProjectName(s string) string {
+	var b strings.Builder
+	pendingSpace := false
+	for _, r := range s {
+		switch {
+		// Whitespace first: newlines and tabs are control characters too, but they
+		// separate words and must collapse to a space rather than vanish.
+		case unicode.IsSpace(r):
+			pendingSpace = b.Len() > 0
+		case r > 0xFFFF || unicode.IsControl(r) || r == utf8.RuneError:
+			continue
+		default:
+			if pendingSpace {
+				b.WriteRune(' ')
+				pendingSpace = false
+			}
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// truncateRunes cuts s to at most n runes (Keystone counts characters, not bytes)
+// and trims a trailing space so a cut never leaves a dangling separator.
+func truncateRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	runes := []rune(s)
+	return strings.TrimRight(string(runes[:n]), " ")
+}
+
 // buildDescription constructs the OS project description for a leaf.
-// Format: "email: reason" where email is the owner's address.
+// Format: "email: reason (managed project)" where email is the owner's address.
 func buildDescription(leaf tree.Node) string {
 	email := leaf.OwnerEmail()
-	if email != "" && leaf.Reason != "" {
-		return email + ": " + leaf.Reason
+	switch {
+	case email != "" && leaf.Reason != "":
+		return email + ": " + leaf.Reason + managedDescriptionSuffix
+	case leaf.Reason != "":
+		return leaf.Reason + managedDescriptionSuffix
 	}
-	if leaf.Reason != "" {
-		return leaf.Reason
-	}
-	return fmt.Sprintf("Managed by DHBW resource management. Node: %s", leaf.ID)
+	return fmt.Sprintf("Managed by DHBW resource management. Node: %s%s", leaf.ID, managedDescriptionSuffix)
 }
 
 // createOpenstackProjectForLeaf creates a new OpenStack project for an approved leaf
 // and applies the full initial quota (managed fields + network defaults).
 func (r *Reconciler) createOpenstackProjectForLeaf(_ context.Context, leaf tree.Node) (osclient.ProjectInfo, error) {
-	name := r.cfg.ProjectPrefix + leaf.ID
+	name := buildProjectName(leaf)
 	description := buildDescription(leaf)
 
 	r.log.Infow("Creating OS project for leaf",
@@ -813,7 +897,10 @@ func (r *Reconciler) createOpenstackProjectForLeaf(_ context.Context, leaf tree.
 // whether the project is currently overcommitted (in-use > new limit).
 // For change_pending leaves the current approved limit (leaf.Limit) is used —
 // the proposed pending change only takes effect after manager approval.
-func (r *Reconciler) syncQuota(leaf tree.Node, osProjectID string) (overcommitted bool, err error) {
+// It also keeps name and description in sync, so renaming a node in the tree renames
+// its OpenStack project on the next tick.
+func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo) (overcommitted bool, err error) {
+	osProjectID := osProject.ID
 	quotaSet := ProjectQuotaToQuotaSet(r.managedProjects, leaf.Limit)
 
 	r.log.Debugw("Syncing managed quota",
@@ -829,12 +916,24 @@ func (r *Reconciler) syncQuota(leaf tree.Node, osProjectID string) (overcommitte
 		return false, fmt.Errorf("update managed quotas: %w", err)
 	}
 
+	// Name is only sent when it actually changed: an unchanged name would be a no-op
+	// write every tick, and it lets an operator's manual rename of an *imported*
+	// project survive until the node itself is renamed.
 	description := buildDescription(leaf)
-	if _, err := r.osClient.UpdateProject(osProjectID, osclient.ProjectUpdateOpts{
+	updateOpts := osclient.ProjectUpdateOpts{
 		BaseProjectOpts: osclient.BaseProjectOpts{Description: &description},
-	}); err != nil {
-		r.log.Warnw("Failed to update OS project description",
-			"node_id", leaf.ID, "os_project_id", osProjectID, "error", err)
+	}
+	desiredName := buildProjectName(leaf)
+	if desiredName != osProject.Name {
+		updateOpts.Name = desiredName
+		r.log.Infow("Renaming OS project to match node",
+			"node_id", leaf.ID, "os_project_id", osProjectID,
+			"old_name", osProject.Name, "new_name", desiredName)
+	}
+	if _, err := r.osClient.UpdateProject(osProjectID, updateOpts); err != nil {
+		r.log.Warnw("Failed to update OS project name/description",
+			"node_id", leaf.ID, "os_project_id", osProjectID,
+			"desired_name", desiredName, "error", err)
 	}
 
 	// Overcommit check: OpenStack accepts a quota reduction below current usage but blocks
@@ -1042,9 +1141,9 @@ func (r *Reconciler) syncGroups(ctx context.Context, activeLeaves []tree.Node, r
 
 	for token := range groupTokens {
 		baseName, _ := strings.CutPrefix(token, "group:")
-		// Prefix the OS group name the same way projects are prefixed so all
-		// managed resources share a consistent naming convention.
-		osGroupName := r.cfg.ProjectPrefix + baseName
+		// Groups have no scope parent and carry no tags, so the prefix is what
+		// marks them as ours and keeps them out of the way of foreign groups.
+		osGroupName := r.cfg.GroupPrefix + baseName
 
 		// Find or create the Keystone group.
 		existing, err := r.osClient.FindGroupByName(osGroupName)

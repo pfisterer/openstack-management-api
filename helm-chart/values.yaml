@@ -75,7 +75,9 @@ openstackManagementApi:
   reconciler:
     enabled: false
     intervalSeconds: 300
-    projectPrefix: "managed-"
+    # Prefix for managed Keystone *group* names. Projects are named after their
+    # node ("<node name> [<node id>]") and identified by tag, not by name.
+    groupPrefix: "managed-"
     # Limit OS-only import to children of this parent project; empty = no scope
     scopeParentId: ""
     # Name-based alternative to scopeParentId: the reconciler resolves the project

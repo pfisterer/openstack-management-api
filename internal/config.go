@@ -88,8 +88,9 @@ type ReconcilerConfiguration struct {
 	Enabled bool `json:"enabled"`
 	// IntervalSeconds is the time between automatic reconciliation runs.
 	IntervalSeconds int `json:"interval_seconds"`
-	// ProjectPrefix is prepended to the project ID when naming new OS projects.
-	ProjectPrefix string `json:"project_prefix"`
+	// GroupPrefix is prepended to the group token when naming Keystone groups.
+	// Projects are not prefixed — they are named after their node (name + node ID).
+	GroupPrefix string `json:"group_prefix"`
 	// ScopeParentID, when set, scopes the OS-only import to children of this parent project.
 	// Projects outside this scope are ignored during the reverse-sync phase.
 	ScopeParentID string `json:"scope_parent_id"`
@@ -216,7 +217,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 		Reconciler: ReconcilerConfiguration{
 			Enabled:                  helper.GetEnvBool("RECONCILER_ENABLED", false),
 			IntervalSeconds:          helper.GetEnvInt("RECONCILER_INTERVAL_SECONDS", 300),
-			ProjectPrefix:            helper.GetEnvString("RECONCILER_PROJECT_PREFIX", "managed-"),
+			GroupPrefix:              helper.GetEnvString("RECONCILER_GROUP_PREFIX", "managed-"),
 			ScopeParentID:            helper.GetEnvString("RECONCILER_SCOPE_PARENT_ID", ""),
 			ScopeParentName:          helper.GetEnvString("RECONCILER_SCOPE_PARENT_NAME", ""),
 			DryRun:                   helper.GetEnvBool("RECONCILER_DRY_RUN", false),

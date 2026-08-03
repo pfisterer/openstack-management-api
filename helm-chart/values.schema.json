@@ -75,7 +75,7 @@
           "properties": {
             "enabled": { "type": "boolean" },
             "intervalSeconds": { "type": "integer", "minimum": 1 },
-            "projectPrefix": { "type": "string" },
+            "groupPrefix": { "type": "string" },
             "scopeParentId": { "type": "string" },
             "scopeParentName": { "type": "string" },
             "dryRun": { "type": "boolean" },

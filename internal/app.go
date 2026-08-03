@@ -218,7 +218,7 @@ func RunApplication() {
 
 			reconcilerCfg := reconciler.Config{
 				Interval:                 time.Duration(config.Reconciler.IntervalSeconds) * time.Second,
-				ProjectPrefix:            config.Reconciler.ProjectPrefix,
+				GroupPrefix:              config.Reconciler.GroupPrefix,
 				ScopeParentID:            config.Reconciler.ScopeParentID,
 				ScopeParentName:          config.Reconciler.ScopeParentName,
 				DryRun:                   config.Reconciler.DryRun,

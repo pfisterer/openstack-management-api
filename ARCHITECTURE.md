@@ -309,9 +309,17 @@ Quota→Limit, requester→Owner.
 
 **Direction 1 — tree → OpenStack:** every `approved`/`change_pending` leaf is
 projected as an OpenStack project: created on first encounter (named
-`<prefix><leafID>`, tagged `ManagedProjectTag` + `<ResourceIDTagPrefix><id>`),
+`<node name> [<leafID>]`, tagged `ManagedProjectTag` + `<ResourceIDTagPrefix><id>`),
 quota synced from the approved limit on every run (`change_pending` uses the
 *currently approved* limit — proposed changes apply only after approval).
+Name and description are re-synced too, so renaming a node renames its project.
+The `[<leafID>]` suffix is required for correctness, not cosmetics: Keystone
+enforces project-name uniqueness **per domain** (not per parent), so plain node
+names would collide with each other and with foreign projects. Identification
+always runs on the resource-id tag, never on the name. Keystone caps names at 64
+characters and rejects non-BMP characters (emoji), so names are sanitized and
+truncated. Keystone *groups* have no parent and no tags and therefore keep the
+`GroupPrefix` (`RECONCILER_GROUP_PREFIX`, default `managed-`).
 Members (owner + authorized users + group assignments) are synced to Keystone;
 groups are auto-created and their memberships synced from the RoleProvider.
 

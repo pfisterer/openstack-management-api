@@ -1,6 +1,7 @@
 package osclient
 
 import (
+	"cmp"
 	"crypto/tls"
 	"fmt"
 	"net/http"
@@ -9,6 +10,27 @@ import (
 	"github.com/gophercloud/gophercloud/openstack"
 	"go.uber.org/zap"
 )
+
+// newBlockStorageV3 resolves the volume service under either name it can carry
+// in the catalog: gophercloud v1 only looks for the legacy type "volumev3",
+// while newer clouds (DevStack since Xena) advertise it as "block-storage" and
+// would otherwise fail the whole client with "No suitable endpoint could be
+// found in the service catalog".
+func newBlockStorageV3(provider *gophercloud.ProviderClient, eo gophercloud.EndpointOpts) (*gophercloud.ServiceClient, error) {
+	sc, err := openstack.NewBlockStorageV3(provider, eo)
+	if err == nil {
+		return sc, nil
+	}
+
+	const altType = "block-storage"
+	altOpts := eo
+	altOpts.ApplyDefaults(altType)
+	url, altErr := provider.EndpointLocator(altOpts)
+	if altErr != nil {
+		return nil, err // report the lookup under the well-known name
+	}
+	return &gophercloud.ServiceClient{ProviderClient: provider, Endpoint: url, Type: altType}, nil
+}
 
 // OpenStackClient is the main OpenStack administrative client
 // holding service clients for identity, compute, network, and block storage.
@@ -27,6 +49,7 @@ type OpenStackClient struct {
 	federatedProvisioning bool
 	federatedIdPID        string
 	federatedProtocolID   string
+	federatedDomainID     string
 }
 
 // SetTagConfig sets the managed-project tag and resource-ID tag prefix from config.
@@ -39,10 +62,11 @@ func (c *OpenStackClient) SetTagConfig(managedProjectTag, resourceIDTagPrefix st
 // SetFederationConfig enables federated pre-provisioning and sets the IdP/protocol that a
 // pre-created user is bound to. See FindOrCreateUser for why this matters on ephemeral OIDC
 // mappings. When enabled is false, FindOrCreateUser creates plain local accounts.
-func (c *OpenStackClient) SetFederationConfig(enabled bool, idpID, protocolID string) {
+func (c *OpenStackClient) SetFederationConfig(enabled bool, idpID, protocolID, domainID string) {
 	c.federatedProvisioning = enabled
 	c.federatedIdPID = idpID
 	c.federatedProtocolID = protocolID
+	c.federatedDomainID = cmp.Or(domainID, "default")
 }
 
 // NewOSAdmin creates a new OpenStack administrative client with default region.
@@ -99,7 +123,7 @@ func NewOSAdminWithRegion(authURL, token, projectID, region string, insecure boo
 		return nil, fmt.Errorf("create compute client: %w", err)
 	}
 
-	blockClient, err := openstack.NewBlockStorageV3(provider, endpointOpts)
+	blockClient, err := newBlockStorageV3(provider, endpointOpts)
 	if err != nil {
 		return nil, fmt.Errorf("create block storage client: %w", err)
 	}
@@ -123,6 +147,84 @@ func NewOSAdminWithRegion(authURL, token, projectID, region string, insecure boo
 // NewOSAdminWithAppCredential creates a new OpenStack admin client using application credentials.
 func NewOSAdminWithAppCredential(
 	authURL, appCredID, appCredSecret, projectID, region string,
+	insecure bool,
+	logger *zap.Logger,
+	sugaredLogger *zap.SugaredLogger,
+) (*OpenStackClient, error) {
+	// Application credentials must not include an explicit project scope — the scope is
+	// embedded in the credential by Keystone. Setting authOpts.Scope causes a 401 because
+	// Keystone treats it as an attempt to override the credential's own project binding.
+	authOpts := gophercloud.AuthOptions{
+		IdentityEndpoint:            authURL,
+		ApplicationCredentialID:     appCredID,
+		ApplicationCredentialSecret: appCredSecret,
+		AllowReauth:                 true,
+	}
+	return newOSAdmin(authURL, authOpts, region, insecure, logger, sugaredLogger)
+}
+
+// PasswordAuthOpts describes a service user and the scope its token should have.
+// Scope precedence: SystemScope > DomainName > project (ProjectID, or ProjectName
+// together with ProjectDomainName). Leaving all of them unset yields an unscoped
+// token, which cannot call anything — Keystone grants roles per scope.
+type PasswordAuthOpts struct {
+	Username       string
+	Password       string
+	UserDomainName string
+
+	SystemScope       bool
+	DomainName        string
+	ProjectID         string
+	ProjectName       string
+	ProjectDomainName string
+}
+
+// NewOSAdminWithPassword creates a client authenticating a service user with a
+// password. Unlike an application credential this can request system or domain
+// scope, which is what clouds enforcing the modern RBAC defaults require for
+// project creation and cross-project role assignments.
+func NewOSAdminWithPassword(
+	authURL string,
+	opts PasswordAuthOpts,
+	region string,
+	insecure bool,
+	logger *zap.Logger,
+	sugaredLogger *zap.SugaredLogger,
+) (*OpenStackClient, error) {
+	authOpts := gophercloud.AuthOptions{
+		IdentityEndpoint: authURL,
+		Username:         opts.Username,
+		Password:         opts.Password,
+		DomainName:       opts.UserDomainName,
+		AllowReauth:      true,
+	}
+
+	switch {
+	case opts.SystemScope:
+		authOpts.Scope = &gophercloud.AuthScope{System: true}
+	case opts.DomainName != "":
+		authOpts.Scope = &gophercloud.AuthScope{DomainName: opts.DomainName}
+	case opts.ProjectID != "":
+		authOpts.Scope = &gophercloud.AuthScope{ProjectID: opts.ProjectID}
+	case opts.ProjectName != "":
+		authOpts.Scope = &gophercloud.AuthScope{
+			ProjectName: opts.ProjectName,
+			DomainName:  cmp.Or(opts.ProjectDomainName, opts.UserDomainName),
+		}
+	}
+
+	// Note: AuthOptions.DomainName stays set — it identifies the *user's* domain
+	// and is required for username auth; the scope above is independent of it.
+
+	return newOSAdmin(authURL, authOpts, region, insecure, logger, sugaredLogger)
+}
+
+// newOSAdmin authenticates with the given options and builds the service clients.
+// Shared by every constructor above — only the AuthOptions differ between them.
+func newOSAdmin(
+	authURL string,
+	authOpts gophercloud.AuthOptions,
+	region string,
 	insecure bool,
 	logger *zap.Logger,
 	sugaredLogger *zap.SugaredLogger,
@@ -151,16 +253,6 @@ func NewOSAdminWithAppCredential(
 
 	provider.HTTPClient = http.Client{Transport: transport}
 
-	// Application credentials must not include an explicit project scope — the scope is
-	// embedded in the credential by Keystone. Setting authOpts.Scope causes a 401 because
-	// Keystone treats it as an attempt to override the credential's own project binding.
-	authOpts := gophercloud.AuthOptions{
-		IdentityEndpoint:            authURL,
-		ApplicationCredentialID:     appCredID,
-		ApplicationCredentialSecret: appCredSecret,
-		AllowReauth:                 true,
-	}
-
 	if err := openstack.Authenticate(provider, authOpts); err != nil {
 		return nil, fmt.Errorf("authentication failed: %w", err)
 	}
@@ -184,7 +276,7 @@ func NewOSAdminWithAppCredential(
 	if err != nil {
 		return nil, err
 	}
-	block, err := openstack.NewBlockStorageV3(provider, eo)
+	block, err := newBlockStorageV3(provider, eo)
 	if err != nil {
 		return nil, err
 	}

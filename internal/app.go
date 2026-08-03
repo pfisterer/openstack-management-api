@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"os"
@@ -68,6 +69,48 @@ func configureAuthMiddleware(cfg *WebServerConfig, tokenLookup common.TokenLooku
 		authMiddleware = webserver.CombinedAuthMiddleware(oidcAuthVerifier, tokenLookup, userTokenResolver, log)
 	}
 	return authMiddleware, nil
+}
+
+// newOpenstackClient builds the OpenStack client for the configured
+// authentication method. Application credentials are the default; password auth
+// for a service user exists because an application credential is always
+// project-scoped and therefore cannot create projects on a cloud that enforces
+// the modern RBAC scope defaults.
+func newOpenstackClient(cfg OpenstackConfiguration, log *zap.Logger, logger *zap.SugaredLogger) (*osclient.OpenStackClient, error) {
+	switch cfg.AuthMethod() {
+	case OpenstackAuthAppCredential:
+		logger.Infow("OpenStack auth: application credential", "auth_url", cfg.AuthURL)
+		return osclient.NewOSAdminWithAppCredential(
+			cfg.AuthURL,
+			cfg.ApplicationCredentialID,
+			cfg.ApplicationCredentialSecret,
+			cfg.ProjectID,
+			cfg.Region,
+			cfg.Insecure,
+			log,
+			logger,
+		)
+
+	case OpenstackAuthPassword:
+		opts := osclient.PasswordAuthOpts{
+			Username:          cfg.Username,
+			Password:          cfg.Password,
+			UserDomainName:    cfg.UserDomainName,
+			SystemScope:       cfg.SystemScope,
+			DomainName:        cfg.DomainName,
+			ProjectID:         cfg.ProjectID,
+			ProjectName:       cfg.ProjectName,
+			ProjectDomainName: cfg.ProjectDomainName,
+		}
+		logger.Infow("OpenStack auth: password",
+			"auth_url", cfg.AuthURL, "user", cfg.Username,
+			"system_scope", cfg.SystemScope, "domain", cfg.DomainName,
+			"project", cmp.Or(cfg.ProjectName, cfg.ProjectID))
+		return osclient.NewOSAdminWithPassword(cfg.AuthURL, opts, cfg.Region, cfg.Insecure, log, logger)
+
+	default:
+		return nil, fmt.Errorf("no OpenStack credentials configured: set OS_APPLICATION_CREDENTIAL_ID/_SECRET or OS_USERNAME/OS_PASSWORD")
+	}
 }
 
 func RunApplication() {
@@ -166,21 +209,12 @@ func RunApplication() {
 	if config.Reconciler.Enabled {
 		logger.Infow("Starting reconciler", "interval_seconds", config.Reconciler.IntervalSeconds, "dry_run", config.Reconciler.DryRun)
 
-		osClient, osErr := osclient.NewOSAdminWithAppCredential(
-			config.Openstack.AuthURL,
-			config.Openstack.ApplicationCredentialID,
-			config.Openstack.ApplicationCredentialSecret,
-			config.Openstack.ProjectID,
-			config.Openstack.Region,
-			config.Openstack.Insecure,
-			log,
-			logger,
-		)
+		osClient, osErr := newOpenstackClient(config.Openstack, log, logger)
 		if osErr != nil {
 			logger.Warnw("OpenStack API not reachable — reconciler will be disabled; restart to retry", zap.Error(osErr))
 		} else {
 			osClient.SetTagConfig(config.Reconciler.ManagedProjectTag, config.Reconciler.ResourceIDTagPrefix)
-			osClient.SetFederationConfig(config.Openstack.FederatedProvisioning, config.Openstack.FederatedIdPID, config.Openstack.FederatedProtocolID)
+			osClient.SetFederationConfig(config.Openstack.FederatedProvisioning, config.Openstack.FederatedIdPID, config.Openstack.FederatedProtocolID, config.Openstack.FederatedDomainID)
 
 			reconcilerCfg := reconciler.Config{
 				Interval:                 time.Duration(config.Reconciler.IntervalSeconds) * time.Second,

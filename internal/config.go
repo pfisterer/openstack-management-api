@@ -15,13 +15,35 @@ import (
 )
 
 // OpenstackConfiguration describes OpenStack authentication and client settings.
+//
+// Two authentication methods are supported; configure exactly one (see
+// AuthMethod). Application credentials are the simpler choice but are always
+// project-scoped, which is a hard limit on clouds that enforce the modern RBAC
+// scope defaults: creating projects or assigning roles across projects needs a
+// system- or domain-scoped token there, and no application credential can carry
+// one. Password auth for a service user exists for exactly that case, because it
+// can request system or domain scope.
 type OpenstackConfiguration struct {
 	AuthURL                     string `json:"auth_url" validate:"required,url"`
-	ApplicationCredentialID     string `json:"application_credential_id" validate:"required"`
-	ApplicationCredentialSecret string `json:"application_credential_secret" validate:"required"`
-	ProjectID                   string `json:"project_id" validate:"required"`
-	Region                      string `json:"region" validate:"required"`
-	Insecure                    bool   `json:"insecure"`
+	ApplicationCredentialID     string `json:"application_credential_id"`
+	ApplicationCredentialSecret string `json:"application_credential_secret"`
+	// Username/Password authenticate a service user (OS_USERNAME / OS_PASSWORD).
+	// UserDomainName is the domain the user itself lives in (OS_USER_DOMAIN_NAME).
+	Username       string `json:"username"`
+	Password       string `json:"password"`
+	UserDomainName string `json:"user_domain_name"`
+	// Scope of the requested token, in the order it is applied: SystemScope
+	// (OS_SYSTEM_SCOPE=all) > DomainName (OS_DOMAIN_NAME) > project
+	// (ProjectID/ProjectName + ProjectDomainName). Password auth only.
+	SystemScope       bool   `json:"system_scope"`
+	DomainName        string `json:"domain_name"`
+	ProjectName       string `json:"project_name"`
+	ProjectDomainName string `json:"project_domain_name"`
+	// ProjectID scopes token auth; with application credentials the scope comes
+	// from the credential itself and this stays unused.
+	ProjectID string `json:"project_id"`
+	Region    string `json:"region" validate:"required"`
+	Insecure  bool   `json:"insecure"`
 	// FederatedProvisioning makes pre-created users federated shadow users instead of plain
 	// local users. Required on clouds whose OIDC mapping is ephemeral (the Keystone default
 	// when the mapping sets no user "type"): there a plain local user is ignored on SSO login
@@ -33,6 +55,31 @@ type OpenstackConfiguration struct {
 	FederatedIdPID string `json:"federated_idp_id"`
 	// FederatedProtocolID is the federation protocol id (e.g. "openid", "saml2"). Default "openid".
 	FederatedProtocolID string `json:"federated_protocol_id"`
+	// FederatedDomainID is the Keystone domain a federated account lives in. It is part of
+	// the derived user ID (sha256(domain_id + "user" + unique_id)), which is how a
+	// pre-created account is matched against the one an SSO login resolves to. Default "default".
+	FederatedDomainID string `json:"federated_domain_id"`
+}
+
+// OpenStack authentication methods.
+const (
+	OpenstackAuthNone          = "none"
+	OpenstackAuthAppCredential = "application_credential"
+	OpenstackAuthPassword      = "password"
+)
+
+// AuthMethod reports which authentication method the configuration selects.
+// Application credentials win when both are present, so a leftover OS_USERNAME
+// from a sourced openrc cannot silently take over an explicit credential.
+func (c OpenstackConfiguration) AuthMethod() string {
+	switch {
+	case c.ApplicationCredentialID != "" && c.ApplicationCredentialSecret != "":
+		return OpenstackAuthAppCredential
+	case c.Username != "" && c.Password != "":
+		return OpenstackAuthPassword
+	default:
+		return OpenstackAuthNone
+	}
 }
 
 // ReconcilerConfiguration controls the two-way sync with OpenStack.
@@ -144,12 +191,20 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			AuthURL:                     getEnvString("OPENSTACK_AUTH_URL", "OS_AUTH_URL", ""),
 			ApplicationCredentialID:     getEnvString("OPENSTACK_APPLICATION_CREDENTIAL_ID", "OS_APPLICATION_CREDENTIAL_ID", ""),
 			ApplicationCredentialSecret: getEnvString("OPENSTACK_APPLICATION_CREDENTIAL_SECRET", "OS_APPLICATION_CREDENTIAL_SECRET", ""),
-			ProjectID:                   getEnvString("OPENSTACK_PROJECT_ID", "OS_PROJECT_ID", ""),
-			Region:                      getEnvString("OPENSTACK_REGION", "OS_REGION_NAME", "microstack"),
-			Insecure:                    getEnvBool("OPENSTACK_INSECURE", "OS_INSECURE", false),
-			FederatedProvisioning:       helper.GetEnvBool("OPENSTACK_FEDERATED_PROVISIONING", false),
-			FederatedIdPID:              helper.GetEnvString("OPENSTACK_FEDERATED_IDP_ID", "keycloak"),
-			FederatedProtocolID:         helper.GetEnvString("OPENSTACK_FEDERATED_PROTOCOL_ID", "openid"),
+			Username:                    getEnvString("OPENSTACK_USERNAME", "OS_USERNAME", ""),
+			Password:                    getEnvString("OPENSTACK_PASSWORD", "OS_PASSWORD", ""),
+			UserDomainName:              getEnvString("OPENSTACK_USER_DOMAIN_NAME", "OS_USER_DOMAIN_NAME", "Default"),
+			// openrc spells the system scope OS_SYSTEM_SCOPE=all.
+			SystemScope:           strings.EqualFold(getEnvString("OPENSTACK_SYSTEM_SCOPE", "OS_SYSTEM_SCOPE", ""), "all"),
+			DomainName:            getEnvString("OPENSTACK_DOMAIN_NAME", "OS_DOMAIN_NAME", ""),
+			ProjectName:           getEnvString("OPENSTACK_PROJECT_NAME", "OS_PROJECT_NAME", ""),
+			ProjectDomainName:     getEnvString("OPENSTACK_PROJECT_DOMAIN_NAME", "OS_PROJECT_DOMAIN_NAME", ""),
+			ProjectID:             getEnvString("OPENSTACK_PROJECT_ID", "OS_PROJECT_ID", ""),
+			Region:                getEnvString("OPENSTACK_REGION", "OS_REGION_NAME", "microstack"),
+			Insecure:              getEnvBool("OPENSTACK_INSECURE", "OS_INSECURE", false),
+			FederatedProvisioning: helper.GetEnvBool("OPENSTACK_FEDERATED_PROVISIONING", false),
+			FederatedIdPID:        helper.GetEnvString("OPENSTACK_FEDERATED_IDP_ID", "keycloak"),
+			FederatedProtocolID:   helper.GetEnvString("OPENSTACK_FEDERATED_PROTOCOL_ID", "openid"),
 		},
 		WebServer: WebServerConfig{
 			DummyAuth:     getEnvBool("API_DUMMY_AUTH", "API_DUMMY_AUTH", false),
@@ -270,6 +325,7 @@ func logAppConfig(appConfig AppConfiguration, log *zap.SugaredLogger) {
 
 	// Redact ALL secrets before marshalling — the whole config is logged below.
 	appConfig.Openstack.ApplicationCredentialSecret = redactSecret(appConfig.Openstack.ApplicationCredentialSecret)
+	appConfig.Openstack.Password = redactSecret(appConfig.Openstack.Password)
 	appConfig.RoleProvider.APIToken = redactSecret(appConfig.RoleProvider.APIToken)
 	appConfig.Storage.ConnectionString = redactSecret(appConfig.Storage.ConnectionString)
 

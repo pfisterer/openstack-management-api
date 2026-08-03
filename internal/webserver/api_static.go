@@ -10,6 +10,10 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/helper"
 )
 
+// appVersion is the embedded VERSION file, which ends in a newline — trim it
+// once here so no consumer has to (it used to reach the UI as "0.7.7\n").
+var appVersion = strings.TrimSpace(generated_docs.Version)
+
 // StaticConfig contains values needed by static endpoints.
 type StaticConfig struct {
 	OIDCIssuerURL string
@@ -21,7 +25,7 @@ func RegisterStaticRoutes(group *gin.RouterGroup, cfg StaticConfig) *gin.RouterG
 	// Serve index.html with the __VERSION__ placeholder replaced by the version
 	group.GET("/", func(c *gin.Context) {
 		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
-		c.String(http.StatusOK, strings.ReplaceAll(helper.IndexHTML, "__VERSION__", generated_docs.Version))
+		c.String(http.StatusOK, strings.ReplaceAll(helper.IndexHTML, "__VERSION__", appVersion))
 	})
 
 	subFS, _ := fs.Sub(generated_docs.ClientDist, "client-dist")
@@ -37,7 +41,7 @@ func RegisterStaticRoutes(group *gin.RouterGroup, cfg StaticConfig) *gin.RouterG
 	// without a client/auth setup (used e.g. by the self-service-ui footer).
 	group.GET("/config.json", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
-			"version": generated_docs.Version,
+			"version": appVersion,
 			"auth": gin.H{
 				"auth_provider": "oidc",
 				"issuer_url":    cfg.OIDCIssuerURL,

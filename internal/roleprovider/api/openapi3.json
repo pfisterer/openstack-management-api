@@ -99,7 +99,7 @@
                 "operationId": "listGroups",
                 "parameters": [
                     {
-                        "description": "Search query (matches ID or display name)",
+                        "description": "Search query (matches ID, display name or description)",
                         "name": "q",
                         "in": "query",
                         "schema": {

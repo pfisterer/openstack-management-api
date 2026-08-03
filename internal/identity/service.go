@@ -207,13 +207,13 @@ func (s *Service) ListAssumableIdentities() ([]common.Identity, error) {
 	}
 
 	// 2. Staff principals from the role provider's known groups (best-effort).
-	if groups, err := s.roles.SearchGroupTokens(ctx, "", identityPickerGroupLimit); err != nil {
+	if groups, err := s.roles.SearchGroups(ctx, "", identityPickerGroupLimit); err != nil {
 		s.log.Warnw("identity picker: group search failed, degrading to local identities", "error", err)
 	} else {
 		for _, group := range groups {
-			emails, err := s.roles.GetGroupUsers(ctx, group)
+			emails, err := s.roles.GetGroupUsers(ctx, group.Token)
 			if err != nil {
-				s.log.Warnw("identity picker: group member lookup failed", "group", group, "error", err)
+				s.log.Warnw("identity picker: group member lookup failed", "group", group.Token, "error", err)
 				continue
 			}
 			for _, email := range emails {
@@ -324,11 +324,11 @@ func (s *Service) GetUserGroupSwitchForActor(actorEmail string) *string {
 	return nil
 }
 
-// SearchGroupTokens returns matching group tokens via the role provider.
-func (s *Service) SearchGroupTokens(query string, limit int) (common.TokenList, error) {
+// SearchGroups returns matching groups with their labels via the role provider.
+func (s *Service) SearchGroups(query string, limit int) ([]common.GroupSummary, error) {
 	ctx, cancel := s.newCtx()
 	defer cancel()
-	return s.roles.SearchGroupTokens(ctx, query, limit)
+	return s.roles.SearchGroups(ctx, query, limit)
 }
 
 // newCtx returns a context with the configured request deadline.

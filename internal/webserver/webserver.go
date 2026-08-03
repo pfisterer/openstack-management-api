@@ -54,7 +54,7 @@ type ConfigResponse struct {
 // role-switch operations).
 type APIService interface {
 	// Group search operation
-	SearchGroupTokens(query string, limit int) (common.TokenList, error)
+	SearchGroups(query string, limit int) ([]common.GroupSummary, error)
 
 	// Node reads / views
 	GetNode(id string, userTokens common.TokenList) (*tree.Node, error)

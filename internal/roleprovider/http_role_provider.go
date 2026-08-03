@@ -12,8 +12,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// userPrefix is the token prefix identifying a user subject ("user:alice@x").
-const userPrefix = "user:"
+// Token prefixes identifying the subject kind ("user:alice@x", "group:cs").
+const (
+	userPrefix  = "user:"
+	groupPrefix = "group:"
+)
 
 // HttpRoleProvider implements common.RoleProvider by calling the role-provider-service REST API.
 type HttpRoleProvider struct {
@@ -64,23 +67,36 @@ func (h *HttpRoleProvider) GetUserTokens(ctx context.Context, claims *common.Use
 	return common.TokenList(*resp.JSON200), nil
 }
 
-// SearchGroupTokens calls GET /v1/groups?q=...&limit=... and returns matching group tokens.
-func (h *HttpRoleProvider) SearchGroupTokens(ctx context.Context, query string, limit int) (common.TokenList, error) {
+// SearchGroups calls GET /v1/groups?q=...&limit=... and keeps each group's
+// display name as the label. The role-provider matches the query against the
+// group ID, the display name and the description, so a label-only hit arrives
+// here too.
+func (h *HttpRoleProvider) SearchGroups(ctx context.Context, query string, limit int) ([]common.GroupSummary, error) {
 	params := &roleclient.ListGroupsParams{Q: &query, Limit: &limit}
 
 	resp, err := h.client.ListGroupsWithResponse(ctx, params)
 	if err != nil {
-		return nil, fmt.Errorf("HttpRoleProvider.SearchGroupTokens: %w", err)
+		return nil, fmt.Errorf("HttpRoleProvider.SearchGroups: %w", err)
 	}
 	if resp.JSON200 == nil {
-		return nil, fmt.Errorf("HttpRoleProvider.SearchGroupTokens: unexpected status %d", resp.StatusCode())
+		return nil, fmt.Errorf("HttpRoleProvider.SearchGroups: unexpected status %d", resp.StatusCode())
 	}
 
-	out := make(common.TokenList, 0, len(*resp.JSON200))
+	out := make([]common.GroupSummary, 0, len(*resp.JSON200))
 	for _, g := range *resp.JSON200 {
-		if g.Token != nil {
-			out = append(out, *g.Token)
+		if g.Token == nil {
+			continue
 		}
+		summary := common.GroupSummary{Token: *g.Token}
+		// Imported groups get display_name = ID; drop that so the UI does not
+		// print the token twice.
+		if g.DisplayName != nil && *g.DisplayName != strings.TrimPrefix(*g.Token, groupPrefix) {
+			summary.Label = *g.DisplayName
+		}
+		if g.Description != nil {
+			summary.Description = *g.Description
+		}
+		out = append(out, summary)
 	}
 	return out, nil
 }

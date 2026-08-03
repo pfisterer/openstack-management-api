@@ -53,27 +53,44 @@ func (m *MockRoleProvider) GetGroupUsers(_ context.Context, groupToken string) (
 	return emails, nil
 }
 
-// SearchGroupTokens returns mock group tokens from mockdata identities.
-func (m *MockRoleProvider) SearchGroupTokens(_ context.Context, query string, limit int) (common.TokenList, error) {
+// mockGroupLabels gives the mock groups a human-readable label, mirroring the
+// display names the role-provider-service seeds, so label search behaves the
+// same in mock mode as against the real provider.
+var mockGroupLabels = map[string]string{
+	mockdata.RootGroup:      "University Root",
+	mockdata.DeptCSAdmin:    "Computer Science Dept",
+	mockdata.DeptCSFaculty:  "CS Faculty Pool",
+	mockdata.DeptBioGroup:   "Biology Dept",
+	mockdata.CSStudentGroup: "CS Students",
+}
+
+// SearchGroups returns mock groups from mockdata identities, matching the query
+// against the token and the label, like the real provider does against group ID,
+// display name and description.
+func (m *MockRoleProvider) SearchGroups(_ context.Context, query string, limit int) ([]common.GroupSummary, error) {
 	identities, _ := mockdata.DefaultMockTreeState()
 	groupSet := map[string]struct{}{}
 	for _, ident := range identities {
 		for _, token := range ident.Tokens {
-			if strings.HasPrefix(token, "group:") {
+			if strings.HasPrefix(token, groupPrefix) {
 				groupSet[token] = struct{}{}
 			}
 		}
 	}
 	needle := strings.ToLower(strings.TrimSpace(query))
-	out := make(common.TokenList, 0, len(groupSet))
+	out := make([]common.GroupSummary, 0, len(groupSet))
 	for token := range groupSet {
-		if needle == "" || strings.Contains(token, needle) {
-			out = append(out, token)
+		label := mockGroupLabels[token]
+		if needle != "" &&
+			!strings.Contains(strings.ToLower(token), needle) &&
+			!strings.Contains(strings.ToLower(label), needle) {
+			continue
 		}
+		out = append(out, common.GroupSummary{Token: token, Label: label})
 	}
 	// Sort the output list
 	if len(out) > 1 {
-		sort.Strings(out)
+		sort.Slice(out, func(i, j int) bool { return out[i].Token < out[j].Token })
 	}
 
 	// Apply limit if specified

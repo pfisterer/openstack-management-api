@@ -107,7 +107,7 @@ type WebserverUpdateSourceRequest struct {
 
 // ListGroupsParams defines parameters for ListGroups.
 type ListGroupsParams struct {
-	// Q Search query (matches ID or display name)
+	// Q Search query (matches ID, display name or description)
 	Q *string `form:"q,omitempty" json:"q,omitempty"`
 
 	// Source Filter by sync source UUID

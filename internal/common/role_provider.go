@@ -10,12 +10,22 @@ type RoleProvider interface {
 	// GetUserTokens queries the authorization system to discover all tokens/relationships a user has.
 	GetUserTokens(ctx context.Context, claims *UserClaims) (TokenList, error)
 
-	// SearchGroupTokens searches for known group tokens matching the query.
-	SearchGroupTokens(ctx context.Context, query string, limit int) (TokenList, error)
+	// SearchGroups searches for known groups whose token, label or description
+	// matches the query.
+	SearchGroups(ctx context.Context, query string, limit int) ([]GroupSummary, error)
 
 	// GetGroupUsers returns the email addresses of all users belonging to the given group token
 	// (e.g. "group:dept_cs_faculty"). Returns an empty slice when the group has no members.
 	GetGroupUsers(ctx context.Context, groupToken string) ([]string, error)
+}
+
+// GroupSummary is a group token together with its human-readable label (the
+// role provider's display name) and description. The picker searches both the
+// token and the label, so the label has to travel with the token.
+type GroupSummary struct {
+	Token       string `json:"token"`
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
 }
 
 // TokenLookupResult is the token information required by the auth middleware.

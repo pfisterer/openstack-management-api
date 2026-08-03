@@ -47,18 +47,33 @@ func TestReconcilerEndpoints_RootGated(t *testing.T) {
 func TestGroupsEndpoints(t *testing.T) {
 	h := setupRouter(t)
 
-	// Search returns the mock groups.
+	// Search by token returns the mock groups, each with its label.
 	rr := do(t, h, http.MethodGet, "/v1/groups/search?q=dept", userRoot, nil)
 	assertStatus(t, rr, http.StatusOK)
-	var resp webserver.TokenListResponse
-	mustDecode(t, rr, &resp)
-	if len(resp.Tokens) == 0 {
-		t.Errorf("group search for 'dept' should return tokens")
+	var searchResp webserver.GroupSearchResponse
+	mustDecode(t, rr, &searchResp)
+	if len(searchResp.Groups) == 0 {
+		t.Fatalf("group search for 'dept' should return groups")
+	}
+	for _, g := range searchResp.Groups {
+		if g.Label == "" {
+			t.Errorf("group %q should carry a label", g.Token)
+		}
+	}
+
+	// Searching by label finds a group whose token does not contain the query.
+	rr = do(t, h, http.MethodGet, "/v1/groups/search?q=Biology", userRoot, nil)
+	assertStatus(t, rr, http.StatusOK)
+	searchResp = webserver.GroupSearchResponse{}
+	mustDecode(t, rr, &searchResp)
+	if len(searchResp.Groups) != 1 || searchResp.Groups[0].Token != "group:dept_bio" {
+		t.Errorf("label search for 'Biology' should return group:dept_bio, got %v", searchResp.Groups)
 	}
 
 	// Mine returns the caller's effective tokens.
 	rr = do(t, h, http.MethodGet, "/v1/groups/mine", userFaculty, nil)
 	assertStatus(t, rr, http.StatusOK)
+	var resp webserver.TokenListResponse
 	mustDecode(t, rr, &resp)
 	found := false
 	for _, tok := range resp.Tokens {

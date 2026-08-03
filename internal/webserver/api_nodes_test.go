@@ -117,8 +117,10 @@ func TestGetNode_Authorization(t *testing.T) {
 	assertStatus(t, do(t, h, http.MethodGet, "/v1/nodes/p_001", userRoot, nil), http.StatusOK)
 	// A foreign branch admin does not.
 	assertStatus(t, do(t, h, http.MethodGet, "/v1/nodes/p_001", userBio, nil), http.StatusForbidden)
-	// The student cannot read the faculty's leaf either.
-	assertStatus(t, do(t, h, http.MethodGet, "/v1/nodes/p_001", userStudent, nil), http.StatusForbidden)
+	// The student is a read-only member of p_001 in the seed and therefore reads it.
+	assertStatus(t, do(t, h, http.MethodGet, "/v1/nodes/p_001", userStudent, nil), http.StatusOK)
+	// On a leaf they have no relation to, the same student is denied.
+	assertStatus(t, do(t, h, http.MethodGet, "/v1/nodes/p_004", userStudent, nil), http.StatusForbidden)
 	// Unknown ID → 404 (as a manager of everything, root gets the honest answer).
 	assertStatus(t, do(t, h, http.MethodGet, "/v1/nodes/nope", userRoot, nil), http.StatusNotFound)
 }

@@ -85,10 +85,12 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			ID: rootID, Kind: tree.KindBudget, ParentID: nil, Status: tree.StatusApproved,
 			Name:       "University Root",
 			AdminScope: common.TokenList{RootGroup},
-			// Departments may request budgets directly under root.
-			EligibleRequesters: common.TokenList{DeptCSAdmin, DeptBioGroup},
-			Limit:              common.ProjectQuota{"cores": common.UnlimitedQuota, "ram": common.UnlimitedQuota, "storage": common.UnlimitedQuota, "gpu": common.UnlimitedQuota},
-			CreatedBy:          "System", CreatedAt: "2025-01-01T00:00:00Z",
+			// No eligible requesters: the root hands resources down by delegation
+			// (a root admin creates the department budgets), it does not take
+			// requests. Nothing in the model enforces that — it is a policy
+			// decision, and this is what that decision looks like as data.
+			Limit:     common.ProjectQuota{"cores": common.UnlimitedQuota, "ram": common.UnlimitedQuota, "storage": common.UnlimitedQuota, "gpu": common.UnlimitedQuota},
+			CreatedBy: "System", CreatedAt: "2025-01-01T00:00:00Z",
 		},
 		{
 			ID: unassignedID, Kind: tree.KindBudget, ParentID: &rootID, Status: tree.StatusApproved,
@@ -137,16 +139,22 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			CreatedBy:          "root.admin@uni.example", CreatedAt: "2025-07-20T14:15:00Z",
 		},
 		{
-			// A pending BUDGET request: the CS dept asks root for expansion capacity.
+			// A pending BUDGET request, awaiting a decision by the CS dept admins.
 			// (The old model had to fake this as a project request.)
-			ID: "b_cs_expansion", Kind: tree.KindBudget, ParentID: &rootID, Status: tree.StatusPending,
-			Name:       "CS Capacity Expansion",
-			Reason:     "Increased enrollment requires more compute capacity next semester",
-			AdminScope: common.TokenList{DeptCSAdmin},
-			Limit:      common.ProjectQuota{"cores": 50, "ram": 200, "storage": 1000, "gpu": 8},
-			CreatedBy:  "admin@cs.example", CreatedAt: "2026-03-01T10:00:00Z",
+			//
+			// It hangs under the CS dept, not under root: faculty is listed in the
+			// dept's eligible requesters, while the root takes no requests at all —
+			// so this is a request that could actually have been made. The
+			// requester holds the admin scope of what they asked for, which is what
+			// the request dialog fills in.
+			ID: "b_cs_expansion", Kind: tree.KindBudget, ParentID: &deptCSID, Status: tree.StatusPending,
+			Name:       "Robotics Lab WS26",
+			Reason:     "A dedicated budget for the robotics lab course next semester",
+			AdminScope: common.TokenList{"user:faculty@cs.example"},
+			Limit:      common.ProjectQuota{"cores": 8, "ram": 32, "storage": 200, "gpu": 1},
+			CreatedBy:  "faculty@cs.example", CreatedAt: "2026-03-01T10:00:00Z",
 			TerminationDate: plusDays(365),
-			History:         created("admin@cs.example", common.ProjectQuota{"cores": 50, "ram": 200, "storage": 1000, "gpu": 8}, tree.StatusPending),
+			History:         created("faculty@cs.example", common.ProjectQuota{"cores": 8, "ram": 32, "storage": 200, "gpu": 1}, tree.StatusPending),
 		},
 
 		// ── Project leaves ────────────────────────────────────────────────────
@@ -158,6 +166,10 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			Limit:  common.ProjectQuota{"cores": 4, "ram": 16, "storage": 100, "gpu": 0},
 			AuthorizedUsers: []common.AuthorizedUser{
 				{Token: DeptCSFaculty, OpenstackRole: "member"},
+				// A read-only participant: the student may look at the project in
+				// OpenStack but cannot change anything. Covers the "reader" role in
+				// the member sync and gives the UI a project with mixed roles.
+				{Token: "user:cs-student@cs.com", OpenstackRole: "reader"},
 			},
 			TerminationDate: plusDays(90),
 			CreatedBy:       "faculty@cs.example", CreatedAt: "2026-01-20T10:00:00Z",

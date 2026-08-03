@@ -24,6 +24,7 @@ package reconciler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -106,6 +107,11 @@ type Status struct {
 	ProjectsDeleted           int       `json:"projects_deleted"`
 	ProjectsPromoted          int       `json:"projects_promoted"`
 	Running                   bool      `json:"running"`
+	// PreseedConflicts lists users whose Keystone account could not be resolved
+	// without guessing, so their role was NOT assigned. These need a human — a
+	// wrong guess creates an account nobody logs into while the role points
+	// nowhere, which is invisible until someone reports missing access.
+	PreseedConflicts []osclient.PreseedConflict `json:"preseed_conflicts,omitempty"`
 }
 
 // Reconciler orchestrates the two-way sync.
@@ -196,9 +202,22 @@ func (r *Reconciler) GetStatus() Status {
 	return r.status
 }
 
+// recordPreseedConflicts appends conflicts to the status of the current run.
+// Deliberately additive within a run and cleared at its start: the list must
+// describe the situation as of the latest run, not accumulate forever.
+func (r *Reconciler) recordPreseedConflicts(conflicts []osclient.PreseedConflict) {
+	if len(conflicts) == 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.status.PreseedConflicts = append(r.status.PreseedConflicts, conflicts...)
+}
+
 func (r *Reconciler) runOnce(ctx context.Context) {
 	r.mu.Lock()
 	r.status.Running = true
+	r.status.PreseedConflicts = nil
 	r.mu.Unlock()
 
 	result, err := r.Reconcile(ctx)
@@ -862,16 +881,18 @@ func (r *Reconciler) syncMembers(leaf tree.Node, osProjectID string) {
 		return
 	}
 	desired := buildDesiredMembers(leaf)
+	var conflicts []osclient.PreseedConflict
 	var memberSyncErr error
 	if r.cfg.NoDelete {
-		memberSyncErr = r.osClient.EnsureProjectMembers(osProjectID, desired)
+		conflicts, memberSyncErr = r.osClient.EnsureProjectMembers(osProjectID, desired)
 	} else {
-		memberSyncErr = r.osClient.SyncProjectMembers(osProjectID, desired)
+		conflicts, memberSyncErr = r.osClient.SyncProjectMembers(osProjectID, desired)
 	}
 	if memberSyncErr != nil {
 		r.log.Warnw("Member sync failed",
 			"node_id", leaf.ID, "os_project_id", osProjectID, "error", memberSyncErr)
 	}
+	r.recordPreseedConflicts(conflicts)
 }
 
 // upsertImported creates or refreshes a synthetic imported leaf under the
@@ -1081,8 +1102,15 @@ func (r *Reconciler) syncGroupMembers(ctx context.Context, groupToken, groupName
 		}
 		user, err := r.osClient.FindOrCreateUser(email)
 		if err != nil {
-			r.log.Warnw("Could not find/create user for group membership",
-				"group", groupName, "email", email, "error", err)
+			var conflict *osclient.PreseedConflict
+			if errors.As(err, &conflict) {
+				r.log.Warnw("Pre-seeding conflict — group membership NOT set",
+					"group", groupName, "email", email, "reason", conflict.Reason)
+				r.recordPreseedConflicts([]osclient.PreseedConflict{*conflict})
+			} else {
+				r.log.Warnw("Could not find/create user for group membership",
+					"group", groupName, "email", email, "error", err)
+			}
 			continue
 		}
 		desiredUserIDs[user.ID] = struct{}{}

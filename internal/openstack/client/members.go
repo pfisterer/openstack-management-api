@@ -1,8 +1,8 @@
 package osclient
 
 import (
+	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 
 	"github.com/gophercloud/gophercloud"
@@ -64,21 +64,13 @@ func (c *OpenStackClient) FindOrCreateUser(email string) (*users.User, error) {
 	if err != nil {
 		return nil, fmt.Errorf("look up user %q: %w", email, err)
 	}
-	if existing != nil {
-		return existing, nil
-	}
 
 	if c.federatedProvisioning {
-		link := FederatedLink{
-			IdPID:      c.federatedIdPID,
-			ProtocolID: c.federatedProtocolID,
-			UniqueID:   url.QueryEscape(email),
-		}
-		created, err := c.CreateFederatedUser(email, email, link)
-		if err != nil {
-			return nil, fmt.Errorf("create federated user %q: %w", email, err)
-		}
-		return created, nil
+		return c.findOrCreateFederatedUser(email, existing)
+	}
+
+	if existing != nil {
+		return existing, nil
 	}
 
 	// Password is intentionally empty — SSO-only login.
@@ -134,7 +126,7 @@ func (c *OpenStackClient) CreateFederatedUser(name, email string, link Federated
 
 // EnsureProjectMembers adds or updates project role assignments to match desired, but
 // never removes existing members. Use this when operating in no-delete mode.
-func (c *OpenStackClient) EnsureProjectMembers(projectID string, desired []DesiredMember) error {
+func (c *OpenStackClient) EnsureProjectMembers(projectID string, desired []DesiredMember) ([]PreseedConflict, error) {
 	return c.syncProjectMembers(projectID, desired, false)
 }
 
@@ -148,11 +140,16 @@ func (c *OpenStackClient) EnsureProjectMembers(projectID string, desired []Desir
 //   - Service accounts (names without "@") are never touched.
 //
 // All errors are non-fatal: a failure for one user is logged and the sync continues.
-func (c *OpenStackClient) SyncProjectMembers(projectID string, desired []DesiredMember) error {
+func (c *OpenStackClient) SyncProjectMembers(projectID string, desired []DesiredMember) ([]PreseedConflict, error) {
 	return c.syncProjectMembers(projectID, desired, true)
 }
 
-func (c *OpenStackClient) syncProjectMembers(projectID string, desired []DesiredMember, removeUnwanted bool) error {
+// syncProjectMembers returns the accounts that could not be resolved without
+// guessing (see PreseedConflict) alongside the usual error: the run continues
+// for everyone else, but those users need a human and must not vanish into the
+// log.
+func (c *OpenStackClient) syncProjectMembers(projectID string, desired []DesiredMember, removeUnwanted bool) ([]PreseedConflict, error) {
+	var conflicts []PreseedConflict
 	// Build desired map: lowercased email → entry with original casing + role.
 	type desiredEntry struct {
 		email    string
@@ -168,7 +165,7 @@ func (c *OpenStackClient) syncProjectMembers(projectID string, desired []Desired
 	// Fetch current direct-user assignments.
 	currentAssignments, err := c.ListProjectMembers(projectID)
 	if err != nil {
-		return fmt.Errorf("list current members: %w", err)
+		return nil, fmt.Errorf("list current members: %w", err)
 	}
 
 	// Build current map: lowercased email → slice of {userID, roleID, roleName}.
@@ -242,8 +239,15 @@ func (c *OpenStackClient) syncProjectMembers(projectID string, desired []Desired
 
 		user, err := c.FindOrCreateUser(want.email)
 		if err != nil {
-			c.log.Warnw("Could not find/create user, skipping",
-				"email", want.email, "project_id", projectID, "error", err)
+			var conflict *PreseedConflict
+			if errors.As(err, &conflict) {
+				conflicts = append(conflicts, *conflict)
+				c.log.Warnw("Pre-seeding conflict — role NOT assigned",
+					"email", want.email, "project_id", projectID, "reason", conflict.Reason)
+			} else {
+				c.log.Warnw("Could not find/create user, skipping",
+					"email", want.email, "project_id", projectID, "error", err)
+			}
 			continue
 		}
 		roleID, err := findRoleID(want.roleName)
@@ -279,7 +283,7 @@ func (c *OpenStackClient) syncProjectMembers(projectID string, desired []Desired
 		}
 	}
 
-	return nil
+	return conflicts, nil
 }
 
 // GetUserByID retrieves a single Keystone user by their ID.

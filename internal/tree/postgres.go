@@ -252,6 +252,30 @@ func (s *PostgresStore) UpsertNode(ctx context.Context, n Node) error {
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{UpdateAll: true}).Create(&row).Error
 }
 
+// CountChildren counts direct children per parent in one grouped query.
+func (s *PostgresStore) CountChildren(ctx context.Context, parentIDs []string) (map[string]int, error) {
+	if len(parentIDs) == 0 {
+		return map[string]int{}, nil
+	}
+	var rows []struct {
+		ParentID string
+		N        int
+	}
+	if err := s.db.WithContext(ctx).
+		Model(&nodeRow{}).
+		Select("parent_id, count(*) as n").
+		Where("parent_id IN ?", parentIDs).
+		Group("parent_id").
+		Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("count children: %w", err)
+	}
+	counts := make(map[string]int, len(rows))
+	for _, r := range rows {
+		counts[r.ParentID] = r.N
+	}
+	return counts, nil
+}
+
 func (s *PostgresStore) DeleteNodes(ctx context.Context, ids []string) error {
 	if len(ids) == 0 {
 		return nil

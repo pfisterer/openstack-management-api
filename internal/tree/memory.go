@@ -98,6 +98,31 @@ func (s *InMemoryStore) UpsertNode(_ context.Context, n Node) error {
 	return nil
 }
 
+// CountChildren counts direct children per parent in a single pass.
+func (s *InMemoryStore) CountChildren(_ context.Context, parentIDs []string) (map[string]int, error) {
+	if len(parentIDs) == 0 {
+		return map[string]int{}, nil
+	}
+	wanted := make(map[string]struct{}, len(parentIDs))
+	for _, id := range parentIDs {
+		wanted[id] = struct{}{}
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	counts := make(map[string]int, len(parentIDs))
+	for _, n := range s.nodes {
+		if n.ParentID == nil {
+			continue
+		}
+		if _, ok := wanted[*n.ParentID]; ok {
+			counts[*n.ParentID]++
+		}
+	}
+	return counts, nil
+}
+
 func (s *InMemoryStore) DeleteNodes(_ context.Context, ids []string) error {
 	if len(ids) == 0 {
 		return nil

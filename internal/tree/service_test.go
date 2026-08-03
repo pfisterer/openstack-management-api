@@ -2,6 +2,7 @@ package tree_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -199,3 +200,145 @@ func TestReparent_CycleGuard(t *testing.T) {
 }
 
 func ptrQuota(q common.ProjectQuota) *common.ProjectQuota { return &q }
+
+// A budget without an admin scope would be invisible: "My Budgets" matches
+// AdminScope directly, so nobody could find it, and requests under it would
+// surface at the nearest ancestor manager instead.
+func TestCreateBudget_RejectsEmptyAdminScope(t *testing.T) {
+	svc, _ := newSvc(t, common.TokenList{"group:root"})
+	rootTokens := common.TokenList{"user:root@x", "group:root"}
+
+	_, err := svc.CreateNode(tree.CreateNodeRequest{
+		ParentID: tree.RootNodeID,
+		Kind:     tree.KindBudget,
+		Name:     "Orphan",
+		Reason:   "test",
+		Limit:    cores(10),
+	}, "root@x", "root@x", rootTokens)
+	if err == nil {
+		t.Fatal("creating a budget without admin_scope should fail")
+	}
+	if !strings.Contains(err.Error(), "admin_scope") {
+		t.Errorf("error should name the offending field, got: %v", err)
+	}
+
+	// Projects are unaffected: they are owned by their requester, not managed.
+	if _, err := svc.CreateNode(tree.CreateNodeRequest{
+		ParentID: tree.RootNodeID,
+		Kind:     tree.KindProject,
+		Reason:   "test",
+		Limit:    cores(1),
+	}, "root@x", "root@x", rootTokens); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+}
+
+// A budget may accept project requests while refusing sub-budget requests —
+// "students may ask for a VM here, but not carve out their own budget".
+func TestAllowSubBudgetRequests(t *testing.T) {
+	svc, _ := newSvc(t, common.TokenList{"group:root"})
+	rootTokens := common.TokenList{"user:root@x", "group:root"}
+	studentTokens := common.TokenList{"user:s1@x", "group:students"}
+	no := false
+
+	budget, err := svc.CreateNode(tree.CreateNodeRequest{
+		ParentID:               tree.RootNodeID,
+		Kind:                   tree.KindBudget,
+		Name:                   "Course",
+		Reason:                 "test",
+		Limit:                  cores(10),
+		AdminScope:             common.TokenList{"group:root"},
+		EligibleRequesters:     common.TokenList{"group:students"},
+		AllowSubBudgetRequests: &no,
+	}, "root@x", "root@x", rootTokens)
+	if err != nil {
+		t.Fatalf("create budget: %v", err)
+	}
+
+	// The requester may still ask for a project.
+	if _, err := svc.CreateNode(tree.CreateNodeRequest{
+		ParentID: budget.ID, Kind: tree.KindProject, Reason: "vm", Limit: cores(1),
+	}, "s1@x", "s1@x", studentTokens); err != nil {
+		t.Fatalf("project request should be allowed: %v", err)
+	}
+
+	// ... but not for a sub-budget.
+	_, err = svc.CreateNode(tree.CreateNodeRequest{
+		ParentID: budget.ID, Kind: tree.KindBudget, Name: "Mine", Reason: "test",
+		Limit: cores(1), AdminScope: common.TokenList{"user:s1@x"},
+	}, "s1@x", "s1@x", studentTokens)
+	if err == nil {
+		t.Fatal("sub-budget request should be refused")
+	}
+
+	// A manager is not restricted by the flag — they shape the tree.
+	if _, err := svc.CreateNode(tree.CreateNodeRequest{
+		ParentID: budget.ID, Kind: tree.KindBudget, Name: "Manager's",
+		Reason: "test", Limit: cores(1), AdminScope: common.TokenList{"group:root"},
+	}, "root@x", "root@x", rootTokens); err != nil {
+		t.Fatalf("manager should still create sub-budgets: %v", err)
+	}
+
+	// Omitting the field keeps the old behaviour: requests are allowed.
+	open, err := svc.CreateNode(tree.CreateNodeRequest{
+		ParentID: tree.RootNodeID, Kind: tree.KindBudget, Name: "Open", Reason: "test",
+		Limit: cores(10), AdminScope: common.TokenList{"group:root"},
+		EligibleRequesters: common.TokenList{"group:students"},
+	}, "root@x", "root@x", rootTokens)
+	if err != nil {
+		t.Fatalf("create open budget: %v", err)
+	}
+	if _, err := svc.CreateNode(tree.CreateNodeRequest{
+		ParentID: open.ID, Kind: tree.KindBudget, Name: "Sub", Reason: "test",
+		Limit: cores(1), AdminScope: common.TokenList{"user:s1@x"},
+	}, "s1@x", "s1@x", studentTokens); err != nil {
+		t.Fatalf("sub-budget request should be allowed by default: %v", err)
+	}
+}
+
+// The tree renders children lazily, so a budget only gets an expand control when
+// the server says it has children — an empty budget must report zero.
+func TestChildCountIsAttached(t *testing.T) {
+	svc, _ := newSvc(t, common.TokenList{"group:root"})
+	rootTokens := common.TokenList{"user:root@x", "group:root"}
+
+	parent, err := svc.CreateNode(tree.CreateNodeRequest{
+		ParentID: tree.RootNodeID, Kind: tree.KindBudget, Name: "Parent", Reason: "test",
+		Limit: cores(10), AdminScope: common.TokenList{"group:root"},
+	}, "root@x", "root@x", rootTokens)
+	if err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	empty, err := svc.CreateNode(tree.CreateNodeRequest{
+		ParentID: parent.ID, Kind: tree.KindBudget, Name: "Empty", Reason: "test",
+		Limit: cores(1), AdminScope: common.TokenList{"group:root"},
+	}, "root@x", "root@x", rootTokens)
+	if err != nil {
+		t.Fatalf("create empty child: %v", err)
+	}
+
+	children, err := svc.ListChildren(parent.ID, rootTokens, 0, 0)
+	if err != nil {
+		t.Fatalf("list children: %v", err)
+	}
+	if len(children) != 1 {
+		t.Fatalf("expected 1 child, got %d", len(children))
+	}
+	if children[0].ChildCount != 0 {
+		t.Errorf("the empty budget should report child_count 0, got %d", children[0].ChildCount)
+	}
+
+	// Give it a leaf and the count follows.
+	if _, err := svc.CreateNode(tree.CreateNodeRequest{
+		ParentID: empty.ID, Kind: tree.KindProject, Reason: "vm", Limit: cores(1),
+	}, "root@x", "root@x", rootTokens); err != nil {
+		t.Fatalf("create leaf: %v", err)
+	}
+	children, err = svc.ListChildren(parent.ID, rootTokens, 0, 0)
+	if err != nil {
+		t.Fatalf("list children: %v", err)
+	}
+	if children[0].ChildCount != 1 {
+		t.Errorf("expected child_count 1 after adding a leaf, got %d", children[0].ChildCount)
+	}
+}

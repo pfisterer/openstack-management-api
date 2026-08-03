@@ -18,6 +18,13 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/common"
 )
 
+// SubBudgetRequestsAllowed reports whether eligible requesters may request a
+// sub-budget under this node. Unset means allowed, so existing budgets keep
+// behaving as before.
+func (n *Node) SubBudgetRequestsAllowed() bool {
+	return n == nil || n.AllowSubBudgetRequests == nil || *n.AllowSubBudgetRequests
+}
+
 // Node kinds.
 const (
 	KindBudget  = "budget"  // inner node: a delegated budget
@@ -175,6 +182,12 @@ type Node struct {
 	EligibleRequesters common.TokenList `json:"eligible_requesters,omitempty"`
 	// AutoApprove, when set on a budget, enables per-requester self-service.
 	AutoApprove *AutoApprove `json:"auto_approve,omitempty"`
+	// AllowSubBudgetRequests controls whether EligibleRequesters may ask for a
+	// sub-budget here, or only for projects. It does NOT restrict managers: they
+	// create sub-budgets directly and this governs requests only.
+	// nil means allowed — the default, and the meaning of every node written
+	// before this field existed.
+	AllowSubBudgetRequests *bool `json:"allow_sub_budget_requests,omitempty"`
 
 	// Owner is the single responsible person of a leaf ("user:<email>").
 	// Additional participants are granted via AuthorizedUsers. Managers of the
@@ -200,6 +213,11 @@ type Node struct {
 	OSOvercommitted          bool                             `json:"os_overcommitted,omitempty"`
 	ExternalGroupAssignments []common.ExternalGroupAssignment `json:"external_group_assignments,omitempty"`
 
+	// ChildCount is attached to API responses (never persisted): the number of
+	// direct children, so a client can tell an empty budget from one whose
+	// children have not been fetched yet. Children are loaded lazily, so without
+	// this every budget looks expandable.
+	ChildCount int `json:"child_count"`
 	// Usage is attached to API responses (never persisted): the rollup of active
 	// descendant leaves for budgets.
 	Usage UsageByStatus `json:"usage,omitempty"`

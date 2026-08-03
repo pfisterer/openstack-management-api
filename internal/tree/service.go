@@ -342,6 +342,32 @@ func buildRolledUpUsage(leaves []Node, parentMap map[string]*string, resourceIDs
 
 // attachUsage computes per-status subtree usage for the budget nodes in the list
 // and returns a new slice with usage attached (leaves are passed through).
+// attachChildCounts fills Node.ChildCount for every budget in the set. Leaves
+// never have children, so they are skipped rather than queried.
+func (s *Service) attachChildCounts(ctx context.Context, nodes []Node) ([]Node, error) {
+	parentIDs := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		if n.Kind == KindBudget {
+			parentIDs = append(parentIDs, n.ID)
+		}
+	}
+	if len(parentIDs) == 0 {
+		return nodes, nil
+	}
+	counts, err := s.store.CountChildren(ctx, parentIDs)
+	if err != nil {
+		return nil, fmt.Errorf("count children: %w", err)
+	}
+	for i := range nodes {
+		if nodes[i].Kind == KindBudget {
+			nodes[i].ChildCount = counts[nodes[i].ID]
+		}
+	}
+	return nodes, nil
+}
+
+// attachUsage adds the subtree usage rollup and the direct child count — the two
+// pieces every list view needs on top of the stored node.
 func (s *Service) attachUsage(ctx context.Context, nodes []Node) ([]Node, error) {
 	budgets := make([]Node, 0, len(nodes))
 	for _, n := range nodes {
@@ -360,7 +386,7 @@ func (s *Service) attachUsage(ctx context.Context, nodes []Node) ([]Node, error)
 		}
 		out = append(out, n)
 	}
-	return out, nil
+	return s.attachChildCounts(ctx, out)
 }
 
 // ── Capacity & limit validation ───────────────────────────────────────────────

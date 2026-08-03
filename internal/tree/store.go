@@ -48,6 +48,9 @@ type Store interface {
 	ListNodes(ctx context.Context, q NodeQuery, limit, offset int) ([]Node, error)
 	UpsertNode(ctx context.Context, n Node) error
 	DeleteNodes(ctx context.Context, ids []string) error
+	// CountChildren returns the number of direct children per parent ID, in one
+	// query for the whole set. Parents without children are absent from the map.
+	CountChildren(ctx context.Context, parentIDs []string) (map[string]int, error)
 }
 
 // ParticipantEmails returns the distinct, sorted set of user emails appearing as

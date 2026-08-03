@@ -212,6 +212,14 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor string, userEmail stri
 		if strings.TrimSpace(req.Name) == "" {
 			return Node{}, fmt.Errorf("budgets require a name")
 		}
+		// A budget without an admin scope is invisible in the UI: "My Budgets"
+		// matches AdminScope directly (the ancestor rule does not apply there),
+		// so nobody would find it, and every request under it would surface at
+		// the nearest ancestor manager instead. The structural "unassigned" node
+		// is the deliberate exception and is created by Bootstrap, not here.
+		if len(req.AdminScope) == 0 {
+			return Node{}, fmt.Errorf("budgets require at least one entry in admin_scope (who manages it)")
+		}
 		if err := s.validateBudgetLimit(req.Limit); err != nil {
 			return Node{}, err
 		}
@@ -255,6 +263,12 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor string, userEmail stri
 	if !isManager && !isEligibleRequester(userTokens, parent) {
 		return Node{}, common.ErrForbidden
 	}
+	// Requesters may be limited to leaves: a course budget usually wants
+	// projects from its students, not a sub-budget tree underneath. Managers are
+	// exempt — they own the structure and create sub-budgets directly.
+	if req.Kind == KindBudget && !isManager && !parent.SubBudgetRequestsAllowed() {
+		return Node{}, fmt.Errorf("%w: this budget does not accept sub-budget requests — request a project instead", common.ErrForbidden)
+	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	node := Node{
@@ -286,6 +300,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor string, userEmail stri
 		node.AdminScope = req.AdminScope
 		node.EligibleRequesters = req.EligibleRequesters
 		node.AutoApprove = req.AutoApprove
+		node.AllowSubBudgetRequests = req.AllowSubBudgetRequests
 	}
 	node.History = []HistoryEntry{createdEntry}
 
@@ -367,7 +382,7 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor string, use
 	}
 
 	wantsPolicyEdit := req.Name != nil || req.AdminScope != nil || req.EligibleRequesters != nil ||
-		req.AutoApprove != nil || req.ClearAutoApprove
+		req.AutoApprove != nil || req.ClearAutoApprove || req.AllowSubBudgetRequests != nil
 	wantsCapacityEdit := req.Limit != nil || req.TerminationDate != nil
 
 	if wantsPolicyEdit {
@@ -400,6 +415,9 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor string, use
 	}
 	if req.EligibleRequesters != nil {
 		updated.EligibleRequesters = *req.EligibleRequesters
+	}
+	if req.AllowSubBudgetRequests != nil {
+		updated.AllowSubBudgetRequests = req.AllowSubBudgetRequests
 	}
 	if req.ClearAutoApprove {
 		updated.AutoApprove = nil

@@ -213,11 +213,20 @@ func (c *OpenStackClient) CreateManagedProject(name, description, parentID, proj
 	return c.CreateProject(opts)
 }
 
-// TagProjectForPromotion adds the managed marker and a fresh resource-id tag to an
-// existing OpenStack project so the reconciler picks it up as a managed project.
-// Any pre-existing resource-id tag is replaced. Safe to call multiple times (idempotent
-// apart from the new resource ID value). Existing non-resource-id tags are preserved.
-func (c *OpenStackClient) TagProjectForPromotion(osProjectID, resourceID string, existingTags []string) error {
+// ResourceIDTag returns the tag that ties an OpenStack project to a node.
+func (c *OpenStackClient) ResourceIDTag(resourceID string) string {
+	return c.resourceIDTagPrefix + resourceID
+}
+
+// TagProjectForNode adds the managed marker and a fresh resource-id tag to an
+// existing OpenStack project so the reconciler picks it up as belonging to that
+// node. Two callers: promoting an imported project into the managed world, and
+// restoring a tag somebody removed in OpenStack.
+//
+// Any pre-existing resource-id tag is replaced. Safe to call multiple times
+// (idempotent apart from the new resource ID value). Existing non-resource-id
+// tags are preserved.
+func (c *OpenStackClient) TagProjectForNode(osProjectID, resourceID string, existingTags []string) error {
 	newTags := make([]string, 0, len(existingTags)+2)
 	hasManagedTag := false
 	for _, tag := range existingTags {

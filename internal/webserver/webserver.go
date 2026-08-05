@@ -47,6 +47,10 @@ type ConfigResponse struct {
 	Resources      []common.ManagedProject `json:"resources"`
 	OpenstackRoles []string                `json:"openstackRoles"`
 	DummyDevUsers  []string                `json:"dummyDevUsers,omitempty"`
+	// ProvisioningEnabled reports whether the reconciler is running. Only then
+	// does an approved project eventually get an OpenStack project — without it
+	// the UI would show every project as "waiting for OpenStack" forever.
+	ProvisioningEnabled bool `json:"provisioningEnabled"`
 }
 
 // APIService provides the business operations consumed by the HTTP handlers.
@@ -92,6 +96,8 @@ type APIConfig struct {
 	ProjectDefinitions []common.ManagedProject
 	Service            APIService
 	DummyDevUsers      []string
+	// ProvisioningEnabled mirrors "the reconciler is configured and running".
+	ProvisioningEnabled bool
 }
 
 // SetupGinWebserver configures and returns the application router.
@@ -215,8 +221,9 @@ func getConfig(cfg APIConfig) gin.HandlerFunc {
 		openstackRoles := []string{"admin", "member", "reader"}
 
 		config := ConfigResponse{
-			Resources:      resources,
-			OpenstackRoles: openstackRoles,
+			Resources:           resources,
+			OpenstackRoles:      openstackRoles,
+			ProvisioningEnabled: cfg.ProvisioningEnabled,
 		}
 
 		// Include dummy dev users in config if set, to inform frontend of available users for testing.

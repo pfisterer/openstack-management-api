@@ -157,10 +157,15 @@ func (s *Service) ListEligibleForOwner(callerTokens common.TokenList, ownerToken
 }
 
 // ListToManage returns the nodes awaiting a decision by the caller: pending and
-// change_pending nodes (budgets AND leaves) whose parent lies in a subtree rooted
-// at a budget the caller directly administers, plus imported leaves in those
-// subtrees (root admins see the unassigned node's imports automatically).
-func (s *Service) ListToManage(userTokens common.TokenList, limit, offset int) ([]Node, error) {
+// change_pending nodes (budgets AND leaves) plus imported leaves, hanging under
+// the budgets the caller directly administers.
+//
+// includeSubtree widens that to the whole subtree below those budgets. Off by
+// default, because a request under a delegated sub-budget is that manager's job:
+// for a root admin the wide list is the entire organization, which drowns the
+// handful of requests actually addressed to them. On it answers the other
+// question — "is anything stuck anywhere below me?".
+func (s *Service) ListToManage(userTokens common.TokenList, includeSubtree bool, limit, offset int) ([]Node, error) {
 	if len(userTokens) == 0 {
 		return nil, fmt.Errorf("no user tokens found")
 	}
@@ -179,21 +184,33 @@ func (s *Service) ListToManage(userTokens common.TokenList, limit, offset int) (
 		return []Node{}, nil
 	}
 
-	// All budgets in the administered subtrees are parents whose children the
-	// caller may decide on.
-	parentMap, err := s.buildSubtreeParentMap(ctx, administered)
-	if err != nil {
-		return nil, fmt.Errorf("collect administered subtrees: %w", err)
-	}
-	parentIDs := make([]string, 0, len(parentMap))
-	for id := range parentMap {
-		parentIDs = append(parentIDs, id)
+	// The parents whose children the caller decides on.
+	var parentIDs []string
+	if includeSubtree {
+		parentMap, err := s.buildSubtreeParentMap(ctx, administered)
+		if err != nil {
+			return nil, fmt.Errorf("collect administered subtrees: %w", err)
+		}
+		for id := range parentMap {
+			parentIDs = append(parentIDs, id)
+		}
+	} else {
+		parentIDs, err = s.undelegatedBudgetIDs(ctx, administered, userTokens)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	return s.store.ListNodes(ctx, NodeQuery{
+	waiting, err := s.store.ListNodes(ctx, NodeQuery{
 		ParentIDs: parentIDs,
 		Statuses:  []string{StatusPending, StatusChangePending, StatusImported},
 	}, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("load requests to manage: %w", err)
+	}
+	// The name of the funding budget travels with the request, so the inbox can
+	// say where something arrived without a lookup per entry.
+	return s.attachParentNames(ctx, waiting)
 }
 
 // ── Create / request ──────────────────────────────────────────────────────────

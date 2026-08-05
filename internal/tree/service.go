@@ -276,6 +276,47 @@ func (s *Service) buildSubtreeParentMap(ctx context.Context, roots []Node) (map[
 	return parentMap, nil
 }
 
+// undelegatedBudgetIDs returns the roots plus every budget below them that has
+// not been handed to anyone else — descending stops at a budget with an admin
+// scope of its own that does not include the caller.
+//
+// This is the set of budgets the caller is personally responsible for. It is not
+// just the roots, because a budget without an admin scope (the imports node, a
+// purely structural grouping) has no manager and its children still belong to
+// whoever manages the level above.
+func (s *Service) undelegatedBudgetIDs(ctx context.Context, roots []Node, userTokens common.TokenList) ([]string, error) {
+	seen := make(map[string]bool, len(roots))
+	ids := make([]string, 0, len(roots))
+	queue := make([]string, 0, len(roots))
+	for _, r := range roots {
+		if !seen[r.ID] {
+			seen[r.ID] = true
+			ids = append(ids, r.ID)
+			queue = append(queue, r.ID)
+		}
+	}
+
+	for len(queue) > 0 {
+		children, err := s.store.ListNodes(ctx, NodeQuery{ParentIDs: queue, Kinds: []string{KindBudget}}, 0, 0)
+		if err != nil {
+			return nil, fmt.Errorf("load child budgets: %w", err)
+		}
+		queue = queue[:0]
+		for _, child := range children {
+			if seen[child.ID] {
+				continue
+			}
+			if len(child.AdminScope) > 0 && !common.NewTokenSet(child.AdminScope).ContainsAny(userTokens) {
+				continue // delegated — its requests are that manager's job
+			}
+			seen[child.ID] = true
+			ids = append(ids, child.ID)
+			queue = append(queue, child.ID)
+		}
+	}
+	return ids, nil
+}
+
 // loadSubtreeUsage computes resource consumption for each budget in roots, rolling
 // up the limits of all ACTIVE descendant leaves through the budget hierarchy.
 //

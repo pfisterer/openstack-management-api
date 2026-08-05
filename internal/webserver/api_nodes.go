@@ -120,10 +120,11 @@ func listMyNodes(cfg APIConfig) gin.HandlerFunc {
 // listNodesToManage returns nodes awaiting a decision by the caller.
 //
 //	@Summary		List nodes to manage
-//	@Description	Retrieves pending / change-pending nodes (budgets and leaves) and imported leaves in the subtrees of budgets the caller administers.
+//	@Description	Retrieves pending / change-pending nodes (budgets and leaves) and imported leaves hanging directly under the budgets the caller administers. Set scope=subtree to include everything below them, including requests addressed to the managers of delegated sub-budgets.
 //	@Tags			nodes
 //	@Produce		json
 //	@Security		Bearer
+//	@Param			scope	query		string	false	"direct (default) or subtree" Enums(direct, subtree)
 //	@Param			limit	query		int	false	"Maximum number of entries to return" default(100)
 //	@Param			offset	query		int	false	"Offset into the result set" default(0)
 //	@Success		200	{array}		tree.Node	"List of nodes."
@@ -143,7 +144,12 @@ func listNodesToManage(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		nodes, err := svc.ListToManage(auth.EffectiveTokens, limit, offset)
+		scope := c.Query("scope")
+		if scope != "" && scope != "direct" && scope != "subtree" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": `scope must be "direct" or "subtree"`})
+			return
+		}
+		nodes, err := svc.ListToManage(auth.EffectiveTokens, scope == "subtree", limit, offset)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return

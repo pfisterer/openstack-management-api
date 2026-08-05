@@ -50,8 +50,23 @@ func TestViews_ToManage(t *testing.T) {
 		t.Errorf("faculty to-manage wrong: %v", nodeIDs(nodes))
 	}
 
-	// Root administers the root node → sees everything pending/imported via subtree.
+	// Root administers the root node. By default it sees only what nobody else is
+	// responsible for: the import under the (unmanaged) imports node, but not the
+	// requests inside the delegated department budgets.
 	rr = do(t, h, http.MethodGet, "/v1/nodes/to-manage", userRoot, nil)
+	assertStatus(t, rr, http.StatusOK)
+	nodes = nil
+	mustDecode(t, rr, &nodes)
+	got = map[string]bool{}
+	for _, n := range nodes {
+		got[n.ID] = true
+	}
+	if !got["p_imported_001"] || got["p_002"] || got["p_003"] || got["b_cs_expansion"] {
+		t.Errorf("root to-manage (direct) wrong: %v", nodeIDs(nodes))
+	}
+
+	// scope=subtree answers the other question — everything below root.
+	rr = do(t, h, http.MethodGet, "/v1/nodes/to-manage?scope=subtree", userRoot, nil)
 	assertStatus(t, rr, http.StatusOK)
 	nodes = nil
 	mustDecode(t, rr, &nodes)
@@ -61,9 +76,13 @@ func TestViews_ToManage(t *testing.T) {
 	}
 	for _, want := range []string{"p_002", "p_003", "b_cs_expansion", "p_imported_001"} {
 		if !got[want] {
-			t.Errorf("root to-manage should contain %s, got %v", want, nodeIDs(nodes))
+			t.Errorf("root to-manage (subtree) should contain %s, got %v", want, nodeIDs(nodes))
 		}
 	}
+
+	// An unknown scope is a client error, not a silently different list.
+	rr = do(t, h, http.MethodGet, "/v1/nodes/to-manage?scope=everything", userRoot, nil)
+	assertStatus(t, rr, http.StatusBadRequest)
 
 	// The student administers nothing.
 	rr = do(t, h, http.MethodGet, "/v1/nodes/to-manage", userStudent, nil)
@@ -81,7 +100,7 @@ func TestViews_EligibleForMe(t *testing.T) {
 	assertStatus(t, rr, http.StatusOK)
 	var nodes []tree.Node
 	mustDecode(t, rr, &nodes)
-	// Students are eligible under the faculty pool and the self-service budget.
+	// Students are eligible under the faculty pool and the auto-approve budget.
 	got := map[string]bool{}
 	for _, n := range nodes {
 		got[n.ID] = true

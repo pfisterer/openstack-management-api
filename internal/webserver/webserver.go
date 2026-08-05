@@ -63,7 +63,7 @@ type APIService interface {
 	ListMyBudgets(userTokens common.TokenList, limit, offset int) ([]tree.Node, error)
 	ListEligibleForMe(userTokens common.TokenList, limit, offset int) ([]tree.Node, error)
 	ListEligibleForOwner(callerTokens common.TokenList, ownerTokens common.TokenList, limit, offset int) ([]tree.Node, error)
-	ListToManage(userTokens common.TokenList, limit, offset int) ([]tree.Node, error)
+	ListToManage(userTokens common.TokenList, includeSubtree bool, limit, offset int) ([]tree.Node, error)
 
 	// Node lifecycle
 	CreateNode(req tree.CreateNodeRequest, actor string, userEmail string, userTokens common.TokenList) (tree.Node, error)

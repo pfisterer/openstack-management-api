@@ -219,8 +219,9 @@ func getConfig(cfg APIConfig) gin.HandlerFunc {
 			}
 		}
 
-		// Default OpenStack roles to be used in the frontend
-		openstackRoles := []string{"admin", "member", "reader"}
+		// Same list the API validates authorized_users against, so the UI can
+		// never offer a role the API would reject.
+		openstackRoles := common.OpenstackRoles
 
 		config := ConfigResponse{
 			Resources:           resources,

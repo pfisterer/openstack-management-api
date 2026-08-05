@@ -173,7 +173,7 @@ func RunApplication() {
 	}
 
 	requestTimeout := time.Duration(config.ServiceTimeoutSeconds) * time.Second
-	treeSvc := tree.NewService(nodeStore, roleProvider, resourceTypeIDs, config.RootAdminTokens, requestTimeout, logger)
+	treeSvc := tree.NewService(nodeStore, roleProvider, resourceTypeIDs, config.RootAdminTokens, requestTimeout, config.MaxAuthorizedUsers, logger)
 
 	// Bootstrap: optional mock seed into an empty store, then ensure the
 	// structural root/unassigned nodes (root admin scope is synced from config).

@@ -26,6 +26,26 @@ const (
 	MaxPageLimit     = 500
 )
 
+// UserPrefix and GroupPrefix mark the two kinds of authorization token.
+const (
+	UserPrefix  = "user:"
+	GroupPrefix = "group:"
+)
+
+// OpenstackRoles are the roles a project participant can hold. The list is the
+// single source for both the /v1/config response (what the UI offers) and the
+// validation of authorized_users — otherwise the UI could offer a role the API
+// rejects, or the API could accept one Keystone does not know.
+var OpenstackRoles = []string{"admin", "member", "reader"}
+
+// DefaultMaxAuthorizedUsers caps how many participants one project may list.
+//
+// Real projects have a handful; a course or department goes in as ONE group
+// token, which is why the ceiling can sit far above normal use and still bound
+// the work a single request creates: every group entry costs the reconciler a
+// Keystone group plus a FindOrCreateUser per member of that group, on every run.
+const DefaultMaxAuthorizedUsers = 32
+
 // UnlimitedQuota is the sentinel value meaning "no cap on this resource".
 // Use -1 in budget limits to signal that a resource is unlimited.
 const UnlimitedQuota = -1

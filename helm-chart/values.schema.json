@@ -56,7 +56,8 @@
             "baseUrl": { "type": "string" },
             "tokenTTLHours": { "type": "integer", "minimum": 1 },
             "dummyAuth": { "type": "boolean" },
-            "mode": { "type": "string", "enum": ["production", "development"] }
+            "mode": { "type": "string", "enum": ["production", "development"] },
+            "maxAuthorizedUsers": { "type": "integer", "minimum": 1 }
           }
         },
         "oidc": {

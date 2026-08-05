@@ -84,6 +84,7 @@ func routerFromStore(t *testing.T, sugar *zap.SugaredLogger, store tree.Store, r
 		quotaResourceIDs,
 		rootAdminTokens,
 		10*time.Second,
+		common.DefaultMaxAuthorizedUsers,
 		sugar,
 	)
 	// Same as app.go: ensure the structural nodes exist and the root admin scope

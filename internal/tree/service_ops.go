@@ -368,7 +368,12 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor string, userEmail stri
 		return Node{}, fmt.Errorf("invalid kind %q", req.Kind)
 	}
 
-	normalizedAuthorizedUsers, err := normalizeAuthorizedUsers(req.AuthorizedUsers)
+	// Validated before the approval lock: checking the group tokens talks to the
+	// role provider, and that call has no business holding up every other
+	// approval in the process.
+	validateCtx, cancelValidate := s.newCtx()
+	normalizedAuthorizedUsers, err := s.normalizeAuthorizedUsers(validateCtx, req.AuthorizedUsers)
+	cancelValidate()
 	if err != nil {
 		return Node{}, err
 	}
@@ -704,7 +709,7 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor string, 
 		if !current.IsLeaf() {
 			return Node{}, fmt.Errorf("authorized_users can only be changed on project leaves")
 		}
-		normalized, err := normalizeAuthorizedUsers(*req.AuthorizedUsers)
+		normalized, err := s.normalizeAuthorizedUsers(ctx, *req.AuthorizedUsers)
 		if err != nil {
 			return Node{}, err
 		}
@@ -1216,7 +1221,7 @@ func (s *Service) PromoteNode(id string, req PromoteNodeRequest, actor string, u
 		return Node{}, err
 	}
 
-	normalizedAuthorizedUsers, err := normalizeAuthorizedUsers(req.AuthorizedUsers)
+	normalizedAuthorizedUsers, err := s.normalizeAuthorizedUsers(ctx, req.AuthorizedUsers)
 	if err != nil {
 		return Node{}, err
 	}

@@ -166,6 +166,11 @@ type AppConfiguration struct {
 	RootAdminTokens       common.TokenList        `json:"root_admin_tokens"`
 	ProjectDefinitions    []common.ManagedProject `json:"resource_definitions" validate:"required,min=1,dive"`
 	ServiceTimeoutSeconds int                     `json:"service_timeout_seconds"`
+	// MaxAuthorizedUsers caps the participants one project may list. Each entry
+	// costs the reconciler Keystone work on every run (a group plus an account
+	// per member), so the ceiling bounds what a single request can trigger.
+	// A course or department belongs in as ONE group token, not as N entries.
+	MaxAuthorizedUsers int `json:"max_authorized_users"`
 }
 
 // loadAppConfiguration loads configuration from an optional .env file and environment variables.
@@ -238,6 +243,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 		RootAdminTokens:       parseCSVEnv(helper.GetEnvString("ROOT_ADMIN_TOKENS", "")),
 		ProjectDefinitions:    loadProjectDefinitionsOrDefaults(),
 		ServiceTimeoutSeconds: helper.GetEnvInt("SERVICE_TIMEOUT_SECONDS", 30),
+		MaxAuthorizedUsers:    helper.GetEnvInt("API_MAX_AUTHORIZED_USERS", common.DefaultMaxAuthorizedUsers),
 	}
 
 	if err := validateConfig(cfg); err != nil {

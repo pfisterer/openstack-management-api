@@ -74,6 +74,13 @@ spec:
               value: {{ .Values.openstackManagementApi.api.dummyAuth | toString | quote }}
             - name: API_MODE
               value: {{ .Values.openstackManagementApi.api.mode | quote }}
+            # Ceiling for authorized_users per project. Each entry costs the
+            # reconciler Keystone work on every run, so this bounds what one
+            # request can trigger; a whole course goes in as ONE group token.
+            - name: API_MAX_AUTHORIZED_USERS
+              value: {{ .Values.openstackManagementApi.api.maxAuthorizedUsers | default 32 | toString | quote }}
+            - name: CORS_ALLOWED_ORIGINS
+              value: {{ join "," (.Values.openstackManagementApi.api.corsAllowedOrigins | default list) | quote }}
 
             # ── OIDC ─────────────────────────────────────────────────────────
             - name: OIDC_ISSUER_URL

@@ -28,12 +28,39 @@ spec:
       labels:
         {{- $selectors | nindent 8 }}
     spec:
+      # This pod never talks to the Kubernetes API — do not hand it a token for it.
+      automountServiceAccountToken: false
+      volumes:
+        # Writable scratch so the container rootfs can stay read-only.
+        - name: tmp
+          emptyDir: {}
       containers:
         - name: openstack-management
           image: {{ .Values.openstackManagementApi.image }}:{{ .Values.openstackManagementApi.version }}
           imagePullPolicy: {{ .Values.openstackManagementApi.imagePullPolicy | default "Always" }}
           ports:
             - containerPort: 8083
+          # Hardening: non-root, no privilege escalation, no capabilities,
+          # read-only rootfs, default seccomp. The image sets USER 65532.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
           env:
             # ── Database ────────────────────────────────────────────────────
             - name: DB_TYPE

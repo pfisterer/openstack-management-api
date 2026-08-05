@@ -30,4 +30,9 @@ COPY --from=builder /app/tmp/build/openstack-management-api /app/
 
 EXPOSE 8083
 
+# Run as a non-root user (numeric UID so Kubernetes can enforce runAsNonRoot
+# without resolving names). Nothing in this image is written at runtime; the
+# binary only needs to be readable and executable.
+USER 65532:65532
+
 CMD ["./openstack-management-api"]

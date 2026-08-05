@@ -218,6 +218,9 @@ func (s *PostgresStore) GetNode(ctx context.Context, id string) (*Node, error) {
 
 func (s *PostgresStore) ListNodes(ctx context.Context, q NodeQuery, limit, offset int) ([]Node, error) {
 	db := s.db.WithContext(ctx)
+	if len(q.IDs) > 0 {
+		db = db.Where("id IN ?", q.IDs)
+	}
 	if len(q.ParentIDs) > 0 {
 		db = db.Where("parent_id IN ?", q.ParentIDs)
 	}

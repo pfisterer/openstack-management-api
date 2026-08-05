@@ -95,7 +95,11 @@ func (s *Service) ListMine(userEmail string, limit, offset int) ([]Node, error) 
 	if err != nil {
 		return nil, err
 	}
-	return s.store.ListNodes(ctx, NodeQuery{Kinds: []string{KindProject}, Owner: owner}, limit, offset)
+	leaves, err := s.store.ListNodes(ctx, NodeQuery{Kinds: []string{KindProject}, Owner: owner}, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("load owned projects: %w", err)
+	}
+	return s.attachUsage(ctx, leaves)
 }
 
 // ListMyBudgets returns the budgets whose AdminScope directly contains one of the

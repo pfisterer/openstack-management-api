@@ -13,6 +13,8 @@ import (
 // list fields match ANY of their values (OR semantics within a field, AND across
 // fields).
 type NodeQuery struct {
+	// IDs restricts to nodes with one of these IDs (bulk lookup in one query).
+	IDs []string
 	// ParentIDs restricts to nodes whose parent is one of these IDs.
 	ParentIDs []string
 	// Kinds restricts to the given node kinds (KindBudget / KindProject).
@@ -92,6 +94,9 @@ func ParticipantEmails(nodes []Node) []string {
 // matchesQuery reports whether a node satisfies the query. Shared by the
 // in-memory store; the Postgres store translates the same semantics to SQL.
 func matchesQuery(n Node, q NodeQuery) bool {
+	if len(q.IDs) > 0 && !containsString(q.IDs, n.ID) {
+		return false
+	}
 	if len(q.ParentIDs) > 0 {
 		if n.ParentID == nil || !containsString(q.ParentIDs, *n.ParentID) {
 			return false

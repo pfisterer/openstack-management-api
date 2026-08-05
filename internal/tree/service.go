@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -366,8 +367,38 @@ func (s *Service) attachChildCounts(ctx context.Context, nodes []Node) ([]Node, 
 	return nodes, nil
 }
 
-// attachUsage adds the subtree usage rollup and the direct child count — the two
-// pieces every list view needs on top of the stored node.
+// attachParentNames fills Node.ParentName for every node that has a parent,
+// loading all distinct parents in one query. Without it a client that shows
+// "paid from <budget>" has to fetch every parent separately — one request per
+// node. Only the display name is exposed; no other parent field is copied.
+func (s *Service) attachParentNames(ctx context.Context, nodes []Node) ([]Node, error) {
+	parentIDs := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		if n.ParentID != nil && !slices.Contains(parentIDs, *n.ParentID) {
+			parentIDs = append(parentIDs, *n.ParentID)
+		}
+	}
+	if len(parentIDs) == 0 {
+		return nodes, nil
+	}
+	parents, err := s.store.ListNodes(ctx, NodeQuery{IDs: parentIDs}, 0, 0)
+	if err != nil {
+		return nil, fmt.Errorf("load parents: %w", err)
+	}
+	names := make(map[string]string, len(parents))
+	for _, p := range parents {
+		names[p.ID] = p.Name
+	}
+	for i := range nodes {
+		if nodes[i].ParentID != nil {
+			nodes[i].ParentName = names[*nodes[i].ParentID]
+		}
+	}
+	return nodes, nil
+}
+
+// attachUsage adds the derived fields every view needs on top of the stored
+// node: the subtree usage rollup, the direct child count and the parent's name.
 func (s *Service) attachUsage(ctx context.Context, nodes []Node) ([]Node, error) {
 	budgets := make([]Node, 0, len(nodes))
 	for _, n := range nodes {
@@ -386,7 +417,11 @@ func (s *Service) attachUsage(ctx context.Context, nodes []Node) ([]Node, error)
 		}
 		out = append(out, n)
 	}
-	return s.attachChildCounts(ctx, out)
+	out, err = s.attachChildCounts(ctx, out)
+	if err != nil {
+		return nil, err
+	}
+	return s.attachParentNames(ctx, out)
 }
 
 // ── Capacity & limit validation ───────────────────────────────────────────────

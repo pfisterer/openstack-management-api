@@ -343,6 +343,49 @@ func TestChildCountIsAttached(t *testing.T) {
 	}
 }
 
+// "My Projects" names the budget each project is paid from. The name travels
+// with the node so the client does not fetch every parent on its own.
+func TestParentNameIsAttached(t *testing.T) {
+	svc, _ := newSvc(t, common.TokenList{"group:root"})
+	rootTokens := common.TokenList{"user:root@x", "group:root"}
+
+	budget, err := svc.CreateNode(tree.CreateNodeRequest{
+		ParentID: tree.RootNodeID, Kind: tree.KindBudget, Name: "Course WI", Reason: "test",
+		Limit: cores(10), AdminScope: common.TokenList{"group:root"},
+		EligibleRequesters: common.TokenList{"user:student@x"},
+	}, "root@x", "root@x", rootTokens)
+	if err != nil {
+		t.Fatalf("create budget: %v", err)
+	}
+	if _, err := svc.CreateNode(tree.CreateNodeRequest{
+		ParentID: budget.ID, Kind: tree.KindProject, Reason: "vm", Limit: cores(1),
+	}, "student@x", "student@x", common.TokenList{"user:student@x"}); err != nil {
+		t.Fatalf("create leaf: %v", err)
+	}
+
+	mine, err := svc.ListMine("student@x", 0, 0)
+	if err != nil {
+		t.Fatalf("list mine: %v", err)
+	}
+	if len(mine) != 1 {
+		t.Fatalf("expected 1 project, got %d", len(mine))
+	}
+	if mine[0].ParentName != "Course WI" {
+		t.Errorf("expected parent_name %q, got %q", "Course WI", mine[0].ParentName)
+	}
+
+	// The root itself has no parent to name.
+	root, err := svc.GetNode(tree.RootNodeID, rootTokens)
+	if err != nil {
+		t.Fatalf("get root: %v", err)
+	}
+	if root.ParentName != "" {
+		t.Errorf("the root has no parent, got parent_name %q", root.ParentName)
+	}
+}
+
+// An end date can be removed again. A nil TerminationDate means "leave as is",
+// so without the explicit flag the UI's "no end date" switch would silently do
 // nothing on a budget that has one.
 func TestClearTerminationDate(t *testing.T) {
 	svc, _ := newSvc(t, common.TokenList{"group:root"})

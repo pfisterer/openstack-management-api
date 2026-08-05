@@ -94,7 +94,7 @@ var KnownStatuses = []string{
 	StatusReleased,
 }
 
-// AutoApprove is the self-service policy of a budget node. When set, an eligible
+// AutoApprove is the auto-approve policy of a budget node. When set, an eligible
 // requester's leaf is approved immediately as long as the requester's cumulative
 // active usage under this budget (matched by Owner) stays within PerRequesterLimit
 // and all ancestors have remaining capacity. This replaces the former "allowance"
@@ -180,7 +180,7 @@ type Node struct {
 	// EligibleRequesters holds the tokens allowed to request child nodes under
 	// this node.
 	EligibleRequesters common.TokenList `json:"eligible_requesters,omitempty"`
-	// AutoApprove, when set on a budget, enables per-requester self-service.
+	// AutoApprove, when set on a budget, enables per-requester auto-approval.
 	AutoApprove *AutoApprove `json:"auto_approve,omitempty"`
 	// AllowSubBudgetRequests controls whether EligibleRequesters may ask for a
 	// sub-budget here, or only for projects. It does NOT restrict managers: they
@@ -221,6 +221,10 @@ type Node struct {
 	// Usage is attached to API responses (never persisted): the rollup of active
 	// descendant leaves for budgets.
 	Usage UsageByStatus `json:"usage,omitempty"`
+	// ParentName is attached to API responses (never persisted): the display name
+	// of ParentID, so a client can name the budget a node is paid from without
+	// fetching each parent separately. Empty for roots.
+	ParentName string `json:"parent_name,omitempty"`
 }
 
 // IsLeaf reports whether the node is a project leaf.

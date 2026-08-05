@@ -171,7 +171,6 @@ func RegisterApiRoutes(v1 *gin.RouterGroup, cfg APIConfig, log *zap.SugaredLogge
 	groups := v1.Group("/groups")
 	{
 		groups.GET("/search", searchGroups(cfg))
-		groups.GET("/mine", listMyGroups(cfg))
 	}
 
 	nodes := v1.Group("/nodes")

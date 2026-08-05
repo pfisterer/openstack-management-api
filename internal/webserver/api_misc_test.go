@@ -70,20 +70,6 @@ func TestGroupsEndpoints(t *testing.T) {
 		t.Errorf("label search for 'Biology' should return group:dept_bio, got %v", searchResp.Groups)
 	}
 
-	// Mine returns the caller's effective tokens.
-	rr = do(t, h, http.MethodGet, "/v1/groups/mine", userFaculty, nil)
-	assertStatus(t, rr, http.StatusOK)
-	var resp webserver.TokenListResponse
-	mustDecode(t, rr, &resp)
-	found := false
-	for _, tok := range resp.Tokens {
-		if tok == "group:dept_cs_faculty" {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("faculty groups/mine should contain group:dept_cs_faculty, got %v", resp.Tokens)
-	}
 }
 
 func TestConfigEndpoint(t *testing.T) {

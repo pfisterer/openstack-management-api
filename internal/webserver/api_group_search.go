@@ -49,28 +49,3 @@ func searchGroups(cfg APIConfig) gin.HandlerFunc {
 		c.JSON(http.StatusOK, GroupSearchResponse{Groups: groups})
 	}
 }
-
-// listMyGroups lists the group tokens for the current user.
-//
-//	@Summary		List my groups
-//	@Description	Lists the group tokens for the current authenticated user.
-//	@Tags			groups
-//	@Produce		json
-//	@Security		Bearer
-//	@Success		200	{object}		webserver.TokenListResponse	"List of group tokens for the user."
-//	@Failure		401	{object}	map[string]any	"Unauthorized."
-//	@ID				listMyGroups
-//	@Router			/v1/groups/mine [get]
-func listMyGroups(_ APIConfig) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		resp := TokenListResponse{
-			Tokens: auth.EffectiveTokens,
-		}
-		c.JSON(http.StatusOK, resp)
-	}
-}

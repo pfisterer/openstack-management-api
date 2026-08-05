@@ -39,6 +39,33 @@ var rootAdminTokens = common.TokenList{"group:root_uni", "user:root.admin@uni.ex
 //   - No reconciler (reconciler endpoints return 503)
 func setupRouter(t *testing.T) http.Handler { return setupRouterWith(t, nil) }
 
+// setupRouterCORS builds the test router with an explicit CORS allowlist, in
+// PRODUCTION mode — the CORS rules are what production applies, and dev mode
+// deliberately relaxes them for loopback origins.
+func setupRouterCORS(t *testing.T, corsOrigins ...string) http.Handler {
+	t.Helper()
+	return corsRouter(t, false, corsOrigins...)
+}
+
+// corsRouter builds a router that only differs in DevMode and the allowlist.
+func corsRouter(t *testing.T, devMode bool, corsOrigins ...string) http.Handler {
+	t.Helper()
+	store, sugar := newTestStore(t)
+	svc := tree.NewService(store, roleprovider.NewMockRoleProvider(), quotaResourceIDs,
+		rootAdminTokens, 10*time.Second, common.DefaultMaxAuthorizedUsers, sugar)
+	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
+		t.Fatalf("bootstrap tree: %v", err)
+	}
+	return webserver.SetupGinWebserver(webserver.SetupConfig{
+		DevMode:            devMode,
+		Log:                sugar,
+		API:                webserver.APIConfig{Service: svc, RoleSwitchGroups: rootAdminTokens},
+		RootAdminTokens:    rootAdminTokens,
+		AuthMiddleware:     webserver.DummyAuthMiddleware(),
+		CORSAllowedOrigins: corsOrigins,
+	})
+}
+
 // setupRouterWith builds the test router with an injectable ReconcilerAPI
 // (nil = reconciler disabled → 503 on the admin endpoints).
 func setupRouterWith(t *testing.T, rec webserver.ReconcilerAPI) http.Handler {
@@ -76,7 +103,7 @@ func newTestStore(t *testing.T) (tree.Store, *zap.SugaredLogger) {
 	return tree.NewInMemoryStore(sugar), sugar
 }
 
-func routerFromStore(t *testing.T, sugar *zap.SugaredLogger, store tree.Store, rec webserver.ReconcilerAPI) http.Handler {
+func routerFromStore(t *testing.T, sugar *zap.SugaredLogger, store tree.Store, rec webserver.ReconcilerAPI, corsOrigins ...string) http.Handler {
 	t.Helper()
 	svc := tree.NewService(
 		store,
@@ -102,9 +129,10 @@ func routerFromStore(t *testing.T, sugar *zap.SugaredLogger, store tree.Store, r
 			// exactly as app.go wires it. canUseRoleSwitch accepts either kind.
 			RoleSwitchGroups: rootAdminTokens,
 		},
-		Reconciler:      rec,
-		RootAdminTokens: rootAdminTokens,
-		AuthMiddleware:  webserver.DummyAuthMiddleware(),
+		Reconciler:         rec,
+		RootAdminTokens:    rootAdminTokens,
+		AuthMiddleware:     webserver.DummyAuthMiddleware(),
+		CORSAllowedOrigins: corsOrigins,
 	})
 }
 

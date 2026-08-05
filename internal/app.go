@@ -257,9 +257,10 @@ func RunApplication() {
 			DummyDevUsers:       dummyDevUsers,
 			ProvisioningEnabled: reconcilerAPI != nil,
 		},
-		Reconciler:      reconcilerAPI,
-		RootAdminTokens: config.RootAdminTokens,
-		AuthMiddleware:  authMiddleware,
+		Reconciler:         reconcilerAPI,
+		RootAdminTokens:    config.RootAdminTokens,
+		AuthMiddleware:     authMiddleware,
+		CORSAllowedOrigins: config.WebServer.CORSAllowedOrigins,
 	})
 
 	// Start the Web server

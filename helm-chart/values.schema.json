@@ -57,7 +57,11 @@
             "tokenTTLHours": { "type": "integer", "minimum": 1 },
             "dummyAuth": { "type": "boolean" },
             "mode": { "type": "string", "enum": ["production", "development"] },
-            "maxAuthorizedUsers": { "type": "integer", "minimum": 1 }
+            "maxAuthorizedUsers": { "type": "integer", "minimum": 1 },
+            "corsAllowedOrigins": {
+              "type": "array",
+              "items": { "type": "string", "pattern": "^https?://[^/]+$" }
+            }
           }
         },
         "oidc": {

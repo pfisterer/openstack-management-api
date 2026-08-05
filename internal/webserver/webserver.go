@@ -3,6 +3,7 @@ package webserver
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -40,6 +41,9 @@ type SetupConfig struct {
 	// Requests that carry none of these tokens receive 403 Forbidden.
 	RootAdminTokens common.TokenList
 	AuthMiddleware  gin.HandlerFunc
+	// CORSAllowedOrigins are the browser origins allowed to call /v1
+	// cross-origin. Empty means none — see enableCors.
+	CORSAllowedOrigins []string
 }
 
 // ConfigResponse contains system-wide resource configuration for the frontend.
@@ -142,8 +146,8 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 	// Setup API v1 routes
 	apiV1Group := router.Group("/v1")
 
-	// Enable CORS with origin reflection for API routes to allow cross-origin requests from any domain
-	enableCorsOriginReflectionConfig(apiV1Group)
+	// Cross-origin access for the API is restricted to configured origins.
+	enableCors(apiV1Group, cfg.CORSAllowedOrigins, cfg.DevMode, cfg.Log)
 
 	// Apply authentication middleware to API routes if provided
 	if cfg.AuthMiddleware != nil {
@@ -246,32 +250,71 @@ func disableCachingMiddleware() gin.HandlerFunc {
 	}
 }
 
-func enableCorsOriginReflectionConfig(router *gin.RouterGroup) {
-	allowedHeaders := []string{"Origin", "Content-Type", "Authorization", "X-DNS-Key-Name", "X-DNS-Key-Algorithm", "X-DNS-Key", "X-Dummy-Auth-User"}
+// enableCors restricts cross-origin API access to allowedOrigins (exact origin
+// matches, e.g. "https://selfservice.dhbw.cloud").
+//
+// The previous version reflected ANY origin and combined that with
+// AllowCredentials — the combination a browser only tolerates because the
+// reflection makes it look like a deliberate per-origin decision. It is not one:
+// with the UI reachable through a BFF that turns a session cookie into a Bearer,
+// a credentialed cross-origin request from an arbitrary page reaches the API
+// authenticated, and reflected headers let that page READ the answer. An empty
+// allowlist is therefore the correct default: in BFF mode the SPA is same-origin
+// with the API and needs no CORS at all.
+//
+// In development the local Vite dev server (http://localhost:8084) is a genuine
+// cross-origin caller, so devMode additionally allows any loopback origin —
+// nobody should have to configure an allowlist to run the UI locally.
+func enableCors(router *gin.RouterGroup, allowedOrigins []string, devMode bool, log *zap.SugaredLogger) {
+	allowed := make(map[string]bool, len(allowedOrigins))
+	for _, origin := range allowedOrigins {
+		if trimmed := strings.TrimRight(strings.TrimSpace(origin), "/"); trimmed != "" {
+			allowed[trimmed] = true
+		}
+	}
 
-	corsConfig := cors.Config{
+	switch {
+	case devMode:
+		log.Infof("CORS: development mode — allowing loopback origins plus %v", allowedOrigins)
+	case len(allowed) == 0:
+		log.Info("CORS: no allowed origins configured — cross-origin API access is disabled")
+	default:
+		log.Infof("CORS: allowing cross-origin API access from %v", allowedOrigins)
+	}
+
+	router.Use(cors.New(cors.Config{
 		AllowOriginFunc: func(origin string) bool {
-			return true
+			origin = strings.TrimRight(origin, "/")
+			return allowed[origin] || (devMode && isLoopbackOrigin(origin))
 		},
 		AllowCredentials: true,
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     allowedHeaders,
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "X-DNS-Key-Name", "X-DNS-Key-Algorithm", "X-DNS-Key", "X-Dummy-Auth-User"},
 		MaxAge:           1 * time.Hour,
+	}))
+
+	// Gin runs group middleware only for requests that MATCH a route, and no
+	// handler is registered for OPTIONS — without this catch-all a preflight
+	// would 404 before the CORS middleware ever ran, and every allowed origin
+	// would break too. The handler itself sets nothing: for an allowed origin
+	// the middleware has already answered 204 with the headers, and for any
+	// other origin it aborted with 403. That is the difference to the previous
+	// version, whose catch-all wrote reflected headers on its own.
+	router.OPTIONS("/*path", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+}
+
+// isLoopbackOrigin reports whether an origin points at this machine — the dev
+// server and any local tooling. Only consulted in development mode.
+func isLoopbackOrigin(origin string) bool {
+	u, err := url.Parse(origin)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return false
 	}
-
-	router.Use(cors.New(corsConfig))
-
-	router.OPTIONS("/*path", func(c *gin.Context) {
-		origin := c.Request.Header.Get("Origin")
-		if origin != "" {
-			c.Header("Access-Control-Allow-Origin", origin)
-		}
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", strings.Join(allowedHeaders, ", "))
-		c.Header("Access-Control-Allow-Credentials", "true")
-		c.Header("Access-Control-Max-Age", fmt.Sprint(int(time.Hour.Seconds())))
-		c.Status(http.StatusNoContent)
-	})
+	switch u.Hostname() {
+	case "localhost", "127.0.0.1", "::1":
+		return true
+	}
+	return false
 }
 
 func parsePagination(c *gin.Context) (int, int, error) {

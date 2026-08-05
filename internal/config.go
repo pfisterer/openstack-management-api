@@ -140,6 +140,12 @@ type WebServerConfig struct {
 	OIDCClientID string `json:"oidc_client_id" validate:"required"`
 	// The bind string for the Gin web server (e.g., ":8082")
 	GinBindString string `json:"gin_bind_string" validate:"required"`
+	// CORSAllowedOrigins lists the exact browser origins allowed to call this
+	// API cross-origin, e.g. "https://selfservice.dhbw.cloud". Empty (the
+	// default) allows none: in BFF mode the SPA reaches the API same-origin
+	// through its own host, so nothing cross-origin is needed at all. Every
+	// entry is a full origin — scheme and host, no path, no wildcard.
+	CORSAllowedOrigins []string `json:"cors_allowed_origins"`
 }
 
 // RoleProviderConfig selects which RoleProvider implementation to use.
@@ -213,10 +219,11 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			FederatedProtocolID:   helper.GetEnvString("OPENSTACK_FEDERATED_PROTOCOL_ID", "openid"),
 		},
 		WebServer: WebServerConfig{
-			DummyAuth:     getEnvBool("API_DUMMY_AUTH", "API_DUMMY_AUTH", false),
-			OIDCIssuerURL: helper.GetEnvString("OIDC_ISSUER_URL", ""),
-			OIDCClientID:  helper.GetEnvString("OIDC_CLIENT_ID", ""),
-			GinBindString: helper.GetEnvString("API_BIND", ":8083"),
+			DummyAuth:          getEnvBool("API_DUMMY_AUTH", "API_DUMMY_AUTH", false),
+			OIDCIssuerURL:      helper.GetEnvString("OIDC_ISSUER_URL", ""),
+			OIDCClientID:       helper.GetEnvString("OIDC_CLIENT_ID", ""),
+			GinBindString:      helper.GetEnvString("API_BIND", ":8083"),
+			CORSAllowedOrigins: parseCSVEnv(helper.GetEnvString("CORS_ALLOWED_ORIGINS", "")),
 		},
 
 		Reconciler: ReconcilerConfiguration{

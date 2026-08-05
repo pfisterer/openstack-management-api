@@ -49,6 +49,18 @@ func TestBuildProjectName(t *testing.T) {
 			leaf: tree.Node{ID: "p_007", Name: strings.Repeat("a", 80)},
 			want: strings.Repeat("a", 64-len(" [p_007]")) + " [p_007]",
 		},
+		{
+			// A real node ID is a UUID; all of it would bury the purpose the
+			// name exists to convey.
+			name: "a uuid node id is shortened to its first block",
+			leaf: tree.Node{ID: "p_7ad31c42-21e7-4fbd-aa3e-15a4660449be", Reason: "asfasf"},
+			want: "asfasf [p_7ad31c42]",
+		},
+		{
+			name: "a uuid node id without a name still identifies the project",
+			leaf: tree.Node{ID: "p_7ad31c42-21e7-4fbd-aa3e-15a4660449be"},
+			want: "p_7ad31c42",
+		},
 	}
 
 	for _, tc := range tests {
@@ -124,5 +136,24 @@ func TestBuildProjectNameFallsBackToReason(t *testing.T) {
 	both := tree.Node{ID: "p_1", Name: "Cloud Computing", Reason: "some purpose"}
 	if got := buildProjectName(both); got != "Cloud Computing [p_1]" {
 		t.Errorf("name should win over reason, got %q", got)
+	}
+}
+
+// The short form is only ever the front of the ID: everything that is not a
+// "<kind>_<uuid>" must survive untouched, or a structural node would end up
+// with a name that points nowhere.
+func TestShortNodeID(t *testing.T) {
+	tests := map[string]string{
+		"p_7ad31c42-21e7-4fbd-aa3e-15a4660449be": "p_7ad31c42",
+		"b_03c80ac1-9311-4825-9dd6-ba749f9a7a2b": "b_03c80ac1",
+		"root":       "root",       // structural node, no UUID
+		"unassigned": "unassigned", // structural node, no UUID
+		"p_001":      "p_001",      // seeded/test IDs are not UUIDs
+		"p_":         "p_",
+	}
+	for id, want := range tests {
+		if got := shortNodeID(id); got != want {
+			t.Errorf("shortNodeID(%q) = %q, want %q", id, got, want)
+		}
 	}
 }

@@ -753,7 +753,7 @@ const keystoneProjectNameMaxLen = 64
 const managedDescriptionSuffix = " (managed project)"
 
 // buildProjectName constructs the OS project name for a leaf: what the leaf is
-// called, with its ID appended, e.g. "Cloud Computing WS26/27 [p_001]".
+// called, with a short form of its ID appended, e.g. "Cloud Computing [p_7ad31c42]".
 //
 // "What it is called" falls back to the purpose, because a project request has
 // no name field at all — only a purpose. Without the fallback every requested
@@ -769,7 +769,7 @@ const managedDescriptionSuffix = " (managed project)"
 // Nothing parses the name back: a project is matched to its node via the
 // resource-id tag, so renaming a node is safe at any time.
 func buildProjectName(leaf tree.Node) string {
-	id := sanitizeProjectName(leaf.ID)
+	id := sanitizeProjectName(shortNodeID(leaf.ID))
 	name := sanitizeProjectName(cmp.Or(leaf.Name, leaf.Reason))
 
 	switch {
@@ -788,6 +788,31 @@ func buildProjectName(leaf tree.Node) string {
 		return truncateRunes(id, keystoneProjectNameMaxLen)
 	}
 	return truncateRunes(name, room) + suffix
+}
+
+// shortNodeID shortens a node ID for use inside a project name. Node IDs are a
+// kind prefix plus a UUID ("p_7ad31c42-21e7-4fbd-aa3e-15a4660449be"), and 36
+// characters of that are noise beside a six-letter purpose — the name is read by
+// people, in Horizon and Skyline, next to dozens of others. Only the first UUID
+// block is kept, the same trade git makes with short commit hashes.
+//
+// Uniqueness survives it: the suffix only has to separate projects that share a
+// NAME, and two of those collide only if their IDs also agree in the first eight
+// hex digits. The kind prefix stays so the suffix still reads as a node ID and
+// can be pasted into a search.
+//
+// IDs that are not "<kind>_<uuid>" — the structural "root" and "unassigned"
+// nodes — are left alone.
+func shortNodeID(id string) string {
+	prefix, rest, found := strings.Cut(id, "_")
+	if !found {
+		return id
+	}
+	block, _, _ := strings.Cut(rest, "-")
+	if len(block) != 8 {
+		return id
+	}
+	return prefix + "_" + block
 }
 
 // sanitizeProjectName makes an arbitrary node name safe for Keystone: it drops

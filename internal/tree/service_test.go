@@ -95,6 +95,7 @@ func TestAutoApprove_CountsPerOwnerNotPerGroup(t *testing.T) {
 		return svc.CreateNode(tree.CreateNodeRequest{
 			ParentID: budget.ID,
 			Kind:     tree.KindProject,
+			Name:     "vm",
 			Reason:   "vm",
 			Limit:    cores(n),
 		}, email, email, tokens)
@@ -153,7 +154,7 @@ func TestAutoApprove_BudgetTotalLimitCaps(t *testing.T) {
 	req := func(email string, n int) tree.Node {
 		t.Helper()
 		node, err := svc.CreateNode(tree.CreateNodeRequest{
-			ParentID: budget.ID, Kind: tree.KindProject, Reason: "vm", Limit: cores(n),
+			ParentID: budget.ID, Kind: tree.KindProject, Name: "vm", Reason: "vm", Limit: cores(n),
 		}, email, email, common.TokenList{"user:" + email, "group:students"})
 		if err != nil {
 			t.Fatalf("request by %s: %v", email, err)
@@ -226,6 +227,7 @@ func TestCreateBudget_RejectsEmptyAdminScope(t *testing.T) {
 	if _, err := svc.CreateNode(tree.CreateNodeRequest{
 		ParentID: tree.RootNodeID,
 		Kind:     tree.KindProject,
+		Name:     "test",
 		Reason:   "test",
 		Limit:    cores(1),
 	}, "root@x", "root@x", rootTokens); err != nil {
@@ -257,7 +259,7 @@ func TestAllowSubBudgetRequests(t *testing.T) {
 
 	// The requester may still ask for a project.
 	if _, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: budget.ID, Kind: tree.KindProject, Reason: "vm", Limit: cores(1),
+		ParentID: budget.ID, Kind: tree.KindProject, Name: "vm", Reason: "vm", Limit: cores(1),
 	}, "s1@x", "s1@x", studentTokens); err != nil {
 		t.Fatalf("project request should be allowed: %v", err)
 	}
@@ -331,7 +333,7 @@ func TestChildCountIsAttached(t *testing.T) {
 
 	// Give it a leaf and the count follows.
 	if _, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: empty.ID, Kind: tree.KindProject, Reason: "vm", Limit: cores(1),
+		ParentID: empty.ID, Kind: tree.KindProject, Name: "vm", Reason: "vm", Limit: cores(1),
 	}, "root@x", "root@x", rootTokens); err != nil {
 		t.Fatalf("create leaf: %v", err)
 	}
@@ -359,7 +361,7 @@ func TestParentNameIsAttached(t *testing.T) {
 		t.Fatalf("create budget: %v", err)
 	}
 	if _, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: budget.ID, Kind: tree.KindProject, Reason: "vm", Limit: cores(1),
+		ParentID: budget.ID, Kind: tree.KindProject, Name: "vm", Reason: "vm", Limit: cores(1),
 	}, "student@x", "student@x", common.TokenList{"user:student@x"}); err != nil {
 		t.Fatalf("create leaf: %v", err)
 	}

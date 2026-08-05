@@ -354,8 +354,8 @@ func createNode(cfg APIConfig) gin.HandlerFunc {
 
 // updateNode applies a direct edit to a budget node.
 //
-//	@Summary		Update budget
-//	@Description	Direct edit of a budget. Policy fields (name, admin scope, eligible requesters, auto-approve) require a manager of the node or its ancestors; limit and termination date require a manager of the parent chain.
+//	@Summary		Update node
+//	@Description	Direct edit of a budget. Policy fields (name, admin scope, eligible requesters, auto-approve) require a manager of the node or its ancestors; limit and termination date require a manager of the parent chain. A project leaf accepts a name-only edit (rename) by its owner or a manager.
 //	@Tags			nodes
 //	@Accept			json
 //	@Produce		json

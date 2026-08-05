@@ -93,8 +93,8 @@ func TestRoleSwitch_ImpersonationDropsRoot(t *testing.T) {
 
 	// But auto-approve works exactly as it would for the student.
 	rr = do(t, h, http.MethodPost, "/v1/nodes", userRoot, tree.CreateNodeRequest{
-		ParentID: "b_cs_students", Kind: tree.KindProject, Reason: "impersonated request",
-		Limit: cores(1),
+		ParentID: "b_cs_students", Kind: tree.KindProject, Name: "impersonated request",
+		Reason: "impersonated request", Limit: cores(1),
 	})
 	assertStatus(t, rr, http.StatusCreated)
 	var n tree.Node

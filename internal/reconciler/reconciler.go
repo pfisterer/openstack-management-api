@@ -887,9 +887,9 @@ const managedDescriptionSuffix = " (managed project)"
 // buildProjectName constructs the OS project name for a leaf: what the leaf is
 // called, with a short form of its ID appended, e.g. "Cloud Computing [p_7ad31c42]".
 //
-// "What it is called" falls back to the purpose, because a project request has
-// no name field at all — only a purpose. Without the fallback every requested
-// project ended up named after its bare node ID ("p_7ad31c42-21e7-…"), which is
+// "What it is called" falls back to the purpose for leaves created before the
+// name became mandatory — they carry no name at all. Without the fallback such a
+// project ends up named after its bare node ID ("p_7ad31c42-21e7-…"), which is
 // what a user sees in Horizon and Skyline and cannot tell apart from any other.
 //
 // The ID suffix is not decoration. Keystone enforces project-name uniqueness per

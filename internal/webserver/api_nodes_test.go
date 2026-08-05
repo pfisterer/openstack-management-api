@@ -274,13 +274,13 @@ func TestValidation_LeafLimits(t *testing.T) {
 
 	// Negative limits and unknown resources are rejected on create.
 	rr := do(t, h, http.MethodPost, "/v1/nodes", userStudent, tree.CreateNodeRequest{
-		ParentID: "b_cs_students", Kind: tree.KindProject, Reason: "x",
+		ParentID: "b_cs_students", Kind: tree.KindProject, Name: "x", Reason: "x",
 		Limit: common.ProjectQuota{"cores": -1},
 	})
 	assertStatus(t, rr, http.StatusBadRequest)
 
 	rr = do(t, h, http.MethodPost, "/v1/nodes", userStudent, tree.CreateNodeRequest{
-		ParentID: "b_cs_students", Kind: tree.KindProject, Reason: "x",
+		ParentID: "b_cs_students", Kind: tree.KindProject, Name: "x", Reason: "x",
 		Limit: common.ProjectQuota{"warp_cores": 1},
 	})
 	assertStatus(t, rr, http.StatusBadRequest)
@@ -328,10 +328,19 @@ func TestUpdateNode_PolicyVsCapacityAuthz(t *testing.T) {
 	rr = do(t, h, http.MethodPut, "/v1/nodes/root", userRoot, tree.UpdateNodeRequest{AdminScope: &scope})
 	assertStatus(t, rr, http.StatusForbidden)
 
-	// Leaves cannot be edited directly.
-	name := "nope"
+	// A leaf accepts exactly one direct edit: its owner renaming it.
+	name := "renamed"
 	rr = do(t, h, http.MethodPut, "/v1/nodes/p_001", userFaculty, tree.UpdateNodeRequest{Name: &name})
+	assertStatus(t, rr, http.StatusOK)
+
+	// Anything else on a leaf still goes through request-change, even when a
+	// rename rides along.
+	rr = do(t, h, http.MethodPut, "/v1/nodes/p_001", userFaculty, tree.UpdateNodeRequest{Name: &name, Limit: &tiny})
 	assertStatus(t, rr, http.StatusBadRequest)
+
+	// Renaming somebody else's project is not a stranger's business.
+	rr = do(t, h, http.MethodPut, "/v1/nodes/p_001", userBio, tree.UpdateNodeRequest{Name: &name})
+	assertStatus(t, rr, http.StatusForbidden)
 }
 
 // ── Delete guards ─────────────────────────────────────────────────────────────

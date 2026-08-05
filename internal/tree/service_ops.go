@@ -336,15 +336,20 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor string, userEmail stri
 	}
 
 	// Validate the request shape before taking the approval lock.
+	//
+	// Every node needs a name, leaves included: it is what the requester sees in
+	// the UI and what the reconciler names the OpenStack project after. Without
+	// it the purpose had to stand in — a whole sentence truncated to Keystone's
+	// name length.
+	if strings.TrimSpace(req.Name) == "" {
+		return Node{}, fmt.Errorf("a name is required")
+	}
 	switch req.Kind {
 	case KindProject:
 		if err := s.validateLeafLimit(req.Limit); err != nil {
 			return Node{}, err
 		}
 	case KindBudget:
-		if strings.TrimSpace(req.Name) == "" {
-			return Node{}, fmt.Errorf("budgets require a name")
-		}
 		// A budget without an admin scope is invisible in the UI: "My Budgets"
 		// matches AdminScope directly (the ancestor rule does not apply there),
 		// so nobody would find it, and every request under it would surface at
@@ -490,12 +495,28 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor string, userEmail stri
 	return node, nil
 }
 
-// ── Direct edit (budgets) ─────────────────────────────────────────────────────
+// ── Direct edit ───────────────────────────────────────────────────────────────
+
+// isRenameOnly reports whether req touches nothing but the name — the only
+// direct edit a project leaf accepts.
+func isRenameOnly(req UpdateNodeRequest) bool {
+	return req.Name != nil &&
+		req.AdminScope == nil && req.EligibleRequesters == nil &&
+		req.AutoApprove == nil && !req.ClearAutoApprove &&
+		req.AllowSubBudgetRequests == nil &&
+		req.Limit == nil && req.TerminationDate == nil && !req.ClearTerminationDate
+}
 
 // UpdateNode applies immediate edits to a budget. Policy fields (name, admin
 // scope, eligible requesters, auto-approve) require a manager of the node or its
 // ancestors. Limit and termination date require a manager of the PARENT chain —
 // you cannot raise your own budget; request a change instead.
+//
+// Project leaves accept exactly one direct edit: a rename, by their owner or a
+// manager of the chain. A name is a label, not an allocation — sending it
+// through the approval cycle would put a manager in front of a typo fix and,
+// worse, park the project in change_pending until they got around to it.
+// Everything else about a leaf still goes through RequestChange.
 func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor string, userTokens common.TokenList) (Node, error) {
 	ctx, cancel := s.newCtx()
 	defer cancel()
@@ -507,8 +528,13 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor string, use
 	if current == nil {
 		return Node{}, fmt.Errorf("node %w", common.ErrNotFound)
 	}
-	if current.Kind != KindBudget {
-		return Node{}, fmt.Errorf("only budgets can be edited directly; use request-change for leaves")
+	if current.Kind != KindBudget && !isRenameOnly(req) {
+		return Node{}, fmt.Errorf("only the name can be edited directly on a project; use request-change for anything else")
+	}
+	// An imported leaf mirrors OpenStack until somebody promotes it; renaming it
+	// here would be overwritten by the next reconcile.
+	if current.Status == StatusImported {
+		return Node{}, fmt.Errorf("imported nodes are read-only until promoted: %w", common.ErrForbidden)
 	}
 	if IsTerminalStatus(current.Status) {
 		return Node{}, fmt.Errorf("cannot edit node in status %q", current.Status)
@@ -519,9 +545,17 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor string, use
 	wantsCapacityEdit := req.Limit != nil || req.TerminationDate != nil || req.ClearTerminationDate
 
 	if wantsPolicyEdit {
-		if manages, err := s.managesNode(ctx, userTokens, current); err != nil {
-			return Node{}, err
-		} else if !manages {
+		// Renaming their own project is the owner's business; every other edit
+		// (and every edit on a budget) belongs to a manager.
+		allowed := current.IsLeaf() && isOwner(userTokens, current)
+		if !allowed {
+			manages, err := s.managesNode(ctx, userTokens, current)
+			if err != nil {
+				return Node{}, err
+			}
+			allowed = manages
+		}
+		if !allowed {
 			return Node{}, common.ErrForbidden
 		}
 	}
@@ -541,6 +575,9 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor string, use
 
 	updated := *current
 	if req.Name != nil {
+		if strings.TrimSpace(*req.Name) == "" {
+			return Node{}, fmt.Errorf("a name is required")
+		}
 		updated.Name = strings.TrimSpace(*req.Name)
 	}
 	if req.AdminScope != nil {

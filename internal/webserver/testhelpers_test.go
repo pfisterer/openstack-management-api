@@ -154,6 +154,15 @@ func futureDate(days int) string {
 	return time.Now().UTC().Add(time.Duration(days) * 24 * time.Hour).Format(time.RFC3339)
 }
 
+// decodePage decodes a paginated node listing and returns the page's items.
+// Tests that also care about the total decode tree.NodePage themselves.
+func decodePage(t *testing.T, rr *httptest.ResponseRecorder) []tree.Node {
+	t.Helper()
+	var page tree.NodePage
+	mustDecode(t, rr, &page)
+	return page.Items
+}
+
 // nodeIDs extracts IDs from a node slice for use in error messages.
 func nodeIDs(ns []tree.Node) []string {
 	ids := make([]string, len(ns))

@@ -84,6 +84,19 @@ func (s *InMemoryStore) ListNodes(_ context.Context, q NodeQuery, limit, offset 
 	return paginateInMemory(out, limit, offset), nil
 }
 
+func (s *InMemoryStore) CountNodes(_ context.Context, q NodeQuery) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	n := 0
+	for _, node := range s.nodes {
+		if matchesQuery(node, q) {
+			n++
+		}
+	}
+	return n, nil
+}
+
 func (s *InMemoryStore) UpsertNode(_ context.Context, n Node) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

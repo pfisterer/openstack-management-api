@@ -317,12 +317,13 @@ func TestChildCountIsAttached(t *testing.T) {
 		t.Fatalf("create empty child: %v", err)
 	}
 
-	children, err := svc.ListChildren(parent.ID, rootTokens, 0, 0)
+	page, err := svc.ListChildren(parent.ID, rootTokens, 0, 0)
 	if err != nil {
 		t.Fatalf("list children: %v", err)
 	}
-	if len(children) != 1 {
-		t.Fatalf("expected 1 child, got %d", len(children))
+	children := page.Items
+	if len(children) != 1 || page.Total != 1 {
+		t.Fatalf("expected 1 child (total 1), got %d (total %d)", len(children), page.Total)
 	}
 	if children[0].ChildCount != 0 {
 		t.Errorf("the empty budget should report child_count 0, got %d", children[0].ChildCount)
@@ -334,11 +335,11 @@ func TestChildCountIsAttached(t *testing.T) {
 	}, "root@x", "root@x", rootTokens); err != nil {
 		t.Fatalf("create leaf: %v", err)
 	}
-	children, err = svc.ListChildren(parent.ID, rootTokens, 0, 0)
+	page, err = svc.ListChildren(parent.ID, rootTokens, 0, 0)
 	if err != nil {
 		t.Fatalf("list children: %v", err)
 	}
-	if children[0].ChildCount != 1 {
+	if page.Items[0].ChildCount != 1 {
 		t.Errorf("expected child_count 1 after adding a leaf, got %d", children[0].ChildCount)
 	}
 }
@@ -367,11 +368,11 @@ func TestParentNameIsAttached(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list mine: %v", err)
 	}
-	if len(mine) != 1 {
-		t.Fatalf("expected 1 project, got %d", len(mine))
+	if len(mine.Items) != 1 {
+		t.Fatalf("expected 1 project, got %d", len(mine.Items))
 	}
-	if mine[0].ParentName != "Course WI" {
-		t.Errorf("expected parent_name %q, got %q", "Course WI", mine[0].ParentName)
+	if mine.Items[0].ParentName != "Course WI" {
+		t.Errorf("expected parent_name %q, got %q", "Course WI", mine.Items[0].ParentName)
 	}
 
 	// The root itself has no parent to name.

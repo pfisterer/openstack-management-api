@@ -4,6 +4,28 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/common"
 )
 
+// NodePage is the envelope every node listing returns.
+//
+// Total is the number of matches BEFORE limit/offset is applied. Without it a
+// full page and a truncated result look the same to a client, and the budget
+// tree silently dropped everything past the page size — a course budget with
+// 600 projects showed 500 and said nothing about the rest.
+type NodePage struct {
+	Items  []Node `json:"items"`
+	Total  int    `json:"total"`
+	Limit  int    `json:"limit"`
+	Offset int    `json:"offset"`
+}
+
+// newNodePage wraps a page of results together with the query bounds that
+// produced it.
+func newNodePage(items []Node, total, limit, offset int) NodePage {
+	if items == nil {
+		items = []Node{}
+	}
+	return NodePage{Items: items, Total: total, Limit: limit, Offset: offset}
+}
+
 // CreateNodeRequest creates a child node under ParentID. Two entry paths share it:
 //   - a manager of the parent chain creates the child directly (status approved),
 //   - an eligible requester submits a request (status pending, possibly auto-approved).

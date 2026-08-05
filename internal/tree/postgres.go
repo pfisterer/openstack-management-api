@@ -216,8 +216,9 @@ func (s *PostgresStore) GetNode(ctx context.Context, id string) (*Node, error) {
 	return &n, nil
 }
 
-func (s *PostgresStore) ListNodes(ctx context.Context, q NodeQuery, limit, offset int) ([]Node, error) {
-	db := s.db.WithContext(ctx)
+// applyNodeQuery translates a NodeQuery into WHERE clauses. Shared by ListNodes
+// and CountNodes so a page and its total can never disagree about what matches.
+func applyNodeQuery(db *gorm.DB, q NodeQuery) *gorm.DB {
 	if len(q.IDs) > 0 {
 		db = db.Where("id IN ?", q.IDs)
 	}
@@ -239,6 +240,11 @@ func (s *PostgresStore) ListNodes(ctx context.Context, q NodeQuery, limit, offse
 	if len(q.EligibleAny) > 0 {
 		db = jsonbContainsAny(db, "eligible_requesters", q.EligibleAny)
 	}
+	return db
+}
+
+func (s *PostgresStore) ListNodes(ctx context.Context, q NodeQuery, limit, offset int) ([]Node, error) {
+	db := applyNodeQuery(s.db.WithContext(ctx), q)
 
 	var rows []nodeRow
 	err := db.Order("id ASC").
@@ -248,6 +254,14 @@ func (s *PostgresStore) ListNodes(ctx context.Context, q NodeQuery, limit, offse
 		return nil, err
 	}
 	return fromNodeRows(rows)
+}
+
+func (s *PostgresStore) CountNodes(ctx context.Context, q NodeQuery) (int, error) {
+	var n int64
+	if err := applyNodeQuery(s.db.WithContext(ctx), q).Model(&nodeRow{}).Count(&n).Error; err != nil {
+		return 0, err
+	}
+	return int(n), nil
 }
 
 func (s *PostgresStore) UpsertNode(ctx context.Context, n Node) error {

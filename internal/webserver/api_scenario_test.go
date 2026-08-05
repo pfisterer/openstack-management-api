@@ -84,8 +84,7 @@ func usageCores(t *testing.T, h http.Handler, admin, budgetID string) int {
 	t.Helper()
 	rr := do(t, h, http.MethodGet, "/v1/nodes/my-budgets", admin, nil)
 	assertStatus(t, rr, http.StatusOK)
-	var ns []tree.Node
-	mustDecode(t, rr, &ns)
+	ns := decodePage(t, rr)
 	for _, n := range ns {
 		if n.ID == budgetID {
 			return n.Usage.Total(quotaResourceIDs)["cores"]

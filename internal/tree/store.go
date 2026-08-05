@@ -48,6 +48,9 @@ type Store interface {
 	// ListNodes returns nodes matching the query, ordered by ID, paginated.
 	// limit <= 0 means no limit.
 	ListNodes(ctx context.Context, q NodeQuery, limit, offset int) ([]Node, error)
+	// CountNodes returns how many nodes match the query, ignoring pagination.
+	// Same filters as ListNodes, so a page can report how much it left out.
+	CountNodes(ctx context.Context, q NodeQuery) (int, error)
 	UpsertNode(ctx context.Context, n Node) error
 	DeleteNodes(ctx context.Context, ids []string) error
 	// CountChildren returns the number of direct children per parent ID, in one

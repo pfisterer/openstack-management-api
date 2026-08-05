@@ -2,6 +2,7 @@ package webserver
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/openstack-management-api/internal/common"
@@ -54,7 +55,7 @@ func getNode(cfg APIConfig) gin.HandlerFunc {
 //	@Param			id		path		string	true	"Parent node ID"
 //	@Param			limit	query		int	false	"Maximum number of entries to return" default(100)
 //	@Param			offset	query		int	false	"Offset into the result set" default(0)
-//	@Success		200	{array}		tree.Node	"List of child nodes."
+//	@Success		200	{object}	tree.NodePage	"List of child nodes, with the total number of matches."
 //	@Failure		401	{object}	map[string]any	"Unauthorized."
 //	@Failure		403	{object}	map[string]any	"Forbidden."
 //	@Failure		404	{object}	map[string]any	"Not found."
@@ -91,7 +92,7 @@ func listNodeChildren(cfg APIConfig) gin.HandlerFunc {
 //	@Security		Bearer
 //	@Param			limit	query		int	false	"Maximum number of entries to return" default(100)
 //	@Param			offset	query		int	false	"Offset into the result set" default(0)
-//	@Success		200	{array}		tree.Node	"List of project leaves."
+//	@Success		200	{object}	tree.NodePage	"List of project leaves, with the total number of matches."
 //	@Failure		401	{object}	map[string]any	"Unauthorized."
 //	@ID				listMyNodes
 //	@Router			/v1/nodes/mine [get]
@@ -127,7 +128,7 @@ func listMyNodes(cfg APIConfig) gin.HandlerFunc {
 //	@Param			scope	query		string	false	"direct (default) or subtree" Enums(direct, subtree)
 //	@Param			limit	query		int	false	"Maximum number of entries to return" default(100)
 //	@Param			offset	query		int	false	"Offset into the result set" default(0)
-//	@Success		200	{array}		tree.Node	"List of nodes."
+//	@Success		200	{object}	tree.NodePage	"List of nodes, with the total number of matches."
 //	@Failure		401	{object}	map[string]any	"Unauthorized."
 //	@ID				listNodesToManage
 //	@Router			/v1/nodes/to-manage [get]
@@ -167,7 +168,7 @@ func listNodesToManage(cfg APIConfig) gin.HandlerFunc {
 //	@Security		Bearer
 //	@Param			limit	query		int	false	"Maximum number of entries to return" default(100)
 //	@Param			offset	query		int	false	"Offset into the result set" default(0)
-//	@Success		200	{array}		tree.Node	"List of budgets."
+//	@Success		200	{object}	tree.NodePage	"List of budgets, with the total number of matches."
 //	@Failure		401	{object}	map[string]any	"Unauthorized."
 //	@ID				listMyBudgets
 //	@Router			/v1/nodes/my-budgets [get]
@@ -202,7 +203,7 @@ func listMyBudgets(cfg APIConfig) gin.HandlerFunc {
 //	@Security		Bearer
 //	@Param			limit	query		int	false	"Maximum number of entries to return" default(100)
 //	@Param			offset	query		int	false	"Offset into the result set" default(0)
-//	@Success		200	{array}		tree.Node	"List of budgets."
+//	@Success		200	{object}	tree.NodePage	"List of budgets, with the total number of matches."
 //	@Failure		401	{object}	map[string]any	"Unauthorized."
 //	@ID				listEligibleBudgets
 //	@Router			/v1/nodes/eligible-for-me [get]
@@ -238,7 +239,7 @@ func listEligibleBudgets(cfg APIConfig) gin.HandlerFunc {
 //	@Param			owner_token	query		[]string	true	"Owner token(s) to resolve eligible budgets for"	collectionFormat(multi)
 //	@Param			limit	query		int	false	"Maximum number of entries to return" default(100)
 //	@Param			offset	query		int	false	"Offset into the result set" default(0)
-//	@Success		200	{array}		tree.Node	"List of budgets."
+//	@Success		200	{object}	tree.NodePage	"List of budgets, with the total number of matches."
 //	@Failure		400	{object}	map[string]any	"Bad request — no owner tokens supplied."
 //	@Failure		401	{object}	map[string]any	"Unauthorized."
 //	@Failure		403	{object}	map[string]any	"Forbidden — caller is not a root admin."
@@ -268,6 +269,48 @@ func listEligibleBudgetsForOwner(cfg APIConfig) gin.HandlerFunc {
 			return
 		}
 		c.JSON(http.StatusOK, nodes)
+	}
+}
+
+// searchNodes finds nodes anywhere below the budgets the caller administers.
+//
+//	@Summary		Search the managed tree
+//	@Description	Full-text search over every node below the budgets the caller administers (and those budgets themselves). Matches name, purpose, ID, owner, creator, status, the linked OpenStack project and the tokens on the node. Returns a flat list — the tree is paginated, so a client cannot filter it locally.
+//	@Tags			nodes
+//	@Produce		json
+//	@Security		Bearer
+//	@Param			q		query		string	true	"Search query (non-empty)"
+//	@Param			limit	query		int	false	"Maximum number of entries to return" default(100)
+//	@Param			offset	query		int	false	"Offset into the result set" default(0)
+//	@Success		200	{object}	tree.NodePage	"Matching nodes, with the total number of matches."
+//	@Failure		400	{object}	map[string]any	"Bad request — empty query or invalid pagination."
+//	@Failure		401	{object}	map[string]any	"Unauthorized."
+//	@ID				searchNodes
+//	@Router			/v1/nodes/search [get]
+func searchNodes(cfg APIConfig) gin.HandlerFunc {
+	svc := cfg.Service
+	return func(c *gin.Context) {
+		limit, offset, err := parsePagination(c)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid pagination parameters"})
+			return
+		}
+		query := strings.TrimSpace(c.Query("q"))
+		if query == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "q must not be empty"})
+			return
+		}
+		auth, err := mustGetAuthContext(c)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
+			return
+		}
+		page, err := svc.SearchNodes(auth.EffectiveTokens, query, limit, offset)
+		if err != nil {
+			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, page)
 	}
 }
 

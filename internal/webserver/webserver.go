@@ -62,12 +62,13 @@ type APIService interface {
 
 	// Node reads / views
 	GetNode(id string, userTokens common.TokenList) (*tree.Node, error)
-	ListChildren(parentID string, userTokens common.TokenList, limit, offset int) ([]tree.Node, error)
-	ListMine(userEmail string, limit, offset int) ([]tree.Node, error)
-	ListMyBudgets(userTokens common.TokenList, limit, offset int) ([]tree.Node, error)
-	ListEligibleForMe(userTokens common.TokenList, limit, offset int) ([]tree.Node, error)
-	ListEligibleForOwner(callerTokens common.TokenList, ownerTokens common.TokenList, limit, offset int) ([]tree.Node, error)
-	ListToManage(userTokens common.TokenList, includeSubtree bool, limit, offset int) ([]tree.Node, error)
+	ListChildren(parentID string, userTokens common.TokenList, limit, offset int) (tree.NodePage, error)
+	ListMine(userEmail string, limit, offset int) (tree.NodePage, error)
+	ListMyBudgets(userTokens common.TokenList, limit, offset int) (tree.NodePage, error)
+	ListEligibleForMe(userTokens common.TokenList, limit, offset int) (tree.NodePage, error)
+	ListEligibleForOwner(callerTokens common.TokenList, ownerTokens common.TokenList, limit, offset int) (tree.NodePage, error)
+	ListToManage(userTokens common.TokenList, includeSubtree bool, limit, offset int) (tree.NodePage, error)
+	SearchNodes(userTokens common.TokenList, query string, limit, offset int) (tree.NodePage, error)
 
 	// Node lifecycle
 	CreateNode(req tree.CreateNodeRequest, actor string, userEmail string, userTokens common.TokenList) (tree.Node, error)
@@ -181,6 +182,7 @@ func RegisterApiRoutes(v1 *gin.RouterGroup, cfg APIConfig, log *zap.SugaredLogge
 		nodes.GET("/my-budgets", listMyBudgets(cfg))
 		nodes.GET("/eligible-for-me", listEligibleBudgets(cfg))
 		nodes.GET("/eligible-for-owner", listEligibleBudgetsForOwner(cfg))
+		nodes.GET("/search", searchNodes(cfg))
 		nodes.GET("/:id", getNode(cfg))
 		nodes.GET("/:id/children", listNodeChildren(cfg))
 		nodes.POST("", createNode(cfg))

@@ -82,8 +82,7 @@ func TestRoleSwitch_ImpersonationDropsRoot(t *testing.T) {
 	// leaves (p_002 in the mock seed).
 	rr = do(t, h, http.MethodGet, "/v1/nodes/mine", userRoot, nil)
 	assertStatus(t, rr, http.StatusOK)
-	var mine []tree.Node
-	mustDecode(t, rr, &mine)
+	mine := decodePage(t, rr)
 	if len(mine) != 1 || mine[0].ID != "p_002" {
 		t.Errorf("impersonated student should own exactly [p_002], got %v", nodeIDs(mine))
 	}

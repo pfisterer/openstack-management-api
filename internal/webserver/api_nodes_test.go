@@ -20,8 +20,7 @@ func TestViews_Mine(t *testing.T) {
 	h := setupRouter(t)
 	rr := do(t, h, http.MethodGet, "/v1/nodes/mine", userFaculty, nil)
 	assertStatus(t, rr, http.StatusOK)
-	var nodes []tree.Node
-	mustDecode(t, rr, &nodes)
+	nodes := decodePage(t, rr)
 	want := map[string]bool{"p_001": true, "p_003": true}
 	if len(nodes) != len(want) {
 		t.Fatalf("faculty should own exactly %d leaves, got %v", len(want), nodeIDs(nodes))
@@ -40,8 +39,7 @@ func TestViews_ToManage(t *testing.T) {
 	// change_pending leaves under them, but NOT the pending budget under root.
 	rr := do(t, h, http.MethodGet, "/v1/nodes/to-manage", userFaculty, nil)
 	assertStatus(t, rr, http.StatusOK)
-	var nodes []tree.Node
-	mustDecode(t, rr, &nodes)
+	nodes := decodePage(t, rr)
 	got := map[string]bool{}
 	for _, n := range nodes {
 		got[n.ID] = true
@@ -55,8 +53,7 @@ func TestViews_ToManage(t *testing.T) {
 	// requests inside the delegated department budgets.
 	rr = do(t, h, http.MethodGet, "/v1/nodes/to-manage", userRoot, nil)
 	assertStatus(t, rr, http.StatusOK)
-	nodes = nil
-	mustDecode(t, rr, &nodes)
+	nodes = decodePage(t, rr)
 	got = map[string]bool{}
 	for _, n := range nodes {
 		got[n.ID] = true
@@ -68,8 +65,7 @@ func TestViews_ToManage(t *testing.T) {
 	// scope=subtree answers the other question — everything below root.
 	rr = do(t, h, http.MethodGet, "/v1/nodes/to-manage?scope=subtree", userRoot, nil)
 	assertStatus(t, rr, http.StatusOK)
-	nodes = nil
-	mustDecode(t, rr, &nodes)
+	nodes = decodePage(t, rr)
 	got = map[string]bool{}
 	for _, n := range nodes {
 		got[n.ID] = true
@@ -87,8 +83,7 @@ func TestViews_ToManage(t *testing.T) {
 	// The student administers nothing.
 	rr = do(t, h, http.MethodGet, "/v1/nodes/to-manage", userStudent, nil)
 	assertStatus(t, rr, http.StatusOK)
-	nodes = nil
-	mustDecode(t, rr, &nodes)
+	nodes = decodePage(t, rr)
 	if len(nodes) != 0 {
 		t.Errorf("student to-manage should be empty, got %v", nodeIDs(nodes))
 	}
@@ -98,8 +93,7 @@ func TestViews_EligibleForMe(t *testing.T) {
 	h := setupRouter(t)
 	rr := do(t, h, http.MethodGet, "/v1/nodes/eligible-for-me", userStudent, nil)
 	assertStatus(t, rr, http.StatusOK)
-	var nodes []tree.Node
-	mustDecode(t, rr, &nodes)
+	nodes := decodePage(t, rr)
 	// Students are eligible under the faculty pool and the auto-approve budget.
 	got := map[string]bool{}
 	for _, n := range nodes {
@@ -117,11 +111,111 @@ func TestViews_EligibleForOwner_RootOnly(t *testing.T) {
 
 	rr = do(t, h, http.MethodGet, "/v1/nodes/eligible-for-owner?owner_token=group:cs-student", userRoot, nil)
 	assertStatus(t, rr, http.StatusOK)
-	var nodes []tree.Node
-	mustDecode(t, rr, &nodes)
+	nodes := decodePage(t, rr)
 	if len(nodes) != 2 {
 		t.Errorf("eligible-for-owner(student) should list 2 budgets, got %v", nodeIDs(nodes))
 	}
+}
+
+// ── Pagination ────────────────────────────────────────────────────────────────
+
+// Every page carries the number of matches it was cut from. Without it a client
+// cannot tell a complete list from a truncated one — which is how the budget
+// tree used to drop everything past its page size without saying so.
+func TestPagination_ChildrenReportTotal(t *testing.T) {
+	h := setupRouter(t)
+
+	rr := do(t, h, http.MethodGet, "/v1/nodes/b_cs_faculty/children", userFaculty, nil)
+	assertStatus(t, rr, http.StatusOK)
+	all := decodePage(t, rr)
+
+	rr = do(t, h, http.MethodGet, "/v1/nodes/b_cs_faculty/children?limit=1", userFaculty, nil)
+	assertStatus(t, rr, http.StatusOK)
+	var first tree.NodePage
+	mustDecode(t, rr, &first)
+	if len(first.Items) != 1 {
+		t.Fatalf("limit=1 should return one child, got %v", nodeIDs(first.Items))
+	}
+	if first.Total != len(all) {
+		t.Errorf("total should count every child (%d), got %d", len(all), first.Total)
+	}
+	if first.Limit != 1 || first.Offset != 0 {
+		t.Errorf("the page should echo its bounds, got limit=%d offset=%d", first.Limit, first.Offset)
+	}
+
+	// The next page continues where the first ended, so paging through a budget
+	// visits every child exactly once.
+	rr = do(t, h, http.MethodGet, "/v1/nodes/b_cs_faculty/children?limit=1&offset=1", userFaculty, nil)
+	assertStatus(t, rr, http.StatusOK)
+	second := decodePage(t, rr)
+	if len(second) != 1 || second[0].ID == first.Items[0].ID {
+		t.Errorf("offset=1 should return the next child, got %v after %v",
+			nodeIDs(second), nodeIDs(first.Items))
+	}
+}
+
+// ── Search ────────────────────────────────────────────────────────────────────
+
+// Search replaces the client-side filter the paginated tree can no longer do.
+// It must stay inside what the caller manages: the faculty's search finds their
+// own ML project, not the import hanging under the root's unassigned node.
+func TestSearchNodes_ScopedToManagedSubtree(t *testing.T) {
+	h := setupRouter(t)
+
+	rr := do(t, h, http.MethodGet, "/v1/nodes/search?q=ml+workload", userFaculty, nil)
+	assertStatus(t, rr, http.StatusOK)
+	found := decodePage(t, rr)
+	ids := map[string]bool{}
+	for _, n := range found {
+		ids[n.ID] = true
+	}
+	if !ids["p_003"] {
+		t.Errorf("faculty should find their own ML project, got %v", nodeIDs(found))
+	}
+	if ids["p_imported_001"] {
+		t.Errorf("faculty must not see the import under the root, got %v", nodeIDs(found))
+	}
+
+	// The root administers everything, so the same query reaches the import.
+	rr = do(t, h, http.MethodGet, "/v1/nodes/search?q=legacy-ml-workload", userRoot, nil)
+	assertStatus(t, rr, http.StatusOK)
+	found = decodePage(t, rr)
+	if len(found) != 1 || found[0].ID != "p_imported_001" {
+		t.Errorf("root should find the import by its OpenStack name, got %v", nodeIDs(found))
+	}
+}
+
+// Matching goes beyond the label the row shows: people search by owner and by
+// the OpenStack project too.
+func TestSearchNodes_MatchesOwnerAndOpenStackProject(t *testing.T) {
+	h := setupRouter(t)
+
+	rr := do(t, h, http.MethodGet, "/v1/nodes/search?q=os-project-abc-123", userRoot, nil)
+	assertStatus(t, rr, http.StatusOK)
+	if found := decodePage(t, rr); len(found) != 1 || found[0].ID != "p_imported_001" {
+		t.Errorf("searching the OpenStack project ID should find the import, got %v", nodeIDs(found))
+	}
+
+	// An email finds what that person owns — and, deliberately, what they were
+	// granted access to: "where does this person appear?" is the question a
+	// manager actually asks.
+	rr = do(t, h, http.MethodGet, "/v1/nodes/search?q="+userStudent, userFaculty, nil)
+	assertStatus(t, rr, http.StatusOK)
+	found := decodePage(t, rr)
+	ids := map[string]bool{}
+	for _, n := range found {
+		ids[n.ID] = true
+	}
+	if !ids["p_002"] {
+		t.Errorf("searching a person's email should find the project they own, got %v", nodeIDs(found))
+	}
+}
+
+// An empty query would mean "everything", which is what the tree is for.
+func TestSearchNodes_RejectsEmptyQuery(t *testing.T) {
+	h := setupRouter(t)
+	assertStatus(t, do(t, h, http.MethodGet, "/v1/nodes/search?q=%20%20", userFaculty, nil),
+		http.StatusBadRequest)
 }
 
 // ── Read authorization ────────────────────────────────────────────────────────
@@ -339,8 +433,7 @@ func TestTransferOwner(t *testing.T) {
 	// The new owner sees it under "mine" and may act on it; the old owner lost control.
 	rr = do(t, h, http.MethodGet, "/v1/nodes/mine", userStudent, nil)
 	assertStatus(t, rr, http.StatusOK)
-	var mine []tree.Node
-	mustDecode(t, rr, &mine)
+	mine := decodePage(t, rr)
 	found := false
 	for _, m := range mine {
 		if m.ID == "p_001" {

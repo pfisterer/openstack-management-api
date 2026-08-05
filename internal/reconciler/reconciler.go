@@ -23,6 +23,7 @@
 package reconciler
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -751,8 +752,13 @@ const keystoneProjectNameMaxLen = 64
 // no meaning for the reconciler — identification runs on tags alone.
 const managedDescriptionSuffix = " (managed project)"
 
-// buildProjectName constructs the OS project name for a leaf: the node's own name
-// with its ID appended, e.g. "Cloud Computing WS26/27 [p_001]".
+// buildProjectName constructs the OS project name for a leaf: what the leaf is
+// called, with its ID appended, e.g. "Cloud Computing WS26/27 [p_001]".
+//
+// "What it is called" falls back to the purpose, because a project request has
+// no name field at all — only a purpose. Without the fallback every requested
+// project ended up named after its bare node ID ("p_7ad31c42-21e7-…"), which is
+// what a user sees in Horizon and Skyline and cannot tell apart from any other.
 //
 // The ID suffix is not decoration. Keystone enforces project-name uniqueness per
 // *domain*, not per parent — two leaves named "Cloud Computing" under different
@@ -764,7 +770,7 @@ const managedDescriptionSuffix = " (managed project)"
 // resource-id tag, so renaming a node is safe at any time.
 func buildProjectName(leaf tree.Node) string {
 	id := sanitizeProjectName(leaf.ID)
-	name := sanitizeProjectName(leaf.Name)
+	name := sanitizeProjectName(cmp.Or(leaf.Name, leaf.Reason))
 
 	switch {
 	case id == "" && name == "":

@@ -109,3 +109,20 @@ func TestBuildDescription(t *testing.T) {
 		t.Errorf("fallback description not marked as managed: %q", bare)
 	}
 }
+
+// A requested project has no name — only a purpose. Naming it after its bare
+// node ID is what a user then sees in Horizon, so the purpose has to carry it.
+func TestBuildProjectNameFallsBackToReason(t *testing.T) {
+	leaf := tree.Node{ID: "p_7ad31c42", Reason: "Lab exercises for Distributed Systems"}
+	got := buildProjectName(leaf)
+	want := "Lab exercises for Distributed Systems [p_7ad31c42]"
+	if got != want {
+		t.Errorf("buildProjectName() = %q, want %q", got, want)
+	}
+
+	// A real name still wins over the purpose.
+	both := tree.Node{ID: "p_1", Name: "Cloud Computing", Reason: "some purpose"}
+	if got := buildProjectName(both); got != "Cloud Computing [p_1]" {
+		t.Errorf("name should win over reason, got %q", got)
+	}
+}

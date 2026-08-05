@@ -53,8 +53,8 @@ type ConfigResponse struct {
 // It is implemented by tree.Service (which embeds identity.Service for the
 // role-switch operations).
 type APIService interface {
-	// Group search operation
-	SearchGroups(query string, limit int) ([]common.GroupSummary, error)
+	// Principal search (groups + users) for token fields
+	SearchPrincipals(query string, limit int) ([]common.GroupSummary, []string, error)
 
 	// Node reads / views
 	GetNode(id string, userTokens common.TokenList) (*tree.Node, error)
@@ -84,7 +84,6 @@ type APIService interface {
 	ClearUserGroupSwitchForActor(actorEmail string)
 	ResolveEffectiveUserTokens(actorEmail string, originalTokens common.TokenList) common.TokenList
 	ResolveEffectiveEmail(actorEmail string) string
-	ListAssumableIdentities() ([]common.Identity, error)
 }
 
 // APIConfig configures API route registration.
@@ -165,13 +164,9 @@ func RegisterApiRoutes(v1 *gin.RouterGroup, cfg APIConfig, log *zap.SugaredLogge
 		roleSwitch.GET("", getRoleSwitch(cfg))
 		roleSwitch.PUT("", setRoleSwitch(cfg))
 		roleSwitch.DELETE("", clearRoleSwitch(cfg))
-		roleSwitch.GET("/identities", listRoleSwitchIdentities(cfg))
 	}
 
-	groups := v1.Group("/groups")
-	{
-		groups.GET("/search", searchGroups(cfg))
-	}
+	v1.GET("/principals/search", searchPrincipals(cfg))
 
 	nodes := v1.Group("/nodes")
 	{

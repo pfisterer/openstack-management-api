@@ -4,6 +4,7 @@ package webserver_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/reconciler"
@@ -44,14 +45,19 @@ func TestReconcilerEndpoints_RootGated(t *testing.T) {
 	}
 }
 
-func TestGroupsEndpoints(t *testing.T) {
+func TestPrincipalSearchEndpoint(t *testing.T) {
 	h := setupRouter(t)
+	search := func(t *testing.T, q string) webserver.PrincipalSearchResponse {
+		t.Helper()
+		rr := do(t, h, http.MethodGet, "/v1/principals/search?q="+q, userRoot, nil)
+		assertStatus(t, rr, http.StatusOK)
+		var resp webserver.PrincipalSearchResponse
+		mustDecode(t, rr, &resp)
+		return resp
+	}
 
 	// Search by token returns the mock groups, each with its label.
-	rr := do(t, h, http.MethodGet, "/v1/groups/search?q=dept", userRoot, nil)
-	assertStatus(t, rr, http.StatusOK)
-	var searchResp webserver.GroupSearchResponse
-	mustDecode(t, rr, &searchResp)
+	searchResp := search(t, "dept")
 	if len(searchResp.Groups) == 0 {
 		t.Fatalf("group search for 'dept' should return groups")
 	}
@@ -62,14 +68,35 @@ func TestGroupsEndpoints(t *testing.T) {
 	}
 
 	// Searching by label finds a group whose token does not contain the query.
-	rr = do(t, h, http.MethodGet, "/v1/groups/search?q=Biology", userRoot, nil)
-	assertStatus(t, rr, http.StatusOK)
-	searchResp = webserver.GroupSearchResponse{}
-	mustDecode(t, rr, &searchResp)
+	searchResp = search(t, "Biology")
 	if len(searchResp.Groups) != 1 || searchResp.Groups[0].Token != "group:dept_bio" {
 		t.Errorf("label search for 'Biology' should return group:dept_bio, got %v", searchResp.Groups)
 	}
 
+	// Users are matched on their address...
+	local := strings.Split(userStudent, "@")[0]
+	searchResp = search(t, local)
+	if len(searchResp.Users) == 0 {
+		t.Errorf("searching %q should find the matching user", local)
+	}
+	for _, email := range searchResp.Users {
+		if !strings.Contains(strings.ToLower(email), strings.ToLower(local)) {
+			t.Errorf("user search returned non-matching %s", email)
+		}
+	}
+
+	// ...but never listed wholesale: an empty query returns groups only, so the
+	// directory cannot be browsed by opening the picker.
+	rr := do(t, h, http.MethodGet, "/v1/principals/search", userRoot, nil)
+	assertStatus(t, rr, http.StatusOK)
+	var all webserver.PrincipalSearchResponse
+	mustDecode(t, rr, &all)
+	if len(all.Users) != 0 {
+		t.Errorf("an empty query must not return users, got %v", all.Users)
+	}
+	if len(all.Groups) == 0 {
+		t.Error("an empty query should still return groups")
+	}
 }
 
 func TestConfigEndpoint(t *testing.T) {

@@ -101,6 +101,21 @@ func (h *HttpRoleProvider) SearchGroups(ctx context.Context, query string, limit
 	return out, nil
 }
 
+// SearchUsers calls GET /v1/users?q=...&limit=... The role-provider matches the
+// address only — it stores no names — so people cannot be looked up by name here.
+func (h *HttpRoleProvider) SearchUsers(ctx context.Context, query string, limit int) ([]string, error) {
+	params := &roleclient.SearchUsersParams{Q: &query, Limit: &limit}
+
+	resp, err := h.client.SearchUsersWithResponse(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("HttpRoleProvider.SearchUsers: %w", err)
+	}
+	if resp.JSON200 == nil {
+		return nil, fmt.Errorf("HttpRoleProvider.SearchUsers: unexpected status %d", resp.StatusCode())
+	}
+	return *resp.JSON200, nil
+}
+
 // GetGroupUsers calls GET /v1/groups/{token}/members?recursive=true and returns user emails.
 func (h *HttpRoleProvider) GetGroupUsers(ctx context.Context, groupToken string) ([]string, error) {
 	recursive := true

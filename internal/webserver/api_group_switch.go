@@ -16,18 +16,6 @@ type setRoleSwitchGroupRequest struct {
 	ImpersonateUser string `json:"impersonate_user"`
 }
 
-// identitySummary is a non-sensitive view of an assumable identity (no tokens).
-type identitySummary struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
-	Email string `json:"email"`
-}
-
-// assumableIdentitiesResponse lists the identities a caller may impersonate.
-type assumableIdentitiesResponse struct {
-	Identities []identitySummary `json:"identities"`
-}
-
 // roleSwitchStateResponse describes the current role switch context.
 type roleSwitchStateResponse struct {
 	Enabled            bool             `json:"enabled"`
@@ -211,42 +199,5 @@ func clearRoleSwitch(cfg APIConfig) gin.HandlerFunc {
 			return
 		}
 		c.JSON(http.StatusOK, response)
-	}
-}
-
-// listRoleSwitchIdentities returns the identities the caller may fully impersonate.
-//
-//	@Summary		List assumable identities
-//	@Description	Returns the identities a role-switch-enabled (root admin) caller may fully impersonate via PUT /v1/role-switch with impersonate_user.
-//	@Tags			role-switch
-//	@Produce		json
-//	@Security		Bearer
-//	@Success		200	{object}	assumableIdentitiesResponse	"Assumable identities."
-//	@Failure		403	{object}	map[string]any	"Forbidden."
-//	@ID				listRoleSwitchIdentities
-//	@Router			/v1/role-switch/identities [get]
-func listRoleSwitchIdentities(cfg APIConfig) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		if !canUseRoleSwitch(auth.OriginalTokens, cfg.RoleSwitchGroups) {
-			c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
-			return
-		}
-
-		identities, err := cfg.Service.ListAssumableIdentities()
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-
-		out := make([]identitySummary, 0, len(identities))
-		for _, ident := range identities {
-			out = append(out, identitySummary{ID: ident.ID, Label: ident.Label, Email: ident.Email})
-		}
-		c.JSON(http.StatusOK, assumableIdentitiesResponse{Identities: out})
 	}
 }

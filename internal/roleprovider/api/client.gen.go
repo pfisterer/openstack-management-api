@@ -129,6 +129,15 @@ type UploadAndSyncMultipartBody struct {
 	File openapi_types.File `json:"file"`
 }
 
+// SearchUsersParams defines parameters for SearchUsers.
+type SearchUsersParams struct {
+	// Q Case-insensitive substring of the email address
+	Q *string `form:"q,omitempty" json:"q,omitempty"`
+
+	// Limit Maximum results to return
+	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
 // CreateGroupJSONRequestBody defines body for CreateGroup for application/json ContentType.
 type CreateGroupJSONRequestBody = WebserverCreateGroupRequest
 
@@ -283,6 +292,9 @@ type ClientInterface interface {
 
 	// UploadAndSyncWithBody request with any body
 	UploadAndSyncWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SearchUsers request
+	SearchUsers(ctx context.Context, params *SearchUsersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetUserTokens request
 	GetUserTokens(ctx context.Context, email string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -554,6 +566,18 @@ func (c *Client) TriggerSync(ctx context.Context, id string, reqEditors ...Reque
 
 func (c *Client) UploadAndSyncWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUploadAndSyncRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SearchUsers(ctx context.Context, params *SearchUsersParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSearchUsersRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1296,6 +1320,71 @@ func NewUploadAndSyncRequestWithBody(server string, id string, contentType strin
 	return req, nil
 }
 
+// NewSearchUsersRequest generates requests for SearchUsers
+func NewSearchUsersRequest(server string, params *SearchUsersParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/users")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Q != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetUserTokensRequest generates requests for GetUserTokens
 func NewGetUserTokensRequest(server string, email string) (*http.Request, error) {
 	var err error
@@ -1436,6 +1525,9 @@ type ClientWithResponsesInterface interface {
 
 	// UploadAndSyncWithBodyWithResponse request with any body
 	UploadAndSyncWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UploadAndSyncResponse, error)
+
+	// SearchUsersWithResponse request
+	SearchUsersWithResponse(ctx context.Context, params *SearchUsersParams, reqEditors ...RequestEditorFn) (*SearchUsersResponse, error)
 
 	// GetUserTokensWithResponse request
 	GetUserTokensWithResponse(ctx context.Context, email string, reqEditors ...RequestEditorFn) (*GetUserTokensResponse, error)
@@ -1870,6 +1962,30 @@ func (r UploadAndSyncResponse) StatusCode() int {
 	return 0
 }
 
+type SearchUsersResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *[]string
+	JSON401      *map[string]interface{}
+	JSON500      *map[string]interface{}
+}
+
+// Status returns HTTPResponse.Status
+func (r SearchUsersResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SearchUsersResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type GetUserTokensResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -2095,6 +2211,15 @@ func (c *ClientWithResponses) UploadAndSyncWithBodyWithResponse(ctx context.Cont
 		return nil, err
 	}
 	return ParseUploadAndSyncResponse(rsp)
+}
+
+// SearchUsersWithResponse request returning *SearchUsersResponse
+func (c *ClientWithResponses) SearchUsersWithResponse(ctx context.Context, params *SearchUsersParams, reqEditors ...RequestEditorFn) (*SearchUsersResponse, error) {
+	rsp, err := c.SearchUsers(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSearchUsersResponse(rsp)
 }
 
 // GetUserTokensWithResponse request returning *GetUserTokensResponse
@@ -2787,6 +2912,46 @@ func ParseUploadAndSyncResponse(rsp *http.Response) (*UploadAndSyncResponse, err
 			return nil, err
 		}
 		response.JSON422 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSearchUsersResponse parses an HTTP response from a SearchUsersWithResponse call
+func ParseSearchUsersResponse(rsp *http.Response) (*SearchUsersResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SearchUsersResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []string
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

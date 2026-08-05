@@ -14,6 +14,11 @@ type RoleProvider interface {
 	// matches the query.
 	SearchGroups(ctx context.Context, query string, limit int) ([]GroupSummary, error)
 
+	// SearchUsers returns email addresses matching query. Matching is on the
+	// address only, never on a person's name — the directory must not be
+	// browsable by name.
+	SearchUsers(ctx context.Context, query string, limit int) ([]string, error)
+
 	// GetGroupUsers returns the email addresses of all users belonging to the given group token
 	// (e.g. "group:dept_cs_faculty"). Returns an empty slice when the group has no members.
 	GetGroupUsers(ctx context.Context, groupToken string) ([]string, error)

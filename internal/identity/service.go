@@ -1,7 +1,7 @@
 // Package identity provides the model-agnostic identity features: role-switch
-// (group override), full identity impersonation, and the assumable-identity
-// picker. It was extracted from the former applogic service — nothing in here
-// depends on the resource tree model.
+// (group override), full identity impersonation, and the principal search behind
+// every token field. It was extracted from the former applogic service — nothing
+// in here depends on the resource tree model.
 package identity
 
 import (
@@ -20,9 +20,9 @@ import (
 
 // Store is the minimal persistence interface the identity service needs.
 type Store interface {
-	// ListIdentities returns the seeded identities (mock/dev data).
-	ListIdentities(ctx context.Context) ([]common.Identity, error)
 	// ListParticipants returns distinct user emails appearing on any leaf node.
+	// These are the only way to find people covered solely by a pattern rule
+	// (students), who have no enumerable row in the directory.
 	ListParticipants(ctx context.Context) ([]string, error)
 }
 
@@ -32,14 +32,6 @@ const userTokenPrefix = "user:"
 
 // groupTokenPrefix is the canonical prefix of group tokens.
 const groupTokenPrefix = "group:"
-
-// identityPickerGroupLimit bounds how many groups we expand to enumerate staff
-// principals from the role provider. The provider has no user-search endpoint
-// (only group search + group→members), so we enumerate the members of the known
-// groups. Fine at the current scale; if the directory grows large this is the
-// point to materialize a searchable principals table or add a subject-search
-// endpoint upstream.
-const identityPickerGroupLimit = 200
 
 // Service implements role-switch overrides and identity resolution.
 type Service struct {
@@ -157,97 +149,6 @@ func (s *Service) ResolveEffectiveEmail(actorEmail string) string {
 	return actorEmail
 }
 
-// ListAssumableIdentities returns the identities a root admin may impersonate via
-// role switch. It fuses three sources, deduped case-insensitively by email:
-//  1. seeded identities (mock/dev data), which carry richer labels + tokens;
-//  2. staff principals enumerated from the role provider's known groups;
-//  3. users who already participate in nodes (owner/authorized tokens) — the only
-//     way pattern-covered members such as students surface, since a glob
-//     membership has no enumerable rows.
-//
-// Role-provider lookups are best-effort: if the provider is unreachable the picker
-// degrades to the locally known identities rather than failing outright. Used both
-// to populate the UI picker and to validate impersonation targets, so the two can
-// never disagree.
-func (s *Service) ListAssumableIdentities() ([]common.Identity, error) {
-	ctx, cancel := s.newCtx()
-	defer cancel()
-
-	byEmail := map[string]common.Identity{}
-	add := func(id common.Identity) {
-		email := strings.TrimSpace(id.Email)
-		if email == "" {
-			return
-		}
-		key := strings.ToLower(email)
-		if existing, ok := byEmail[key]; ok {
-			// Enrich an existing (leaner) entry with a label/tokens if we have them.
-			if existing.Label == "" && id.Label != "" {
-				existing.Label = id.Label
-			}
-			if len(existing.Tokens) == 0 && len(id.Tokens) > 0 {
-				existing.Tokens = id.Tokens
-			}
-			byEmail[key] = existing
-			return
-		}
-		if id.ID == "" {
-			id.ID = email
-		}
-		byEmail[key] = id
-	}
-
-	// 1. Seeded identities first, so their richer label/tokens win on dedupe.
-	seeded, err := s.store.ListIdentities(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("list seeded identities: %w", err)
-	}
-	for _, id := range seeded {
-		add(id)
-	}
-
-	// 2. Staff principals from the role provider's known groups (best-effort).
-	if groups, err := s.roles.SearchGroups(ctx, "", identityPickerGroupLimit); err != nil {
-		s.log.Warnw("identity picker: group search failed, degrading to local identities", "error", err)
-	} else {
-		for _, group := range groups {
-			emails, err := s.roles.GetGroupUsers(ctx, group.Token)
-			if err != nil {
-				s.log.Warnw("identity picker: group member lookup failed", "group", group.Token, "error", err)
-				continue
-			}
-			for _, email := range emails {
-				add(common.Identity{Email: email})
-			}
-		}
-	}
-
-	// 3. Users who already participate in nodes (surfaces pattern-covered members).
-	if participants, err := s.store.ListParticipants(ctx); err != nil {
-		s.log.Warnw("identity picker: participant lookup failed", "error", err)
-	} else {
-		for _, email := range participants {
-			add(common.Identity{Email: email})
-		}
-	}
-
-	out := make([]common.Identity, 0, len(byEmail))
-	for _, id := range byEmail {
-		out = append(out, id)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		li, lj := out[i].Label, out[j].Label
-		if li == "" {
-			li = out[i].Email
-		}
-		if lj == "" {
-			lj = out[j].Email
-		}
-		return strings.ToLower(li) < strings.ToLower(lj)
-	})
-	return out, nil
-}
-
 // SetUserGroupSwitchForActor stores a temporary effective group for one actor.
 func (s *Service) SetUserGroupSwitchForActor(actorEmail, groupToken string) error {
 	normalizedActor := canonicalActorEmail(actorEmail)
@@ -273,9 +174,10 @@ func (s *Service) SetUserGroupSwitchForActor(actorEmail, groupToken string) erro
 // SetUserImpersonationForActor makes the actor fully assume the given identity
 // (see ResolveEffectiveUserTokens, identity mode). The endpoint is root-gated, and
 // the effective tokens are resolved live from the role provider, so an unknown
-// email simply yields an empty view. The picker's fused identity list is therefore
-// only quick-pick suggestions, not a whitelist. Stored in the same per-actor
-// override slot, so it replaces any active group override and vice versa.
+// email simply yields an empty view. There is deliberately no whitelist of
+// assumable identities — a root admin may become any address, which is the only
+// way to reach someone who is a member through a pattern rule. Stored in the same
+// per-actor override slot, so it replaces any active group override and vice versa.
 func (s *Service) SetUserImpersonationForActor(actorEmail, targetEmail string) error {
 	normalizedActor := canonicalActorEmail(actorEmail)
 	if normalizedActor == "" {
@@ -324,11 +226,66 @@ func (s *Service) GetUserGroupSwitchForActor(actorEmail string) *string {
 	return nil
 }
 
-// SearchGroups returns matching groups with their labels via the role provider.
-func (s *Service) SearchGroups(query string, limit int) ([]common.GroupSummary, error) {
+// SearchPrincipals returns what a token field may be filled with: groups matched
+// on token, display name or description, and users matched on their email
+// address ONLY.
+//
+// The asymmetry is deliberate. A group is an organizational label and may be
+// browsed; a person is not, so you have to know (part of) someone's address to
+// find them — you cannot search the staff by name. Users come from the role
+// provider plus everyone already participating in the tree, which is how members
+// covered only by a pattern rule (students) become findable at all.
+//
+// Both halves are best-effort: a directory outage yields the local half rather
+// than an error, so a form still works.
+func (s *Service) SearchPrincipals(query string, limit int) ([]common.GroupSummary, []string, error) {
 	ctx, cancel := s.newCtx()
 	defer cancel()
-	return s.roles.SearchGroups(ctx, query, limit)
+
+	groups, err := s.roles.SearchGroups(ctx, query, limit)
+	if err != nil {
+		s.log.Warnw("principal search: group search failed", "error", err)
+		groups = nil
+	}
+
+	byEmail := map[string]struct{}{}
+	users := []string{}
+	addUser := func(email string) {
+		email = strings.TrimSpace(email)
+		if email == "" || len(users) >= limit {
+			return
+		}
+		key := strings.ToLower(email)
+		if _, dup := byEmail[key]; dup {
+			return
+		}
+		byEmail[key] = struct{}{}
+		users = append(users, email)
+	}
+
+	// An empty query must not dump the directory: users only appear once the
+	// caller has typed something to match on.
+	if needle := strings.ToLower(strings.TrimSpace(query)); needle != "" {
+		if found, err := s.roles.SearchUsers(ctx, query, limit); err != nil {
+			s.log.Warnw("principal search: user search failed", "error", err)
+		} else {
+			for _, email := range found {
+				addUser(email)
+			}
+		}
+		if participants, err := s.store.ListParticipants(ctx); err != nil {
+			s.log.Warnw("principal search: participant lookup failed", "error", err)
+		} else {
+			for _, email := range participants {
+				if strings.Contains(strings.ToLower(email), needle) {
+					addUser(email)
+				}
+			}
+		}
+		sort.Strings(users)
+	}
+
+	return groups, users, nil
 }
 
 // newCtx returns a context with the configured request deadline.

@@ -38,6 +38,28 @@ func (m *MockRoleProvider) GetUserTokens(ctx context.Context, claims *common.Use
 	return common.TokenList{"user:" + userEmail}, nil
 }
 
+// SearchUsers matches mock identities on their email address only, like the real
+// provider — never on the label, so dev behaves the same way as production.
+func (m *MockRoleProvider) SearchUsers(_ context.Context, query string, limit int) ([]string, error) {
+	identities, _ := mockdata.DefaultMockTreeState()
+	needle := strings.ToLower(strings.TrimSpace(query))
+	out := []string{}
+	for _, ident := range identities {
+		if ident.Email == "" {
+			continue
+		}
+		if needle != "" && !strings.Contains(strings.ToLower(ident.Email), needle) {
+			continue
+		}
+		out = append(out, ident.Email)
+	}
+	sort.Strings(out)
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 // GetGroupUsers returns the emails of all mock identities that carry the given group token.
 func (m *MockRoleProvider) GetGroupUsers(_ context.Context, groupToken string) ([]string, error) {
 	identities, _ := mockdata.DefaultMockTreeState()

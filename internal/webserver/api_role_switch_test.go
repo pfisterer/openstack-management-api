@@ -31,7 +31,6 @@ func TestRoleSwitch_OnlyAllowlistedUsers(t *testing.T) {
 	}
 	assertStatus(t, do(t, h, http.MethodPut, "/v1/role-switch", userFaculty,
 		map[string]string{"group_token": "group:root_uni"}), http.StatusForbidden)
-	assertStatus(t, do(t, h, http.MethodGet, "/v1/role-switch/identities", userFaculty, nil), http.StatusForbidden)
 }
 
 func TestRoleSwitch_GroupOverride(t *testing.T) {
@@ -111,28 +110,4 @@ func TestRoleSwitch_ImpersonationDropsRoot(t *testing.T) {
 	// Clearing the switch restores root rights.
 	assertStatus(t, do(t, h, http.MethodDelete, "/v1/role-switch", userRoot, nil), http.StatusOK)
 	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/approve", userRoot, tree.ApproveNodeRequest{}), http.StatusOK)
-}
-
-func TestRoleSwitch_IdentityPicker(t *testing.T) {
-	h := setupRouter(t)
-	rr := do(t, h, http.MethodGet, "/v1/role-switch/identities", userRoot, nil)
-	assertStatus(t, rr, http.StatusOK)
-	var resp struct {
-		Identities []struct {
-			Email string `json:"email"`
-		} `json:"identities"`
-	}
-	mustDecode(t, rr, &resp)
-	// All five mock identities must be present (fused from seed + provider + participants).
-	want := map[string]bool{userRoot: false, userCSAdmin: false, userFaculty: false, userBio: false, userStudent: false}
-	for _, id := range resp.Identities {
-		if _, ok := want[id.Email]; ok {
-			want[id.Email] = true
-		}
-	}
-	for email, seen := range want {
-		if !seen {
-			t.Errorf("identity picker is missing %s", email)
-		}
-	}
 }

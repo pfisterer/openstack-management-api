@@ -37,6 +37,11 @@ type UpdateNodeRequest struct {
 	AllowSubBudgetRequests *bool                `json:"allow_sub_budget_requests"`
 	Limit                  *common.ProjectQuota `json:"limit"`
 	TerminationDate        *string              `json:"termination_date"`
+	// ClearTerminationDate removes an existing end date: the node then runs
+	// until somebody changes it. A nil TerminationDate cannot express this —
+	// it means "leave as is" — so removal needs its own flag, like
+	// ClearAutoApprove.
+	ClearTerminationDate bool `json:"clear_termination_date"`
 }
 
 // ChangeNodeRequest proposes changes that require approval by a manager of the

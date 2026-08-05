@@ -72,7 +72,7 @@ func TestAutoApprove_CountsPerOwnerNotPerGroup(t *testing.T) {
 	svc, _ := newSvc(t, common.TokenList{"group:root"})
 	rootTokens := common.TokenList{"user:root@x", "group:root"}
 
-	// Root creates a self-service budget: total 10, 2 per requester.
+	// Root creates an auto-approve budget: total 10, 2 per requester.
 	budget, err := svc.CreateNode(tree.CreateNodeRequest{
 		ParentID:           tree.RootNodeID,
 		Kind:               tree.KindBudget,
@@ -129,7 +129,7 @@ func TestAutoApprove_CountsPerOwnerNotPerGroup(t *testing.T) {
 	}
 }
 
-// TestAutoApprove_BudgetTotalLimitCaps verifies the self-service budget's own
+// TestAutoApprove_BudgetTotalLimitCaps verifies the auto-approve budget's own
 // total limit is enforced even when every requester is within their personal cap
 // (the old model had no total for allowances at all).
 func TestAutoApprove_BudgetTotalLimitCaps(t *testing.T) {
@@ -340,5 +340,47 @@ func TestChildCountIsAttached(t *testing.T) {
 	}
 	if children[0].ChildCount != 1 {
 		t.Errorf("expected child_count 1 after adding a leaf, got %d", children[0].ChildCount)
+	}
+}
+
+// nothing on a budget that has one.
+func TestClearTerminationDate(t *testing.T) {
+	svc, _ := newSvc(t, common.TokenList{"group:root"})
+	rootTokens := common.TokenList{"user:root@x", "group:root"}
+	ends := "2027-01-01T00:00:00Z"
+
+	budget, err := svc.CreateNode(tree.CreateNodeRequest{
+		ParentID:        tree.RootNodeID,
+		Kind:            tree.KindBudget,
+		Name:            "Course",
+		Reason:          "test",
+		Limit:           cores(10),
+		AdminScope:      common.TokenList{"group:root"},
+		TerminationDate: &ends,
+	}, "root@x", "root@x", rootTokens)
+	if err != nil {
+		t.Fatalf("create budget: %v", err)
+	}
+	if budget.TerminationDate == nil {
+		t.Fatal("budget should have been created with an end date")
+	}
+
+	// Without the flag the date survives — that is what "leave as is" means.
+	untouched, err := svc.UpdateNode(budget.ID, tree.UpdateNodeRequest{}, "root@x", rootTokens)
+	if err != nil {
+		t.Fatalf("update without changes: %v", err)
+	}
+	if untouched.TerminationDate == nil {
+		t.Error("an update that says nothing about the end date must not remove it")
+	}
+
+	cleared, err := svc.UpdateNode(budget.ID, tree.UpdateNodeRequest{
+		ClearTerminationDate: true,
+	}, "root@x", rootTokens)
+	if err != nil {
+		t.Fatalf("clear termination date: %v", err)
+	}
+	if cleared.TerminationDate != nil {
+		t.Errorf("end date should be gone, got %q", *cleared.TerminationDate)
 	}
 }

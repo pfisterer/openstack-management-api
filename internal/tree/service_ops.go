@@ -383,7 +383,7 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor string, use
 
 	wantsPolicyEdit := req.Name != nil || req.AdminScope != nil || req.EligibleRequesters != nil ||
 		req.AutoApprove != nil || req.ClearAutoApprove || req.AllowSubBudgetRequests != nil
-	wantsCapacityEdit := req.Limit != nil || req.TerminationDate != nil
+	wantsCapacityEdit := req.Limit != nil || req.TerminationDate != nil || req.ClearTerminationDate
 
 	if wantsPolicyEdit {
 		if manages, err := s.managesNode(ctx, userTokens, current); err != nil {
@@ -427,7 +427,9 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor string, use
 		}
 		updated.AutoApprove = req.AutoApprove
 	}
-	if req.TerminationDate != nil {
+	if req.ClearTerminationDate {
+		updated.TerminationDate = nil
+	} else if req.TerminationDate != nil {
 		updated.TerminationDate = req.TerminationDate
 	}
 

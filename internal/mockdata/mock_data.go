@@ -1,6 +1,6 @@
 // Package mockdata provides the development/testing seed for the tree model:
 // a small university with a root budget, department budgets, a student
-// self-service budget (auto-approve) and example leaves in every lifecycle state.
+// auto-approve budget and example leaves in every lifecycle state.
 package mockdata
 
 import (
@@ -119,7 +119,7 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			TerminationDate: plusDays(365),
 		},
 		{
-			// Student self-service: managed by FACULTY (not by the students —
+			// Student auto-approve: managed by FACULTY (not by the students —
 			// consumers deliberately hold no admin scope), consumable by students
 			// up to 2 cores each, capped at 10 cores overall.
 			ID: studentsID, Kind: tree.KindBudget, ParentID: &facultyID, Status: tree.StatusApproved,
@@ -180,7 +180,7 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			// faculty decision.
 			ID: "p_002", Kind: tree.KindProject, ParentID: &facultyID, Status: tree.StatusPending,
 			Name:   "Student course project",
-			Reason: "Student course project needs compute (exceeds self-service limit)",
+			Reason: "Student course project needs compute (exceeds auto-approve limit)",
 			Owner:  "user:cs-student@cs.com",
 			Limit:  common.ProjectQuota{"cores": 2, "ram": 8, "storage": 50, "gpu": 0},
 			AuthorizedUsers: []common.AuthorizedUser{

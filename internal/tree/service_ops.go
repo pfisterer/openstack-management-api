@@ -329,7 +329,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor string, userEmail stri
 		node.History = append(node.History, approvedEntry)
 
 	case req.Kind == KindProject && parent.AutoApprove != nil:
-		// Self-service: cumulative per-owner usage under this budget must stay
+		// Auto-approve: cumulative per-owner usage under this budget must stay
 		// within the per-requester limit, and every ancestor must have capacity.
 		usage, err := s.ownerActiveUsage(ctx, parent.ID, node.Owner)
 		if err != nil {
@@ -611,7 +611,7 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor string, 
 // ApproveNode approves a pending node or the pending changes of a change_pending
 // node. Only managers of the PARENT chain may approve — a node's own admin scope
 // deliberately does not count, so nobody approves their own budget or a peer's
-// self-service request. ModifiedLimit lets the approver grant a different limit.
+// auto-approved request. ModifiedLimit lets the approver grant a different limit.
 func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor string, userTokens common.TokenList) (Node, error) {
 	s.approvalMu.Lock()
 	defer s.approvalMu.Unlock()

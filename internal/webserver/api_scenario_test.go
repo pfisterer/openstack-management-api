@@ -163,7 +163,7 @@ func TestScenario_DHBWTreeLifecycle(t *testing.T) {
 		t.Errorf("child limit 50 > CS pool 40 should be 400, got %d", rr.Code)
 	}
 
-	// Student self-service: managed by faculty, consumable by students. The
+	// Student auto-approve: managed by faculty, consumable by students. The
 	// per-requester auto-approve cap (2) and the total limit (10) are independent.
 	studBudget := mkBudget(t, h, userFaculty, tree.CreateNodeRequest{
 		ParentID:           csFacPool,
@@ -206,7 +206,7 @@ func TestScenario_DHBWTreeLifecycle(t *testing.T) {
 		t.Errorf("student approving own over-cap request should be 403, got %d: %s", rr.Code, rr.Body.String())
 	}
 	if rr := do(t, h, http.MethodGet, "/v1/nodes/"+studBudget+"/children", userStudent, nil); rr.Code != http.StatusForbidden {
-		t.Errorf("student listing self-service children should be 403, got %d", rr.Code)
+		t.Errorf("student listing auto-approve children should be 403, got %d", rr.Code)
 	}
 
 	// The budget's manager (faculty) approves it — beyond the auto cap, but within
@@ -215,7 +215,7 @@ func TestScenario_DHBWTreeLifecycle(t *testing.T) {
 	checkAll(3, 3, 3, 0, 3)
 
 	// ── Phase 2b: within the per-requester cap but an ancestor is full ────────
-	// poolB (limit 3) filled to 2; a self-service budget (cap 3) sits under it.
+	// poolB (limit 3) filled to 2; an auto-approve budget (cap 3) sits under it.
 	// A 2-core request fits the cap (0+2<=3) but not poolB's remaining capacity
 	// (2+2>3) → not auto-approved. The fill is released afterwards.
 	poolB := mkBudget(t, h, userRoot, tree.CreateNodeRequest{

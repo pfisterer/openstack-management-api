@@ -93,7 +93,7 @@ func TestRoleSwitch_ImpersonationDropsRoot(t *testing.T) {
 	// student cannot decide the pending leaf, so neither can root-as-student.
 	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/approve", userRoot, tree.ApproveNodeRequest{}), http.StatusForbidden)
 
-	// But auto-approve self-service works exactly as it would for the student.
+	// But auto-approve works exactly as it would for the student.
 	rr = do(t, h, http.MethodPost, "/v1/nodes", userRoot, tree.CreateNodeRequest{
 		ParentID: "b_cs_students", Kind: tree.KindProject, Reason: "impersonated request",
 		Limit: cores(1),
@@ -102,7 +102,7 @@ func TestRoleSwitch_ImpersonationDropsRoot(t *testing.T) {
 	var n tree.Node
 	mustDecode(t, rr, &n)
 	if n.Status != tree.StatusApproved {
-		t.Errorf("impersonated self-service request should auto-approve, got %q", n.Status)
+		t.Errorf("impersonated request should auto-approve, got %q", n.Status)
 	}
 	if n.Owner != "user:"+userStudent {
 		t.Errorf("owner should be the impersonated student, got %q", n.Owner)

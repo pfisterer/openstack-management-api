@@ -90,7 +90,7 @@ Everything else is bookkeeping around these:
    `AutoApprove` policy and the requester's cumulative active usage under N
    (matched by `Owner`) plus the request stays within
    `auto_approve.per_requester_limit` **and every ancestor has remaining
-   capacity**, the request is approved immediately (self-service).
+   capacity**, the request is approved immediately (auto-approve).
 
 Capacity is enforced on every approval: for each ancestor A,
 `Usage(A) + Δ ≤ A.Limit`. All capacity-relevant paths serialize on a single
@@ -295,7 +295,7 @@ Two implementations:
   orphaned in existing databases; drop manually if desired).
 
 Mock seed (`DB_ADD_MOCK_DATA=true`, only when the store is empty): a small
-university — root, departments, a faculty pool, a student self-service budget
+university — root, departments, a faculty pool, a student auto-approve budget
 with `auto_approve`, example leaves in every lifecycle state, one `imported`
 leaf under `unassigned`.
 

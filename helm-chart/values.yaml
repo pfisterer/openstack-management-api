@@ -50,6 +50,21 @@ openstackManagementApi:
     region: "microstack"
     insecure: false
 
+    # Pre-created users must be FEDERATED accounts wherever the cloud logs people
+    # in via OIDC. Keystone derives a federated user's id from the identity it is
+    # bound to, so a plain local account with the right name is a different user
+    # than the one an SSO login lands on — the role is assigned, and the person
+    # still sees nothing. Leave false only for clouds with local accounts only.
+    federatedProvisioning: false
+    # The Keystone identity-provider and protocol ids a pre-created account is
+    # bound to, and the domain federated accounts live in. All three are part of
+    # the derived user id, so they must match the cloud exactly:
+    #   openstack identity provider list
+    #   openstack federation protocol list --identity-provider <id>
+    federatedIdpId: "keycloak"
+    federatedProtocolId: "openid"
+    federatedDomainId: "default"
+
   #------------------------------------
   # Web Server / API
   #------------------------------------

@@ -45,7 +45,11 @@
             "applicationCredentialSecret": { "type": "string" },
             "projectId": { "type": "string" },
             "region": { "type": "string" },
-            "insecure": { "type": "boolean" }
+            "insecure": { "type": "boolean" },
+            "federatedProvisioning": { "type": "boolean" },
+            "federatedIdpId": { "type": "string" },
+            "federatedProtocolId": { "type": "string" },
+            "federatedDomainId": { "type": "string" }
           }
         },
         "api": {

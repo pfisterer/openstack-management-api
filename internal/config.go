@@ -217,6 +217,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			FederatedProvisioning: helper.GetEnvBool("OPENSTACK_FEDERATED_PROVISIONING", false),
 			FederatedIdPID:        helper.GetEnvString("OPENSTACK_FEDERATED_IDP_ID", "keycloak"),
 			FederatedProtocolID:   helper.GetEnvString("OPENSTACK_FEDERATED_PROTOCOL_ID", "openid"),
+			FederatedDomainID:     helper.GetEnvString("OPENSTACK_FEDERATED_DOMAIN_ID", "default"),
 		},
 		WebServer: WebServerConfig{
 			DummyAuth:          getEnvBool("API_DUMMY_AUTH", "API_DUMMY_AUTH", false),

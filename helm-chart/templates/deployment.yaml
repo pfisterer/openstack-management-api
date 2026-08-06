@@ -89,6 +89,14 @@ spec:
               value: {{ .Values.openstackManagementApi.openstack.region | quote }}
             - name: OPENSTACK_INSECURE
               value: {{ .Values.openstackManagementApi.openstack.insecure | toString | quote }}
+            - name: OPENSTACK_FEDERATED_PROVISIONING
+              value: {{ .Values.openstackManagementApi.openstack.federatedProvisioning | toString | quote }}
+            - name: OPENSTACK_FEDERATED_IDP_ID
+              value: {{ .Values.openstackManagementApi.openstack.federatedIdpId | quote }}
+            - name: OPENSTACK_FEDERATED_PROTOCOL_ID
+              value: {{ .Values.openstackManagementApi.openstack.federatedProtocolId | quote }}
+            - name: OPENSTACK_FEDERATED_DOMAIN_ID
+              value: {{ .Values.openstackManagementApi.openstack.federatedDomainId | quote }}
 
             # ── Web Server / API ─────────────────────────────────────────────
             - name: API_BIND

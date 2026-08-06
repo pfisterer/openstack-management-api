@@ -10,6 +10,12 @@ import (
 var (
 	ErrForbidden = errors.New("forbidden")
 	ErrNotFound  = errors.New("not found")
+	// ErrConflict marks a request that was well-formed but arrived too late:
+	// the node had already moved to a status in which the operation no longer
+	// applies. It is a distinct sentinel because the caller's reaction differs
+	// from a validation error — there is nothing to correct in the input, the
+	// client's view of the world is simply stale and needs reloading.
+	ErrConflict = errors.New("conflict")
 )
 
 // StorageConfiguration holds configuration for the storage backend.

@@ -328,6 +328,7 @@ func searchNodes(cfg APIConfig) gin.HandlerFunc {
 //	@Failure		401		{object}	map[string]any	"Unauthorized."
 //	@Failure		403		{object}	map[string]any	"Forbidden."
 //	@Failure		404		{object}	map[string]any	"Parent not found."
+//	@Failure		409		{object}	map[string]any	"Conflict: the node changed status; reload."
 //	@ID				createNode
 //	@Router			/v1/nodes [post]
 func createNode(cfg APIConfig) gin.HandlerFunc {
@@ -367,6 +368,7 @@ func createNode(cfg APIConfig) gin.HandlerFunc {
 //	@Failure		401		{object}	map[string]any	"Unauthorized."
 //	@Failure		403		{object}	map[string]any	"Forbidden."
 //	@Failure		404		{object}	map[string]any	"Not found."
+//	@Failure		409		{object}	map[string]any	"Conflict: the node changed status; reload."
 //	@ID				updateNode
 //	@Router			/v1/nodes/{id} [put]
 func updateNode(cfg APIConfig) gin.HandlerFunc {
@@ -406,6 +408,7 @@ func updateNode(cfg APIConfig) gin.HandlerFunc {
 //	@Failure		401		{object}	map[string]any	"Unauthorized."
 //	@Failure		403		{object}	map[string]any	"Forbidden."
 //	@Failure		404		{object}	map[string]any	"Not found."
+//	@Failure		409		{object}	map[string]any	"Conflict: the node changed status; reload."
 //	@ID				requestNodeChange
 //	@Router			/v1/nodes/{id}/request-change [post]
 func requestNodeChange(cfg APIConfig) gin.HandlerFunc {
@@ -445,6 +448,7 @@ func requestNodeChange(cfg APIConfig) gin.HandlerFunc {
 //	@Failure		401		{object}	map[string]any	"Unauthorized."
 //	@Failure		403		{object}	map[string]any	"Forbidden."
 //	@Failure		404		{object}	map[string]any	"Not found."
+//	@Failure		409		{object}	map[string]any	"Conflict: the node changed status; reload."
 //	@ID				approveNode
 //	@Router			/v1/nodes/{id}/approve [post]
 func approveNode(cfg APIConfig) gin.HandlerFunc {
@@ -481,6 +485,7 @@ func approveNode(cfg APIConfig) gin.HandlerFunc {
 //	@Failure		401		{object}	map[string]any	"Unauthorized."
 //	@Failure		403		{object}	map[string]any	"Forbidden."
 //	@Failure		404		{object}	map[string]any	"Not found."
+//	@Failure		409		{object}	map[string]any	"Conflict: the node changed status; reload."
 //	@ID				rejectNode
 //	@Router			/v1/nodes/{id}/reject [post]
 func rejectNode(cfg APIConfig) gin.HandlerFunc {
@@ -513,6 +518,7 @@ func rejectNode(cfg APIConfig) gin.HandlerFunc {
 //	@Failure		401	{object}	map[string]any	"Unauthorized."
 //	@Failure		403	{object}	map[string]any	"Forbidden."
 //	@Failure		404	{object}	map[string]any	"Not found."
+//	@Failure		409	{object}	map[string]any	"Conflict: the node changed status; reload."
 //	@ID				releaseNode
 //	@Router			/v1/nodes/{id}/release [post]
 func releaseNode(cfg APIConfig) gin.HandlerFunc {
@@ -547,6 +553,7 @@ func releaseNode(cfg APIConfig) gin.HandlerFunc {
 //	@Failure		401		{object}	map[string]any	"Unauthorized."
 //	@Failure		403		{object}	map[string]any	"Forbidden."
 //	@Failure		404		{object}	map[string]any	"Not found."
+//	@Failure		409		{object}	map[string]any	"Conflict: the node changed status; reload."
 //	@ID				reparentNode
 //	@Router			/v1/nodes/{id}/reparent [post]
 func reparentNode(cfg APIConfig) gin.HandlerFunc {
@@ -586,6 +593,7 @@ func reparentNode(cfg APIConfig) gin.HandlerFunc {
 //	@Failure		401		{object}	map[string]any	"Unauthorized."
 //	@Failure		403		{object}	map[string]any	"Forbidden."
 //	@Failure		404		{object}	map[string]any	"Not found."
+//	@Failure		409		{object}	map[string]any	"Conflict: the node changed status; reload."
 //	@ID				transferNodeOwner
 //	@Router			/v1/nodes/{id}/transfer-owner [post]
 func transferNodeOwner(cfg APIConfig) gin.HandlerFunc {

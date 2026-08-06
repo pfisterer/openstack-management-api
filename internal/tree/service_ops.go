@@ -396,7 +396,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor string, userEmail stri
 		return Node{}, fmt.Errorf("parent must be a budget")
 	}
 	if parent.Status != StatusApproved {
-		return Node{}, fmt.Errorf("cannot create nodes under a budget in status %q", parent.Status)
+		return Node{}, fmt.Errorf("%w: cannot create nodes under a budget in status %q", common.ErrConflict, parent.Status)
 	}
 
 	isManager, err := s.managesNode(ctx, userTokens, parent)
@@ -542,7 +542,7 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor string, use
 		return Node{}, fmt.Errorf("imported nodes are read-only until promoted: %w", common.ErrForbidden)
 	}
 	if IsTerminalStatus(current.Status) {
-		return Node{}, fmt.Errorf("cannot edit node in status %q", current.Status)
+		return Node{}, fmt.Errorf("%w: cannot edit node in status %q", common.ErrConflict, current.Status)
 	}
 
 	wantsPolicyEdit := req.Name != nil || req.AdminScope != nil || req.EligibleRequesters != nil ||
@@ -672,7 +672,7 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor string, 
 		return Node{}, fmt.Errorf("imported nodes are read-only until promoted: %w", common.ErrForbidden)
 	}
 	if IsTerminalStatus(current.Status) {
-		return Node{}, fmt.Errorf("cannot modify node in status %q", current.Status)
+		return Node{}, fmt.Errorf("%w: cannot modify node in status %q", common.ErrConflict, current.Status)
 	}
 
 	// Authorization: the leaf owner, a budget's own managers (asking their parent
@@ -804,7 +804,7 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor string, u
 		return Node{}, fmt.Errorf("node %w", common.ErrNotFound)
 	}
 	if current.Status != StatusPending && current.Status != StatusChangePending {
-		return Node{}, fmt.Errorf("cannot approve node in status %q", current.Status)
+		return Node{}, fmt.Errorf("%w: cannot approve node in status %q", common.ErrConflict, current.Status)
 	}
 
 	if manages, err := s.managesParentChain(ctx, userTokens, current); err != nil {
@@ -916,7 +916,7 @@ func (s *Service) RejectNode(id string, req RejectNodeRequest, actor string, use
 		return Node{}, fmt.Errorf("node %w", common.ErrNotFound)
 	}
 	if current.Status != StatusPending && current.Status != StatusChangePending {
-		return Node{}, fmt.Errorf("cannot reject node in status %q", current.Status)
+		return Node{}, fmt.Errorf("%w: cannot reject node in status %q", common.ErrConflict, current.Status)
 	}
 
 	if manages, err := s.managesParentChain(ctx, userTokens, current); err != nil {
@@ -966,7 +966,7 @@ func (s *Service) ReleaseNode(id string, actor string, userTokens common.TokenLi
 		return Node{}, fmt.Errorf("only project leaves can be released; delete budgets instead")
 	}
 	if current.Status != StatusApproved {
-		return Node{}, fmt.Errorf("cannot release node in status %q", current.Status)
+		return Node{}, fmt.Errorf("%w: cannot release node in status %q", common.ErrConflict, current.Status)
 	}
 
 	allowed := isOwner(userTokens, current)
@@ -1022,10 +1022,10 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor string,
 		return Node{}, fmt.Errorf("imported nodes are moved via promote: %w", common.ErrForbidden)
 	}
 	if IsTerminalStatus(current.Status) {
-		return Node{}, fmt.Errorf("cannot move node in status %q", current.Status)
+		return Node{}, fmt.Errorf("%w: cannot move node in status %q", common.ErrConflict, current.Status)
 	}
 	if current.ParentID != nil && *current.ParentID == req.NewParentID {
-		return Node{}, fmt.Errorf("node is already under this parent")
+		return Node{}, fmt.Errorf("%w: node is already under this parent", common.ErrConflict)
 	}
 
 	newParent, err := s.store.GetNode(ctx, req.NewParentID)
@@ -1121,7 +1121,7 @@ func (s *Service) TransferOwner(id string, req TransferOwnerRequest, actor strin
 		return Node{}, fmt.Errorf("imported nodes get their owner via promote: %w", common.ErrForbidden)
 	}
 	if IsTerminalStatus(current.Status) {
-		return Node{}, fmt.Errorf("cannot transfer node in status %q", current.Status)
+		return Node{}, fmt.Errorf("%w: cannot transfer node in status %q", common.ErrConflict, current.Status)
 	}
 
 	if manages, err := s.managesParentChain(ctx, userTokens, current); err != nil {
@@ -1135,7 +1135,7 @@ func (s *Service) TransferOwner(id string, req TransferOwnerRequest, actor strin
 		return Node{}, err
 	}
 	if newOwner == current.Owner {
-		return Node{}, fmt.Errorf("node is already owned by %s", newOwner)
+		return Node{}, fmt.Errorf("%w: node is already owned by %s", common.ErrConflict, newOwner)
 	}
 
 	historyEntry := newHistoryEntry("owner_transferred", actor, current.Status)

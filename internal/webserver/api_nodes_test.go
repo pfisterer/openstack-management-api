@@ -243,26 +243,34 @@ func TestGetNode_Authorization(t *testing.T) {
 func TestLifecycle_Guards(t *testing.T) {
 	h := setupRouter(t)
 
+	// A status guard is a CONFLICT (409), not a bad request: the caller sent a
+	// well-formed request against a node that had moved on. The client can tell
+	// this apart from "your input is wrong" and reload instead.
+
 	// Approving an already-approved node is rejected.
-	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_001/approve", userCSAdmin, tree.ApproveNodeRequest{}), http.StatusBadRequest)
+	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_001/approve", userCSAdmin, tree.ApproveNodeRequest{}), http.StatusConflict)
 	// Releasing a pending node is rejected.
-	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/release", userFaculty, nil), http.StatusBadRequest)
-	// Releasing a budget is rejected.
+	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/release", userFaculty, nil), http.StatusConflict)
+	// Releasing a budget stays a 400: no status makes a budget releasable, so
+	// this is a malformed request, not a stale view.
 	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/b_cs_faculty/release", userCSAdmin, nil), http.StatusBadRequest)
 
 	// Rejecting a pending leaf is terminal; nothing can revive it.
 	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/reject", userFaculty, nil), http.StatusOK)
-	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/approve", userFaculty, tree.ApproveNodeRequest{}), http.StatusBadRequest)
+	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/approve", userFaculty, tree.ApproveNodeRequest{}), http.StatusConflict)
 	limit := cores(1)
-	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/request-change", userStudent, tree.ChangeNodeRequest{Limit: &limit}), http.StatusBadRequest)
+	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/request-change", userStudent, tree.ChangeNodeRequest{Limit: &limit}), http.StatusConflict)
 }
 
 func TestLifecycle_ImportedIsReadOnly(t *testing.T) {
 	h := setupRouter(t)
 	limit := cores(1)
 	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_imported_001/request-change", userRoot, tree.ChangeNodeRequest{Limit: &limit}), http.StatusForbidden)
-	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_imported_001/approve", userRoot, tree.ApproveNodeRequest{}), http.StatusBadRequest)
-	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_imported_001/release", userRoot, nil), http.StatusBadRequest)
+	// These two have no dedicated "imported" check and fall through to the
+	// status guard, which now answers 409 (the imported status is what blocks
+	// them). The explicit checks above stay 403.
+	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_imported_001/approve", userRoot, tree.ApproveNodeRequest{}), http.StatusConflict)
+	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_imported_001/release", userRoot, nil), http.StatusConflict)
 	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_imported_001/reparent", userRoot, tree.ReparentNodeRequest{NewParentID: "b_dept_cs"}), http.StatusForbidden)
 	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_imported_001/transfer-owner", userRoot, tree.TransferOwnerRequest{NewOwner: userFaculty}), http.StatusForbidden)
 }

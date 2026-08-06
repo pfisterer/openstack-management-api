@@ -184,7 +184,7 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			Owner:  "user:cs-student@cs.com",
 			Limit:  common.ProjectQuota{"cores": 2, "ram": 8, "storage": 50, "gpu": 0},
 			AuthorizedUsers: []common.AuthorizedUser{
-				{Token: "user:cs-student@cs.com", OpenstackRole: "admin"},
+				{Token: "user:cs-student@cs.com", OpenstackRole: "member"},
 			},
 			TerminationDate: plusDays(30),
 			CreatedBy:       "cs-student@cs.com", CreatedAt: "2026-01-23T08:00:00Z",
@@ -234,7 +234,7 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			OSProjectName: "legacy-ml-workload",
 			Limit:         common.ProjectQuota{"cores": 9, "ram": 16, "storage": 100, "gpu": 0},
 			AuthorizedUsers: []common.AuthorizedUser{
-				{Token: "user:faculty@cs.example", OpenstackRole: "admin"},
+				{Token: "user:faculty@cs.example", OpenstackRole: "member"},
 				{Token: DeptCSFaculty, OpenstackRole: "member"},
 			},
 			ExternalGroupAssignments: []common.ExternalGroupAssignment{

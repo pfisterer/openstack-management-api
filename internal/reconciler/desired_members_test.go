@@ -30,14 +30,13 @@ func TestBuildDesiredMembers_OwnerIsNotCloudAdmin(t *testing.T) {
 	}
 }
 
-// An authorized user keeps the role the project asked for — including "admin"
-// when an operator deliberately chose it. Only the OWNER default changed.
+// An authorized user keeps whichever currently-offered role the project chose.
 func TestBuildDesiredMembers_AuthorizedUsersKeepTheirRole(t *testing.T) {
 	leaf := tree.Node{
 		Owner: "user:owner@example.edu",
 		AuthorizedUsers: []common.AuthorizedUser{
 			{Token: "user:reader@example.edu", OpenstackRole: "reader"},
-			{Token: "user:ops@example.edu", OpenstackRole: "admin"},
+			{Token: "user:member@example.edu", OpenstackRole: "member"},
 			// Group tokens have no Keystone equivalent and must be skipped.
 			{Token: "group:course-wi", OpenstackRole: "member"},
 		},
@@ -51,7 +50,7 @@ func TestBuildDesiredMembers_AuthorizedUsersKeepTheirRole(t *testing.T) {
 	want := map[string]string{
 		"owner@example.edu":  common.OwnerOpenstackRole,
 		"reader@example.edu": "reader",
-		"ops@example.edu":    "admin",
+		"member@example.edu": "member",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("members = %v, want %v (group tokens must be skipped)", got, want)
@@ -60,5 +59,37 @@ func TestBuildDesiredMembers_AuthorizedUsersKeepTheirRole(t *testing.T) {
 		if got[email] != role {
 			t.Errorf("role for %s = %q, want %q", email, got[email], role)
 		}
+	}
+}
+
+// Rows written while "admin" was still selectable must not keep granting it on
+// every reconcile pass. Validation only guards new writes; this guards old rows.
+func TestBuildDesiredMembers_StoredAdminIsClampedDown(t *testing.T) {
+	leaf := tree.Node{
+		Owner: "user:owner@example.edu",
+		AuthorizedUsers: []common.AuthorizedUser{
+			{Token: "user:legacy@example.edu", OpenstackRole: "admin"},
+			{Token: "user:garbage@example.edu", OpenstackRole: "not-a-role"},
+			{Token: "user:cased@example.edu", OpenstackRole: "  Reader "},
+		},
+	}
+
+	got := map[string]string{}
+	for _, m := range buildDesiredMembers(leaf) {
+		got[m.Email] = m.RoleName
+	}
+
+	if got["legacy@example.edu"] == "admin" {
+		t.Error("a stored 'admin' role was passed through to Keystone")
+	}
+	if got["legacy@example.edu"] != common.OwnerOpenstackRole {
+		t.Errorf("legacy admin = %q, want it clamped to %q", got["legacy@example.edu"], common.OwnerOpenstackRole)
+	}
+	if got["garbage@example.edu"] != common.OwnerOpenstackRole {
+		t.Errorf("unknown role = %q, want %q", got["garbage@example.edu"], common.OwnerOpenstackRole)
+	}
+	// Clamping must not swallow a role that is merely untidy.
+	if got["cased@example.edu"] != "reader" {
+		t.Errorf("'  Reader ' = %q, want reader", got["cased@example.edu"])
 	}
 }

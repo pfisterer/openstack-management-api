@@ -43,9 +43,16 @@ const (
 // validation of authorized_users — otherwise the UI could offer a role the API
 // rejects, or the API could accept one Keystone does not know.
 //
-// "admin" is in the list because an operator may deliberately want it, but read
-// OwnerOpenstackRole before handing it to anyone.
-var OpenstackRoles = []string{"admin", "member", "reader"}
+// "admin" used to be in this list, which made cloud-wide admin a self-service
+// choice: whoever files a project request fills in authorized_users, and the
+// auto-approval path only weighs quota against the parent budget — it never
+// looks at the roles. Someone requesting a project could therefore hand a
+// friend the operator's view of the entire cloud with nobody reviewing it.
+// See OwnerOpenstackRole for why "admin" is not project-local in OpenStack.
+//
+// Granting "admin" remains possible, but only as a deliberate act by an
+// operator against Keystone — not as an entry in a self-service form.
+var OpenstackRoles = []string{"member", "reader"}
 
 // OwnerOpenstackRole is the Keystone role a project owner receives.
 //

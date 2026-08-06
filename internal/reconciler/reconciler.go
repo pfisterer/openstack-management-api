@@ -1132,15 +1132,31 @@ func buildDesiredMembers(leaf tree.Node) []osclient.DesiredMember {
 		if email, ok := strings.CutPrefix(au.Token, "user:"); ok {
 			desired = append(desired, osclient.DesiredMember{
 				Email:    email,
-				RoleName: au.OpenstackRole,
+				RoleName: allowedRole(au.OpenstackRole),
 			})
 		}
 	}
 	return desired
 }
 
+// allowedRole keeps a stored role from outliving the rules it was written under.
+//
+// The API validates authorized_users on write, but rows persist across releases:
+// an entry saved while "admin" was still selectable would otherwise keep being
+// re-granted on every reconcile pass, forever, with no way to see it in the UI.
+// Anything not currently offered is clamped down to the participant default
+// rather than skipped — dropping it would silently revoke access instead of
+// reducing it.
+func allowedRole(role string) string {
+	normalized := strings.ToLower(strings.TrimSpace(role))
+	if slices.Contains(common.OpenstackRoles, normalized) {
+		return normalized
+	}
+	return common.OwnerOpenstackRole
+}
+
 // syncMembers reconciles the OpenStack project's user role assignments to match the
-// leaf's owner (admin) and AuthorizedUsers. Non-fatal: errors are logged
+// leaf's owner and AuthorizedUsers. Non-fatal: errors are logged
 // but do not interrupt the reconciliation run.
 func (r *Reconciler) syncMembers(leaf tree.Node, osProjectID string) {
 	if r.cfg.DryRun {

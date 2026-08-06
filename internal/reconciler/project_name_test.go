@@ -146,10 +146,10 @@ func TestShortNodeID(t *testing.T) {
 	tests := map[string]string{
 		"p_7ad31c42-21e7-4fbd-aa3e-15a4660449be": "p_7ad31c42",
 		"b_03c80ac1-9311-4825-9dd6-ba749f9a7a2b": "b_03c80ac1",
-		"root":       "root",       // structural node, no UUID
-		"unassigned": "unassigned", // structural node, no UUID
-		"p_001":      "p_001",      // seeded/test IDs are not UUIDs
-		"p_":         "p_",
+		"root":                                   "root",       // structural node, no UUID
+		"unassigned":                             "unassigned", // structural node, no UUID
+		"p_001":                                  "p_001",      // seeded/test IDs are not UUIDs
+		"p_":                                     "p_",
 	}
 	for id, want := range tests {
 		if got := shortNodeID(id); got != want {

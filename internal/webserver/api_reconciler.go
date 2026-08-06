@@ -72,6 +72,10 @@ func getReconcilerStatus(rec ReconcilerAPI) gin.HandlerFunc {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "reconciler is disabled"})
 			return
 		}
+		if !rec.Ready() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "reconciler is enabled but still connecting to OpenStack"})
+			return
+		}
 		c.JSON(http.StatusOK, rec.GetStatus())
 	}
 }
@@ -92,6 +96,10 @@ func triggerReconcile(rec ReconcilerAPI, log *zap.SugaredLogger) gin.HandlerFunc
 	return func(c *gin.Context) {
 		if rec == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "reconciler is disabled"})
+			return
+		}
+		if !rec.Ready() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "reconciler is enabled but still connecting to OpenStack"})
 			return
 		}
 		log.Info("Manual reconciliation triggered via API")

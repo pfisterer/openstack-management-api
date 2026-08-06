@@ -204,15 +204,23 @@ func RunApplication() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var rec *reconciler.Reconciler
+	// Setup Gin web server with configured dependencies.
+	// A local ReconcilerAPI variable avoids passing a typed nil as the interface,
+	// which would make cfg.Reconciler != nil even when no reconciler exists.
+	var reconcilerAPI webserver.ReconcilerAPI
 
 	if config.Reconciler.Enabled {
 		logger.Infow("Starting reconciler", "interval_seconds", config.Reconciler.IntervalSeconds, "dry_run", config.Reconciler.DryRun)
 
-		osClient, osErr := newOpenstackClient(config.Openstack, log, logger)
-		if osErr != nil {
-			logger.Warnw("OpenStack API not reachable — reconciler will be disabled; restart to retry", zap.Error(osErr))
-		} else {
+		// Connecting to OpenStack is retried in the background rather than done
+		// once here: a cloud that is away for a minute must not disable
+		// provisioning until somebody restarts the pod. See reconcilerSupervisor.
+		supervisor := &reconcilerSupervisor{}
+		supervisor.connectAndStart(ctx, func() (*reconciler.Reconciler, error) {
+			osClient, osErr := newOpenstackClient(config.Openstack, log, logger)
+			if osErr != nil {
+				return nil, osErr
+			}
 			osClient.SetTagConfig(config.Reconciler.ManagedProjectTag, config.Reconciler.ResourceIDTagPrefix)
 			osClient.SetFederationConfig(config.Openstack.FederatedProvisioning, config.Openstack.FederatedIdPID, config.Openstack.FederatedProtocolID, config.Openstack.FederatedDomainID)
 
@@ -228,19 +236,11 @@ func RunApplication() {
 				PendingDeletionTagPrefix: config.Reconciler.PendingDeletionTagPrefix,
 				ContactTagPrefix:         config.Reconciler.ContactTagPrefix,
 			}
-			rec = reconciler.New(nodeStore, osClient, reconcilerCfg, config.ProjectDefinitions, roleProvider, logger)
-			go rec.Start(ctx)
-		}
+			return reconciler.New(nodeStore, osClient, reconcilerCfg, config.ProjectDefinitions, roleProvider, logger), nil
+		}, logger)
+		reconcilerAPI = supervisor
 	} else {
 		logger.Info("Reconciler disabled (set RECONCILER_ENABLED=true to enable)")
-	}
-
-	// Setup Gin web server with configured dependencies.
-	// Use a local ReconcilerAPI variable to avoid passing a typed nil (*reconciler.Reconciler)
-	// as the interface, which would make cfg.Reconciler != nil even when rec is nil.
-	var reconcilerAPI webserver.ReconcilerAPI
-	if rec != nil {
-		reconcilerAPI = rec
 	}
 
 	router := webserver.SetupGinWebserver(webserver.SetupConfig{
@@ -251,11 +251,12 @@ func RunApplication() {
 			OIDCClientID:  config.WebServer.OIDCClientID,
 		},
 		API: webserver.APIConfig{
-			RoleSwitchGroups:    config.RootAdminTokens,
-			ProjectDefinitions:  config.ProjectDefinitions,
-			Service:             treeSvc,
-			DummyDevUsers:       dummyDevUsers,
-			ProvisioningEnabled: reconcilerAPI != nil,
+			RoleSwitchGroups:   config.RootAdminTokens,
+			ProjectDefinitions: config.ProjectDefinitions,
+			Service:            treeSvc,
+			DummyDevUsers:      dummyDevUsers,
+			// Asked per request: the reconciler may still be connecting.
+			ProvisioningEnabled: func() bool { return reconcilerAPI != nil && reconcilerAPI.Ready() },
 		},
 		Reconciler:         reconcilerAPI,
 		RootAdminTokens:    config.RootAdminTokens,

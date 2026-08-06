@@ -27,6 +27,11 @@ const (
 type ReconcilerAPI interface {
 	Trigger()
 	GetStatus() reconciler.Status
+	// Ready reports whether the reconciler has a live OpenStack connection.
+	// It is false while the connection is still being retried, which is a
+	// different thing from the reconciler being switched off — the API says so
+	// rather than presenting a configured-but-unreachable cloud as "disabled".
+	Ready() bool
 }
 
 // SetupConfig defines required dependencies for constructing the HTTP router.
@@ -102,7 +107,10 @@ type APIConfig struct {
 	Service            APIService
 	DummyDevUsers      []string
 	// ProvisioningEnabled mirrors "the reconciler is configured and running".
-	ProvisioningEnabled bool
+	// A function, not a bool: the reconciler may still be connecting when the
+	// server starts, and a value frozen at startup would tell every client for
+	// the rest of the pod's life that provisioning does not exist.
+	ProvisioningEnabled func() bool
 }
 
 // SetupGinWebserver configures and returns the application router.
@@ -230,7 +238,7 @@ func getConfig(cfg APIConfig) gin.HandlerFunc {
 		config := ConfigResponse{
 			Resources:           resources,
 			OpenstackRoles:      openstackRoles,
-			ProvisioningEnabled: cfg.ProvisioningEnabled,
+			ProvisioningEnabled: cfg.ProvisioningEnabled != nil && cfg.ProvisioningEnabled(),
 		}
 
 		// Include dummy dev users in config if set, to inform frontend of available users for testing.

@@ -15,10 +15,28 @@ import (
 type fakeReconciler struct {
 	triggered int
 	status    reconciler.Status
+	// notReady models a reconciler that is configured but still dialling
+	// OpenStack — a state the endpoints must report differently from "off".
+	notReady bool
 }
 
 func (f *fakeReconciler) Trigger()                     { f.triggered++ }
 func (f *fakeReconciler) GetStatus() reconciler.Status { return f.status }
+func (f *fakeReconciler) Ready() bool                  { return !f.notReady }
+
+// A reconciler that is enabled but has no connection yet must not look like a
+// disabled one, and must not be triggerable — the old code could not tell the
+// two apart because a failed startup left the API with no reconciler at all.
+func TestReconcilerEndpoints_ConnectingReturns503AndDoesNotTrigger(t *testing.T) {
+	rec := &fakeReconciler{notReady: true}
+	h := setupRouterWith(t, rec)
+
+	assertStatus(t, do(t, h, http.MethodGet, "/v1/admin/reconcile/status", userRoot, nil), http.StatusServiceUnavailable)
+	assertStatus(t, do(t, h, http.MethodPost, "/v1/admin/reconcile/trigger", userRoot, nil), http.StatusServiceUnavailable)
+	if rec.triggered != 0 {
+		t.Errorf("triggered = %d, want 0 while still connecting", rec.triggered)
+	}
+}
 
 func TestReconcilerEndpoints_DisabledReturns503(t *testing.T) {
 	h := setupRouter(t) // nil reconciler

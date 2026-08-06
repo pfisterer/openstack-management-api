@@ -578,10 +578,20 @@ const ManagedUserDescription = "Auto-created by openstack-management-api (do not
 // account is safe to remove once NoDelete mode is lifted.
 const OrphanedUserFlagDescription = "PENDING DELETION (no project memberships) - Auto-created by openstack-management-api (do not edit or delete this comment)"
 
-// ListUserProjectAssignments returns all project-scoped role assignments for a user.
+// ListUserProjectAssignments returns all project-scoped role assignments for a user,
+// INCLUDING the ones they hold through a group.
 // An empty slice (no error) means the user has no project memberships anywhere.
+//
+// `effective` is what makes group membership count. Without it Keystone reports
+// only assignments written directly against the user id, and this function feeds
+// CollectOrphanedManagedUsers — which deletes managed accounts that appear to
+// hold no role. A user authorised solely through a Keystone group would look
+// unused and be deleted, on every reconcile pass. That has not bitten yet only
+// because no groups carry role assignments in these environments today;
+// syncGroupMembers already puts users into groups, so it was waiting to.
 func (c *OpenStackClient) ListUserProjectAssignments(userID string) ([]ProjectRole, error) {
-	listOpts := roles.ListAssignmentsOpts{UserID: userID}
+	effective := true
+	listOpts := roles.ListAssignmentsOpts{UserID: userID, Effective: &effective}
 	iter := NewPagerIterator(
 		func() pagination.Pager { return roles.ListAssignments(c.Identity, listOpts) },
 		roles.ExtractRoleAssignments,

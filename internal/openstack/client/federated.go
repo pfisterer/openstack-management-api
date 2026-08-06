@@ -149,14 +149,27 @@ func (c *OpenStackClient) findOrCreateFederatedUser(email string, byName *users.
 			return nil, fmt.Errorf("create federated user %q: %w", email, err)
 		}
 		// The ID Keystone assigned must be the one a login will resolve to,
-		// otherwise the account is invisible to that login. Report it rather
-		// than leave a silently useless account behind.
+		// otherwise the account is invisible to that login.
 		if created.ID != expectedID {
+			// Take the account back out. Leaving it behind is what turned a
+			// stable failure into a self-sustaining loop: the rejected account
+			// carries our managed description and holds no role, so the orphan
+			// sweep at the end of the very same run deleted it — and the next
+			// run five minutes later created it again, with a fresh UUID. That
+			// cycle ran against Keystone until somebody noticed.
+			//
+			// Cleaning up here rather than relying on the sweep also keeps the
+			// two decisions independent: whoever changes the sweep later cannot
+			// silently resurrect the loop.
+			cleanup := ""
+			if err := c.DeleteUser(created.ID); err != nil {
+				cleanup = fmt.Sprintf(" (the account could not be removed either: %v)", err)
+			}
 			return nil, &PreseedConflict{
 				Email: email,
 				Reason: fmt.Sprintf(
-					"pre-created account got id %s, but a login for unique_id %q resolves to id %s — this cloud derives federated ids differently than assumed; delete the account and pre-seed it manually",
-					created.ID, uniqueID, expectedID),
+					"pre-created account got id %s, but a login for unique_id %q resolves to id %s — this cloud derives federated ids differently than assumed. The unusable account was removed again%s; grant the role by hand on the account the login actually uses, or let the user log in once so it exists",
+					created.ID, uniqueID, expectedID, cleanup),
 			}
 		}
 		return created, nil

@@ -1113,13 +1113,15 @@ func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo) (
 
 // buildDesiredMembers extracts the intended OpenStack role assignments from a leaf.
 // Only user: tokens are processed — group: tokens have no direct Keystone equivalent.
-// The owner receives the admin role; AuthorizedUsers their specified OpenStack role.
+// The owner receives common.OwnerOpenstackRole; AuthorizedUsers their specified one.
 func buildDesiredMembers(leaf tree.Node) []osclient.DesiredMember {
 	desired := make([]osclient.DesiredMember, 0, 1+len(leaf.AuthorizedUsers))
 	if email := leaf.OwnerEmail(); email != "" {
 		desired = append(desired, osclient.DesiredMember{
-			Email:    email,
-			RoleName: "admin",
+			Email: email,
+			// Was hardcoded "admin", which is cloud-wide in OpenStack's default
+			// policy — see the note on OwnerOpenstackRole.
+			RoleName: common.OwnerOpenstackRole,
 		})
 	}
 	for _, au := range leaf.AuthorizedUsers {

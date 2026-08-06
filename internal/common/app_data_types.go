@@ -42,7 +42,25 @@ const (
 // single source for both the /v1/config response (what the UI offers) and the
 // validation of authorized_users — otherwise the UI could offer a role the API
 // rejects, or the API could accept one Keystone does not know.
+//
+// "admin" is in the list because an operator may deliberately want it, but read
+// OwnerOpenstackRole before handing it to anyone.
 var OpenstackRoles = []string{"admin", "member", "reader"}
+
+// OwnerOpenstackRole is the Keystone role a project owner receives.
+//
+// It is "member", NOT "admin". OpenStack's "admin" role is not confined to the
+// project it is granted in: a large part of the default policy checks
+// `role:admin` without looking at scope, so a project-scoped admin can read
+// cloud-wide state — the full hypervisor list, host aggregates, every tenant's
+// resources. Granting it to a project owner hands a student the operator's view
+// of the whole cloud (observed on ha-teststack 2026-08-06).
+//
+// "member" is what "may run their own project" actually means: create and manage
+// servers, volumes, networks inside the project, and nothing outside it. Owners
+// do not need "admin" to manage participants either — that happens through this
+// platform, not through Horizon.
+const OwnerOpenstackRole = "member"
 
 // DefaultMaxAuthorizedUsers caps how many participants one project may list.
 //

@@ -639,55 +639,6 @@ func quotaFits(need, limit common.ProjectQuota, resourceIDs []string) bool {
 	return true
 }
 
-// quotaNeverGrows reports whether no configured resource is higher in `to` than
-// in `from` — i.e. the change gives capacity back or leaves it alone.
-//
-// The UnlimitedQuota sentinel (-1) is the LARGEST value, not the smallest, so a
-// plain numeric comparison inverts both unlimited cases: unlimited → concrete is
-// a REDUCTION, concrete → unlimited an increase. quotaFits already reads an
-// unlimited *limit* as "no cap", which covers the first case; only an unlimited
-// *new* value has to be ruled out separately.
-func quotaNeverGrows(from, to common.ProjectQuota, resourceIDs []string) bool {
-	for _, resourceID := range resourceIDs {
-		if to[resourceID] == common.UnlimitedQuota && from[resourceID] != common.UnlimitedQuota {
-			return false
-		}
-	}
-	return quotaFits(to, from, resourceIDs)
-}
-
-// terminationDateNeverGrows reports whether `proposed` does not extend the node's
-// life beyond `current`. An earlier date counts as a reduction: it hands the
-// capacity back sooner and can only shrink the claim on the parent budget. A nil
-// current date means "runs until somebody says otherwise", so naming any concrete
-// day shortens it. A date neither side can parse is treated as an extension —
-// when in doubt a manager decides.
-func terminationDateNeverGrows(current *string, proposed string) bool {
-	proposedAt, ok := parseTerminationDate(proposed)
-	if !ok {
-		return false
-	}
-	if current == nil {
-		return true
-	}
-	currentAt, ok := parseTerminationDate(*current)
-	if !ok {
-		return false
-	}
-	return !proposedAt.After(currentAt)
-}
-
-// parseTerminationDate accepts the two shapes that reach the API: the RFC3339
-// timestamp the model stores and the bare calendar day a date picker sends.
-func parseTerminationDate(value string) (time.Time, bool) {
-	for _, layout := range []string{time.RFC3339, time.DateOnly} {
-		if parsed, err := time.Parse(layout, value); err == nil {
-			return parsed, true
-		}
-	}
-	return time.Time{}, false
-}
-
 // tokenListsEqual compares two token lists as sets.
 func tokenListsEqual(a, b common.TokenList) bool {
 	if len(a) != len(b) {

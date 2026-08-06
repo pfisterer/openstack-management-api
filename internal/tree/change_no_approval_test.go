@@ -385,7 +385,6 @@ func TestRequestChange_ChangePendingNodeIsUnaffected(t *testing.T) {
 
 func ptrString(s string) *string { return &s }
 
-
 // Clients send the whole node back, not a patch: the UI puts the unchanged
 // member list into every change request. A bare nil-check on AuthorizedUsers
 // therefore made the fast path unreachable from the only client there is —

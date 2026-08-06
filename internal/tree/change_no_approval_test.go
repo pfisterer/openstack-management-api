@@ -384,3 +384,66 @@ func TestRequestChange_ChangePendingNodeIsUnaffected(t *testing.T) {
 }
 
 func ptrString(s string) *string { return &s }
+
+
+// Clients send the whole node back, not a patch: the UI puts the unchanged
+// member list into every change request. A bare nil-check on AuthorizedUsers
+// therefore made the fast path unreachable from the only client there is —
+// every shrink still queued for approval. Order must not count as a change
+// either, since a form rebuilds the list in whatever sequence it renders.
+func TestRequestChange_UnchangedMembersDoNotBlockTheFastPath(t *testing.T) {
+	svc, store, budget := changeFixture(t)
+	members := []common.AuthorizedUser{
+		{Token: "user:a@x", OpenstackRole: "member"},
+		{Token: "user:b@x", OpenstackRole: "reader"},
+	}
+	leaf := approvedLeaf(t, svc, budget.ID, tree.CreateNodeRequest{
+		Limit:           quota(4, 8),
+		AuthorizedUsers: members,
+	})
+
+	// Same people, same roles, opposite order — and a shrink alongside.
+	resent := []common.AuthorizedUser{
+		{Token: "user:b@x", OpenstackRole: "reader"},
+		{Token: "user:a@x", OpenstackRole: "member"},
+	}
+	changed, err := svc.RequestChange(leaf.ID, tree.ChangeNodeRequest{
+		Limit:           ptrQuota(quota(2, 8)),
+		AuthorizedUsers: &resent,
+	}, "student@x", changeStudentTokens)
+	if err != nil {
+		t.Fatalf("request change: %v", err)
+	}
+
+	if changed.Status != tree.StatusApproved {
+		t.Errorf("status = %q, want approved — resending an unchanged member list must not force approval", changed.Status)
+	}
+	if changed.Pending != nil {
+		t.Errorf("no proposal may be left behind, got %+v", changed.Pending)
+	}
+	if stored := reload(t, store, leaf.ID); stored.Limit["cores"] != 2 {
+		t.Errorf("stored cores = %v, want 2", stored.Limit["cores"])
+	}
+}
+
+// A real membership change still needs a decision, even next to a shrink.
+func TestRequestChange_ChangedMembersStillNeedApproval(t *testing.T) {
+	svc, _, budget := changeFixture(t)
+	leaf := approvedLeaf(t, svc, budget.ID, tree.CreateNodeRequest{
+		Limit:           quota(4, 8),
+		AuthorizedUsers: []common.AuthorizedUser{{Token: "user:a@x", OpenstackRole: "member"}},
+	})
+
+	// Same person, different role — the length is identical, the access is not.
+	promoted := []common.AuthorizedUser{{Token: "user:a@x", OpenstackRole: "reader"}}
+	changed, err := svc.RequestChange(leaf.ID, tree.ChangeNodeRequest{
+		Limit:           ptrQuota(quota(2, 8)),
+		AuthorizedUsers: &promoted,
+	}, "student@x", changeStudentTokens)
+	if err != nil {
+		t.Fatalf("request change: %v", err)
+	}
+	if changed.Status != tree.StatusChangePending {
+		t.Errorf("status = %q, want change_pending", changed.Status)
+	}
+}

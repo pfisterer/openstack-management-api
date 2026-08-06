@@ -647,6 +647,32 @@ func quotaFits(need, limit common.ProjectQuota, resourceIDs []string) bool {
 // a REDUCTION, concrete → unlimited an increase. quotaFits already reads an
 // unlimited *limit* as "no cap", which covers the first case; only an unlimited
 // *new* value has to be ruled out separately.
+// sameAuthorizedUsers reports whether two member lists grant the same access.
+//
+// Order is not access: clients rebuild the list from a form, so the same two
+// people can arrive in either sequence. Comparing the slices directly would call
+// that a change and send a shrink off for approval it does not need.
+func sameAuthorizedUsers(a, b []common.AuthorizedUser) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	key := func(u common.AuthorizedUser) string {
+		return strings.ToLower(strings.TrimSpace(u.Token)) + "\x00" + strings.ToLower(strings.TrimSpace(u.OpenstackRole))
+	}
+	seen := make(map[string]int, len(a))
+	for _, u := range a {
+		seen[key(u)]++
+	}
+	for _, u := range b {
+		k := key(u)
+		if seen[k] == 0 {
+			return false
+		}
+		seen[k]--
+	}
+	return true
+}
+
 func quotaNeverGrows(from, to common.ProjectQuota, resourceIDs []string) bool {
 	for _, resourceID := range resourceIDs {
 		if to[resourceID] == common.UnlimitedQuota && from[resourceID] != common.UnlimitedQuota {

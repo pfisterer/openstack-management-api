@@ -653,10 +653,46 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor string, use
 
 // ── Change requests ───────────────────────────────────────────────────────────
 
+// changeNeedsNoApproval reports whether a proposed change can be applied straight
+// away because it cannot cost anybody anything: no resource limit grows, the node
+// does not live longer, and no access is handed out. Growth is decided per
+// request, not per resource — as soon as a single resource grows the WHOLE change
+// goes through the approval cycle, since a manager approves a proposal, not parts
+// of one.
+//
+// Leaves only. Shrinking a BUDGET can strand already-approved children, which is
+// why ApproveNode re-checks the subtree usage before applying a budget change; a
+// leaf has no children, so handing capacity back is unconditionally safe for
+// every ancestor and needs no capacity check at all.
+func (s *Service) changeNeedsNoApproval(current *Node, req ChangeNodeRequest) bool {
+	if !current.IsLeaf() {
+		return false
+	}
+	// Authorized users are an access decision, not a budget one: who may enter the
+	// project is precisely what the manager reviews, and even a shorter list can
+	// have swapped one person for another. Always ask.
+	if req.AuthorizedUsers != nil {
+		return false
+	}
+	// An empty request is not a free change — let the path below reject it.
+	if req.Limit == nil && req.TerminationDate == nil && req.Reason == nil {
+		return false
+	}
+	if req.Limit != nil && !quotaNeverGrows(current.Limit, *req.Limit, s.resourceIDs) {
+		return false
+	}
+	if req.TerminationDate != nil && !terminationDateNeverGrows(current.TerminationDate, *req.TerminationDate) {
+		return false
+	}
+	return true
+}
+
 // RequestChange proposes modifications that require approval by the parent chain.
 // On a pending node the request is amended in place (it is not yet approved); on
 // an approved or change_pending node the proposal is stored as pending changes and
-// the node transitions to (or stays in) change_pending.
+// the node transitions to (or stays in) change_pending. A change that costs nobody
+// anything (see changeNeedsNoApproval) skips the cycle and applies immediately —
+// the caller then gets a node in status approved instead of change_pending.
 func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor string, userTokens common.TokenList) (Node, error) {
 	ctx, cancel := s.newCtx()
 	defer cancel()
@@ -739,6 +775,40 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor string, 
 			historyEntry.Reason = req.Reason
 			updated.Reason = *req.Reason
 		}
+		updated.History = append(slices.Clone(current.History), historyEntry)
+		if err := s.store.UpsertNode(ctx, updated); err != nil {
+			return Node{}, fmt.Errorf("persist node: %w", err)
+		}
+		return updated, nil
+	}
+
+	// Nothing to approve: apply now and stay approved. Restricted to `approved`
+	// on purpose — a change_pending node has a proposal a manager is still looking
+	// at, and writing a limit past it would decide half of that proposal silently.
+	// No capacity check and no approvalMu: this branch only ever lowers usage, so
+	// it cannot race another approval into an overbooked budget.
+	if current.Status == StatusApproved && s.changeNeedsNoApproval(current, req) {
+		historyEntry := newHistoryEntry("change_applied_without_approval", actor, StatusApproved)
+		historyEntry.StatusFrom = &current.Status
+		if req.Limit != nil {
+			historyEntry.LimitFrom = &current.Limit
+			historyEntry.LimitTo = req.Limit
+			updated.Limit = *req.Limit
+		}
+		if req.TerminationDate != nil {
+			historyEntry.TerminationDateFrom = current.TerminationDate
+			historyEntry.TerminationDateTo = req.TerminationDate
+			updated.TerminationDate = req.TerminationDate
+		}
+		if req.Reason != nil {
+			// Same double role as in the amend branch above: the reason of the
+			// latest request is what the node says about itself.
+			historyEntry.Reason = req.Reason
+			updated.Reason = *req.Reason
+		}
+		// An approved node carries no proposal — hold that invariant explicitly,
+		// exactly as ApproveNode does.
+		updated.Pending = nil
 		updated.History = append(slices.Clone(current.History), historyEntry)
 		if err := s.store.UpsertNode(ctx, updated); err != nil {
 			return Node{}, fmt.Errorf("persist node: %w", err)

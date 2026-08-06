@@ -396,7 +396,7 @@ func updateNode(cfg APIConfig) gin.HandlerFunc {
 // requestNodeChange proposes changes requiring approval by the parent chain.
 //
 //	@Summary		Request node change
-//	@Description	Proposes changes (limit, termination date, authorized users). A pending node is amended in place; an approved node transitions to change_pending until a manager of the parent chain decides.
+//	@Description	Proposes changes (limit, termination date, authorized users). A pending node is amended in place; an approved node transitions to change_pending until a manager of the parent chain decides. A change to an approved project that costs nobody anything — no resource limit grows, no later end date, no authorized-user change — is applied at once and the node stays approved.
 //	@Tags			nodes
 //	@Accept			json
 //	@Produce		json

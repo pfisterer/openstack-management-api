@@ -31,6 +31,10 @@ type ProjectMemberInfo struct {
 type DesiredMember struct {
 	Email    string
 	RoleName string
+	// PrimaryProject marks the member for whom this project is their own — the
+	// owner. Their Keystone default_project_id is pointed here when it is still
+	// unset, so a dashboard login lands in the project instead of nowhere.
+	PrimaryProject bool
 }
 
 // looksLikeEmail returns true when the string contains "@", distinguishing real user
@@ -124,6 +128,42 @@ func (c *OpenStackClient) CreateFederatedUser(name, email string, link Federated
 	return created, nil
 }
 
+// ensureDefaultProject points a user's Keystone default_project_id at projectID,
+// but ONLY when it is still unset.
+//
+// Without it a dashboard login yields an unscoped session: the person has the
+// role, yet lands with no project selected and has to find it in the switcher.
+//
+// The "only when unset" part is not politeness, it is correctness. This runs on
+// every reconcile pass (every few minutes) for every project. Overwriting would
+// mean that someone who owns two projects has their choice reset continuously,
+// and whichever project happened to sync last would win. The first project a
+// person owns therefore sets the default and nothing ever changes it again;
+// picking a different one is theirs to do.
+//
+// Failures are logged, never fatal — a missing default project is a small
+// inconvenience, and it must not abort a member sync that otherwise worked.
+func (c *OpenStackClient) ensureDefaultProject(userID, projectID, email string) {
+	user, err := c.GetUserByID(userID)
+	if err != nil || user == nil {
+		c.log.Warnw("Could not read user for default-project check",
+			"email", email, "user_id", userID, "error", err)
+		return
+	}
+	if user.DefaultProjectID != "" {
+		return // already has one, theirs to change
+	}
+	if _, err := users.Update(c.Identity, userID, users.UpdateOpts{
+		DefaultProjectID: projectID,
+	}).Extract(); err != nil {
+		c.log.Warnw("Could not set default project",
+			"email", email, "user_id", userID, "project_id", projectID, "error", err)
+		return
+	}
+	c.log.Infow("Set default project for user",
+		"email", email, "user_id", userID, "project_id", projectID)
+}
+
 // EnsureProjectMembers adds or updates project role assignments to match desired, but
 // never removes existing members. Use this when operating in no-delete mode.
 func (c *OpenStackClient) EnsureProjectMembers(projectID string, desired []DesiredMember) ([]PreseedConflict, error) {
@@ -154,11 +194,14 @@ func (c *OpenStackClient) syncProjectMembers(projectID string, desired []Desired
 	type desiredEntry struct {
 		email    string
 		roleName string
+		primary  bool
 	}
 	desiredMap := make(map[string]desiredEntry, len(desired))
 	for _, m := range desired {
 		if looksLikeEmail(m.Email) {
-			desiredMap[strings.ToLower(m.Email)] = desiredEntry{email: m.Email, roleName: m.RoleName}
+			desiredMap[strings.ToLower(m.Email)] = desiredEntry{
+				email: m.Email, roleName: m.RoleName, primary: m.PrimaryProject,
+			}
 		}
 	}
 
@@ -234,6 +277,13 @@ func (c *OpenStackClient) syncProjectMembers(projectID string, desired []Desired
 		}
 
 		if alreadyCorrect {
+			// The role needs no change, but a member added before this ran (or
+			// before the owner changed) can still be missing a default project.
+			// The user id is already known from the existing assignment, so this
+			// costs one GET and, at most once per user, one PATCH.
+			if want.primary && len(curEntries) > 0 {
+				c.ensureDefaultProject(curEntries[0].userID, projectID, want.email)
+			}
 			continue
 		}
 
@@ -262,6 +312,9 @@ func (c *OpenStackClient) syncProjectMembers(projectID string, desired []Desired
 		} else {
 			c.log.Infow("Assigned project role",
 				"email", want.email, "role", want.roleName, "project_id", projectID)
+		}
+		if want.primary {
+			c.ensureDefaultProject(user.ID, projectID, want.email)
 		}
 	}
 

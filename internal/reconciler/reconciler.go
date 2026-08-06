@@ -1122,6 +1122,10 @@ func buildDesiredMembers(leaf tree.Node) []osclient.DesiredMember {
 			// Was hardcoded "admin", which is cloud-wide in OpenStack's default
 			// policy — see the note on OwnerOpenstackRole.
 			RoleName: common.OwnerOpenstackRole,
+			// This is the owner's own project, so it is the sensible landing
+			// place for their dashboard session (only applied when they have no
+			// default project yet).
+			PrimaryProject: true,
 		})
 	}
 	for _, au := range leaf.AuthorizedUsers {

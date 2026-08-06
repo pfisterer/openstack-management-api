@@ -208,9 +208,18 @@ type Node struct {
 	CreatedAt string `json:"created_at,omitempty"`
 
 	// ── OpenStack linkage (leaves, maintained by the reconciler) ──────────────
-	OSProjectID              string                           `json:"os_project_id,omitempty"`
-	OSProjectName            string                           `json:"os_project_name,omitempty"`
-	OSOvercommitted          bool                             `json:"os_overcommitted,omitempty"`
+	OSProjectID     string `json:"os_project_id,omitempty"`
+	OSProjectName   string `json:"os_project_name,omitempty"`
+	OSOvercommitted bool   `json:"os_overcommitted,omitempty"`
+	// OSInUse is what the project actually consumes in OpenStack, as opposed to
+	// the Limit it was granted. Only resources OpenStack reports an in-use
+	// counter for appear here; a missing key means "not measured", not zero.
+	//
+	// It exists because a quota reduction below current usage is something
+	// OpenStack accepts silently — the servers keep running and only new ones
+	// are refused. Without this the platform sees only the smaller claim and a
+	// shrink looks like capacity handed back when nothing was.
+	OSInUse                  common.ProjectQuota              `json:"os_in_use,omitempty"`
 	ExternalGroupAssignments []common.ExternalGroupAssignment `json:"external_group_assignments,omitempty"`
 
 	// ChildCount is attached to API responses (never persisted): the number of

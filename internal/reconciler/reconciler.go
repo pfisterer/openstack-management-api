@@ -418,14 +418,15 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 			r.syncMembers(leaf, created.ID)
 			r.syncGroupAssignments(leaf, created.ID, groupTokenToOSID)
 		} else {
-			overcommitted, err := r.syncQuota(leaf, osProject)
+			overcommitted, inUse, err := r.syncQuota(leaf, osProject)
 			if err != nil {
 				r.log.Warnw("Failed to sync quota for leaf", "node_id", leaf.ID, "os_project_id", osProject.ID, "error", err)
 				continue
 			}
-			if leaf.OSProjectID != osProject.ID || leaf.OSOvercommitted != overcommitted {
+			if leaf.OSProjectID != osProject.ID || leaf.OSOvercommitted != overcommitted || !quotaEqual(leaf.OSInUse, inUse) {
 				leaf.OSProjectID = osProject.ID
 				leaf.OSOvercommitted = overcommitted
+				leaf.OSInUse = inUse
 				if !r.cfg.DryRun {
 					if err := r.store.UpsertNode(ctx, leaf); err != nil {
 						r.log.Warnw("Failed to persist OS sync state on leaf", "node_id", leaf.ID, "error", err)
@@ -1062,7 +1063,7 @@ func (r *Reconciler) createOpenstackProjectForLeaf(_ context.Context, leaf tree.
 // the proposed pending change only takes effect after manager approval.
 // It also keeps name and description in sync, so renaming a node in the tree renames
 // its OpenStack project on the next tick.
-func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo) (overcommitted bool, err error) {
+func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo) (overcommitted bool, inUse common.ProjectQuota, err error) {
 	osProjectID := osProject.ID
 	quotaSet := ProjectQuotaToQuotaSet(r.managedProjects, leaf.Limit)
 
@@ -1072,11 +1073,11 @@ func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo) (
 		"dry_run", r.cfg.DryRun)
 
 	if r.cfg.DryRun {
-		return false, nil
+		return false, nil, nil
 	}
 
 	if err := r.osClient.UpdateManagedQuotas(osProjectID, quotaSet); err != nil {
-		return false, fmt.Errorf("update managed quotas: %w", err)
+		return false, nil, fmt.Errorf("update managed quotas: %w", err)
 	}
 
 	// Name is only sent when it actually changed: an unchanged name would be a no-op
@@ -1105,10 +1106,10 @@ func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo) (
 	if err != nil {
 		r.log.Warnw("Skipping overcommit check (quota detail unavailable)",
 			"node_id", leaf.ID, "os_project_id", osProjectID, "error", err)
-		return false, nil
+		return false, nil, nil
 	}
 
-	return IsProjectOvercommitted(r.managedProjects, leaf.Limit, detail), nil
+	return IsProjectOvercommitted(r.managedProjects, leaf.Limit, detail), ProjectInUse(r.managedProjects, detail), nil
 }
 
 // buildDesiredMembers extracts the intended OpenStack role assignments from a leaf.

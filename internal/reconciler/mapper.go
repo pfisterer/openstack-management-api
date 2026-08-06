@@ -128,6 +128,31 @@ func QuotaSetToProjectQuota(resources []common.ManagedProject, qs osclient.Quota
 // IsProjectOvercommitted returns true when any resource marked OSOvercommitCheck has its
 // in-use value (from the OS quota detail) exceeding the approved quota limit.
 // A limit of common.UnlimitedQuota (-1) or zero is never treated as overcommitted.
+// ProjectInUse translates OpenStack's in-use counters into our resource ids, so
+// the platform can show what a project actually consumes next to what it claims.
+//
+// Only resources marked OSOvercommitCheck are mapped; the rest have no in-use
+// counter we could read, and reporting 0 for them would look like "nothing is
+// used" rather than "not measured". Storage is among the missing ones on some
+// clouds — see the note in quotas.go.
+func ProjectInUse(resources []common.ManagedProject, detail *osclient.ProjectQuotaDetail) common.ProjectQuota {
+	if detail == nil {
+		return nil
+	}
+	inUse := make(common.ProjectQuota)
+	for _, res := range resources {
+		if !res.OSOvercommitCheck || res.OSQuotaField == "" {
+			continue
+		}
+		fa, ok := quotaFields[res.OSQuotaField]
+		if !ok {
+			continue
+		}
+		inUse[res.ID] = fa.get(detail.InUse) / multiplierOf(res)
+	}
+	return inUse
+}
+
 func IsProjectOvercommitted(resources []common.ManagedProject, approvedRQ common.ProjectQuota, detail *osclient.ProjectQuotaDetail) bool {
 	if detail == nil {
 		return false
@@ -150,4 +175,20 @@ func IsProjectOvercommitted(resources []common.ManagedProject, approvedRQ common
 		}
 	}
 	return false
+}
+
+// quotaEqual compares two resource maps by value, treating a missing key and a
+// zero as different: a resource OpenStack does not report an in-use counter for
+// must not look like one that is measured and idle.
+func quotaEqual(a, b common.ProjectQuota) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for id, av := range a {
+		bv, ok := b[id]
+		if !ok || av != bv {
+			return false
+		}
+	}
+	return true
 }

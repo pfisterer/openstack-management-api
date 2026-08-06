@@ -670,14 +670,8 @@ func (s *Service) changeNeedsNoApproval(current *Node, req ChangeNodeRequest) bo
 	}
 	// Authorized users are an access decision, not a budget one: who may enter the
 	// project is precisely what the manager reviews, and even a shorter list can
-	// have swapped one person for another. Always ask — but only when the list
-	// actually differs.
-	//
-	// The distinction matters because clients send the whole node back, not a
-	// patch: the UI puts the unchanged member list in every change request, so a
-	// bare nil-check made the fast path unreachable from the only client there is
-	// — every shrink still queued for approval.
-	if req.AuthorizedUsers != nil && !sameAuthorizedUsers(current.AuthorizedUsers, *req.AuthorizedUsers) {
+	// have swapped one person for another. Always ask.
+	if req.AuthorizedUsers != nil {
 		return false
 	}
 	// An empty request is not a free change — let the path below reject it.

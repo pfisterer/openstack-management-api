@@ -124,6 +124,12 @@ type ReconcilerConfiguration struct {
 	// DeleteReleasedProjects is false. The full tag is "<prefix><YYYY-MM-DD>".
 	// Default: "pending-deletion:".
 	PendingDeletionTagPrefix string `json:"pending_deletion_tag_prefix"`
+	// TerminationTagPrefix is the tag prefix carrying a leaf's termination date,
+	// so the intended end of life can be read off an OpenStack project without
+	// going through this API. The value is the stored timestamp verbatim
+	// (RFC3339), and the tag is absent while no date is set.
+	// Default: "termination:".
+	TerminationTagPrefix string `json:"termination_tag_prefix"`
 	// ContactTagPrefix is the prefix for tags that record requester contact addresses.
 	// One tag per requester email is written alongside the pending-deletion tag.
 	// Default: "contact:".
@@ -241,6 +247,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			PendingDeletionGraceDays: helper.GetEnvInt("RECONCILER_PENDING_DELETION_GRACE_DAYS", 30),
 			PendingDeletionTagPrefix: helper.GetEnvString("RECONCILER_PENDING_DELETION_TAG_PREFIX", "pending-deletion:"),
 			ContactTagPrefix:         helper.GetEnvString("RECONCILER_CONTACT_TAG_PREFIX", "contact:"),
+			TerminationTagPrefix:     helper.GetEnvString("RECONCILER_TERMINATION_TAG_PREFIX", "termination:"),
 		},
 		RoleProvider: RoleProviderConfig{
 			Type:     helper.GetEnvString("ROLE_PROVIDER", "mock"),

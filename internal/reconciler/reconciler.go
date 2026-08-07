@@ -92,6 +92,9 @@ type Config struct {
 	// PendingDeletionTagPrefix is the tag prefix for the scheduled deletion date.
 	// Full tag format: "<prefix><YYYY-MM-DD>". Default: "pending-deletion:".
 	PendingDeletionTagPrefix string
+	// TerminationTagPrefix is the tag prefix carrying the leaf's termination date
+	// (the stored RFC3339 timestamp, verbatim). Default: "termination:".
+	TerminationTagPrefix string
 	// ContactTagPrefix is the prefix for tags that record owner contact addresses.
 	// Default: "contact:".
 	ContactTagPrefix string
@@ -121,6 +124,11 @@ type Status struct {
 	// wrong guess creates an account nobody logs into while the role points
 	// nowhere, which is invisible until someone reports missing access.
 	PreseedConflicts []osclient.PreseedConflict `json:"preseed_conflicts,omitempty"`
+	// TerminationTagPrefix is configuration rather than run state: the admin UI
+	// shows the CLI query for overdue projects, and that query has to name the
+	// prefix THIS deployment writes (see syncTerminationTag). Hardcoding it in
+	// the frontend would go quietly wrong the day someone overrides the env.
+	TerminationTagPrefix string `json:"termination_tag_prefix,omitempty"`
 }
 
 // Reconciler orchestrates the two-way sync.
@@ -208,7 +216,9 @@ func (r *Reconciler) Trigger() {
 func (r *Reconciler) GetStatus() Status {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.status
+	status := r.status
+	status.TerminationTagPrefix = r.cfg.TerminationTagPrefix
+	return status
 }
 
 // recordPreseedConflicts appends conflicts to the status of the current run.
@@ -793,6 +803,71 @@ func (r *Reconciler) handleReleasedProject(osProject osclient.ProjectInfo, leaf 
 	res.projectsTaggedForDeletion++
 }
 
+// syncTerminationTag publishes a leaf's termination date on its OpenStack project
+// as <TerminationTagPrefix><RFC3339>, so "what runs out when" can be answered from
+// OpenStack alone — `openstack project list` and the Keystone API both return tags,
+// and an operator holding neither an account here nor database access can read the
+// date off the project itself. The value is the stored timestamp verbatim rather
+// than a truncated date: it is what the API would answer, and a tag is a bad place
+// to lose precision.
+//
+// Publishing only. Nothing enforces the date (see Node.TerminationDate) — a project
+// past it keeps running, it is now merely visible.
+//
+// Writes only on an actual change, because this runs for every managed leaf on every
+// tick: an unconditional update would be one Keystone write per project per interval
+// for a value that changes maybe twice in a project's life. Clearing the date in the
+// tree removes the tag on the next tick, and every other tag (managed, resource-id,
+// contact, pending-deletion) is carried over untouched.
+func (r *Reconciler) syncTerminationTag(leaf tree.Node, osProject osclient.ProjectInfo) {
+	prefix := r.cfg.TerminationTagPrefix
+	if prefix == "" {
+		return // switched off by configuration
+	}
+
+	desired := ""
+	if leaf.TerminationDate != nil && *leaf.TerminationDate != "" {
+		desired = prefix + *leaf.TerminationDate
+	}
+
+	current := ""
+	for _, tag := range osProject.Tags {
+		if strings.HasPrefix(tag, prefix) {
+			current = tag
+			break
+		}
+	}
+	if current == desired {
+		return
+	}
+
+	// Rebuild rather than append: a changed date has to REPLACE the old tag, and a
+	// cleared one has to leave nothing behind.
+	newTags := make([]string, 0, len(osProject.Tags)+1)
+	for _, tag := range osProject.Tags {
+		if !strings.HasPrefix(tag, prefix) {
+			newTags = append(newTags, tag)
+		}
+	}
+	if desired != "" {
+		newTags = append(newTags, desired)
+	}
+
+	r.log.Infow("Updating termination tag on OS project",
+		"node_id", leaf.ID, "os_project_id", osProject.ID,
+		"old_tag", current, "new_tag", desired, "dry_run", r.cfg.DryRun)
+
+	if r.cfg.DryRun {
+		return
+	}
+	if _, err := r.osClient.UpdateProject(osProject.ID, osclient.ProjectUpdateOpts{
+		Tags: &newTags,
+	}); err != nil {
+		r.log.Warnw("Failed to update termination tag on OS project",
+			"node_id", leaf.ID, "os_project_id", osProject.ID, "error", err)
+	}
+}
+
 // loadScopedOSProjects fetches the OS projects to reconcile against.
 // When a scope parent is configured it lists all children of that parent so externally
 // created projects can be imported. Otherwise only managed-tagged projects.
@@ -1099,6 +1174,8 @@ func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo) (
 			"node_id", leaf.ID, "os_project_id", osProjectID,
 			"desired_name", desiredName, "error", err)
 	}
+
+	r.syncTerminationTag(leaf, osProject)
 
 	// Overcommit check: OpenStack accepts a quota reduction below current usage but blocks
 	// new resource creation. We surface this in the UI via the OSOvercommitted flag.

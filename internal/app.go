@@ -235,6 +235,7 @@ func RunApplication() {
 				PendingDeletionGraceDays: config.Reconciler.PendingDeletionGraceDays,
 				PendingDeletionTagPrefix: config.Reconciler.PendingDeletionTagPrefix,
 				ContactTagPrefix:         config.Reconciler.ContactTagPrefix,
+				TerminationTagPrefix:     config.Reconciler.TerminationTagPrefix,
 			}
 			return reconciler.New(nodeStore, osClient, reconcilerCfg, config.ProjectDefinitions, roleProvider, logger), nil
 		}, logger)

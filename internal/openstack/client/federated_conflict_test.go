@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/gophercloud/gophercloud"
+	"github.com/gophercloud/gophercloud/openstack/identity/v3/users"
 	"go.uber.org/zap"
 )
 
@@ -18,13 +19,16 @@ type keystoneStub struct {
 	// createdID is the id the stub hands out on POST /users — the knob that
 	// decides whether the caller sees a match or a conflict.
 	createdID string
-	deleted   []string
-	server    *httptest.Server
+	// present answers GET /users/{id}: the account a login binds to exists only
+	// when a test puts it here.
+	present map[string]string // id -> name
+	deleted []string
+	server  *httptest.Server
 }
 
 func newKeystoneStub(t *testing.T, createdID string) *keystoneStub {
 	t.Helper()
-	stub := &keystoneStub{createdID: createdID}
+	stub := &keystoneStub{createdID: createdID, present: map[string]string{}}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/users", func(w http.ResponseWriter, r *http.Request) {
@@ -47,8 +51,14 @@ func newKeystoneStub(t *testing.T, createdID string) *keystoneStub {
 		id := strings.TrimPrefix(r.URL.Path, "/users/")
 		switch r.Method {
 		case http.MethodGet:
-			// The derived id is never already present in these tests.
-			w.WriteHeader(http.StatusNotFound)
+			name, ok := stub.present[id]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"user": map[string]any{"id": id, "name": name, "enabled": true},
+			})
 		case http.MethodDelete:
 			stub.deleted = append(stub.deleted, id)
 			w.WriteHeader(http.StatusNoContent)
@@ -75,51 +85,73 @@ func (s *keystoneStub) client() *OpenStackClient {
 	}
 }
 
-// A rejected account must not survive the call that rejected it.
+// Keystone mints its own ID on POST /v3/users and ignores one supplied in the
+// request — verified against the cloud this runs on. So a pre-created account
+// NEVER carries the ID a login resolves to, and an earlier version of this code
+// took that difference as proof of a broken assumption and deleted the account
+// again. That made pre-creation impossible: no cloud can pass that test.
 //
-// This is the regression that mattered: the conflict branch used to leave the
-// account in Keystone. It carried the managed description and held no role, so
-// the orphan sweep at the end of the same reconcile pass deleted it — and five
-// minutes later the next pass created it again under a fresh uuid. The loop ran
-// unattended against a live Keystone.
-func TestFindOrCreateFederatedUser_RemovesTheAccountItRejects(t *testing.T) {
+// The stand-in is what holds the role until the first login, so it has to
+// survive the call that created it.
+func TestFindOrCreateFederatedUser_KeepsThePreCreatedStandIn(t *testing.T) {
 	const email = "s1@example.edu"
-	stub := newKeystoneStub(t, "aaaabbbbccccddddeeeeffff00001111") // a uuid, not the derived sha256
-	client := stub.client()
-
-	user, err := client.findOrCreateFederatedUser(email, nil)
-
-	if user != nil {
-		t.Errorf("user = %+v, want nil on conflict", user)
-	}
-	var conflict *PreseedConflict
-	if !asPreseedConflict(err, &conflict) {
-		t.Fatalf("err = %v, want a *PreseedConflict", err)
-	}
-	if len(stub.deleted) != 1 || stub.deleted[0] != stub.createdID {
-		t.Fatalf("deleted = %v, want exactly the account just created (%s)", stub.deleted, stub.createdID)
-	}
-	if strings.Contains(conflict.Reason, "delete the account and pre-seed it manually") {
-		t.Error("the reason still tells the operator to delete an account that is already gone")
-	}
-}
-
-// The happy path must not delete anything.
-func TestFindOrCreateFederatedUser_KeepsAMatchingAccount(t *testing.T) {
-	const email = "s1@example.edu"
-	expected := FederatedUserID("default", FederatedUniqueID(email))
-	stub := newKeystoneStub(t, expected)
+	stub := newKeystoneStub(t, "aaaabbbbccccddddeeeeffff00001111") // a uuid, as Keystone hands out
 	client := stub.client()
 
 	user, err := client.findOrCreateFederatedUser(email, nil)
 	if err != nil {
 		t.Fatalf("findOrCreateFederatedUser: %v", err)
 	}
-	if user == nil || user.ID != expected {
-		t.Fatalf("user = %+v, want the account with the derived id %s", user, expected)
+	if user == nil || user.ID != stub.createdID {
+		t.Fatalf("user = %+v, want the account just created (%s)", user, stub.createdID)
 	}
 	if len(stub.deleted) != 0 {
-		t.Errorf("deleted = %v, want nothing removed on the happy path", stub.deleted)
+		t.Errorf("deleted = %v, want the stand-in kept", stub.deleted)
+	}
+}
+
+// Once the person has logged in, the account Keystone made for that login is
+// the only one worth holding a role — and our stand-in is a duplicate of the
+// same person, so it goes.
+func TestFindOrCreateFederatedUser_LoginAccountWinsAndSupersedesTheStandIn(t *testing.T) {
+	const email = "s1@example.edu"
+	derived := FederatedUserID("default", FederatedUniqueID(email))
+	stub := newKeystoneStub(t, "unused")
+	stub.present[derived] = email
+	client := stub.client()
+
+	standIn := &users.User{ID: "aaaabbbbccccddddeeeeffff00001111", Name: email, Description: ManagedUserDescription}
+	user, err := client.findOrCreateFederatedUser(email, standIn)
+	if err != nil {
+		t.Fatalf("findOrCreateFederatedUser: %v", err)
+	}
+	if user == nil || user.ID != derived {
+		t.Fatalf("user = %+v, want the account the login binds to (%s)", user, derived)
+	}
+	if len(stub.deleted) != 1 || stub.deleted[0] != standIn.ID {
+		t.Fatalf("deleted = %v, want exactly the superseded stand-in (%s)", stub.deleted, standIn.ID)
+	}
+}
+
+// An account we did not create is never deleted and never silently reused: a
+// role assigned to it would be invisible to the login.
+func TestFindOrCreateFederatedUser_LeavesAForeignAccountAlone(t *testing.T) {
+	const email = "s1@example.edu"
+	stub := newKeystoneStub(t, "unused")
+	client := stub.client()
+
+	foreign := &users.User{ID: "0000111122223333444455556666aaaa", Name: email, Description: "somebody else's account"}
+	user, err := client.findOrCreateFederatedUser(email, foreign)
+
+	if user != nil {
+		t.Errorf("user = %+v, want nil rather than a guess", user)
+	}
+	var conflict *PreseedConflict
+	if !asPreseedConflict(err, &conflict) {
+		t.Fatalf("err = %v, want a *PreseedConflict", err)
+	}
+	if len(stub.deleted) != 0 {
+		t.Fatalf("deleted = %v, want a foreign account left untouched", stub.deleted)
 	}
 }
 

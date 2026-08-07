@@ -24,7 +24,25 @@ import (
 //     and nothing downstream changes it (shadow_federated_user stores it as is);
 //   - the public user ID is derived from it: the default (sha256) ID generator
 //     hashes the mapping values ordered by key — domain_id, entity_type,
-//     local_id — i.e. sha256(domain_id + "user" + unique_id).
+//     local_id — i.e. sha256(domain_id + "user" + unique_id). Verified against
+//     the live shadow users of two real logins: the formula reproduces both ids
+//     exactly.
+//
+// What that derivation does NOT give us is a way to CREATE such an account.
+// Keystone mints the ID itself on POST /v3/users and ignores one supplied in
+// the request (verified), so a pre-created account always carries a UUID, never
+// the derived ID. An earlier version of this code treated that difference as
+// proof that the cloud "derives ids differently" and deleted the account again
+// — which made pre-creation impossible everywhere, since no cloud can satisfy
+// that test.
+//
+// The binding that actually matters is the federated_user row Keystone writes
+// from the `federated` block: the login looks the account up by
+// (idp_id, protocol_id, unique_id), not by ID. So a pre-created account is kept
+// and given its role. Should a login nevertheless spawn its own shadow account,
+// the next sync notices — the derived ID now exists, it wins, and the leftover
+// pre-created duplicate is removed. Either way the platform converges, without
+// having to be right about Keystone's internals up front.
 //
 // Two details are ours, not Keystone's, and both are worth knowing:
 //
@@ -97,47 +115,57 @@ func (e *PreseedConflict) Error() string {
 // up on, creating it when it does not exist yet. byName is the account already
 // found under that email (may be nil).
 //
-// Two lookups are combined on purpose: by email, because that is the identifier
-// the platform works with, and by the derived ID, because that is the account
-// the login actually binds to. Agreement between the two is what makes
-// pre-creation safe; disagreement is reported instead of resolved by guessing,
-// since either choice would silently strand the role assignment.
+// The order below is the whole design: the account a login actually lands on
+// wins whenever it exists, and everything else is a stand-in that holds the
+// role until that day. See the notes at the top for why a stand-in can never
+// carry the login's ID, and why that is not a reason to refuse pre-creation.
 func (c *OpenStackClient) findOrCreateFederatedUser(email string, byName *users.User) (*users.User, error) {
 	uniqueID := FederatedUniqueID(email)
-	expectedID := FederatedUserID(c.federatedDomainID, uniqueID)
+	derivedID := FederatedUserID(c.federatedDomainID, uniqueID)
 
-	derived, err := c.getUserByIDIfExists(expectedID)
+	derived, err := c.getUserByIDIfExists(derivedID)
 	if err != nil {
 		return nil, fmt.Errorf("look up derived federated id for %q: %w", email, err)
 	}
 
 	switch {
-	// The account found by email IS the one the login will use.
-	case byName != nil && byName.ID == expectedID:
-		return byName, nil
-
-	// Nothing under this email, but the login target already exists — an earlier
-	// real login created it under a different name. Reusing it is exactly right;
-	// creating another account here would be the duplicate we want to avoid.
-	case byName == nil && derived != nil:
-		c.log.Infow("Reusing existing federated account for pre-seeding",
-			"email", email, "user_id", derived.ID, "name", derived.Name)
+	// The account a login binds to exists — it is the only one worth holding a
+	// role. A stand-in of OURS for the same person has served its purpose and is
+	// removed, so the person does not end up with two accounts and a role on the
+	// wrong one. Accounts we did not create are never touched.
+	case derived != nil:
+		if byName != nil && byName.ID != derived.ID && byName.Description == ManagedUserDescription {
+			if err := c.DeleteUser(byName.ID); err != nil {
+				c.log.Warnw("Could not remove the pre-created account the login superseded",
+					"email", email, "preseeded_id", byName.ID, "login_id", derived.ID, "error", err)
+			} else {
+				c.log.Infow("Removed the pre-created account the login superseded",
+					"email", email, "preseeded_id", byName.ID, "login_id", derived.ID)
+			}
+		}
 		return derived, nil
 
-	// An account carries this email, but it is not the one the login binds to.
-	// Typically the OIDC username differs from the email (the asserted
-	// preferred_username is what counts), or the account is a plain local user.
+	// Our own stand-in from an earlier run, still carrying the link the login
+	// resolves by. Reuse it rather than creating a second one.
+	case byName != nil && byName.Description == ManagedUserDescription && hasFederatedLink(byName, c.federatedIdPID, c.federatedProtocolID, uniqueID):
+		return byName, nil
+
+	// An account carries this email but is not the one a login binds to, and it
+	// is not a stand-in of ours either: a plain local account, or one whose OIDC
+	// username differs from the email. Guessing would strand the role on it.
 	case byName != nil:
 		return nil, &PreseedConflict{
 			Email: email,
 			Reason: fmt.Sprintf(
-				"a Keystone user with this name exists (id %s), but a login for this address resolves to id %s (unique_id %q, idp %q). "+
+				"a Keystone user with this name exists (id %s) but carries no federation link for unique_id %q on idp %q, so a login would not use it (it would land on id %s). "+
 					"Most likely the OIDC username differs from the email address, or the account is a local (non-federated) one. "+
-					"Assign the role to the correct account manually, or correct the username — pre-creating now would produce an account nobody logs into",
-				byName.ID, expectedID, uniqueID, c.federatedIdPID),
+					"Assign the role to the correct account manually, or correct the username",
+				byName.ID, uniqueID, c.federatedIdPID, derivedID),
 		}
 
-	// Neither exists: pre-create the account the login will find.
+	// Nobody yet: pre-create the stand-in and let it hold the role. Keystone
+	// gives it a UUID of its own choosing — see the notes at the top; the login
+	// finds it by the federation link, not by ID.
 	default:
 		link := FederatedLink{
 			IdPID:      c.federatedIdPID,
@@ -148,32 +176,38 @@ func (c *OpenStackClient) findOrCreateFederatedUser(email string, byName *users.
 		if err != nil {
 			return nil, fmt.Errorf("create federated user %q: %w", email, err)
 		}
-		// The ID Keystone assigned must be the one a login will resolve to,
-		// otherwise the account is invisible to that login.
-		if created.ID != expectedID {
-			// Take the account back out. Leaving it behind is what turned a
-			// stable failure into a self-sustaining loop: the rejected account
-			// carries our managed description and holds no role, so the orphan
-			// sweep at the end of the very same run deleted it — and the next
-			// run five minutes later created it again, with a fresh UUID. That
-			// cycle ran against Keystone until somebody noticed.
-			//
-			// Cleaning up here rather than relying on the sweep also keeps the
-			// two decisions independent: whoever changes the sweep later cannot
-			// silently resurrect the loop.
-			cleanup := ""
-			if err := c.DeleteUser(created.ID); err != nil {
-				cleanup = fmt.Sprintf(" (the account could not be removed either: %v)", err)
-			}
-			return nil, &PreseedConflict{
-				Email: email,
-				Reason: fmt.Sprintf(
-					"pre-created account got id %s, but a login for unique_id %q resolves to id %s — this cloud derives federated ids differently than assumed. The unusable account was removed again%s; grant the role by hand on the account the login actually uses, or let the user log in once so it exists",
-					created.ID, uniqueID, expectedID, cleanup),
-			}
-		}
 		return created, nil
 	}
+}
+
+// hasFederatedLink reports whether a user carries the given IdP link. Keystone
+// returns the block under "federated" and gophercloud collects unmodelled
+// fields in Extra, so it arrives as nested []any/map[string]any.
+func hasFederatedLink(user *users.User, idpID, protocolID, uniqueID string) bool {
+	blocks, ok := user.Extra["federated"].([]any)
+	if !ok {
+		return false
+	}
+	for _, raw := range blocks {
+		block, ok := raw.(map[string]any)
+		if !ok || block["idp_id"] != idpID {
+			continue
+		}
+		protocols, ok := block["protocols"].([]any)
+		if !ok {
+			continue
+		}
+		for _, rawProto := range protocols {
+			proto, ok := rawProto.(map[string]any)
+			if !ok {
+				continue
+			}
+			if proto["protocol_id"] == protocolID && proto["unique_id"] == uniqueID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // getUserByIDIfExists returns nil (and no error) when the user does not exist,

@@ -10,13 +10,18 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # write: the release step below creates a tag and a GitHub release.
+      contents: write
       packages: write
 
     steps:
 
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          # Full history: the release notes are derived from the commits since
+          # the previous tag, and a shallow clone has neither.
+          fetch-depth: 0
 
       - name: Read version from VERSION file
         id: get_version
@@ -47,6 +52,37 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # --- release ---
+      # A stable VERSION gets a Git tag and a GitHub release; a "-test.N" one
+      # deliberately gets neither. That omission is the whole mechanism: Argo CD
+      # pulls this repo's Helm chart, and production resolves it against tags,
+      # so an untagged commit simply does not exist for production.
+      - name: Tag and release stable versions
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(steps.get_version.outputs.VERSION, '-')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "v$VERSION is already tagged — nothing to release."
+            exit 0
+          fi
+          # The commit subjects are the changelog; they are already written as
+          # one. Only the "release X.Y.Z" bumps say nothing worth reading.
+          NOTES="$RUNNER_TEMP/notes.md"
+          PREV=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+          RANGE=HEAD
+          [ -n "$PREV" ] && RANGE="$PREV..HEAD"
+          git log --pretty=%s "$RANGE" | grep -v '^release ' | sort -s -t: -k1,1 |
+            awk -F': ' '{ g = (NF > 1 ? $1 : "other"); sub(/^[^:]*: /, "");
+                          if (g != last) { printf "\n**%s**\n", g; last = g }
+                          printf "- %s\n", $0 }' > "$NOTES" || true
+          [ -s "$NOTES" ] || echo "Maintenance release." > "$NOTES"
+          git tag "v$VERSION"
+          git push origin "v$VERSION"
+          gh release create "v$VERSION" --title "v$VERSION" --notes-file "$NOTES"
 
       # --- ghcr retention (runs after the push, so counts include the new tag) ---
       # Keep only the newest pre-release "-test.N" tag

@@ -7,9 +7,7 @@ projects as real OpenStack projects (and imports unknown ones back).
 
 This document describes the system as of 2026-07 — after the rewrite of the
 domain core to the **unified tree model** (`internal/tree`) and the matching
-self-service-ui overhaul. The design analysis that motivated the rewrite lives
-in [`__Modellanalyse.md`](__Modellanalyse.md) (German); its §5 is the blueprint
-this implementation follows.
+self-service-ui overhaul.
 
 > **Scope:** this file is the architecture reference; `README.md` covers
 > quick-start, configuration and build/CI and links here for everything else.
@@ -64,9 +62,9 @@ The entire domain is a single tree of `tree.Node` values
 
 Both share one lifecycle, one authorization rule and one capacity mechanism.
 This replaced a model with separate Delegation/Project entities whose
-double-used fields caused four structural authorization bugs (F-1…F-4 in the
-Modellanalyse); the old `/v1` API and `internal/applogic`/`storage` were
-deleted without migration (no production users existed).
+double-used fields caused four structural authorization bugs; the old `/v1` API
+and `internal/applogic`/`storage` were deleted without migration (no production
+users existed).
 
 ### 2.1 The three rules
 

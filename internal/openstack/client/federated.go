@@ -128,6 +128,22 @@ func (c *OpenStackClient) findOrCreateFederatedUser(email string, byName *users.
 		return nil, fmt.Errorf("look up derived federated id for %q: %w", email, err)
 	}
 
+	// Keystone's user LIST omits federated attributes; only a GET on the single
+	// user carries them (verified against the cloud this runs on). byName comes
+	// from a list, so judging its federation link on that payload declares every
+	// account we pre-created link-less from its second sync onwards — and then
+	// refuses the role for good, on every project but the one whose sync created
+	// the account. Re-read it before deciding anything about it.
+	if byName != nil {
+		full, err := c.getUserByIDIfExists(byName.ID)
+		if err != nil {
+			return nil, fmt.Errorf("read user %q: %w", email, err)
+		}
+		if full != nil {
+			byName = full
+		}
+	}
+
 	switch {
 	// The account a login binds to exists — it is the only one worth holding a
 	// role. A stand-in of OURS for the same person has served its purpose and is

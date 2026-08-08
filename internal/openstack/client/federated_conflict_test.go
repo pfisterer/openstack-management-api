@@ -22,13 +22,16 @@ type keystoneStub struct {
 	// present answers GET /users/{id}: the account a login binds to exists only
 	// when a test puts it here.
 	present map[string]string // id -> name
-	deleted []string
-	server  *httptest.Server
+	// federated marks ids whose GET carries a federation link — Keystone returns
+	// those on a single-user GET only, never in a list.
+	federated map[string]bool
+	deleted   []string
+	server    *httptest.Server
 }
 
 func newKeystoneStub(t *testing.T, createdID string) *keystoneStub {
 	t.Helper()
-	stub := &keystoneStub{createdID: createdID, present: map[string]string{}}
+	stub := &keystoneStub{createdID: createdID, present: map[string]string{}, federated: map[string]bool{}}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/users", func(w http.ResponseWriter, r *http.Request) {
@@ -56,9 +59,14 @@ func newKeystoneStub(t *testing.T, createdID string) *keystoneStub {
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"user": map[string]any{"id": id, "name": name, "enabled": true},
-			})
+			user := map[string]any{"id": id, "name": name, "enabled": true, "description": ManagedUserDescription}
+			if stub.federated[id] {
+				user["federated"] = []any{map[string]any{
+					"idp_id":    "keycloak",
+					"protocols": []any{map[string]any{"protocol_id": "openid", "unique_id": FederatedUniqueID("s1@example.edu")}},
+				}}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"user": user})
 		case http.MethodDelete:
 			stub.deleted = append(stub.deleted, id)
 			w.WriteHeader(http.StatusNoContent)
@@ -152,6 +160,33 @@ func TestFindOrCreateFederatedUser_LeavesAForeignAccountAlone(t *testing.T) {
 	}
 	if len(stub.deleted) != 0 {
 		t.Fatalf("deleted = %v, want a foreign account left untouched", stub.deleted)
+	}
+}
+
+// The regression this cost a staging deployment: Keystone's user LIST omits
+// federated attributes, so the account we pre-created looks link-less on every
+// later sync. Judging it on that payload turned "our own stand-in" into "an
+// account we must not touch", and the role was never assigned to anything after
+// the run that created it.
+func TestFindOrCreateFederatedUser_ReReadsTheAccountBeforeJudgingIt(t *testing.T) {
+	const email = "s1@example.edu"
+	stub := newKeystoneStub(t, "unused")
+	const standInID = "aaaabbbbccccddddeeeeffff00001111"
+	stub.present[standInID] = email  // a GET finds it…
+	stub.federated[standInID] = true // …carrying the link a list would not show
+	client := stub.client()
+
+	// Exactly what FindUserByName hands over: no federated attributes at all.
+	fromList := &users.User{ID: standInID, Name: email, Description: ManagedUserDescription}
+	user, err := client.findOrCreateFederatedUser(email, fromList)
+	if err != nil {
+		t.Fatalf("findOrCreateFederatedUser: %v", err)
+	}
+	if user == nil || user.ID != standInID {
+		t.Fatalf("user = %+v, want the existing stand-in (%s) reused", user, standInID)
+	}
+	if len(stub.deleted) != 0 {
+		t.Errorf("deleted = %v, want nothing removed", stub.deleted)
 	}
 }
 

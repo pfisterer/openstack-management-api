@@ -15,3 +15,6 @@ internal/generated_docs/
 private/
 private-*
 docs/helm-repo
+# Generated npm client package (built by `make npm-package`)
+client-npm/
+*.tgz

@@ -8,6 +8,8 @@ GO_MOD := go.mod
 SWAGGER_JSON := $(DOC_DIR)/swagger.json
 OPENAPI_YAML := $(DOC_DIR)/openapi3.json
 CLIENT_DIR := $(DOC_DIR)/client-typescript
+CLIENT_PKG_DIR := ./client-npm
+NPM_PKG_NAME := @dhbw-cloud/os-mgt-client
 CLIENT_TS := $(CLIENT_DIR)/client.gen.ts
 CLIENT_SDK := $(CLIENT_DIR)/sdk.gen.ts
 DIST_DIR := $(DOC_DIR)/client-dist
@@ -23,7 +25,7 @@ RP_SWAGGER_SRC    := ../role-provider-service/internal/generated_docs/swagger.js
 
 .DEFAULT_GOAL := all
 
-.PHONY: all image build clean doc convert client bundle check swag run help install-npm bundle-deps docker docker-login docker-build multi-arch-build dev helm-update test generate-role-provider-client
+.PHONY: all image build clean doc convert client bundle npm-package npm-pack npm-publish check swag run help install-npm bundle-deps docker docker-login docker-build multi-arch-build dev helm-update test generate-role-provider-client
 
 all: test bundle build bundle-deps
 
@@ -112,6 +114,64 @@ generate-role-provider-client: install-npm
 	@command -v oapi-codegen >/dev/null 2>&1 || go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
 	@oapi-codegen -config $(RP_API_DIR)/oapi-codegen.yaml $(RP_API_DIR)/openapi3.json
 	@echo "✅ Go client generated in $(RP_API_DIR)/client.gen.go"
+
+# ── npm client package ──────────────────────────────────────────────────────
+# Builds the generated client as a publishable npm package. This is the same
+# code the server embeds today; packaging it lets the UI depend on a VERSION
+# instead of fetching it at runtime, so a missing operation becomes a build
+# error there rather than a silent no-op in the browser.
+npm-package: client
+	@echo "📦 Assembling $(NPM_PKG_NAME)..."
+	@rm -rf $(CLIENT_PKG_DIR)
+	@mkdir -p $(CLIENT_PKG_DIR)/src
+	@cp -R $(CLIENT_DIR)/. $(CLIENT_PKG_DIR)/src/
+	@# The generated index.ts exports every operation and type, but not the
+	@# client instance itself — and that is what the consumer configures.
+	@printf '%s\n' \
+		"export * from './index';" \
+		"export { client } from './client.gen';" \
+		> $(CLIENT_PKG_DIR)/src/entry.ts
+	@VERSION=$$(cat VERSION | tr -d '\n'); printf '%s\n' \
+		'{' \
+		'  "name": "$(NPM_PKG_NAME)",' \
+		"  \"version\": \"$$VERSION\"," \
+		'  "description": "Generated TypeScript client for the DHBW Cloud $(PROJECT_NAME).",' \
+		'  "license": "Apache-2.0",' \
+		'  "type": "module",' \
+		'  "exports": { ".": { "types": "./dist/entry.d.ts", "default": "./dist/index.mjs" } },' \
+		'  "types": "./dist/entry.d.ts",' \
+		'  "files": ["dist"],' \
+		'  "publishConfig": { "access": "public" },' \
+		'  "repository": { "type": "git", "url": "git+https://github.com/pfisterer/$(PROJECT_NAME).git" }' \
+		'}' \
+		> $(CLIENT_PKG_DIR)/package.json
+	@# Bundled rather than compiled file-by-file: the generated sources import
+	@# each other without file extensions, which every bundler tolerates and
+	@# plain Node does not. One .mjs sidesteps the question.
+	@npx esbuild $(CLIENT_PKG_DIR)/src/entry.ts --bundle --format=esm \
+		--outfile=$(CLIENT_PKG_DIR)/dist/index.mjs
+	@npx tsc $(CLIENT_PKG_DIR)/src/entry.ts --declaration --emitDeclarationOnly \
+		--outDir $(CLIENT_PKG_DIR)/dist --module esnext --moduleResolution bundler \
+		--target es2022 --skipLibCheck
+	@echo "✅ Package assembled in $(CLIENT_PKG_DIR)"
+
+# Build the tarball an npm publish would upload — for trying the package out
+# in a consumer without publishing anything.
+npm-pack: npm-package
+	@cd $(CLIENT_PKG_DIR) && npm pack
+
+# Publish the package to npm. A prerelease goes to the `next` dist-tag: npm
+# would otherwise point `latest` at it, so a plain `npm install` would hand a
+# consumer a -test.N build. Same channel split the images and chart tags use.
+# Needs `npm login` once; publishConfig.access=public is already in the manifest.
+npm-publish: npm-package
+	@VERSION=$$(cat VERSION | tr -d '\n'); \
+	case "$$VERSION" in \
+		*-*) TAG=next ;; \
+		*)   TAG=latest ;; \
+	esac; \
+	echo "📤 Publishing $(NPM_PKG_NAME)@$$VERSION (dist-tag: $$TAG)"; \
+	cd $(CLIENT_PKG_DIR) && npm publish --tag "$$TAG"
 
 # Run Go tests
 test: check-modules

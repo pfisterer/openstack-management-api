@@ -75,10 +75,17 @@ jobs:
           PREV=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
           RANGE=HEAD
           [ -n "$PREV" ] && RANGE="$PREV..HEAD"
-          git log --pretty=%s "$RANGE" | grep -v '^release ' | sort -s -t: -k1,1 |
-            awk -F': ' '{ g = (NF > 1 ? $1 : "other"); sub(/^[^:]*: /, "");
+          git log --pretty=%s "$RANGE" | grep -v '^release ' |
+            awk -F': ' '{ line = $0; g = "zz-other";
+                          # Only a bare lowercase word counts as a topic prefix.
+                          # Without that test, `Revert "nodes: ..."` splits at its
+                          # own colon and invents the group `Revert "nodes`.
+                          if (NF > 1 && $1 ~ /^[a-z0-9._-]+$/) { g = $1; sub(/^[^:]*: /, "", line) }
+                          printf "%s\t%s\n", g, line }' |
+            sort -s -t "$(printf '\t')" -k1,1 |
+            awk -F'\t' '{ g = $1; sub(/^zz-/, "", g);   # sorts ungrouped ones last
                           if (g != last) { printf "\n**%s**\n", g; last = g }
-                          printf "- %s\n", $0 }' > "$NOTES" || true
+                          printf "- %s\n", $2 }' > "$NOTES" || true
           [ -s "$NOTES" ] || echo "Maintenance release." > "$NOTES"
           git tag "v$VERSION"
           git push origin "v$VERSION"

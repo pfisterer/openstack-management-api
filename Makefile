@@ -10,9 +10,6 @@ OPENAPI_YAML := $(DOC_DIR)/openapi3.json
 CLIENT_DIR := $(DOC_DIR)/client-typescript
 CLIENT_PKG_DIR := ./client-npm
 NPM_PKG_NAME := @dhbw-cloud/os-mgt-client
-CLIENT_TS := $(CLIENT_DIR)/client.gen.ts
-CLIENT_SDK := $(CLIENT_DIR)/sdk.gen.ts
-DIST_DIR := $(DOC_DIR)/client-dist
 EMBED_FILE := $(DOC_DIR)/embedded.go
 
 # Docker Image details
@@ -25,13 +22,13 @@ RP_SWAGGER_SRC    := ../role-provider-service/internal/generated_docs/swagger.js
 
 .DEFAULT_GOAL := all
 
-.PHONY: all image build clean doc convert client bundle npm-package npm-pack npm-publish check swag run help install-npm bundle-deps docker docker-login docker-build multi-arch-build dev helm-update test generate-role-provider-client
+.PHONY: all image build clean doc convert client bundle npm-package npm-pack npm-publish check swag run help install-npm docker docker-login docker-build multi-arch-build dev helm-update test generate-role-provider-client
 
-all: test bundle build bundle-deps
+all: test bundle build
 
 # Like `all` but WITHOUT the test suite — used by the Docker image build so the
 # CI image build stays fast and deterministic. Run tests locally via `make test`.
-image: bundle build bundle-deps
+image: bundle build
 
 # Start development server with live reload
 dev:
@@ -69,13 +66,10 @@ client: convert-to-openapi3 install-npm
 	rm -f $(OPENAPI_YAML)
 	@echo "✅ TS client generated in $(CLIENT_DIR)"
 
-# Bundle web UI dependencies into single JS file and embed into Go
-bundle: client install-npm generate-role-provider-client
-	@echo "📦 Bundling into a single JS file with esbuild..."
-	@mkdir -p $(DIST_DIR)
-	set -e; \
-	npx esbuild "$(CLIENT_TS)" "$(CLIENT_SDK)" --bundle --outdir="$(DIST_DIR)" --format=esm --out-extension:.js=".mjs" --sourcemap
-	npx esbuild "$(CLIENT_TS)" "$(CLIENT_SDK)" --bundle --outdir="$(DIST_DIR)" --format=cjs --sourcemap
+# Embed the API description into the binary. The TypeScript client used to be
+# bundled in here too and served under /client; consumers take it from npm now
+# ($(NPM_PKG_NAME)), so this step needs neither Node nor esbuild.
+bundle: generate-swagger-json
 	@echo "🧩 Copying VERSION file to $(DOC_DIR)..."
 	@cp VERSION $(DOC_DIR)/VERSION
 	@echo "🧩 Generating embedded.go for generated docs..."
@@ -83,20 +77,14 @@ bundle: client install-npm generate-role-provider-client
 	@printf '%s\n' \
 		'package generated_docs' \
 		'' \
-		'import "embed"' \
+		'import _ "embed"' \
 		'' \
 		'//go:embed swagger.json' \
 		'var SwaggerJSON string' \
-		'//go:embed client-dist/*' \
-		'var ClientDist embed.FS' \
 		'//go:embed VERSION' \
 		'var Version string' \
 		> $(EMBED_FILE)
-	@echo "✅ Bundled JS in $(DIST_DIR)/"
 	@echo "✅ Embedded docs written to $(EMBED_FILE)"
-	@echo "Deleting intermediate client files in $(CLIENT_DIR)..."
-	@rm -rf $(CLIENT_DIR)
-	@echo "✅ Bundled JS in $(DIST_DIR)/"
 
 # Generate Go client from the role-provider-service Swagger spec
 generate-role-provider-client: install-npm
@@ -165,6 +153,11 @@ npm-pack: npm-package
 # consumer a -test.N build. Same channel split the images and chart tags use.
 # Needs `npm login` once; publishConfig.access=public is already in the manifest.
 npm-publish: npm-package
+	@# Deliberately not a CI step: publishing is a rare, deliberate act and the
+	@# login is interactive (npm opens a browser). Only prompts when the stored
+	@# credentials are missing or expired, so publishing both services in a row
+	@# usually asks once, not twice.
+	@npm whoami >/dev/null 2>&1 || npm login
 	@VERSION=$$(cat VERSION | tr -d '\n'); \
 	case "$$VERSION" in \
 		*-*) TAG=next ;; \
@@ -262,7 +255,7 @@ help:
 	@echo "  convert-to-openapi3     → Convert swagger.json → openapi3.json"
 	@echo "  client                  → Generate TypeScript client"
 	@echo "  bundle                  → Bundle client into JS"
-	@echo "  bundle-deps             → Bundle web UI dependencies"
+	@echo "              → Bundle web UI dependencies"
 	@echo "  generate-role-provider-client      → Regenerate Go client from role-provider-service swagger.json"
 	@echo "  docker-build            → Build Docker image"
 	@echo "  docker-run              → Run Docker container"

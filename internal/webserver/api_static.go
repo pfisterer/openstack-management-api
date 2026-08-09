@@ -1,7 +1,6 @@
 package webserver
 
 import (
-	"io/fs"
 	"net/http"
 	"strings"
 
@@ -27,9 +26,6 @@ func RegisterStaticRoutes(group *gin.RouterGroup, cfg StaticConfig) *gin.RouterG
 		c.Writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 		c.String(http.StatusOK, strings.ReplaceAll(helper.IndexHTML, "__VERSION__", appVersion))
 	})
-
-	subFS, _ := fs.Sub(generated_docs.ClientDist, "client-dist")
-	group.StaticFS("/client", http.FS(subFS))
 
 	group.GET("/swagger.json", func(c *gin.Context) {
 		c.Writer.Header().Set("Content-Type", "application/json; charset=utf-8")

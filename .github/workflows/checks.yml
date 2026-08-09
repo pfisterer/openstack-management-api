@@ -27,16 +27,12 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Set up Node
-        uses: actions/setup-node@v7
-        with:
-          node-version: lts/*
-
       # internal/generated_docs/ is generated and gitignored, so a fresh clone
-      # does not compile at all: internal/webserver imports it. `bundle` is what
-      # writes it (swagger.json + the TS client + embedded.go) and is the same
-      # step the image build runs.
-      - name: Generate embedded docs and client
+      # does not compile at all: the webserver imports it. `bundle` writes it
+      # (swagger.json + VERSION + embedded.go) and is the same step the image
+      # build runs. Needs swag only — the TypeScript client that used to be
+      # bundled in here lives on npm now, so there is no Node step.
+      - name: Generate embedded docs
         run: make bundle
 
       - name: go vet

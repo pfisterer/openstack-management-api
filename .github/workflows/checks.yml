@@ -2,8 +2,8 @@ name: Checks
 
 # Deliberately a separate workflow, not steps in docker-image.yml: by
 # convention nothing is verified inside the image build (the emulated arm64
-# build OOM-killed the in-image test run, so checks are a local step). This is
-# where the checks live instead — no Docker build, no registry.
+# build OOM-killed the in-image test run). This is where the checks live
+# instead — no Docker build, no registry.
 on:
   push:
     branches: ["main"]
@@ -26,6 +26,18 @@ jobs:
           # Follows go.mod rather than a number kept in step with it by hand.
           go-version-file: go.mod
           cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+
+      # internal/generated_docs/ is generated and gitignored, so a fresh clone
+      # does not compile at all: internal/webserver imports it. `bundle` is what
+      # writes it (swagger.json + the TS client + embedded.go) and is the same
+      # step the image build runs.
+      - name: Generate embedded docs and client
+        run: make bundle
 
       - name: go vet
         run: go vet ./...

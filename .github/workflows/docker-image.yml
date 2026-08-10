@@ -83,6 +83,18 @@ jobs:
           set -euo pipefail
           echo "$GH_TOKEN" | helm registry login ghcr.io \
             -u "${{ github.actor }}" --password-stdin
+          # An already published version is never overwritten. The question is
+          # asked of the registry rather than of the diff: "has this version been
+          # published" is the invariant that matters, and a paths filter would
+          # only answer "did this file change".
+          NAME=$(awk '/^name:/{print $2; exit}' helm-chart/Chart.yaml)
+          VERSION=$(awk '/^version:/{print $2; exit}' helm-chart/Chart.yaml)
+          if helm show chart "oci://ghcr.io/${{ github.repository_owner }}/charts/$NAME" \
+               --version "$VERSION" >/dev/null 2>&1; then
+            echo "$NAME $VERSION is already published - nothing to do."
+            exit 0
+          fi
+
           helm package helm-chart/ --destination "$RUNNER_TEMP"
           helm push "$RUNNER_TEMP"/*.tgz \
             "oci://ghcr.io/${{ github.repository_owner }}/charts"

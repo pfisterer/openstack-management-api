@@ -197,8 +197,27 @@ its values per environment from the `dhbw-deployment` repo and syncs with ArgoCD
 The database is expected to be a CloudNativePG cluster in production;
 `DB_TYPE=memory` exists for development and demos only.
 
+The chart is published as an OCI artifact on every push to `main`:
+
+```sh
+helm pull oci://ghcr.io/pfisterer/charts/openstack-management-api --version 0.8.5-test.1
+```
+
+It is normally not installed on its own. The DHBW deployment composes all four
+services with the [cloud-self-service](https://github.com/pfisterer/cloud-self-service)
+umbrella chart, which pins this chart by version — and a pinned chart version
+pins its `appVersion`, which pins the image tag. Values for this chart go under
+its chart name there:
+
+```yaml
+openstack-management-api:
+  openstackManagementApi:
+    ...
+```
+
 ## Related projects
 
+- [cloud-self-service](https://github.com/pfisterer/cloud-self-service) — the umbrella chart that composes all four
 - [self-service-ui](https://github.com/pfisterer/self-service-ui) — the web interface
 - [role-provider-service](https://github.com/pfisterer/role-provider-service) — group membership and token resolution
 - [dynamic-zones](https://github.com/pfisterer/dynamic-zones) — the DNS half of the platform

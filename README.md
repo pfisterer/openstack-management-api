@@ -129,7 +129,10 @@ description — that spec is the reference, so it cannot drift from the
 implementation the way a hand-written endpoint list does:
 
 - **`GET /swagger.json`** — the OpenAPI spec
-- **`/client`** — a bundled TypeScript client (the web UI imports it at runtime)
+- A generated TypeScript client is published to npm as `@dhbw-cloud/os-mgt-client`.
+  It used to be served from `/client` and loaded by the browser at startup; consumers
+  now depend on a version at build time, so a missing operation is a build error there
+  instead of a silent no-op in the browser.
 
 [self-service-ui](https://github.com/pfisterer/self-service-ui) renders the same
 spec in the browser under *Cloud Projects → API Documentation*, which is usually

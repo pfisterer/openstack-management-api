@@ -5,6 +5,15 @@
   "additionalProperties": false,
   "required": ["openstackManagementApi", "ingress"],
   "properties": {
+    "global": {
+      "type": "object",
+      "description": "Injected by Helm into every subchart. Must be tolerated here, or this chart cannot be used as a dependency at all, because additionalProperties is false."
+    },
+    "nameOverride": { "type": "string" },
+    "fullnameOverride": {
+      "type": "string",
+      "description": "Pins the resource base name. The umbrella chart sets this so adopting these releases does not rename every object."
+    },
     "openstackManagementApi": {
       "type": "object",
       "additionalProperties": false,

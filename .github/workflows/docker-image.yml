@@ -60,6 +60,33 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # --- chart artifact ---
+      # The chart goes to the same registry as the image, under
+      # ghcr.io/<owner>/charts/<chart-name>, versioned by Chart.yaml — which the
+      # check at the top of this job guarantees agrees with the source of truth.
+      # That guarantee is the point: here the number stops being a label and
+      # becomes the artifact's identity.
+      #
+      # Prereleases are pushed too, so staging can consume charts the same way
+      # production will rather than staying a special case. This is additive:
+      # Argo CD still pulls the chart from the Git path, so nothing about the
+      # deployment changes until the umbrella chart starts consuming these.
+      - name: Set up Helm
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: azure/setup-helm@v4
+
+      - name: Package and push the Helm chart
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "$GH_TOKEN" | helm registry login ghcr.io \
+            -u "${{ github.actor }}" --password-stdin
+          helm package helm-chart/ --destination "$RUNNER_TEMP"
+          helm push "$RUNNER_TEMP"/*.tgz \
+            "oci://ghcr.io/${{ github.repository_owner }}/charts"
+
       # --- release ---
       # A stable VERSION gets a Git tag and a GitHub release; a "-test.N" one
       # deliberately gets neither. That omission is the whole mechanism: Argo CD

@@ -5,7 +5,8 @@
 openstackManagementApi:
   image: ghcr.io/pfisterer/openstack-management-api
   imagePullPolicy: Always
-  version: "latest"
+  # Empty -> the chart\'s appVersion is used (see the deployment template).
+  version: ""
   hostname: "os-mgt-api.example.com"
   replicas: 1
 

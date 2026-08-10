@@ -36,7 +36,12 @@ spec:
           emptyDir: {}
       containers:
         - name: openstack-management
-          image: {{ .Values.openstackManagementApi.image }}:{{ .Values.openstackManagementApi.version }}
+          # The tag falls back to this chart's appVersion, which is what makes a
+          # pinned chart version pin the image too: under the umbrella chart no
+          # version is passed at all, so "new chart, old image" cannot occur.
+          # An explicit value still wins — that is how argocd-image-updater
+          # keeps driving the standalone releases.
+          image: {{ .Values.openstackManagementApi.image }}:{{ .Values.openstackManagementApi.version | default .Chart.AppVersion }}
           imagePullPolicy: {{ .Values.openstackManagementApi.imagePullPolicy | default "Always" }}
           ports:
             - containerPort: 8083

@@ -21,7 +21,7 @@
       "properties": {
         "image": { "type": "string", "minLength": 1 },
         "imagePullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] },
-        "version": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "description": "Image tag. Empty falls back to the chart appVersion, which is how a pinned chart version pins the image." },
         "hostname": { "type": "string", "minLength": 1 },
         "replicas": { "type": "integer", "minimum": 0 },
         "rootAdminTokens": { "type": "string" },

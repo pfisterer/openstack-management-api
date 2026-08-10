@@ -22,7 +22,7 @@ RP_SWAGGER_SRC    := ../role-provider-service/internal/generated_docs/swagger.js
 
 .DEFAULT_GOAL := all
 
-.PHONY: all image build clean doc convert client bundle npm-package npm-pack npm-publish check swag run help install-npm docker docker-login docker-build multi-arch-build dev helm-update test generate-role-provider-client
+.PHONY: all image build clean doc convert client bundle npm-package npm-pack npm-publish check swag run help install-npm docker docker-login docker-build multi-arch-build dev helm-update test generate-role-provider-client bump version-check
 
 all: test bundle build
 
@@ -219,14 +219,40 @@ docker-multi-arch-build: helm-update
 	@echo "✅ Multi-architecture image $(DOCKER_REPO):$(DOCKER_TAG) built and pushed."
 	@echo "You can pull it with: docker pull $(DOCKER_REPO):$(DOCKER_TAG)"
 
+# --- Versioning -------------------------------------------------------------
+# VERSION is the single source of truth; Chart.yaml has to agree with it. That
+# matters more than it used to: once the chart is published as an OCI artifact,
+# the number in Chart.yaml IS the artifact version, so a mismatch ships one
+# release's contents under another release's name. `version-check` runs in CI
+# and FAILS on a mismatch rather than quietly rewriting the file — rewriting
+# would hide exactly the mistake it is meant to catch.
+
+# make bump V=1.2.3
+bump:
+	@test -n "$(V)" || { echo "usage: make bump V=<x.y.z>"; exit 1; }
+	@printf '%s' "$(V)" > VERSION
+	@$(MAKE) --no-print-directory helm-update
+
+version-check:
+	@v=$$(cat VERSION | tr -d '\n'); \
+	cv=$$(awk '/^version:/{print $$2}' helm-chart/Chart.yaml); \
+	av=$$(awk '/^appVersion:/{gsub(/"/,"",$$2); print $$2}' helm-chart/Chart.yaml); \
+	if [ "$$v" != "$$cv" ] || [ "$$v" != "$$av" ]; then \
+		echo "✗ VERSION is $$v, Chart.yaml says version=$$cv appVersion=$$av"; \
+		echo "  fix with: make bump V=$$v"; \
+		exit 1; \
+	fi; \
+	echo "✅ version $$v is consistent"
+
 # Update helm chart version from VERSION file
 helm-update:
 	helm lint helm-chart/
-	echo "✅ Helm chart linted successfully."
-
+	@echo "✅ Helm chart linted successfully."
 	@VERSION=$$(cat VERSION | tr -d '\n'); \
-	sed -i '' "s/^version: .*/version: $$VERSION/" helm-chart/Chart.yaml; \
-	sed -i '' "s/^appVersion: .*/appVersion: \"$$VERSION\"/" helm-chart/Chart.yaml; \
+	sed -e "s/^version: .*/version: $$VERSION/" \
+	    -e "s/^appVersion: .*/appVersion: \"$$VERSION\"/" \
+	    helm-chart/Chart.yaml > helm-chart/Chart.yaml.tmp; \
+	mv helm-chart/Chart.yaml.tmp helm-chart/Chart.yaml; \
 	echo "✅ Updated helm-chart/Chart.yaml to version $$VERSION"
 
 

@@ -27,6 +27,13 @@ jobs:
         id: get_version
         run: echo "VERSION=$(cat VERSION)" >> "$GITHUB_OUTPUT"
 
+      # Chart.yaml must state the same version as the source of truth above.
+      # Deliberately a check, not a fix-up: a workflow that silently rewrote the
+      # file would leave the repository wrong and hide the omission. It runs
+      # before the build so a mismatch costs nothing but a red run.
+      - name: Check the chart version matches
+        run: make version-check
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 

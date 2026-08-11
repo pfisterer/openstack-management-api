@@ -80,6 +80,13 @@ openstackManagementApi:
     # Maximum number of authorized_users entries per project. A course or
     # department belongs in as one group token, not as N individual entries.
     maxAuthorizedUsers: 32
+    # Bill a project the LARGER of its declared limit and what OpenStack reports
+    # it actually uses, in both the auto-approve check and the budget rollup.
+    # On by default: with it off, shrinking a limit after filling the project
+    # frees budget on paper while the servers keep running. Turn it off only if
+    # the reconciler ever reports inflated usage — that would lock budgets that
+    # are genuinely within their limits.
+    chargeOsInUse: true
     # Browser origins allowed to call /v1 cross-origin, as full origins
     # ("https://selfservice.example.cloud"). Empty = no cross-origin access,
     # which is right whenever the SPA reaches this API same-origin through a

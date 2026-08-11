@@ -52,7 +52,7 @@ func corsRouter(t *testing.T, devMode bool, corsOrigins ...string) http.Handler 
 	t.Helper()
 	store, sugar := newTestStore(t)
 	svc := tree.NewService(store, roleprovider.NewMockRoleProvider(), quotaResourceIDs,
-		rootAdminTokens, 10*time.Second, common.DefaultMaxAuthorizedUsers, sugar)
+		rootAdminTokens, 10*time.Second, common.DefaultMaxAuthorizedUsers, true, sugar)
 	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
 		t.Fatalf("bootstrap tree: %v", err)
 	}
@@ -112,6 +112,7 @@ func routerFromStore(t *testing.T, sugar *zap.SugaredLogger, store tree.Store, r
 		rootAdminTokens,
 		10*time.Second,
 		common.DefaultMaxAuthorizedUsers,
+		true,
 		sugar,
 	)
 	// Same as app.go: ensure the structural nodes exist and the root admin scope

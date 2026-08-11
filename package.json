@@ -17,7 +17,7 @@
         "esbuild": "^0.28.1",
         "esbuild-plugin-alias-path": "^2.0.2",
         "swagger2openapi": "^7.0.8",
-        "typescript": "^5.9.3"
+        "typescript": "^6.0.3"
     },
     "overrides": {
         "js-yaml": "^4.2.1"

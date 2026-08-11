@@ -183,6 +183,15 @@ type AppConfiguration struct {
 	// per member), so the ceiling bounds what a single request can trigger.
 	// A course or department belongs in as ONE group token, not as N entries.
 	MaxAuthorizedUsers int `json:"max_authorized_users"`
+	// ChargeOSInUse bills a project the LARGER of its declared limit and what
+	// OpenStack reports it actually consumes, in both the auto-approve check
+	// and the budget rollup. Default on: with it off, shrinking a limit after
+	// filling the project frees budget on paper while the servers keep running
+	// (see tree.chargedQuota). The switch exists to turn the stricter
+	// accounting off if a reconciler bug ever reports inflated usage — that
+	// would otherwise lock budgets that are genuinely within their limits, and
+	// waiting for a release to undo it is the worse failure mode.
+	ChargeOSInUse bool `json:"charge_os_in_use"`
 }
 
 // loadAppConfiguration loads configuration from an optional .env file and environment variables.
@@ -259,6 +268,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 		ProjectDefinitions:    loadProjectDefinitionsOrDefaults(),
 		ServiceTimeoutSeconds: helper.GetEnvInt("SERVICE_TIMEOUT_SECONDS", 30),
 		MaxAuthorizedUsers:    helper.GetEnvInt("API_MAX_AUTHORIZED_USERS", common.DefaultMaxAuthorizedUsers),
+		ChargeOSInUse:         helper.GetEnvBool("API_CHARGE_OS_IN_USE", true),
 	}
 
 	if err := validateConfig(cfg); err != nil {

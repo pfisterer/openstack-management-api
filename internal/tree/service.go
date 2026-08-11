@@ -30,6 +30,10 @@ type Service struct {
 	// maxAuthorizedUsers bounds how many participants one node may list.
 	maxAuthorizedUsers int
 
+	// chargeOSInUse makes the accounting bill max(declared limit, measured
+	// OpenStack usage) instead of the declared limit alone. See chargedQuota.
+	chargeOSInUse bool
+
 	// approvalMu serializes the capacity check-then-write critical sections
 	// (create with direct/auto approval, approve, reparent, promote) so concurrent
 	// approvals cannot both pass the capacity check and over-allocate a budget.
@@ -43,7 +47,7 @@ type Service struct {
 // NewService constructs the tree service.
 // rootAdminTokens is synchronized into the root node's AdminScope on every
 // Bootstrap — the configuration is the source of truth for that one scope.
-func NewService(store Store, roles common.RoleProvider, resourceIDs []string, rootAdminTokens common.TokenList, requestTimeout time.Duration, maxAuthorizedUsers int, log *zap.SugaredLogger) *Service {
+func NewService(store Store, roles common.RoleProvider, resourceIDs []string, rootAdminTokens common.TokenList, requestTimeout time.Duration, maxAuthorizedUsers int, chargeOSInUse bool, log *zap.SugaredLogger) *Service {
 	if store == nil {
 		panic("tree.NewService requires a non-nil store")
 	}
@@ -64,6 +68,7 @@ func NewService(store Store, roles common.RoleProvider, resourceIDs []string, ro
 		rootAdminTokens:    rootAdminTokens,
 		requestTimeout:     requestTimeout,
 		maxAuthorizedUsers: maxAuthorizedUsers,
+		chargeOSInUse:      chargeOSInUse,
 		log:                log,
 	}
 }
@@ -355,19 +360,21 @@ func (s *Service) loadSubtreeUsage(ctx context.Context, roots []Node) (UsagePerN
 		return nil, fmt.Errorf("load active leaves for usage rollup: %w", err)
 	}
 
-	return buildRolledUpUsage(leaves, parentMap, s.resourceIDs), nil
+	return buildRolledUpUsage(leaves, parentMap, s.resourceIDs, s.chargeOSInUse), nil
 }
 
 // buildRolledUpUsage attributes each leaf's limit and ID to its parent budget and
 // every tracked ancestor, so a budget's usage reflects total consumption across
 // its entire subtree — not just its direct children.
-func buildRolledUpUsage(leaves []Node, parentMap map[string]*string, resourceIDs []string) UsagePerNode {
+func buildRolledUpUsage(leaves []Node, parentMap map[string]*string, resourceIDs []string, chargeOSInUse bool) UsagePerNode {
 	result := make(UsagePerNode)
 
 	for _, leaf := range leaves {
 		if leaf.ParentID == nil {
 			continue
 		}
+		// Per leaf, before any summation — see chargedQuota.
+		charged := chargedQuota(leaf, resourceIDs, chargeOSInUse)
 		current := *leaf.ParentID
 		for {
 			if _, tracked := parentMap[current]; !tracked {
@@ -377,7 +384,7 @@ func buildRolledUpUsage(leaves []Node, parentMap map[string]*string, resourceIDs
 				result[current] = make(UsageByStatus)
 			}
 			entry := result[current][leaf.Status]
-			entry.Limit = quotaAdd(entry.Limit, leaf.Limit, resourceIDs)
+			entry.Limit = quotaAdd(entry.Limit, charged, resourceIDs)
 			entry.NodeIDs = append(entry.NodeIDs, leaf.ID)
 			result[current][leaf.Status] = entry
 
@@ -591,8 +598,9 @@ func (s *Service) ownerActiveUsage(ctx context.Context, budgetID string, ownerTo
 	}
 	usage := make(common.ProjectQuota, len(s.resourceIDs))
 	for _, leaf := range leaves {
+		charged := chargedQuota(leaf, s.resourceIDs, s.chargeOSInUse)
 		for _, id := range s.resourceIDs {
-			usage[id] += leaf.Limit[id]
+			usage[id] += charged[id]
 		}
 	}
 	return usage, nil
@@ -616,6 +624,49 @@ func newHistoryEntry(event, actor, statusTo string) HistoryEntry {
 }
 
 // quotaAdd sums configured resource types from two quota objects.
+// chargedQuota is what a leaf COSTS its budget: the declared limit, or the
+// measured OpenStack usage where that is higher. With chargeOSInUse off it is
+// the declared limit alone, which is the pre-2026-08 behaviour.
+//
+// Why the max: shrinking a limit after filling the project frees budget on
+// paper while the servers keep running. OpenStack accepts the smaller quota,
+// existing servers are untouched, only NEW ones are refused — so 8 cores
+// requested, filled, then shrunk to 1 books 1 and leaves 8 in use. Repeat per
+// project and the platform's books say "almost nothing" while the cloud is
+// full. Billing the larger of the two numbers removes the gain regardless of
+// which route (self-service or an approving manager) granted the shrink.
+//
+// Two rules that are easy to get wrong:
+//   - A resource MISSING from OSInUse means "OpenStack does not measure this",
+//     NOT "zero in use". Treating an absent key as 0 would be exactly the
+//     understatement this function exists to prevent, so it leaves the limit
+//     untouched instead.
+//   - An unlimited limit (common.UnlimitedQuota, -1) stays unlimited. A naive
+//     max(-1, n) would turn "no cap" into a finite number and quietly tighten
+//     a budget nobody asked to tighten.
+//
+// The result must be computed PER LEAF and only then summed: max() does not
+// distribute over addition, so applying it to an already-aggregated total
+// gives a different (and wrong) answer.
+func chargedQuota(leaf Node, resourceIDs []string, chargeOSInUse bool) common.ProjectQuota {
+	if !chargeOSInUse {
+		return leaf.Limit
+	}
+	out := make(common.ProjectQuota, len(resourceIDs))
+	for _, id := range resourceIDs {
+		limit := leaf.Limit[id]
+		out[id] = limit
+		if limit == common.UnlimitedQuota {
+			continue
+		}
+		inUse, measured := leaf.OSInUse[id]
+		if measured && inUse > limit {
+			out[id] = inUse
+		}
+	}
+	return out
+}
+
 func quotaAdd(a, b common.ProjectQuota, resourceIDs []string) common.ProjectQuota {
 	out := make(common.ProjectQuota, len(a)+len(resourceIDs))
 	maps.Copy(out, a)

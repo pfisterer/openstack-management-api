@@ -119,6 +119,11 @@ spec:
             # request can trigger; a whole course goes in as ONE group token.
             - name: API_MAX_AUTHORIZED_USERS
               value: {{ .Values.openstackManagementApi.api.maxAuthorizedUsers | default 32 | toString | quote }}
+            {{- /* Explicit rather than `| default true`: that helper treats
+                   false as empty and would silently flip an intentional
+                   opt-out back on. */}}
+            - name: API_CHARGE_OS_IN_USE
+              value: {{ dig "chargeOsInUse" true .Values.openstackManagementApi.api | toString | quote }}
             - name: CORS_ALLOWED_ORIGINS
               value: {{ join "," (.Values.openstackManagementApi.api.corsAllowedOrigins | default list) | quote }}
 

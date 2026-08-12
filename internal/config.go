@@ -304,10 +304,21 @@ func loadProjectDefinitionsOrDefaults() []common.ManagedProject {
 		},
 		{
 			ID: "storage", Name: "Storage", Default: 50, Min: 1, Max: 100000,
-			Unit:         "GB",
-			Message:      "1 GB - 100 TB",
-			ShowOnUI:     true,
+			Unit:     "GB",
+			Message:  "1 GB - 100 TB",
+			ShowOnUI: true,
+			// No OSMultiplier: OpenStack counts `gigabytes` in GB and so do we.
 			OSQuotaField: "gigabytes",
+			// Measured, like cores and ram — and for the same reason. Without
+			// this flag ProjectInUse skips the resource entirely, so storage
+			// never reaches OSInUse and the accounting keeps billing the
+			// declared limit. That leaves the shrink-after-filling loophole
+			// wide open for exactly the resource that is cheapest to abuse:
+			// request 500 GB, fill it with volumes, shrink to 5. OpenStack
+			// accepts the smaller quota and keeps the volumes; the books say 5.
+			// The number was available all along — it rides in the same quota
+			// detail response the reconciler already fetches.
+			OSOvercommitCheck: true,
 		},
 		{
 			ID: "gpu", Name: "GPUs", Default: 0, Min: 0, Max: 1000,

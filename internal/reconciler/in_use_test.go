@@ -15,8 +15,10 @@ func TestProjectInUse_ReportsRealConsumption(t *testing.T) {
 		{ID: "cores", OSQuotaField: "cores", OSOvercommitCheck: true},
 		// RAM is counted in GB here and in MB in OpenStack.
 		{ID: "ram", OSQuotaField: "ram", OSOvercommitCheck: true, OSMultiplier: 1024},
-		// Not measured: no in-use counter, so it must be absent rather than 0.
-		{ID: "storage", OSQuotaField: "gigabytes", OSOvercommitCheck: false},
+		{ID: "storage", OSQuotaField: "gigabytes", OSOvercommitCheck: true},
+		// Genuinely unmeasurable: OpenStack has no quota field for GPUs, so it
+		// must be absent rather than 0.
+		{ID: "gpu", OSOvercommitCheck: true},
 	}
 	detail := &osclient.ProjectQuotaDetail{InUse: osclient.QuotaSet{Cores: 8, RAM: 16384, Gigabytes: 50}}
 
@@ -28,8 +30,12 @@ func TestProjectInUse_ReportsRealConsumption(t *testing.T) {
 	if got["ram"] != 16 {
 		t.Errorf("ram = %d, want 16 (16384 MB / 1024)", got["ram"])
 	}
-	if _, present := got["storage"]; present {
-		t.Error("storage is not measured; reporting it would read as 'nothing used' rather than 'unknown'")
+	// Counted in GB on both sides, so no multiplier is involved.
+	if got["storage"] != 50 {
+		t.Errorf("storage = %d, want 50", got["storage"])
+	}
+	if _, present := got["gpu"]; present {
+		t.Error("gpu has no OpenStack quota field; reporting it would read as 'nothing used' rather than 'unknown'")
 	}
 }
 

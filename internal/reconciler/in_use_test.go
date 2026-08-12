@@ -5,6 +5,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	osclient "github.com/pfisterer/openstack-management-api/internal/openstack/client"
+	"github.com/pfisterer/openstack-management-api/internal/tree"
 )
 
 // ProjectInUse is what makes an overcommit visible instead of merely flagged:
@@ -55,5 +56,76 @@ func TestQuotaEqual_DistinguishesMissingFromZero(t *testing.T) {
 	}
 	if !quotaEqual(common.ProjectQuota{"cores": 2, "ram": 4}, common.ProjectQuota{"ram": 4, "cores": 2}) {
 		t.Error("same values in another order compared unequal")
+	}
+}
+
+// A pass that could not read the quota detail must leave the last known usage
+// alone. Writing an empty map there is not a cosmetic bug: the accounting bills
+// max(limit, in-use), so an erased measurement drops the charge back to the
+// declared limit — which is exactly the shrink-after-filling loophole that
+// billing the maximum exists to close, reopened by a transient API error.
+func TestApplyOSSyncState_UnmeasuredPassKeepsTheLastKnownUsage(t *testing.T) {
+	leaf := tree.Node{
+		OSProjectID:     "os-1",
+		OSOvercommitted: true,
+		OSInUse:         common.ProjectQuota{"cores": 8, "ram": 5},
+	}
+
+	changed := applyOSSyncState(&leaf, "os-1", false, nil, false)
+
+	if changed {
+		t.Error("nothing was measured and the project id is unchanged; there is nothing to persist")
+	}
+	if !quotaEqual(leaf.OSInUse, common.ProjectQuota{"cores": 8, "ram": 5}) {
+		t.Errorf("OSInUse = %v, want the stored measurement untouched", leaf.OSInUse)
+	}
+	if !leaf.OSOvercommitted {
+		t.Error("OSOvercommitted was cleared by a pass that did not measure anything")
+	}
+}
+
+// The project id is tracked even when the quota detail was unreadable — it does
+// not come from the measurement, so there is no reason to lose it.
+func TestApplyOSSyncState_UnmeasuredPassStillAdoptsTheProjectID(t *testing.T) {
+	leaf := tree.Node{OSInUse: common.ProjectQuota{"cores": 8}}
+
+	if !applyOSSyncState(&leaf, "os-new", false, nil, false) {
+		t.Fatal("a new OS project id has to be persisted")
+	}
+	if leaf.OSProjectID != "os-new" {
+		t.Errorf("OSProjectID = %q, want %q", leaf.OSProjectID, "os-new")
+	}
+	if !quotaEqual(leaf.OSInUse, common.ProjectQuota{"cores": 8}) {
+		t.Errorf("OSInUse = %v, want it untouched", leaf.OSInUse)
+	}
+}
+
+// A real measurement overwrites, including back down to zero: a project that
+// genuinely released its servers must stop being billed for them.
+func TestApplyOSSyncState_MeasuredPassOverwrites(t *testing.T) {
+	leaf := tree.Node{
+		OSProjectID:     "os-1",
+		OSOvercommitted: true,
+		OSInUse:         common.ProjectQuota{"cores": 8, "ram": 5},
+	}
+
+	if !applyOSSyncState(&leaf, "os-1", false, common.ProjectQuota{"cores": 0, "ram": 0}, true) {
+		t.Fatal("the measurement changed, so the node needs persisting")
+	}
+	if !quotaEqual(leaf.OSInUse, common.ProjectQuota{"cores": 0, "ram": 0}) {
+		t.Errorf("OSInUse = %v, want the fresh measurement", leaf.OSInUse)
+	}
+	if leaf.OSOvercommitted {
+		t.Error("OSOvercommitted should follow the fresh measurement")
+	}
+}
+
+// An unchanged measurement must not report a change, or the reconciler rewrites
+// every leaf on every tick.
+func TestApplyOSSyncState_IdenticalMeasurementIsNotAChange(t *testing.T) {
+	leaf := tree.Node{OSProjectID: "os-1", OSInUse: common.ProjectQuota{"cores": 2}}
+
+	if applyOSSyncState(&leaf, "os-1", false, common.ProjectQuota{"cores": 2}, true) {
+		t.Error("nothing changed, but the node was marked for persisting")
 	}
 }

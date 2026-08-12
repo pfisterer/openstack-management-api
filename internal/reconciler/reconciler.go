@@ -428,19 +428,14 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 			r.syncMembers(leaf, created.ID)
 			r.syncGroupAssignments(leaf, created.ID, groupTokenToOSID)
 		} else {
-			overcommitted, inUse, err := r.syncQuota(leaf, osProject)
+			overcommitted, inUse, measured, err := r.syncQuota(leaf, osProject)
 			if err != nil {
 				r.log.Warnw("Failed to sync quota for leaf", "node_id", leaf.ID, "os_project_id", osProject.ID, "error", err)
 				continue
 			}
-			if leaf.OSProjectID != osProject.ID || leaf.OSOvercommitted != overcommitted || !quotaEqual(leaf.OSInUse, inUse) {
-				leaf.OSProjectID = osProject.ID
-				leaf.OSOvercommitted = overcommitted
-				leaf.OSInUse = inUse
-				if !r.cfg.DryRun {
-					if err := r.store.UpsertNode(ctx, leaf); err != nil {
-						r.log.Warnw("Failed to persist OS sync state on leaf", "node_id", leaf.ID, "error", err)
-					}
+			if applyOSSyncState(&leaf, osProject.ID, overcommitted, inUse, measured) && !r.cfg.DryRun {
+				if err := r.store.UpsertNode(ctx, leaf); err != nil {
+					r.log.Warnw("Failed to persist OS sync state on leaf", "node_id", leaf.ID, "error", err)
 				}
 			}
 			r.syncMembers(leaf, osProject.ID)
@@ -1132,13 +1127,49 @@ func (r *Reconciler) createOpenstackProjectForLeaf(_ context.Context, leaf tree.
 	return osclient.ProjectInfo{ID: project.ID, Name: project.Name, Tags: project.Tags}, nil
 }
 
+// applyOSSyncState writes the result of one sync pass onto a leaf and reports
+// whether anything changed (i.e. whether the node needs persisting).
+//
+// The rule that matters: the measurement is only written when there WAS one.
+// A failed quota-detail call used to arrive here as an empty in-use map, which
+// differs from whatever was stored and therefore overwrote it with nothing.
+// Since the accounting bills max(limit, in-use), the charge then silently fell
+// back to the declared limit until the next successful pass — the
+// shrink-after-filling loophole, reopened by a transient API error, and
+// OSOvercommitted cleared along with it so the UI stopped warning too.
+//
+// "Not measured" is not "nothing in use". The rest of this package is careful
+// about that distinction (see ProjectInUse and quotaEqual); this is the place
+// where it used to be lost.
+func applyOSSyncState(leaf *tree.Node, osProjectID string, overcommitted bool, inUse common.ProjectQuota, measured bool) bool {
+	changed := leaf.OSProjectID != osProjectID
+	if measured {
+		changed = changed || leaf.OSOvercommitted != overcommitted || !quotaEqual(leaf.OSInUse, inUse)
+	}
+	if !changed {
+		return false
+	}
+	leaf.OSProjectID = osProjectID
+	if measured {
+		leaf.OSOvercommitted = overcommitted
+		leaf.OSInUse = inUse
+	}
+	return true
+}
+
 // syncQuota pushes the current approved limit to an existing OS project and returns
 // whether the project is currently overcommitted (in-use > new limit).
 // For change_pending leaves the current approved limit (leaf.Limit) is used —
 // the proposed pending change only takes effect after manager approval.
 // It also keeps name and description in sync, so renaming a node in the tree renames
 // its OpenStack project on the next tick.
-func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo) (overcommitted bool, inUse common.ProjectQuota, err error) {
+//
+// The `measured` return says whether overcommitted/inUse mean anything. False
+// covers both "we did not look" (dry run) and "we looked and could not see"
+// (quota detail unavailable). Callers MUST NOT store the values in that case:
+// an empty in-use map is indistinguishable from a genuine zero once written,
+// and writing it undoes the whole point of billing max(limit, in-use).
+func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo) (overcommitted bool, inUse common.ProjectQuota, measured bool, err error) {
 	osProjectID := osProject.ID
 	quotaSet := ProjectQuotaToQuotaSet(r.managedProjects, leaf.Limit)
 
@@ -1148,11 +1179,11 @@ func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo) (
 		"dry_run", r.cfg.DryRun)
 
 	if r.cfg.DryRun {
-		return false, nil, nil
+		return false, nil, false, nil
 	}
 
 	if err := r.osClient.UpdateManagedQuotas(osProjectID, quotaSet); err != nil {
-		return false, nil, fmt.Errorf("update managed quotas: %w", err)
+		return false, nil, false, fmt.Errorf("update managed quotas: %w", err)
 	}
 
 	// Name is only sent when it actually changed: an unchanged name would be a no-op
@@ -1181,12 +1212,15 @@ func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo) (
 	// new resource creation. We surface this in the UI via the OSOvercommitted flag.
 	detail, err := r.osClient.GetProjectQuotaDetail(osProjectID)
 	if err != nil {
-		r.log.Warnw("Skipping overcommit check (quota detail unavailable)",
+		// Not an error for the caller: the quota push above succeeded, so the
+		// pass is not a failure. But measured=false, or the caller would store
+		// "no usage" for a project it simply could not read.
+		r.log.Warnw("Skipping overcommit check (quota detail unavailable); keeping the last known usage",
 			"node_id", leaf.ID, "os_project_id", osProjectID, "error", err)
-		return false, nil, nil
+		return false, nil, false, nil
 	}
 
-	return IsProjectOvercommitted(r.managedProjects, leaf.Limit, detail), ProjectInUse(r.managedProjects, detail), nil
+	return IsProjectOvercommitted(r.managedProjects, leaf.Limit, detail), ProjectInUse(r.managedProjects, detail), true, nil
 }
 
 // buildDesiredMembers extracts the intended OpenStack role assignments from a leaf.

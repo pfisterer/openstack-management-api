@@ -1,4 +1,9 @@
 ---
+# Dependency condition of the cloud-self-service umbrella chart, which decides by
+# this key whether to install this chart at all. Set it there, not here: a
+# standalone `helm install` of this chart ignores it entirely.
+enabled: true
+
 #------------------------------------
 # OpenStack Management API — Image & Replicas
 #------------------------------------
@@ -15,7 +20,7 @@ openstackManagementApi:
   # only for roleProvider.type=http) `role-provider-api-token`. When set, the
   # chart does NOT create its own Secret and the corresponding plaintext values
   # below (db.connectionString, openstack.applicationCredentialSecret,
-  # rootAdminTokens) are ignored.
+  # rootAdminTokens, roleProvider.apiToken) are ignored.
   existingSecret: ""
 
   #------------------------------------
@@ -23,11 +28,17 @@ openstackManagementApi:
   #------------------------------------
   # "mock": built-in demo identities (no external dependency).
   # "http": call role-provider-service for real transitive group tokens and
-  #         group search. Set url and provide `role-provider-api-token` in the
-  #         Secret above (must be one of the role-provider's API_TOKENS).
+  #         group search. Set url and apiToken below.
   roleProvider:
     type: "mock"
     url: ""
+    # Read-only token for the role provider's API — must be one of ITS
+    # `api.tokens`. Stored in a Secret. Only used for type=http; the deployment
+    # reads the key with `optional: true`, so an empty value here does not stop
+    # the pod from starting, it just makes every call to the role provider
+    # unauthenticated. Ignored when existingSecret is set (supply the
+    # `role-provider-api-token` key there instead).
+    apiToken: ""
 
   #------------------------------------
   # Database

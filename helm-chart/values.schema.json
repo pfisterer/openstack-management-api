@@ -9,6 +9,10 @@
       "type": "object",
       "description": "Injected by Helm into every subchart. Must be tolerated here, or this chart cannot be used as a dependency at all, because additionalProperties is false."
     },
+    "enabled": {
+      "type": "boolean",
+      "description": "Dependency condition of the cloud-self-service umbrella chart, which passes it down into this namespace — so it has to be allowed here for the same reason global does. A standalone install ignores it."
+    },
     "nameOverride": { "type": "string" },
     "fullnameOverride": {
       "type": "string",
@@ -32,7 +36,11 @@
           "additionalProperties": false,
           "properties": {
             "type": { "type": "string", "enum": ["mock", "http"] },
-            "url": { "type": "string" }
+            "url": { "type": "string" },
+            "apiToken": {
+              "type": "string",
+              "description": "Read-only token for the role provider's API, stored in the Secret as role-provider-api-token. Ignored when existingSecret is set."
+            }
           }
         },
         "db": {

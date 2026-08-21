@@ -22,10 +22,28 @@ RP_API_DIR        := ./internal/roleprovider/api
 # Keep it in step with the version the umbrella chart pins next to this service
 # — those two being one number is what makes a mismatch visible.
 #
-# Only stable releases carry the swagger.json asset: a "-test.N" push gets no
-# GitHub release, so there is nothing to attach it to.
-RP_VERSION        := v0.6.6
-RP_SWAGGER_URL    := https://github.com/pfisterer/role-provider-service/releases/download/$(RP_VERSION)/swagger.json
+# Only stable releases carry the swagger.json asset: a "-test.N" push creates no
+# GitHub release, and that omission is deliberate over there — it is what keeps
+# production from resolving a prerelease.
+#
+# So while an API change is still in flight on a prerelease, override the URL
+# rather than the version. role-provider-service serves its own spec at
+# /swagger.json ahead of the bearer middleware, so any running instance is a
+# valid source, and curl reads file:// as happily as https://:
+#
+#   make generate-role-provider-client \
+#     RP_SWAGGER_URL=https://role-provider.staging.dhbw.cloud/swagger.json
+#
+#   make generate-role-provider-client \
+#     RP_SWAGGER_URL=file://$$PWD/../role-provider-service/internal/generated_docs/swagger.json
+#
+# That is the old sibling-checkout behaviour, minus the part where it was the
+# silent default. The committed value below stays a released version, so what
+# lands on main is always reproducible from something published — and since the
+# generated client is committed, an override made mid-flight shows up in the
+# diff instead of hiding in someone's working copy.
+RP_VERSION        ?= v0.6.6
+RP_SWAGGER_URL    ?= https://github.com/pfisterer/role-provider-service/releases/download/$(RP_VERSION)/swagger.json
 
 .DEFAULT_GOAL := all
 

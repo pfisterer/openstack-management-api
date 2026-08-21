@@ -42,12 +42,12 @@ RP_API_DIR        := ./internal/roleprovider/api
 # lands on main is always reproducible from something published — and since the
 # generated client is committed, an override made mid-flight shows up in the
 # diff instead of hiding in someone's working copy.
-RP_VERSION        ?= v0.6.6
+RP_VERSION        ?= v0.6.7
 RP_SWAGGER_URL    ?= https://github.com/pfisterer/role-provider-service/releases/download/$(RP_VERSION)/swagger.json
 
 .DEFAULT_GOAL := all
 
-.PHONY: all image build clean doc convert client bundle npm-package npm-pack npm-publish check swag run help install-npm docker docker-login docker-build multi-arch-build dev helm-update test generate-role-provider-client bump version-check
+.PHONY: all image build clean doc convert client bundle npm-package npm-pack npm-publish check swag run help install-npm docker docker-login docker-build multi-arch-build dev helm-update test generate-role-provider-client print-rp-swagger-url bump version-check
 
 all: test bundle build
 
@@ -110,6 +110,12 @@ bundle: generate-swagger-json
 		'var Version string' \
 		> $(EMBED_FILE)
 	@echo "✅ Embedded docs written to $(EMBED_FILE)"
+
+# Where CI reads the URL from, so the pin lives in exactly one place. A copy of
+# it in the workflow would be a second thing to move when RP_VERSION changes,
+# and the check would keep passing against the old one.
+print-rp-swagger-url:
+	@echo "$(RP_SWAGGER_URL)"
 
 # Generate Go client from the role-provider-service OpenAPI description.
 #

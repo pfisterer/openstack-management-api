@@ -43,3 +43,23 @@ jobs:
       - name: Tests
         if: '!cancelled()'
         run: make test
+
+      # internal/roleprovider/api/swagger.json is the input the Go client is
+      # generated from, and it is committed. Nothing used to notice when it fell
+      # behind the service it describes: the generating target read a sibling
+      # checkout and warned rather than failed when it was absent, and it does
+      # not run here at all.
+      #
+      # This holds the committed copy against the release RP_VERSION names, which
+      # catches both ways it goes wrong — the pin moved without regenerating, or
+      # the file was edited by hand. No Node, no codegen, a couple of seconds.
+      #
+      # What it deliberately does not cover is client.gen.go itself; verifying
+      # that means regenerating, which needs npx swagger2openapi. The spec is the
+      # input, and an input that matches is most of the answer.
+      - name: Role-provider spec matches the pinned release
+        if: '!cancelled()'
+        run: |
+          set -euo pipefail
+          curl -fsSL "$(make --no-print-directory print-rp-swagger-url)" -o "$RUNNER_TEMP/rp.json"
+          diff -u internal/roleprovider/api/swagger.json "$RUNNER_TEMP/rp.json"

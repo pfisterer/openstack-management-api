@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pfisterer/cloud-self-service-golib/logging"
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/helper"
 	"github.com/pfisterer/openstack-management-api/internal/mockdata"
 	osclient "github.com/pfisterer/openstack-management-api/internal/openstack/client"
 	"github.com/pfisterer/openstack-management-api/internal/reconciler"
@@ -122,7 +122,7 @@ func RunApplication() {
 	}
 
 	// Initialize logger
-	log, logger := helper.InitLogger(config.DevMode)
+	log, logger := logging.Init(config.DevMode)
 	defer log.Sync()
 	logger.Info("Starting OpenStack Management Application")
 	logAppConfig(config, logger)

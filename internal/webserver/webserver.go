@@ -11,8 +11,8 @@ import (
 	"github.com/gin-contrib/cors"
 	ginzap "github.com/gin-contrib/zap"
 	"github.com/gin-gonic/gin"
+	"github.com/pfisterer/cloud-self-service-golib/logging"
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/helper"
 	"github.com/pfisterer/openstack-management-api/internal/reconciler"
 	"github.com/pfisterer/openstack-management-api/internal/tree"
 	"go.uber.org/zap"
@@ -132,7 +132,7 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 	}
 
 	// Pipe Gin internals through Zap logger outputs.
-	ginLogWriter := &helper.ZapWriter{SugarLogger: cfg.Log, Level: cfg.Log.Level()}
+	ginLogWriter := &logging.Writer{Logger: cfg.Log, Level: cfg.Log.Level()}
 	gin.DefaultWriter = ginLogWriter
 	gin.DefaultErrorWriter = ginLogWriter
 	router.Use(ginzap.RecoveryWithZap(cfg.Log.Desugar(), true))

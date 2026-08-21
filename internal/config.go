@@ -9,8 +9,8 @@ import (
 
 	"github.com/go-playground/validator/v10"
 	"github.com/joho/godotenv"
+	"github.com/pfisterer/cloud-self-service-golib/envconf"
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/helper"
 	"go.uber.org/zap"
 )
 
@@ -210,9 +210,9 @@ func loadAppConfiguration() (AppConfiguration, error) {
 	// Generate the application configuration struct from environment variables.
 	cfg := AppConfiguration{
 		Storage: common.StorageConfiguration{
-			Type:             strings.ToLower(strings.TrimSpace(helper.GetEnvString("DB_TYPE", "memory"))),
-			ConnectionString: helper.GetEnvString("DB_CONNECTION_STRING", "host=localhost user=postgres password=postgres dbname=openstack_management_api port=5432 sslmode=disable TimeZone=UTC"),
-			AddMockData:      helper.GetEnvBool("DB_ADD_MOCK_DATA", false),
+			Type:             strings.ToLower(strings.TrimSpace(envconf.String("DB_TYPE", "memory"))),
+			ConnectionString: envconf.String("DB_CONNECTION_STRING", "host=localhost user=postgres password=postgres dbname=openstack_management_api port=5432 sslmode=disable TimeZone=UTC"),
+			AddMockData:      envconf.Bool("DB_ADD_MOCK_DATA", false),
 		},
 		Openstack: OpenstackConfiguration{
 			AuthURL:                     getEnvString("OPENSTACK_AUTH_URL", "OS_AUTH_URL", ""),
@@ -229,46 +229,46 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			ProjectID:             getEnvString("OPENSTACK_PROJECT_ID", "OS_PROJECT_ID", ""),
 			Region:                getEnvString("OPENSTACK_REGION", "OS_REGION_NAME", "microstack"),
 			Insecure:              getEnvBool("OPENSTACK_INSECURE", "OS_INSECURE", false),
-			FederatedProvisioning: helper.GetEnvBool("OPENSTACK_FEDERATED_PROVISIONING", false),
-			FederatedIdPID:        helper.GetEnvString("OPENSTACK_FEDERATED_IDP_ID", "keycloak"),
-			FederatedProtocolID:   helper.GetEnvString("OPENSTACK_FEDERATED_PROTOCOL_ID", "openid"),
-			FederatedDomainID:     helper.GetEnvString("OPENSTACK_FEDERATED_DOMAIN_ID", "default"),
+			FederatedProvisioning: envconf.Bool("OPENSTACK_FEDERATED_PROVISIONING", false),
+			FederatedIdPID:        envconf.String("OPENSTACK_FEDERATED_IDP_ID", "keycloak"),
+			FederatedProtocolID:   envconf.String("OPENSTACK_FEDERATED_PROTOCOL_ID", "openid"),
+			FederatedDomainID:     envconf.String("OPENSTACK_FEDERATED_DOMAIN_ID", "default"),
 		},
 		WebServer: WebServerConfig{
 			DummyAuth:          getEnvBool("API_DUMMY_AUTH", "API_DUMMY_AUTH", false),
-			OIDCIssuerURL:      helper.GetEnvString("OIDC_ISSUER_URL", ""),
-			OIDCClientID:       helper.GetEnvString("OIDC_CLIENT_ID", ""),
-			GinBindString:      helper.GetEnvString("API_BIND", ":8083"),
-			CORSAllowedOrigins: parseCSVEnv(helper.GetEnvString("CORS_ALLOWED_ORIGINS", "")),
+			OIDCIssuerURL:      envconf.String("OIDC_ISSUER_URL", ""),
+			OIDCClientID:       envconf.String("OIDC_CLIENT_ID", ""),
+			GinBindString:      envconf.String("API_BIND", ":8083"),
+			CORSAllowedOrigins: parseCSVEnv(envconf.String("CORS_ALLOWED_ORIGINS", "")),
 		},
 
 		Reconciler: ReconcilerConfiguration{
-			Enabled:                  helper.GetEnvBool("RECONCILER_ENABLED", false),
-			IntervalSeconds:          helper.GetEnvInt("RECONCILER_INTERVAL_SECONDS", 300),
-			GroupPrefix:              helper.GetEnvString("RECONCILER_GROUP_PREFIX", "managed-"),
-			ScopeParentID:            helper.GetEnvString("RECONCILER_SCOPE_PARENT_ID", ""),
-			ScopeParentName:          helper.GetEnvString("RECONCILER_SCOPE_PARENT_NAME", ""),
-			DryRun:                   helper.GetEnvBool("RECONCILER_DRY_RUN", false),
-			NoDelete:                 helper.GetEnvBool("RECONCILER_NO_DELETE", false),
-			ManagedProjectTag:        helper.GetEnvString("RECONCILER_MANAGED_PROJECT_TAG", "managed"),
-			ResourceIDTagPrefix:      helper.GetEnvString("RECONCILER_RESOURCE_ID_TAG_PREFIX", "managed-resource-id:"),
-			DeleteReleasedProjects:   helper.GetEnvBool("RECONCILER_DELETE_RELEASED_PROJECTS", false),
-			PendingDeletionGraceDays: helper.GetEnvInt("RECONCILER_PENDING_DELETION_GRACE_DAYS", 30),
-			PendingDeletionTagPrefix: helper.GetEnvString("RECONCILER_PENDING_DELETION_TAG_PREFIX", "pending-deletion:"),
-			ContactTagPrefix:         helper.GetEnvString("RECONCILER_CONTACT_TAG_PREFIX", "contact:"),
-			TerminationTagPrefix:     helper.GetEnvString("RECONCILER_TERMINATION_TAG_PREFIX", "termination:"),
+			Enabled:                  envconf.Bool("RECONCILER_ENABLED", false),
+			IntervalSeconds:          envconf.Int("RECONCILER_INTERVAL_SECONDS", 300),
+			GroupPrefix:              envconf.String("RECONCILER_GROUP_PREFIX", "managed-"),
+			ScopeParentID:            envconf.String("RECONCILER_SCOPE_PARENT_ID", ""),
+			ScopeParentName:          envconf.String("RECONCILER_SCOPE_PARENT_NAME", ""),
+			DryRun:                   envconf.Bool("RECONCILER_DRY_RUN", false),
+			NoDelete:                 envconf.Bool("RECONCILER_NO_DELETE", false),
+			ManagedProjectTag:        envconf.String("RECONCILER_MANAGED_PROJECT_TAG", "managed"),
+			ResourceIDTagPrefix:      envconf.String("RECONCILER_RESOURCE_ID_TAG_PREFIX", "managed-resource-id:"),
+			DeleteReleasedProjects:   envconf.Bool("RECONCILER_DELETE_RELEASED_PROJECTS", false),
+			PendingDeletionGraceDays: envconf.Int("RECONCILER_PENDING_DELETION_GRACE_DAYS", 30),
+			PendingDeletionTagPrefix: envconf.String("RECONCILER_PENDING_DELETION_TAG_PREFIX", "pending-deletion:"),
+			ContactTagPrefix:         envconf.String("RECONCILER_CONTACT_TAG_PREFIX", "contact:"),
+			TerminationTagPrefix:     envconf.String("RECONCILER_TERMINATION_TAG_PREFIX", "termination:"),
 		},
 		RoleProvider: RoleProviderConfig{
-			Type:     helper.GetEnvString("ROLE_PROVIDER", "mock"),
-			URL:      helper.GetEnvString("ROLE_PROVIDER_URL", ""),
-			APIToken: helper.GetEnvString("ROLE_PROVIDER_API_TOKEN", ""),
+			Type:     envconf.String("ROLE_PROVIDER", "mock"),
+			URL:      envconf.String("ROLE_PROVIDER_URL", ""),
+			APIToken: envconf.String("ROLE_PROVIDER_API_TOKEN", ""),
 		},
 		DevMode:               getEnvString("API_MODE", "API_MODE", "production") == "development",
-		RootAdminTokens:       parseCSVEnv(helper.GetEnvString("ROOT_ADMIN_TOKENS", "")),
+		RootAdminTokens:       parseCSVEnv(envconf.String("ROOT_ADMIN_TOKENS", "")),
 		ProjectDefinitions:    loadProjectDefinitionsOrDefaults(),
-		ServiceTimeoutSeconds: helper.GetEnvInt("SERVICE_TIMEOUT_SECONDS", 30),
-		MaxAuthorizedUsers:    helper.GetEnvInt("API_MAX_AUTHORIZED_USERS", common.DefaultMaxAuthorizedUsers),
-		ChargeOSInUse:         helper.GetEnvBool("API_CHARGE_OS_IN_USE", true),
+		ServiceTimeoutSeconds: envconf.Int("SERVICE_TIMEOUT_SECONDS", 30),
+		MaxAuthorizedUsers:    envconf.Int("API_MAX_AUTHORIZED_USERS", common.DefaultMaxAuthorizedUsers),
+		ChargeOSInUse:         envconf.Bool("API_CHARGE_OS_IN_USE", true),
 	}
 
 	if err := validateConfig(cfg); err != nil {
@@ -331,21 +331,21 @@ func loadProjectDefinitionsOrDefaults() []common.ManagedProject {
 		// ── Static network/storage quotas (not shown on UI, fixed at project creation) ─
 		// To change a default, update the Default field here. The OSQuotaField drives the
 		// mapping to OpenStack — no other file needs to change.
-		{ID: "networks", Name: "Networks", Default: helper.GetEnvInt("RECONCILER_DEFAULT_NETWORKS", 2),
+		{ID: "networks", Name: "Networks", Default: envconf.Int("RECONCILER_DEFAULT_NETWORKS", 2),
 			Static: true, OSQuotaField: "networks"},
-		{ID: "subnets", Name: "Subnets", Default: helper.GetEnvInt("RECONCILER_DEFAULT_SUBNETS", 4),
+		{ID: "subnets", Name: "Subnets", Default: envconf.Int("RECONCILER_DEFAULT_SUBNETS", 4),
 			Static: true, OSQuotaField: "subnets"},
-		{ID: "ports", Name: "Ports", Default: helper.GetEnvInt("RECONCILER_DEFAULT_PORTS", 50),
+		{ID: "ports", Name: "Ports", Default: envconf.Int("RECONCILER_DEFAULT_PORTS", 50),
 			Static: true, OSQuotaField: "ports"},
-		{ID: "routers", Name: "Routers", Default: helper.GetEnvInt("RECONCILER_DEFAULT_ROUTERS", 1),
+		{ID: "routers", Name: "Routers", Default: envconf.Int("RECONCILER_DEFAULT_ROUTERS", 1),
 			Static: true, OSQuotaField: "routers"},
-		{ID: "floating_ips", Name: "Floating IPs", Default: helper.GetEnvInt("RECONCILER_DEFAULT_FLOATING_IPS", 2),
+		{ID: "floating_ips", Name: "Floating IPs", Default: envconf.Int("RECONCILER_DEFAULT_FLOATING_IPS", 2),
 			Static: true, OSQuotaField: "floating_ips"},
-		{ID: "security_groups", Name: "Security Groups", Default: helper.GetEnvInt("RECONCILER_DEFAULT_SECURITY_GROUPS", 10),
+		{ID: "security_groups", Name: "Security Groups", Default: envconf.Int("RECONCILER_DEFAULT_SECURITY_GROUPS", 10),
 			Static: true, OSQuotaField: "security_groups"},
-		{ID: "volumes", Name: "Volumes", Default: helper.GetEnvInt("RECONCILER_DEFAULT_VOLUMES", 10),
+		{ID: "volumes", Name: "Volumes", Default: envconf.Int("RECONCILER_DEFAULT_VOLUMES", 10),
 			Static: true, OSQuotaField: "volumes"},
-		{ID: "snapshots", Name: "Snapshots", Default: helper.GetEnvInt("RECONCILER_DEFAULT_SNAPSHOTS", 10),
+		{ID: "snapshots", Name: "Snapshots", Default: envconf.Int("RECONCILER_DEFAULT_SNAPSHOTS", 10),
 			Static: true, OSQuotaField: "snapshots"},
 	}
 }

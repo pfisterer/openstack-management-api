@@ -18,7 +18,14 @@ DOCKER_TAG ?= $(shell cat VERSION)
 DOCKER_PLATFORMS ?= linux/amd64,linux/arm64
 
 RP_API_DIR        := ./internal/roleprovider/api
-RP_SWAGGER_SRC    := ../role-provider-service/internal/generated_docs/swagger.json
+# The role-provider-service release whose API this client is generated from.
+# Keep it in step with the version the umbrella chart pins next to this service
+# — those two being one number is what makes a mismatch visible.
+#
+# Only stable releases carry the swagger.json asset: a "-test.N" push gets no
+# GitHub release, so there is nothing to attach it to.
+RP_VERSION        := v0.6.6
+RP_SWAGGER_URL    := https://github.com/pfisterer/role-provider-service/releases/download/$(RP_VERSION)/swagger.json
 
 .DEFAULT_GOAL := all
 
@@ -86,14 +93,29 @@ bundle: generate-swagger-json
 		> $(EMBED_FILE)
 	@echo "✅ Embedded docs written to $(EMBED_FILE)"
 
-# Generate Go client from the role-provider-service Swagger spec
+# Generate Go client from the role-provider-service OpenAPI description.
+#
+# The spec comes from a released version of that service, not from a checkout
+# next to this one. The old filesystem path meant the client could be generated
+# from whatever happened to be on the developer's disk — and when the path was
+# missing, the target printed a warning and carried on with the committed copy,
+# which is how a client stays silently out of date. A failed download now stops
+# the target.
 generate-role-provider-client: install-npm
-	@if [ -f "$(RP_SWAGGER_SRC)" ]; then \
-		echo "🔁 Copying swagger.json from $(RP_SWAGGER_SRC)..."; \
-		cp "$(RP_SWAGGER_SRC)" "$(RP_API_DIR)/swagger.json"; \
-	else \
-		echo "⚠️  Warning: $(RP_SWAGGER_SRC) not found — using existing $(RP_API_DIR)/swagger.json"; \
-	fi
+	@echo "🔁 Fetching swagger.json from role-provider-service $(RP_VERSION)..."
+	@# Into a temporary file first: writing straight to the destination would
+	@# leave a truncated or half-downloaded spec behind on failure, and the
+	@# committed one is the only copy there is.
+	@curl -fsSL "$(RP_SWAGGER_URL)" -o "$(RP_API_DIR)/swagger.json.tmp" || { \
+		rm -f "$(RP_API_DIR)/swagger.json.tmp"; \
+		echo "❌ $(RP_SWAGGER_URL) is not available."; \
+		echo "   Releases made before role-provider-service started attaching the"; \
+		echo "   spec carry no such asset. Either point RP_VERSION at a newer"; \
+		echo "   release, or attach it to this one once, from that repository:"; \
+		echo "     make generate-docs && gh release upload $(RP_VERSION) internal/generated_docs/swagger.json"; \
+		exit 1; \
+	}
+	@mv "$(RP_API_DIR)/swagger.json.tmp" "$(RP_API_DIR)/swagger.json"
 	@echo "🔁 Converting role-provider-service swagger.json → OpenAPI 3..."
 	@npx swagger2openapi $(RP_API_DIR)/swagger.json \
 		--outfile $(RP_API_DIR)/openapi3.json \

@@ -24,7 +24,7 @@ func (m *MockRoleProvider) GetUserTokens(ctx context.Context, claims *common.Use
 	if claims == nil {
 		return common.TokenList{}, nil
 	}
-	userEmail := claims.ResolveEmail()
+	userEmail := claims.Identity()
 	if userEmail == "" {
 		return common.TokenList{}, nil
 	}

@@ -2,7 +2,8 @@ package common
 
 import (
 	"errors"
-	"strings"
+
+	"github.com/pfisterer/cloud-self-service-golib/authn"
 )
 
 // Sentinel errors returned by service methods.
@@ -131,26 +132,14 @@ func (s TokenSet) ContainsAny(tokens TokenList) bool {
 }
 
 // UserClaims holds the relevant user information extracted from the ID token.
-type UserClaims struct {
-	Subject           string `json:"sub"`
-	Email             string `json:"email,omitempty"`
-	PreferredUsername string `json:"preferred_username,omitempty"`
-	Name              string `json:"name,omitempty"`
-}
-
-// ResolveEmail returns the best available email-like identifier from the claims,
-// trying Email → PreferredUsername → Subject in order.
-func (c *UserClaims) ResolveEmail() string {
-	if c == nil {
-		return ""
-	}
-	for _, candidate := range []string{c.Email, c.PreferredUsername, c.Subject} {
-		if v := strings.TrimSpace(candidate); v != "" {
-			return v
-		}
-	}
-	return ""
-}
+//
+// An alias rather than a type of its own: the identity of a caller has to mean
+// the same thing in every service, so the definition lives in the shared module
+// and this name stays for the call sites that read well with it. Claims.Identity
+// replaces what used to be ResolveEmail here — same order (email, then
+// preferred_username, then sub), named for what it answers rather than for the
+// claim it happens to return today.
+type UserClaims = authn.Claims
 
 // Identity represents a user or group in the identity catalog.
 type Identity struct {

@@ -49,7 +49,7 @@ func (h *HttpRoleProvider) GetUserTokens(ctx context.Context, claims *common.Use
 	if claims == nil {
 		return common.TokenList{}, nil
 	}
-	email := claims.ResolveEmail()
+	email := claims.Identity()
 	if email == "" {
 		return common.TokenList{}, nil
 	}

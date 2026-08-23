@@ -9,6 +9,7 @@ import (
 
 	"github.com/coreos/go-oidc"
 	"github.com/gin-gonic/gin"
+	"github.com/pfisterer/cloud-self-service-golib/authn"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/mockdata"
 	"go.uber.org/zap"
@@ -110,7 +111,7 @@ func NewOIDCAuthVerifier(cfg OIDCVerifierConfig, log *zap.SugaredLogger) (*oidcA
 }
 
 func authenticatedEmailFromClaims(claims *common.UserClaims) string {
-	return claims.ResolveEmail()
+	return claims.Identity()
 }
 
 // ResolveOriginalAuthContext returns the authenticated identity and token set
@@ -181,12 +182,12 @@ func CombinedAuthMiddleware(oidcVerifier *oidcAuthVerifier, tokenLookup common.T
 		// Get the Authorization header
 		authHeader := c.GetHeader("Authorization")
 
-		tokenString, ok := cutBearerPrefix(authHeader)
+		tokenString, ok := authn.CutBearerPrefix(authHeader)
 		if !ok {
 			// The header value itself is never logged: a client sending a valid
 			// token under an unexpected scheme would write its credential into
 			// the log. The scheme alone is what makes this diagnosable.
-			log.Warnf("Missing or invalid Authorization header (scheme %q)", authScheme(authHeader))
+			log.Warnf("Missing or invalid Authorization header (scheme %q)", authn.Scheme(authHeader))
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing or invalid Authorization Bearer header"})
 			return
 		}
@@ -310,22 +311,4 @@ func DummyAuthMiddleware() gin.HandlerFunc {
 		c.Set(userTokensKey, userTokens)
 		c.Next()
 	}
-}
-
-// cutBearerPrefix strips the "Bearer " prefix and returns the token. The scheme
-// is matched case-insensitively: RFC 7235 defines it that way, and a client
-// sending "bearer <token>" was previously rejected as unauthenticated.
-func cutBearerPrefix(header string) (string, bool) {
-	const prefix = "bearer "
-	if len(header) < len(prefix) || !strings.EqualFold(header[:len(prefix)], prefix) {
-		return "", false
-	}
-	return strings.TrimSpace(header[len(prefix):]), true
-}
-
-// authScheme returns the scheme of an Authorization header ("Basic", "Token", …)
-// without the credentials that follow it — safe to log, unlike the header.
-func authScheme(header string) string {
-	scheme, _, _ := strings.Cut(strings.TrimSpace(header), " ")
-	return scheme
 }

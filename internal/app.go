@@ -3,6 +3,7 @@ package app
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/cloud-self-service-golib/logging"
+	"github.com/pfisterer/cloud-self-service-golib/token"
+	"github.com/pfisterer/cloud-self-service-golib/tokengorm"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/mockdata"
 	osclient "github.com/pfisterer/openstack-management-api/internal/openstack/client"
@@ -20,29 +23,55 @@ import (
 	"go.uber.org/zap"
 )
 
-func configureStores(cfg *common.StorageConfiguration, log *zap.SugaredLogger) (tree.Store, common.TokenLookupFunc, error) {
-	storageType := strings.ToLower(strings.TrimSpace(cfg.Type))
+// apiTokenPrefix is what tells this service's tokens apart from an OIDC bearer
+// token, and from another service's tokens. It matches the prefix the auth
+// middleware routes on.
+const apiTokenPrefix = "os_mgt_"
 
-	// API-token auth is a placeholder in both modes; real auth is OIDC.
-	tokenLookup := func(_ context.Context, _ string) (common.TokenLookupResult, error) {
-		return common.TokenLookupResult{Found: false}, nil
-	}
+func configureStores(cfg *common.StorageConfiguration, log *zap.SugaredLogger) (tree.Store, *token.Service, error) {
+	storageType := strings.ToLower(strings.TrimSpace(cfg.Type))
 
 	switch storageType {
 
 	case "memory":
-		// Memory mode is intended for local development and tests.
-		return tree.NewInMemoryStore(log), tokenLookup, nil
+		// Memory mode is intended for local development and tests. Tokens do
+		// not survive a restart here, which is fine for the one and unusable
+		// for the other.
+		return tree.NewInMemoryStore(log), token.NewService(apiTokenPrefix, token.NewMemoryStore()), nil
 
 	case "postgres":
 		store, err := tree.NewPostgresStore(cfg.ConnectionString, log)
 		if err != nil {
 			return nil, nil, fmt.Errorf("postgres storage: %w", err)
 		}
-		return store, tokenLookup, nil
+		// Same connection pool: this Postgres is shared with PowerDNS and its
+		// connection budget is the reason NewPostgresStore caps it at all.
+		tokens, err := tokengorm.NewService(apiTokenPrefix, store.DB())
+		if err != nil {
+			return nil, nil, fmt.Errorf("token storage: %w", err)
+		}
+		return store, tokens, nil
 
 	default:
 		return nil, nil, fmt.Errorf("unsupported storage type %q", cfg.Type)
+	}
+}
+
+// tokenLookupFor adapts the token service to what the auth middleware wants.
+func tokenLookupFor(tokens *token.Service) common.TokenLookupFunc {
+	return func(ctx context.Context, secret string) (common.TokenLookupResult, error) {
+		rec, err := tokens.Lookup(ctx, secret)
+		if errors.Is(err, token.ErrNotFound) {
+			return common.TokenLookupResult{Found: false}, nil
+		}
+		if err != nil {
+			return common.TokenLookupResult{}, err
+		}
+		return common.TokenLookupResult{
+			Found:    true,
+			Subject:  rec.Subject,
+			ReadOnly: rec.ReadOnly,
+		}, nil
 	}
 }
 
@@ -134,7 +163,7 @@ func RunApplication() {
 	}
 
 	// Configure resource storage and token lookup
-	nodeStore, tokenLookup, err := configureStores(&config.Storage, logger)
+	nodeStore, apiTokens, err := configureStores(&config.Storage, logger)
 	if err != nil {
 		logger.Fatal("Failed to initialize storage", zap.Error(err))
 	}
@@ -187,7 +216,7 @@ func RunApplication() {
 	}
 
 	//Create authentication middleware based on configuration.
-	authMiddleware, err := configureAuthMiddleware(&config.WebServer, tokenLookup, roleProvider.GetUserTokens, logger)
+	authMiddleware, err := configureAuthMiddleware(&config.WebServer, tokenLookupFor(apiTokens), roleProvider.GetUserTokens, logger)
 	if err != nil {
 		logger.Fatal("Failed to initialize authentication middleware", zap.Error(err))
 	}
@@ -258,6 +287,10 @@ func RunApplication() {
 			DummyDevUsers:      dummyDevUsers,
 			// Asked per request: the reconciler may still be connecting.
 			ProvisioningEnabled: func() bool { return reconcilerAPI != nil && reconcilerAPI.Ready() },
+		},
+		Tokens: webserver.TokenConfig{
+			Service: apiTokens,
+			TTL:     time.Duration(config.WebServer.APITokenTTLHours) * time.Hour,
 		},
 		Reconciler:         reconcilerAPI,
 		RootAdminTokens:    config.RootAdminTokens,

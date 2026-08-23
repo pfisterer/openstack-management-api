@@ -152,6 +152,10 @@ type WebServerConfig struct {
 	// through its own host, so nothing cross-origin is needed at all. Every
 	// entry is a full origin — scheme and host, no path, no wildcard.
 	CORSAllowedOrigins []string `json:"cors_allowed_origins"`
+	// APITokenTTLHours is how long an issued API token stays valid. It matches
+	// dynamic-zones' API_TOKEN_TTL_HOURS so that the two services do not answer
+	// the same question differently.
+	APITokenTTLHours int `json:"api_token_ttl_hours"`
 }
 
 // RoleProviderConfig selects which RoleProvider implementation to use.
@@ -240,6 +244,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			OIDCClientID:       envconf.String("OIDC_CLIENT_ID", ""),
 			GinBindString:      envconf.String("API_BIND", ":8083"),
 			CORSAllowedOrigins: parseCSVEnv(envconf.String("CORS_ALLOWED_ORIGINS", "")),
+			APITokenTTLHours:   envconf.Int("API_TOKEN_TTL_HOURS", 24),
 		},
 
 		Reconciler: ReconcilerConfiguration{

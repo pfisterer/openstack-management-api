@@ -230,8 +230,14 @@ func CombinedAuthMiddleware(oidcVerifier *oidcAuthVerifier, tokenLookup common.T
 				return
 			}
 
+			// Email, not PreferredUsername. Claims.Identity prefers the e-mail
+			// and the role provider resolves groups by it, so a token filled
+			// into the wrong claim authenticates cleanly and then belongs to no
+			// group — which reads as a permissions problem and is an identity
+			// one. Tokens are issued under the actor's e-mail (see
+			// api_tokens.go), so this puts back exactly what was put in.
 			claims = &common.UserClaims{
-				PreferredUsername: token.Username,
+				Email: token.Subject,
 			}
 		} else {
 			if oidcVerifier == nil {

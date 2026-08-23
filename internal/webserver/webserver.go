@@ -46,6 +46,8 @@ type SetupConfig struct {
 	// Requests that carry none of these tokens receive 403 Forbidden.
 	RootAdminTokens common.TokenList
 	AuthMiddleware  gin.HandlerFunc
+	// Tokens configures /v1/tokens. A nil Service omits the endpoints.
+	Tokens TokenConfig
 	// CORSAllowedOrigins are the browser origins allowed to call /v1
 	// cross-origin. Empty means none — see enableCors.
 	CORSAllowedOrigins []string
@@ -164,6 +166,10 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 
 	// Register API routes with the provided tree service and role switch groups configuration
 	RegisterApiRoutes(apiV1Group, cfg.API, cfg.Log)
+
+	// After RegisterApiRoutes: the token handlers read the AuthContext that
+	// EffectiveAuthMiddleware sets there.
+	RegisterTokenRoutes(apiV1Group, cfg.Tokens, cfg.Log)
 
 	// Always register reconciler admin endpoints so CORS headers are present even
 	// when the reconciler is disabled. Handlers return 503 when Reconciler is nil.

@@ -47,6 +47,11 @@ type PostgresStore struct {
 	log *zap.SugaredLogger
 }
 
+// DB exposes the connection so that the API-token store can share this pool
+// rather than opening a second one against the same shared Postgres, whose
+// connection budget is the reason for the limits set below.
+func (s *PostgresStore) DB() *gorm.DB { return s.db }
+
 func NewPostgresStore(dsn string, log *zap.SugaredLogger) (*PostgresStore, error) {
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {

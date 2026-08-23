@@ -35,8 +35,12 @@ type GroupSummary struct {
 
 // TokenLookupResult is the token information required by the auth middleware.
 type TokenLookupResult struct {
-	Found    bool
-	Username string
+	Found bool
+	// Subject is the identity the token was issued for, in the form group
+	// resolution expects — an e-mail address. Named Username before, which is
+	// what invited filling it with preferred_username and getting a caller that
+	// authenticates but belongs to no group.
+	Subject  string
 	ReadOnly bool
 }
 

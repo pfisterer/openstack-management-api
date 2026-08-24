@@ -152,10 +152,22 @@ type WebServerConfig struct {
 	// through its own host, so nothing cross-origin is needed at all. Every
 	// entry is a full origin — scheme and host, no path, no wildcard.
 	CORSAllowedOrigins []string `json:"cors_allowed_origins"`
-	// APITokenTTLHours is how long an issued API token stays valid. It matches
-	// dynamic-zones' API_TOKEN_TTL_HOURS so that the two services do not answer
-	// the same question differently.
+	// APITokenTTLHours is how long an issued API token stays valid when the
+	// request does not say. It matches dynamic-zones' API_TOKEN_TTL_HOURS so
+	// that the two services do not answer the same question differently.
 	APITokenTTLHours int `json:"api_token_ttl_hours"`
+	// APITokenMaxTTLHours is the longest lifetime a caller may ask for. Zero
+	// means no bound.
+	APITokenMaxTTLHours int `json:"api_token_max_ttl_hours"`
+	// APITokenAllowNeverExpires permits tokens with no expiry.
+	//
+	// The code default is off, deliberately more conservative than the chart:
+	// a service started without configuration should not mint permanent
+	// credentials. Saying yes is a deployment's decision, and this one does —
+	// see the chart, and note that what carries it is visibility rather than
+	// expiry (every token lists its description and last use, and revoking is
+	// one request).
+	APITokenAllowNeverExpires bool `json:"api_token_allow_never_expires"`
 }
 
 // RoleProviderConfig selects which RoleProvider implementation to use.
@@ -239,12 +251,14 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			FederatedDomainID:     envconf.String("OPENSTACK_FEDERATED_DOMAIN_ID", "default"),
 		},
 		WebServer: WebServerConfig{
-			DummyAuth:          getEnvBool("API_DUMMY_AUTH", "API_DUMMY_AUTH", false),
-			OIDCIssuerURL:      envconf.String("OIDC_ISSUER_URL", ""),
-			OIDCClientID:       envconf.String("OIDC_CLIENT_ID", ""),
-			GinBindString:      envconf.String("API_BIND", ":8083"),
-			CORSAllowedOrigins: parseCSVEnv(envconf.String("CORS_ALLOWED_ORIGINS", "")),
-			APITokenTTLHours:   envconf.Int("API_TOKEN_TTL_HOURS", 24),
+			DummyAuth:                 getEnvBool("API_DUMMY_AUTH", "API_DUMMY_AUTH", false),
+			OIDCIssuerURL:             envconf.String("OIDC_ISSUER_URL", ""),
+			OIDCClientID:              envconf.String("OIDC_CLIENT_ID", ""),
+			GinBindString:             envconf.String("API_BIND", ":8083"),
+			CORSAllowedOrigins:        parseCSVEnv(envconf.String("CORS_ALLOWED_ORIGINS", "")),
+			APITokenTTLHours:          envconf.Int("API_TOKEN_TTL_HOURS", 24),
+			APITokenMaxTTLHours:       envconf.Int("API_TOKEN_MAX_TTL_HOURS", 8760),
+			APITokenAllowNeverExpires: envconf.Bool("API_TOKEN_ALLOW_NEVER_EXPIRES", false),
 		},
 
 		Reconciler: ReconcilerConfiguration{

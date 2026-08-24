@@ -76,6 +76,8 @@
             "bind": { "type": "string" },
             "baseUrl": { "type": "string" },
             "tokenTTLHours": { "type": "integer", "minimum": 1 },
+            "tokenMaxTTLHours": { "type": "integer", "minimum": 1 },
+            "tokenAllowNeverExpires": { "type": "boolean" },
             "dummyAuth": { "type": "boolean" },
             "mode": { "type": "string", "enum": ["production", "development"] },
             "maxAuthorizedUsers": { "type": "integer", "minimum": 1 },

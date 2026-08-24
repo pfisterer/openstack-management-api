@@ -290,7 +290,11 @@ func RunApplication() {
 		},
 		Tokens: webserver.TokenConfig{
 			Service: apiTokens,
-			TTL:     time.Duration(config.WebServer.APITokenTTLHours) * time.Hour,
+			TTL: token.TTLPolicy{
+				Default:    time.Duration(config.WebServer.APITokenTTLHours) * time.Hour,
+				Max:        time.Duration(config.WebServer.APITokenMaxTTLHours) * time.Hour,
+				AllowNever: config.WebServer.APITokenAllowNeverExpires,
+			},
 		},
 		Reconciler:         reconcilerAPI,
 		RootAdminTokens:    config.RootAdminTokens,

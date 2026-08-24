@@ -83,7 +83,22 @@ openstackManagementApi:
   api:
     bind: ":8083"
     baseUrl: "http://localhost:8083"
-    tokenTTLHours: 24
+    # Lifetime of an API token when the request does not ask for one, and the
+    # longest one a caller may ask for. A request over the maximum is refused
+    # rather than shortened — a token that dies earlier than the person was told
+    # is an outage nobody traces back to the moment they created it.
+    tokenTTLHours: 720
+    tokenMaxTTLHours: 8760
+    # Whether a token may be issued with no expiry at all. On, because the
+    # non-interactive callers this exists for — a CI job, a cron script, an
+    # agent — have nobody to notice a silent expiry, and an expiry nobody is
+    # reminded of is an outage months later rather than a safeguard.
+    #
+    # What makes it defensible is that the alternative to expiry is visibility:
+    # every token is listed with its description and when it was last used, and
+    # revoking is one request. A deployment that would rather force rotation
+    # sets this to false, and callers then have to name a lifetime.
+    tokenAllowNeverExpires: true
     # Set to true to bypass OIDC (development only)
     dummyAuth: false
     # "production" or "development"

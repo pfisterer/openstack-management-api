@@ -12,7 +12,7 @@ require (
 	github.com/gophercloud/gophercloud v1.14.1
 	github.com/joho/godotenv v1.5.1
 	github.com/oapi-codegen/runtime v1.4.2
-	github.com/pfisterer/cloud-self-service-golib v0.3.1
+	github.com/pfisterer/cloud-self-service-golib v0.5.0
 	go.uber.org/zap v1.28.0
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.31.2

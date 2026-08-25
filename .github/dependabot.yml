@@ -1,0 +1,24 @@
+# Watches the shared library, so a fix released there does not sit unnoticed
+# until someone happens to look. That is not hypothetical: on 2026-08-25 this
+# repo and dynamic-zones were on golib v0.5.0 while role-provider-service was
+# still on v0.1.0 — five releases behind, because nobody had reason to open it.
+#
+# Dependabot and not Renovate: Renovate needs its GitHub App installed on the
+# org, Dependabot needs only this file on the default branch. The library is the
+# problem to solve; adding a second piece of infrastructure to solve it is not.
+#
+# Deliberately narrowed to the one dependency with `allow`. A blanket gomod
+# watch would open pull requests for every transitive module, and a stream of
+# noise is read exactly as carefully as no notification at all. Widening it is
+# one line, once someone wants it.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    allow:
+      - dependency-name: github.com/pfisterer/cloud-self-service-golib
+    commit-message:
+      prefix: deps
+    open-pull-requests-limit: 1

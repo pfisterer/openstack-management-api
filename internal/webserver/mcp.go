@@ -235,7 +235,12 @@ type mcpCreateBudgetInput struct {
 	// Two token lists, and the distinction is the one the old model got
 	// wrong: managing is not the same as being allowed to spend. Keeping
 	// them apart is why allowance members can no longer approve each other.
-	AdminScope         []string       `json:"admin_scope,omitempty" jsonschema:"tokens that may approve requests here, e.g. group:dept_cs_admin or user:a@b.c"`
+	//
+	// admin_scope carries no omitempty, which is what makes the SDK mark it
+	// required: a budget without one is refused by the service, and leaving it
+	// optional in the schema only means a model finds that out by being turned
+	// down once. Found the first time this ran against staging.
+	AdminScope         []string       `json:"admin_scope" jsonschema:"tokens that may approve requests here, e.g. group:dept_cs_admin or user:a@b.c"`
 	EligibleRequesters []string       `json:"eligible_requesters,omitempty" jsonschema:"tokens that may request something here, without any say over decisions"`
 	AutoApproveLimit   map[string]int `json:"auto_approve_limit,omitempty" jsonschema:"optional: requests up to this size per requester are approved without a human"`
 }

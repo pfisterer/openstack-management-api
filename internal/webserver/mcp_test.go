@@ -267,3 +267,56 @@ func TestMCP_RequiresAuthentication(t *testing.T) {
 		t.Errorf("got %d, want 401", res.StatusCode)
 	}
 }
+
+// What a tool declares as required is the difference between a model getting it
+// right first time and finding out by being refused. create_budget is the case
+// that taught this: admin_scope was optional in the schema and mandatory in the
+// service, so the first real call failed.
+func TestMCP_ToolsDeclareTheirRequiredArguments(t *testing.T) {
+	session := mcpSession(t, mcpTestServer(t), writeSecret)
+	res, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+
+	want := map[string][]string{
+		"create_budget":          {"parent_id", "name", "reason", "limit", "admin_scope"},
+		"create_project":         {"budget_id", "name", "reason", "limit"},
+		"release_project":        {"id", "confirm_name"},
+		"delete_budget":          {"id", "confirm_name"},
+		"rename_project":         {"id", "name"},
+		"move_to_budget":         {"id", "new_budget_id"},
+		"transfer_ownership":     {"id", "new_owner"},
+		"request_project_change": {"id", "limit"},
+		"get_project":            {"id"},
+		"search_projects":        {"query"},
+		"list_my_projects":       {},
+		"list_my_budgets":        {},
+	}
+
+	for _, tool := range res.Tools {
+		expected, checked := want[tool.Name]
+		if !checked {
+			continue
+		}
+		t.Run(tool.Name, func(t *testing.T) {
+			schema, err := json.Marshal(tool.InputSchema)
+			if err != nil {
+				t.Fatalf("marshal schema: %v", err)
+			}
+			var parsed struct {
+				Required []string `json:"required"`
+			}
+			if err := json.Unmarshal(schema, &parsed); err != nil {
+				t.Fatalf("decode schema: %v", err)
+			}
+			got := slices.Clone(parsed.Required)
+			slices.Sort(got)
+			expectedSorted := slices.Clone(expected)
+			slices.Sort(expectedSorted)
+			if !slices.Equal(got, expectedSorted) {
+				t.Errorf("required = %v, want %v", got, expectedSorted)
+			}
+		})
+	}
+}

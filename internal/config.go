@@ -130,6 +130,12 @@ type ReconcilerConfiguration struct {
 	// (RFC3339), and the tag is absent while no date is set.
 	// Default: "termination:".
 	TerminationTagPrefix string `json:"termination_tag_prefix"`
+	// StatusTagPrefix is the tag prefix carrying a leaf's lifecycle status, so an
+	// outside workflow can select OpenStack projects by state — above all the
+	// released ones it is supposed to clean up — without querying this API.
+	// Full tag format: "<prefix><status>", e.g. "status:released".
+	// Default: "status:". Empty switches the tag off.
+	StatusTagPrefix string `json:"status_tag_prefix"`
 	// ContactTagPrefix is the prefix for tags that record requester contact addresses.
 	// One tag per requester email is written alongside the pending-deletion tag.
 	// Default: "contact:".
@@ -286,6 +292,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			PendingDeletionTagPrefix: envconf.String("RECONCILER_PENDING_DELETION_TAG_PREFIX", "pending-deletion:"),
 			ContactTagPrefix:         envconf.String("RECONCILER_CONTACT_TAG_PREFIX", "contact:"),
 			TerminationTagPrefix:     envconf.String("RECONCILER_TERMINATION_TAG_PREFIX", "termination:"),
+			StatusTagPrefix:          envconf.String("RECONCILER_STATUS_TAG_PREFIX", "status:"),
 		},
 		RoleProvider: RoleProviderConfig{
 			Type:     envconf.String("ROLE_PROVIDER", "mock"),

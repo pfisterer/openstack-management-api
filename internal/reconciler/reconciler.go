@@ -106,6 +106,11 @@ type Config struct {
 	// TerminationTagPrefix is the tag prefix carrying the leaf's termination date
 	// (the stored RFC3339 timestamp, verbatim). Default: "termination:".
 	TerminationTagPrefix string
+	// StatusTagPrefix is the tag prefix carrying the leaf's lifecycle status, so
+	// an outside workflow can select projects by state without asking this API.
+	// Full tag format: "<prefix><status>", e.g. "status:released". Default:
+	// "status:". Empty switches the tag off.
+	StatusTagPrefix string
 	// ContactTagPrefix is the prefix for tags that record owner contact addresses.
 	// Default: "contact:".
 	ContactTagPrefix string
@@ -832,11 +837,22 @@ func (r *Reconciler) handleReleasedProject(osProject osclient.ProjectInfo, leaf 
 		return
 	}
 
-	// Check idempotency: skip if the pending-deletion tag is already set.
+	// Check idempotency: skip if the pending-deletion tag is already set AND the
+	// status tag already says released. The second half matters for projects
+	// released before the status tag existed — they carry the date but still the
+	// old status, and skipping on the date alone would leave them that way for
+	// good, because this is the only path that ever writes tags for them.
+	tagged, statusCorrect := false, r.cfg.StatusTagPrefix == ""
 	for _, tag := range osProject.Tags {
 		if strings.HasPrefix(tag, r.cfg.PendingDeletionTagPrefix) {
-			return
+			tagged = true
 		}
+		if r.cfg.StatusTagPrefix != "" && tag == r.cfg.StatusTagPrefix+leaf.Status {
+			statusCorrect = true
+		}
+	}
+	if tagged && statusCorrect {
+		return
 	}
 
 	graceDays := r.cfg.PendingDeletionGraceDays
@@ -847,20 +863,32 @@ func (r *Reconciler) handleReleasedProject(osProject osclient.ProjectInfo, leaf 
 
 	// Rebuild the tag list: keep existing tags (minus stale contact tags), then append
 	// the new pending-deletion date tag and the owner contact tag.
-	newTags := make([]string, 0, len(osProject.Tags)+2)
+	newTags := make([]string, 0, len(osProject.Tags)+3)
 	for _, tag := range osProject.Tags {
 		if !strings.HasPrefix(tag, r.cfg.ContactTagPrefix) {
 			newTags = append(newTags, tag)
 		}
 	}
-	newTags = append(newTags, r.cfg.PendingDeletionTagPrefix+deletionDate)
+	// Only when there is none yet. Getting here with one already set means the
+	// status tag is what is missing, and re-dating the deadline then would push
+	// it another 30 days out every time this ran — the grace period would never
+	// expire. The existing tag was kept by the loop above.
+	if !tagged {
+		newTags = append(newTags, r.cfg.PendingDeletionTagPrefix+deletionDate)
+	}
 	if email := leaf.OwnerEmail(); email != "" {
 		newTags = append(newTags, r.cfg.ContactTagPrefix+email)
 	}
+	// The status tag rides along in this same write. A released leaf never
+	// reaches the normal sync path — that one only runs for the reconcilable
+	// statuses — so without this the project would keep the "approved" it was
+	// last tagged with, which is the one moment a workflow must not be misled.
+	newTags, _ = applyPrefixedTags(newTags, prefixedTag{r.cfg.StatusTagPrefix, leaf.Status})
 
 	r.log.Infow("Tagging OS project for pending deletion",
 		"os_project_id", osProject.ID, "node_id", leaf.ID,
-		"deletion_date", deletionDate, "dry_run", r.cfg.DryRun)
+		"deletion_date", deletionDate, "already_tagged", tagged,
+		"status", leaf.Status, "dry_run", r.cfg.DryRun)
 
 	if !r.cfg.DryRun {
 		if _, err := r.osClient.UpdateProject(osProject.ID, osclient.ProjectUpdateOpts{
@@ -890,43 +918,28 @@ func (r *Reconciler) handleReleasedProject(osProject osclient.ProjectInfo, leaf 
 // for a value that changes maybe twice in a project's life. Clearing the date in the
 // tree removes the tag on the next tick, and every other tag (managed, resource-id,
 // contact, pending-deletion) is carried over untouched.
-func (r *Reconciler) syncTerminationTag(leaf tree.Node, osProject osclient.ProjectInfo) {
-	prefix := r.cfg.TerminationTagPrefix
-	if prefix == "" {
-		return // switched off by configuration
+func (r *Reconciler) syncManagedTags(leaf tree.Node, osProject osclient.ProjectInfo) {
+	termination := ""
+	if leaf.TerminationDate != nil {
+		termination = *leaf.TerminationDate
 	}
 
-	desired := ""
-	if leaf.TerminationDate != nil && *leaf.TerminationDate != "" {
-		desired = prefix + *leaf.TerminationDate
-	}
-
-	current := ""
-	for _, tag := range osProject.Tags {
-		if strings.HasPrefix(tag, prefix) {
-			current = tag
-			break
-		}
-	}
-	if current == desired {
+	// One rebuild and at most one write for both tags. Two independent syncs
+	// would each rebuild from this same snapshot, so whichever wrote second
+	// would carry the other's old value back — an update that silently undoes
+	// the one before it, on exactly the ticks where both changed.
+	newTags, changed := applyPrefixedTags(osProject.Tags,
+		prefixedTag{r.cfg.TerminationTagPrefix, termination},
+		prefixedTag{r.cfg.StatusTagPrefix, leaf.Status},
+	)
+	if !changed {
 		return
 	}
 
-	// Rebuild rather than append: a changed date has to REPLACE the old tag, and a
-	// cleared one has to leave nothing behind.
-	newTags := make([]string, 0, len(osProject.Tags)+1)
-	for _, tag := range osProject.Tags {
-		if !strings.HasPrefix(tag, prefix) {
-			newTags = append(newTags, tag)
-		}
-	}
-	if desired != "" {
-		newTags = append(newTags, desired)
-	}
-
-	r.log.Infow("Updating termination tag on OS project",
+	r.log.Infow("Updating tags on OS project",
 		"node_id", leaf.ID, "os_project_id", osProject.ID,
-		"old_tag", current, "new_tag", desired, "dry_run", r.cfg.DryRun)
+		"status", leaf.Status, "termination", termination,
+		"tags", newTags, "dry_run", r.cfg.DryRun)
 
 	if r.cfg.DryRun {
 		return
@@ -934,9 +947,64 @@ func (r *Reconciler) syncTerminationTag(leaf tree.Node, osProject osclient.Proje
 	if _, err := r.osClient.UpdateProject(osProject.ID, osclient.ProjectUpdateOpts{
 		Tags: &newTags,
 	}); err != nil {
-		r.log.Warnw("Failed to update termination tag on OS project",
+		r.log.Warnw("Failed to update tags on OS project",
 			"node_id", leaf.ID, "os_project_id", osProject.ID, "error", err)
 	}
+}
+
+// prefixedTag is one "<prefix><value>" tag the reconciler owns: it replaces any
+// existing tag with that prefix, and an empty value removes it.
+type prefixedTag struct {
+	prefix string
+	value  string
+}
+
+// applyPrefixedTags brings every owned prefix to its desired value in one pass and
+// reports whether anything actually changed. An empty prefix is skipped, which is
+// how a tag is switched off by configuration.
+//
+// The caller writes only when changed is true, because this runs for every managed
+// leaf on every tick: an unconditional update would be one Keystone write per
+// project per interval for values that change a handful of times in a project's
+// life. Tags outside the owned prefixes (managed, resource-id, contact,
+// pending-deletion) are carried over untouched.
+//
+// "Changed" is decided per prefix, NOT by comparing the two lists: the owned tags
+// are re-appended at the end, so a positional comparison would report a change on
+// the first pass and then again on every pass if Keystone ever hands the list back
+// in a different order — a write per project per tick, forever, with no difference
+// to show for it.
+func applyPrefixedTags(tags []string, owned ...prefixedTag) ([]string, bool) {
+	changed := false
+	out := make([]string, 0, len(tags)+len(owned))
+
+	for _, tag := range tags {
+		kept := true
+		for _, o := range owned {
+			if o.prefix != "" && strings.HasPrefix(tag, o.prefix) {
+				kept = false
+				if tag != o.prefix+o.value {
+					changed = true // replaced, or removed because value is empty
+				}
+				break
+			}
+		}
+		if kept {
+			out = append(out, tag)
+		}
+	}
+
+	for _, o := range owned {
+		if o.prefix == "" || o.value == "" {
+			continue
+		}
+		desired := o.prefix + o.value
+		out = append(out, desired)
+		if !slices.Contains(tags, desired) {
+			changed = true // newly added
+		}
+	}
+	return out, changed
 }
 
 // loadScopedOSProjects fetches the OS projects to reconcile against.
@@ -1282,7 +1350,7 @@ func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo) (
 			"desired_name", desiredName, "error", err)
 	}
 
-	r.syncTerminationTag(leaf, osProject)
+	r.syncManagedTags(leaf, osProject)
 
 	// Overcommit check: OpenStack accepts a quota reduction below current usage but blocks
 	// new resource creation. We surface this in the UI via the OSOvercommitted flag.

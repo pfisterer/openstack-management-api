@@ -268,6 +268,7 @@ func RunApplication() {
 				PendingDeletionTagPrefix: config.Reconciler.PendingDeletionTagPrefix,
 				ContactTagPrefix:         config.Reconciler.ContactTagPrefix,
 				TerminationTagPrefix:     config.Reconciler.TerminationTagPrefix,
+				StatusTagPrefix:          config.Reconciler.StatusTagPrefix,
 			}
 			return reconciler.New(nodeStore, osClient, reconcilerCfg, config.ProjectDefinitions, roleProvider, logger), nil
 		}, logger)

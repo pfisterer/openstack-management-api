@@ -13,7 +13,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/oapi-codegen/runtime v1.4.2
-	github.com/pfisterer/cloud-self-service-golib v0.5.0
+	github.com/pfisterer/cloud-self-service-golib v0.6.0
 	go.uber.org/zap v1.28.0
 	gorm.io/driver/postgres v1.6.0
 	gorm.io/gorm v1.31.2

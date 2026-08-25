@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/pfisterer/cloud-self-service-golib/mcpserve"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/tree"
 	"go.uber.org/zap"
@@ -22,11 +23,15 @@ import (
 // would have to answer each of those again, or pass them through and be a hop
 // with no content.
 //
-// The one thing it does NOT inherit is the read-only rule, and that is the point
-// of this file: for REST, "not a GET" stands in for "changes something", which
-// is why RejectWritesForReadOnlyTokens sits on the /v1 group. Every MCP call is
-// a POST, reads included, so here the tool says what it does and the check runs
-// against that.
+// The one thing it does NOT inherit is the read-only rule: for REST, "not a GET"
+// stands in for "changes something", which is why RejectWritesForReadOnlyTokens
+// sits on the /v1 group. Every MCP call is a POST, reads included, so the tool
+// says what it does and the check runs against that — the `mutates` argument to
+// mcpserve.AddTool, which is where that rule now lives for both services.
+//
+// The transport, the per-request server and that gate come from
+// github.com/pfisterer/cloud-self-service-golib/mcpserve. What stays here is
+// what is about projects: the tools, their payloads, and who the caller is.
 
 // mcpCaller is the identity a tool acts as, lifted out of the Gin context and
 // into the request context, which is the only thing the SDK hands to getServer.
@@ -50,7 +55,10 @@ type mcpCaller struct {
 // actorEmail stays for OUR log lines, where the real caller is the useful one.
 func (c mcpCaller) serviceActor() string { return c.userEmail }
 
-type mcpCallerKey struct{}
+// ReadOnly satisfies mcpserve.Caller: whether this request's credential may
+// change anything. It is the only thing the shared wiring knows about a caller —
+// the identity above never travels through it.
+func (c mcpCaller) ReadOnly() bool { return c.readOnly }
 
 // RegisterMCPRoutes mounts the MCP endpoint on the given group. The group must
 // already carry the authentication middleware and must NOT carry
@@ -63,11 +71,12 @@ func RegisterMCPRoutes(group *gin.RouterGroup, cfg APIConfig, log *zap.SugaredLo
 
 	// A server per request, built around the caller: a tool closes over the
 	// identity that called it, so there is no way for one request's tools to run
-	// with another's rights.
-	handler := mcp.NewStreamableHTTPHandler(func(r *http.Request) *mcp.Server {
-		caller, _ := r.Context().Value(mcpCallerKey{}).(mcpCaller)
+	// with another's rights. That, the transport and the read-only gate are the
+	// same in every service doing this and live in the shared library; what is
+	// left here is turning a Gin context into a caller.
+	handler := mcpserve.Handler(func(caller mcpCaller) *mcp.Server {
 		return newMCPServer(cfg, caller, log)
-	}, nil)
+	})
 
 	group.Any("", func(c *gin.Context) {
 		auth, err := mustGetAuthContext(c)
@@ -81,23 +90,9 @@ func RegisterMCPRoutes(group *gin.RouterGroup, cfg APIConfig, log *zap.SugaredLo
 			tokens:     auth.EffectiveTokens,
 			readOnly:   IsReadOnlyToken(c),
 		}
-		ctx := context.WithValue(c.Request.Context(), mcpCallerKey{}, caller)
+		ctx := mcpserve.WithCaller(c.Request.Context(), caller)
 		handler.ServeHTTP(c.Writer, c.Request.WithContext(ctx))
 	})
-}
-
-// addMCPTool registers a tool, and leaves out a mutating one when the caller's
-// token is read-only.
-//
-// Left out rather than registered-and-refused on purpose: a model picks from the
-// tools it is shown. Offering one that always fails invites it to try, read the
-// error and try again differently — noise for the user and requests for us. A
-// read-only token simply has a smaller toolbox.
-func addMCPTool[In, Out any](s *mcp.Server, caller mcpCaller, mutates bool, t *mcp.Tool, h mcp.ToolHandlerFor[In, Out]) {
-	if mutates && caller.readOnly {
-		return
-	}
-	mcp.AddTool(s, t, h)
 }
 
 func newMCPServer(cfg APIConfig, caller mcpCaller, log *zap.SugaredLogger) *mcp.Server {
@@ -276,7 +271,7 @@ type mcpDeleteBudgetInput struct {
 // ── Tools ───────────────────────────────────────────────────────────────────
 
 func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *zap.SugaredLogger) {
-	addMCPTool(s, caller, false, &mcp.Tool{
+	mcpserve.AddTool(s, caller, false, &mcp.Tool{
 		Name:        "list_my_projects",
 		Description: "List the cloud projects the calling user owns, with their status and granted resources.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpPageInput) (*mcp.CallToolResult, mcpProjectList, error) {
@@ -288,7 +283,7 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 		return nil, mcpProjectList{Projects: toMCPProjects(page), Total: page.Total}, nil
 	})
 
-	addMCPTool(s, caller, false, &mcp.Tool{
+	mcpserve.AddTool(s, caller, false, &mcp.Tool{
 		Name:        "list_my_budgets",
 		Description: "List the budgets the calling user manages. A budget is what projects are charged against.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpPageInput) (*mcp.CallToolResult, mcpProjectList, error) {
@@ -300,7 +295,7 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 		return nil, mcpProjectList{Projects: toMCPProjects(page), Total: page.Total}, nil
 	})
 
-	addMCPTool(s, caller, false, &mcp.Tool{
+	mcpserve.AddTool(s, caller, false, &mcp.Tool{
 		Name:        "get_project",
 		Description: "Look up one project or budget by id.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpGetInput) (*mcp.CallToolResult, mcpProject, error) {
@@ -314,7 +309,7 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 		return nil, toMCPProject(*node), nil
 	})
 
-	addMCPTool(s, caller, false, &mcp.Tool{
+	mcpserve.AddTool(s, caller, false, &mcp.Tool{
 		Name:        "search_projects",
 		Description: "Search the projects and budgets visible to the calling user by name.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpSearchInput) (*mcp.CallToolResult, mcpProjectList, error) {
@@ -354,7 +349,7 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 	// when the budget auto-approves a request that size. Calling it
 	// "request_project" would have made a model report "waiting for approval"
 	// for something that is already running.
-	addMCPTool(s, caller, true, &mcp.Tool{
+	mcpserve.AddTool(s, caller, true, &mcp.Tool{
 		Name: "create_project",
 		Description: "Create a cloud project under a budget. If you manage that budget it is created directly; " +
 			"otherwise it becomes a request waiting for a decision, unless the budget auto-approves this size. " +
@@ -381,7 +376,7 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 		return nil, toMCPProject(node), nil
 	})
 
-	addMCPTool(s, caller, true, &mcp.Tool{
+	mcpserve.AddTool(s, caller, true, &mcp.Tool{
 		Name: "request_project_change",
 		Description: "Propose new resource amounts for an existing project. The project keeps running on its " +
 			"currently approved limits until someone accepts the proposal.",
@@ -399,7 +394,7 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 		return nil, toMCPProject(node), nil
 	})
 
-	addMCPTool(s, caller, true, &mcp.Tool{
+	mcpserve.AddTool(s, caller, true, &mcp.Tool{
 		Name: "approve_request",
 		Description: "Approve a pending project request or change. Requires managing the budget it is charged to. " +
 			"An approved project is created in OpenStack within a few minutes.",
@@ -417,7 +412,7 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 		return nil, toMCPProject(node), nil
 	})
 
-	addMCPTool(s, caller, true, &mcp.Tool{
+	mcpserve.AddTool(s, caller, true, &mcp.Tool{
 		Name: "reject_request",
 		Description: "Turn down a pending project request or change. Nothing is deleted — the requester can ask " +
 			"again. Requires managing the budget it is charged to.",
@@ -434,7 +429,7 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 		return nil, toMCPProject(node), nil
 	})
 
-	addMCPTool(s, caller, true, &mcp.Tool{
+	mcpserve.AddTool(s, caller, true, &mcp.Tool{
 		Name:        "rename_project",
 		Description: "Change the name of a project or budget. Does not touch its resources, status or ownership.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpRenameInput) (*mcp.CallToolResult, mcpProject, error) {
@@ -461,7 +456,7 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 // ownership transfer can be transferred again. Deleting a budget cannot, and is
 // therefore absent along with release.
 func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *zap.SugaredLogger) {
-	addMCPTool(s, caller, true, &mcp.Tool{
+	mcpserve.AddTool(s, caller, true, &mcp.Tool{
 		Name: "create_budget",
 		Description: "Create a budget under an existing one. A budget caps what everything below it may hold " +
 			"together, and says who may approve and who may request there.",
@@ -489,7 +484,7 @@ func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log 
 		return nil, toMCPProject(node), nil
 	})
 
-	addMCPTool(s, caller, true, &mcp.Tool{
+	mcpserve.AddTool(s, caller, true, &mcp.Tool{
 		Name: "move_to_budget",
 		Description: "Charge an existing project or budget to a different budget. Requires managing both the one " +
 			"it leaves and the one it joins, and the new one must have room for it.",
@@ -503,7 +498,7 @@ func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log 
 		return nil, toMCPProject(node), nil
 	})
 
-	addMCPTool(s, caller, true, &mcp.Tool{
+	mcpserve.AddTool(s, caller, true, &mcp.Tool{
 		Name: "transfer_ownership",
 		Description: "Make someone else the responsible owner of a project. The previous owner keeps no special " +
 			"claim on it afterwards.",
@@ -517,7 +512,7 @@ func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log 
 		return nil, toMCPProject(node), nil
 	})
 
-	addMCPTool(s, caller, true, &mcp.Tool{
+	mcpserve.AddTool(s, caller, true, &mcp.Tool{
 		Name: "adopt_imported_project",
 		Description: "Take an imported project — one that exists in OpenStack but was created outside the " +
 			"self-service — into a budget, so it is managed and counted like the others.",
@@ -564,15 +559,13 @@ func registerDestructiveTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, lo
 		if node == nil {
 			return nil, fmt.Errorf("no project or budget with id %q, or it is not visible to you", id)
 		}
-		if confirm != node.Name {
-			return nil, fmt.Errorf(
-				"confirm_name %q does not match: %q is named %q. Read it back before destroying it",
-				confirm, id, node.Name)
+		if err := mcpserve.ConfirmEcho("confirm_name", confirm, node.Name, fmt.Sprintf("%q", id)); err != nil {
+			return nil, err
 		}
 		return node, nil
 	}
 
-	addMCPTool(s, caller, true, &mcp.Tool{
+	mcpserve.AddTool(s, caller, true, &mcp.Tool{
 		Name: "release_project",
 		Description: "Give up a project. This cannot be undone: depending on the deployment the OpenStack " +
 			"project and everything in it — servers, volumes, data — is deleted within minutes, or marked for " +
@@ -589,7 +582,7 @@ func registerDestructiveTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, lo
 		return nil, toMCPProject(node), nil
 	})
 
-	addMCPTool(s, caller, true, &mcp.Tool{
+	mcpserve.AddTool(s, caller, true, &mcp.Tool{
 		Name: "delete_budget",
 		Description: "Delete a budget. Only budgets, never projects — those are released instead. This cannot " +
 			"be undone. Ask the person before calling this.",

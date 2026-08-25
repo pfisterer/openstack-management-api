@@ -234,6 +234,17 @@ type Node struct {
 	// children have not been fetched yet. Children are loaded lazily, so without
 	// this every budget looks expandable.
 	ChildCount int `json:"child_count"`
+	// AncestorIDs is attached to /v1/nodes/my-budgets (never persisted): every
+	// node above this one, root-most first, excluding the node itself.
+	//
+	// It exists because "which of my budgets are the top-most ones" cannot be
+	// answered from ParentID alone. A client holding the budgets it manages sees
+	// only those — the nodes BETWEEN two of them belong to someone else and are
+	// not in the list. Comparing parents therefore mistakes a budget two levels
+	// under another managed budget for a root, and it is then drawn twice: once
+	// as a root and once in its real place. Observed on staging on 2026-08-25
+	// with a budget under an unmanaged "Mannheim" under the managed root.
+	AncestorIDs []string `json:"ancestor_ids,omitempty"`
 	// Usage is attached to API responses (never persisted): the rollup of active
 	// descendant leaves for budgets.
 	Usage UsageByStatus `json:"usage,omitempty"`

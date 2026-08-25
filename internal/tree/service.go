@@ -482,6 +482,73 @@ func (s *Service) attachParentNames(ctx context.Context, nodes []Node) ([]Node, 
 	return nodes, nil
 }
 
+// maxAncestorDepth bounds the upward walk in attachAncestorIDs. A tree this
+// deep is already a bug; the cap is here so a cycle that slipped past the
+// cycle guard cannot turn into an endless query loop.
+const maxAncestorDepth = 64
+
+// attachAncestorIDs fills Node.AncestorIDs, root-most first, for every node
+// given.
+//
+// Batched by LEVEL rather than per node: walking each node's chain with
+// nodeChain would be one query per node per level, and the caller (my-budgets)
+// can hold hundreds. Here each level of the tree costs one query no matter how
+// many nodes are on it, and the levels above the first are shared by nearly all
+// of them anyway.
+func (s *Service) attachAncestorIDs(ctx context.Context, nodes []Node) ([]Node, error) {
+	// child ID → parent ID, grown level by level until every chain reaches a
+	// node without a parent.
+	parentOf := make(map[string]string, len(nodes))
+	var frontier []string
+	for _, n := range nodes {
+		if n.ParentID != nil {
+			parentOf[n.ID] = *n.ParentID
+			if _, known := parentOf[*n.ParentID]; !known && !slices.Contains(frontier, *n.ParentID) {
+				frontier = append(frontier, *n.ParentID)
+			}
+		}
+	}
+
+	for depth := 0; len(frontier) > 0 && depth < maxAncestorDepth; depth++ {
+		level, err := s.store.ListNodes(ctx, NodeQuery{IDs: frontier}, 0, 0)
+		if err != nil {
+			return nil, fmt.Errorf("load ancestors: %w", err)
+		}
+		var next []string
+		for _, p := range level {
+			if p.ParentID == nil {
+				continue
+			}
+			parentOf[p.ID] = *p.ParentID
+			if _, known := parentOf[*p.ParentID]; !known && !slices.Contains(next, *p.ParentID) {
+				next = append(next, *p.ParentID)
+			}
+		}
+		frontier = next
+	}
+
+	for i := range nodes {
+		var chain []string
+		seen := map[string]struct{}{nodes[i].ID: {}}
+		for id, ok := parentOf[nodes[i].ID]; ok; id, ok = parentOf[id] {
+			if _, dup := seen[id]; dup {
+				// A cycle. Report what was walked so far rather than failing the
+				// whole listing: the caller uses this to decide where to DRAW a
+				// node, and a broken tree should still be visible enough to fix.
+				s.log.Warnw("cycle in ancestor chain", "node", nodes[i].ID, "at", id)
+				break
+			}
+			seen[id] = struct{}{}
+			chain = append(chain, id)
+		}
+		// Collected parent-first; the field is documented root-most first, which
+		// is the order a client compares against and the order it reads in.
+		slices.Reverse(chain)
+		nodes[i].AncestorIDs = chain
+	}
+	return nodes, nil
+}
+
 // attachUsage adds the derived fields every view needs on top of the stored
 // node: the subtree usage rollup, the direct child count and the parent's name.
 func (s *Service) attachUsage(ctx context.Context, nodes []Node) ([]Node, error) {

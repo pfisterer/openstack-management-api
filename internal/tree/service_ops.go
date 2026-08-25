@@ -125,10 +125,24 @@ func (s *Service) ListMyBudgets(userTokens common.TokenList, limit, offset int) 
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
-	return s.listPage(ctx, NodeQuery{
+	page, err := s.listPage(ctx, NodeQuery{
 		Kinds:         []string{KindBudget},
 		AdminScopeAny: userTokens,
 	}, limit, offset)
+	if err != nil {
+		return NodePage{}, err
+	}
+
+	// Only here, and not in listPage: this is the one listing whose caller has
+	// to work out which entries are the TOP-most ones it manages, and the answer
+	// needs the nodes in between — which are not in the list, because they are
+	// exactly the ones the caller does not manage. Every other listing knows
+	// where its nodes belong from ParentID alone.
+	page.Items, err = s.attachAncestorIDs(ctx, page.Items)
+	if err != nil {
+		return NodePage{}, err
+	}
+	return page, nil
 }
 
 // ListEligibleForMe returns the approved budgets the caller may submit requests to.

@@ -66,19 +66,34 @@ func TestReconcilerSupervisor_StopsOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	s := &reconcilerSupervisor{minDelay: 5 * time.Millisecond, maxDelay: 20 * time.Millisecond}
-	go s.connectWithRetry(ctx, func() (*reconciler.Reconciler, error) {
-		attempts.Add(1)
-		return nil, errors.New("dial tcp: i/o timeout")
-	}, zap.NewNop().Sugar())
+	// Wait for the loop to return rather than sampling the counter around
+	// cancel(): the backoff timer can fire in the same instant, so an attempt
+	// already inside build() gets counted after the cancel through no fault of
+	// the code. Returning at all is the property under test, and once it has
+	// returned the count is settled.
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		s.connectWithRetry(ctx, func() (*reconciler.Reconciler, error) {
+			attempts.Add(1)
+			return nil, errors.New("dial tcp: i/o timeout")
+		}, zap.NewNop().Sugar())
+	}()
 
 	// One attempt happens immediately; then it waits out the backoff.
 	time.Sleep(100 * time.Millisecond)
 	cancel()
+
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("still retrying 5s after cancel; attempts = %d", attempts.Load())
+	}
+
 	after := attempts.Load()
 	time.Sleep(200 * time.Millisecond)
-
 	if got := attempts.Load(); got != after {
-		t.Errorf("attempts kept rising after cancel (%d → %d)", after, got)
+		t.Errorf("attempts kept rising after the loop returned (%d → %d)", after, got)
 	}
 	if s.Ready() {
 		t.Error("Ready() = true although no connection ever succeeded")

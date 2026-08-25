@@ -20,7 +20,7 @@ type Token struct {
 	Prefix string `json:"token_prefix" example:"os_mgt_ab12cd34"`
 	// TokenString is set only in the response that creates a token. It is not
 	// stored and cannot be recovered afterwards.
-	TokenString string    `json:"token_string,omitempty" example:"os_mgt_abcdef123456"`
+	TokenString string `json:"token_string,omitempty" example:"os_mgt_abcdef123456"`
 	// ExpiresAt is null for a token that does not expire.
 	//
 	// A pointer, so that "no expiry" is null and not the year 1: Go's zero time

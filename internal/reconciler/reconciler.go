@@ -71,13 +71,24 @@ type Config struct {
 	// DryRun prevents any writes to OpenStack or the store; useful for testing.
 	DryRun bool
 
-	// NoDelete prevents all destructive operations. When true:
+	// NoDelete prevents destructive operations IN OPENSTACK. When true:
 	//   - Released OS projects are always tagged for pending deletion (never deleted), regardless of DeleteReleasedProjects.
-	//   - Stale imported leaves are kept (not removed from the database).
 	//   - Orphaned managed Keystone users have their description updated to OrphanedUserFlagDescription instead of being deleted.
 	//   - Group membership removals and project member removals are skipped.
 	//   - Group role un-assignments from projects are skipped.
 	// This is intended as a "phase 1" safe mode while the reconciler is being introduced.
+	//
+	// It does NOT keep our own records of things that OpenStack no longer has.
+	// A leaf whose project has been deleted describes something that is not
+	// there, and holding on to it is not caution — it is a tree that disagrees
+	// with the cloud, which is the one state this reconciler exists to prevent.
+	// Both cleanups that drop such records (stale imported leaves, released
+	// leaves) therefore run regardless.
+	//
+	// One record IS still kept: the shadow import that recoverUntaggedProject
+	// removes when a leaf reclaims its project. That project still exists, so a
+	// wrong decision there discards a record of something real — a different
+	// risk from dropping a record whose project is provably gone.
 	NoDelete bool
 
 	// DeleteReleasedProjects controls what happens to OS projects whose leaf is released.
@@ -102,18 +113,22 @@ type Config struct {
 
 // Status is returned by GetStatus to report the outcome of the last reconciliation run.
 type Status struct {
-	LastRunAt                 time.Time `json:"last_run_at"`
-	LastError                 string    `json:"last_error,omitempty"`
-	ProjectsSynced            int       `json:"projects_synced"`
-	ProjectsCreated           int       `json:"projects_created"`
-	ImportedLeaves            int       `json:"imported_leaves"`
-	ImportedRemoved           int       `json:"imported_removed"`
-	OrphanedUsersRemoved      int       `json:"orphaned_users_removed"`
-	GroupsCreated             int       `json:"groups_created"`
-	GroupsSynced              int       `json:"groups_synced"`
-	ProjectsTaggedForDeletion int       `json:"projects_tagged_for_deletion"`
-	ProjectsDeleted           int       `json:"projects_deleted"`
-	ProjectsPromoted          int       `json:"projects_promoted"`
+	LastRunAt       time.Time `json:"last_run_at"`
+	LastError       string    `json:"last_error,omitempty"`
+	ProjectsSynced  int       `json:"projects_synced"`
+	ProjectsCreated int       `json:"projects_created"`
+	ImportedLeaves  int       `json:"imported_leaves"`
+	ImportedRemoved int       `json:"imported_removed"`
+	// ReleasedLeavesRemoved counts released records dropped because their
+	// OpenStack project has been deleted — the end of the handover that the
+	// pending-deletion tag starts.
+	ReleasedLeavesRemoved     int `json:"released_leaves_removed"`
+	OrphanedUsersRemoved      int `json:"orphaned_users_removed"`
+	GroupsCreated             int `json:"groups_created"`
+	GroupsSynced              int `json:"groups_synced"`
+	ProjectsTaggedForDeletion int `json:"projects_tagged_for_deletion"`
+	ProjectsDeleted           int `json:"projects_deleted"`
+	ProjectsPromoted          int `json:"projects_promoted"`
 	// ProjectsRetagged counts managed projects whose resource-id tag was missing
 	// and had to be restored — see recoverUntaggedProject. Anything above zero
 	// means somebody edited tags in OpenStack.
@@ -253,6 +268,7 @@ func (r *Reconciler) runOnce(ctx context.Context) {
 		r.status.ProjectsCreated = result.projectsCreated
 		r.status.ImportedLeaves = result.importedLeaves
 		r.status.ImportedRemoved = result.importedRemoved
+		r.status.ReleasedLeavesRemoved = result.releasedLeavesRemoved
 		r.status.OrphanedUsersRemoved = result.orphanedUsersRemoved
 		r.status.GroupsCreated = result.groupsCreated
 		r.status.GroupsSynced = result.groupsSynced
@@ -265,6 +281,7 @@ func (r *Reconciler) runOnce(ctx context.Context) {
 			"created", result.projectsCreated,
 			"imported", result.importedLeaves,
 			"imported_removed", result.importedRemoved,
+			"released_removed", result.releasedLeavesRemoved,
 			"orphaned_users_removed", result.orphanedUsersRemoved,
 			"groups_created", result.groupsCreated,
 			"groups_synced", result.groupsSynced,
@@ -281,6 +298,7 @@ type reconcileResult struct {
 	projectsCreated           int
 	importedLeaves            int
 	importedRemoved           int
+	releasedLeavesRemoved     int
 	orphanedUsersRemoved      int
 	groupsCreated             int
 	groupsSynced              int
@@ -455,6 +473,8 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 			if releasedLeaf, wasReleased := releasedLeafByID[resourceID]; wasReleased {
 				// Leaf was released: tag the project for pending deletion or delete it.
 				r.handleReleasedProject(osProject, releasedLeaf, &res)
+				// Seen in OpenStack, so it is not a candidate for removal below.
+				delete(releasedLeafByID, resourceID)
 				delete(importedByOSProjectID, osID)
 				continue
 			}
@@ -469,25 +489,29 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 		delete(importedByOSProjectID, osID) // mark as seen so we don't remove it below
 	}
 
-	// Clean up imported leaves whose OS projects no longer exist.
+	// Clean up imported leaves whose OS projects are no longer in scope.
 	for osID, staleLeaf := range importedByOSProjectID {
-		if _, stillExists := osProjectByOSID[osID]; !stillExists {
-			if r.cfg.NoDelete {
-				r.log.Infow("NoDelete: skipping removal of stale imported leaf (OS project gone)",
-					"node_id", staleLeaf.ID, "os_project_id", osID)
-				continue
-			}
-			r.log.Infow("Removing stale imported leaf (OS project gone)",
-				"node_id", staleLeaf.ID, "os_project_id", osID)
-			if !r.cfg.DryRun {
-				if err := r.store.DeleteNodes(ctx, []string{staleLeaf.ID}); err != nil {
-					r.log.Warnw("Failed to delete stale imported leaf",
-						"id", staleLeaf.ID, "error", err)
-				}
-			}
-			res.importedRemoved++
+		if _, stillInScope := osProjectByOSID[osID]; stillInScope {
+			continue
 		}
+		r.log.Infow("Removing stale imported leaf (OS project gone from scope)",
+			"node_id", staleLeaf.ID, "os_project_id", osID)
+		if !r.cfg.DryRun {
+			if err := r.store.DeleteNodes(ctx, []string{staleLeaf.ID}); err != nil {
+				r.log.Warnw("Failed to delete stale imported leaf",
+					"id", staleLeaf.ID, "error", err)
+			}
+		}
+		res.importedRemoved++
 	}
+
+	// Released leaves whose OpenStack project has been deleted are removed too.
+	//
+	// A released leaf costs nothing (usage sums approved and change_pending only)
+	// and stays as the record of what someone had. Responsibility for the actual
+	// deletion is handed to OpenStack via the pending-deletion and contact tags,
+	// so the honest end of that record is the moment the project is really gone.
+	r.removeReleasedLeavesWithoutProject(ctx, releasedLeafByID, osProjectByOSID, &res)
 
 	// ── Phase 6: Remove auto-created Keystone users with no project memberships ─
 	//
@@ -509,6 +533,58 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 // *osclient.OpenStackClient satisfies it; tests substitute a fake.
 type tagReader interface {
 	ExtractResourceIDFromTags(tags []string) string
+}
+
+// removeReleasedLeavesWithoutProject drops the released leaves whose OpenStack
+// project is no longer in the reconciler's scope.
+//
+// Out of scope counts as gone, deliberately: the scope is what this reconciler
+// is responsible for, and a project moved out of it is somebody else's now. The
+// alternative — asking Keystone about every unseen project to tell "deleted"
+// from "moved" — buys a distinction that changes nothing we would do about it.
+//
+// The ones Phase 5 saw were removed from `released` as it went, so everything
+// arriving here was absent from the listing. That the listing is complete is
+// guaranteed upstream: a failed project listing aborts the whole run before
+// this point, so "not in the list" can never mean "the list did not load".
+func (r *Reconciler) removeReleasedLeavesWithoutProject(
+	ctx context.Context,
+	released map[string]tree.Node,
+	osProjectByOSID map[string]osclient.ProjectInfo,
+	res *reconcileResult,
+) {
+	// Sorted, so a run is reproducible and its log reads the same twice.
+	ids := make([]string, 0, len(released))
+	for id := range released {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+
+	for _, id := range ids {
+		leaf := released[id]
+
+		// In scope under its stored ID, just not matched by tag above: the
+		// project is right there, its resource-id tag is not — which any
+		// project admin can arrange in Horizon with two clicks. In scope is in
+		// scope, so this is not a deletion. One map lookup, no API call.
+		if _, inScope := osProjectByOSID[leaf.OSProjectID]; inScope && leaf.OSProjectID != "" {
+			continue
+		}
+
+		// Not gated on NoDelete: nothing is destroyed in OpenStack here — the
+		// project is already gone from it. See the field's documentation.
+		r.log.Infow("Removing released leaf — its OpenStack project is gone",
+			"node_id", leaf.ID, "name", leaf.Name, "os_project_id", leaf.OSProjectID,
+			"dry_run", r.cfg.DryRun)
+		if !r.cfg.DryRun {
+			if err := r.store.DeleteNodes(ctx, []string{leaf.ID}); err != nil {
+				r.log.Warnw("Failed to remove released leaf",
+					"node_id", leaf.ID, "error", err)
+				continue
+			}
+		}
+		res.releasedLeavesRemoved++
+	}
 }
 
 // chooseRecoverableProject decides whether a leaf may reclaim the OpenStack

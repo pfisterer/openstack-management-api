@@ -1066,8 +1066,11 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor string,
 	}
 
 	// Capacity / limit invariants against the new chain for nodes that carry
-	// active consumption. Pending nodes move freely — they are checked at approval.
-	if slices.Contains(ActiveStatuses, current.Status) {
+	// consumption. Pending nodes move freely — they are checked at approval.
+	// The set is the accounting's, not a fixed list: a released leaf that is
+	// billed must also be checked when it moves, or moving it is a way to put
+	// charged usage into a budget that has no room for it.
+	if slices.Contains(s.chargedStatuses(), current.Status) {
 		if current.IsLeaf() {
 			if err := s.checkCapacity(ctx, newParentChain, current.Limit, nil); err != nil {
 				return Node{}, err

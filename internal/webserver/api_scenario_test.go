@@ -108,7 +108,15 @@ func ptrStr(s string) *string { return &s }
 func TestScenario_DHBWTreeLifecycle(t *testing.T) {
 	// Start from the bootstrapped structural nodes only — the entire tree is
 	// built through the API.
-	h := setupRouterSeeded(t, nil)
+	//
+	// ChargeReleased is deliberately OFF here, unlike production: this suite is
+	// about the lifecycle (request → approve → change → release), and it uses
+	// release several times purely to hand capacity back so the next phase has
+	// room. With the charge on, those releases would keep their limits booked
+	// and every number after the first release would be measuring the
+	// accounting policy instead of the lifecycle. The policy has its own tests
+	// (TestReleasedLeafAccounting); this keeps the off-path covered too.
+	h := setupRouterSeeded(t, nil, tree.Accounting{ChargeOSInUse: true})
 
 	// ── Phase 1: build the tree in different roles ────────────────────────────
 

@@ -30,9 +30,10 @@ type Service struct {
 	// maxAuthorizedUsers bounds how many participants one node may list.
 	maxAuthorizedUsers int
 
-	// chargeOSInUse makes the accounting bill max(declared limit, measured
-	// OpenStack usage) instead of the declared limit alone. See chargedQuota.
-	chargeOSInUse bool
+	// accounting decides what a budget is billed for. Both switches only ever
+	// make the books stricter when on; off is the older, more permissive
+	// behaviour, kept so a bad number can be turned off without a release.
+	accounting Accounting
 
 	// approvalMu serializes the capacity check-then-write critical sections
 	// (create with direct/auto approval, approve, reparent, promote) so concurrent
@@ -44,10 +45,37 @@ type Service struct {
 	log *zap.SugaredLogger
 }
 
+// Accounting holds the two switches that decide what a budget is billed for.
+// A struct rather than two bool parameters: side by side in a call they are
+// indistinguishable, and swapping them compiles cleanly and silently changes
+// every budget in the deployment.
+type Accounting struct {
+	// ChargeOSInUse bills max(declared limit, measured OpenStack usage) instead
+	// of the declared limit alone. See chargedQuota for why.
+	ChargeOSInUse bool
+	// ChargeReleased keeps a released leaf's limit booked against its budget.
+	//
+	// Releasing is a request, not a deletion: the reconciler tags the project
+	// pending-deletion and hands the actual removal to OpenStack and whoever
+	// acts on that tag. Until that happens the servers run and the quota is
+	// held, so not charging it lets a budget be re-spent on capacity that is
+	// still occupied — release everything, request it again, and the same
+	// hardware is booked twice.
+	//
+	// It ends by itself: once the project is really gone the reconciler drops
+	// our record entirely (removeReleasedLeavesWithoutProject), so nothing is
+	// charged for a project that no longer exists. That cleanup is what makes
+	// this switch safe to leave on — without it a released leaf would be
+	// charged forever.
+	//
+	// Off is the pre-2026-08 behaviour: released frees the budget immediately.
+	ChargeReleased bool
+}
+
 // NewService constructs the tree service.
 // rootAdminTokens is synchronized into the root node's AdminScope on every
 // Bootstrap — the configuration is the source of truth for that one scope.
-func NewService(store Store, roles common.RoleProvider, resourceIDs []string, rootAdminTokens common.TokenList, requestTimeout time.Duration, maxAuthorizedUsers int, chargeOSInUse bool, log *zap.SugaredLogger) *Service {
+func NewService(store Store, roles common.RoleProvider, resourceIDs []string, rootAdminTokens common.TokenList, requestTimeout time.Duration, maxAuthorizedUsers int, accounting Accounting, log *zap.SugaredLogger) *Service {
 	if store == nil {
 		panic("tree.NewService requires a non-nil store")
 	}
@@ -68,7 +96,7 @@ func NewService(store Store, roles common.RoleProvider, resourceIDs []string, ro
 		rootAdminTokens:    rootAdminTokens,
 		requestTimeout:     requestTimeout,
 		maxAuthorizedUsers: maxAuthorizedUsers,
-		chargeOSInUse:      chargeOSInUse,
+		accounting:         accounting,
 		log:                log,
 	}
 }
@@ -354,13 +382,13 @@ func (s *Service) loadSubtreeUsage(ctx context.Context, roots []Node) (UsagePerN
 	leaves, err := s.store.ListNodes(ctx, NodeQuery{
 		ParentIDs: budgetIDs,
 		Kinds:     []string{KindProject},
-		Statuses:  ActiveStatuses,
+		Statuses:  s.chargedStatuses(),
 	}, 0, 0)
 	if err != nil {
 		return nil, fmt.Errorf("load active leaves for usage rollup: %w", err)
 	}
 
-	return buildRolledUpUsage(leaves, parentMap, s.resourceIDs, s.chargeOSInUse), nil
+	return buildRolledUpUsage(leaves, parentMap, s.resourceIDs, s.accounting.ChargeOSInUse), nil
 }
 
 // buildRolledUpUsage attributes each leaf's limit and ID to its parent budget and
@@ -590,7 +618,7 @@ func (s *Service) ownerActiveUsage(ctx context.Context, budgetID string, ownerTo
 	leaves, err := s.store.ListNodes(ctx, NodeQuery{
 		ParentIDs: []string{budgetID},
 		Kinds:     []string{KindProject},
-		Statuses:  ActiveStatuses,
+		Statuses:  s.chargedStatuses(),
 		Owner:     ownerToken,
 	}, 0, 0)
 	if err != nil {
@@ -598,7 +626,7 @@ func (s *Service) ownerActiveUsage(ctx context.Context, budgetID string, ownerTo
 	}
 	usage := make(common.ProjectQuota, len(s.resourceIDs))
 	for _, leaf := range leaves {
-		charged := chargedQuota(leaf, s.resourceIDs, s.chargeOSInUse)
+		charged := chargedQuota(leaf, s.resourceIDs, s.accounting.ChargeOSInUse)
 		for _, id := range s.resourceIDs {
 			usage[id] += charged[id]
 		}
@@ -648,6 +676,17 @@ func newHistoryEntry(event, actor, statusTo string) HistoryEntry {
 // The result must be computed PER LEAF and only then summed: max() does not
 // distribute over addition, so applying it to an already-aggregated total
 // gives a different (and wrong) answer.
+// chargedStatuses are the leaf states whose limits count against a budget. The
+// single answer for every place that asks — the rollup, the per-requester
+// auto-approve cap and the reparent capacity check must agree, or a leaf gets
+// billed in one view and moves for free in another.
+func (s *Service) chargedStatuses() []string {
+	if s.accounting.ChargeReleased {
+		return ActiveStatusesWithReleased
+	}
+	return ActiveStatuses
+}
+
 func chargedQuota(leaf Node, resourceIDs []string, chargeOSInUse bool) common.ProjectQuota {
 	if !chargeOSInUse {
 		return leaf.Limit

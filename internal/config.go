@@ -208,6 +208,16 @@ type AppConfiguration struct {
 	// would otherwise lock budgets that are genuinely within their limits, and
 	// waiting for a release to undo it is the worse failure mode.
 	ChargeOSInUse bool `json:"charge_os_in_use"`
+	// ChargeReleased keeps a released project booked against its budget until
+	// OpenStack has actually deleted it. Default on: releasing only tags the
+	// project for deletion, so the servers keep running and the capacity stays
+	// occupied — freeing the budget at that moment lets the same hardware be
+	// booked twice. See tree.Accounting.ChargeReleased.
+	//
+	// Turning it off restores the pre-2026-08 behaviour, which is a deliberate
+	// trade: budgets free up immediately, at the price of over-booking for as
+	// long as the deletion takes.
+	ChargeReleased bool `json:"charge_released"`
 }
 
 // loadAppConfiguration loads configuration from an optional .env file and environment variables.
@@ -288,6 +298,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 		ServiceTimeoutSeconds: envconf.Int("SERVICE_TIMEOUT_SECONDS", 30),
 		MaxAuthorizedUsers:    envconf.Int("API_MAX_AUTHORIZED_USERS", common.DefaultMaxAuthorizedUsers),
 		ChargeOSInUse:         envconf.Bool("API_CHARGE_OS_IN_USE", true),
+		ChargeReleased:        envconf.Bool("API_CHARGE_RELEASED", true),
 	}
 
 	if err := validateConfig(cfg); err != nil {

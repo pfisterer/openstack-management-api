@@ -29,6 +29,10 @@ const (
 // quotaResourceIDs matches the resource IDs used in mock data.
 var quotaResourceIDs = []string{"cores", "ram", "storage", "gpu"}
 
+// testAccounting mirrors the production defaults, so a test that passes here
+// says something about the deployment rather than about a lenient fixture.
+var testAccounting = tree.Accounting{ChargeOSInUse: true, ChargeReleased: true}
+
 // rootAdminTokens mirrors the root-level tokens in mock data.
 var rootAdminTokens = common.TokenList{"group:root_uni", "user:root.admin@uni.example"}
 
@@ -52,7 +56,7 @@ func corsRouter(t *testing.T, devMode bool, corsOrigins ...string) http.Handler 
 	t.Helper()
 	store, sugar := newTestStore(t)
 	svc := tree.NewService(store, roleprovider.NewMockRoleProvider(), quotaResourceIDs,
-		rootAdminTokens, 10*time.Second, common.DefaultMaxAuthorizedUsers, true, sugar)
+		rootAdminTokens, 10*time.Second, common.DefaultMaxAuthorizedUsers, testAccounting, sugar)
 	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
 		t.Fatalf("bootstrap tree: %v", err)
 	}
@@ -75,7 +79,7 @@ func setupRouterWith(t *testing.T, rec webserver.ReconcilerAPI) http.Handler {
 	if err := store.Seed(context.Background(), ids, nodes); err != nil {
 		t.Fatalf("seed mock state: %v", err)
 	}
-	return routerFromStore(t, sugar, store, rec)
+	return routerFromStore(t, sugar, store, rec, testAccounting)
 }
 
 // setupRouterSeeded builds the router with a CUSTOM node seed — used by the
@@ -83,14 +87,18 @@ func setupRouterWith(t *testing.T, rec webserver.ReconcilerAPI) http.Handler {
 // because the DummyAuthMiddleware resolves the caller's tokens from there.
 // The service bootstrap runs afterwards, so the structural root/unassigned nodes
 // always exist and the root admin scope is synced to rootAdminTokens.
-func setupRouterSeeded(t *testing.T, nodes []tree.Node) http.Handler {
+//
+// The accounting policy is a parameter because it changes what the same
+// lifecycle costs — see the scenario suite for why it does not just take the
+// production default.
+func setupRouterSeeded(t *testing.T, nodes []tree.Node, acc tree.Accounting) http.Handler {
 	t.Helper()
 	store, sugar := newTestStore(t)
 	ids, _ := mockdata.DefaultMockTreeState()
 	if err := store.Seed(context.Background(), ids, nodes); err != nil {
 		t.Fatalf("seed scenario state: %v", err)
 	}
-	return routerFromStore(t, sugar, store, nil)
+	return routerFromStore(t, sugar, store, nil, acc)
 }
 
 func newTestStore(t *testing.T) (tree.Store, *zap.SugaredLogger) {
@@ -103,7 +111,7 @@ func newTestStore(t *testing.T) (tree.Store, *zap.SugaredLogger) {
 	return tree.NewInMemoryStore(sugar), sugar
 }
 
-func routerFromStore(t *testing.T, sugar *zap.SugaredLogger, store tree.Store, rec webserver.ReconcilerAPI, corsOrigins ...string) http.Handler {
+func routerFromStore(t *testing.T, sugar *zap.SugaredLogger, store tree.Store, rec webserver.ReconcilerAPI, acc tree.Accounting, corsOrigins ...string) http.Handler {
 	t.Helper()
 	svc := tree.NewService(
 		store,
@@ -112,7 +120,7 @@ func routerFromStore(t *testing.T, sugar *zap.SugaredLogger, store tree.Store, r
 		rootAdminTokens,
 		10*time.Second,
 		common.DefaultMaxAuthorizedUsers,
-		true,
+		acc,
 		sugar,
 	)
 	// Same as app.go: ensure the structural nodes exist and the root admin scope

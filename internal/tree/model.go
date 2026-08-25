@@ -72,8 +72,15 @@ const (
 	UnassignedNodeID = "unassigned"
 )
 
-// ActiveStatuses are the leaf states that consume capacity in the usage rollup.
+// ActiveStatuses are the leaf states that always consume capacity: the project
+// is live in OpenStack and its limit is in force.
 var ActiveStatuses = []string{StatusApproved, StatusChangePending}
+
+// ActiveStatusesWithReleased adds released leaves to them, which is what the
+// accounting charges by default — see Accounting.ChargeReleased. Releasing does
+// not delete the OpenStack project; it hands the deletion to OpenStack via the
+// pending-deletion tag, and until that happens the servers are still running.
+var ActiveStatusesWithReleased = []string{StatusApproved, StatusChangePending, StatusReleased}
 
 // ReconcilableStatuses are the leaf states the reconciler projects into OpenStack.
 // change_pending leaves keep their currently approved limit active while the

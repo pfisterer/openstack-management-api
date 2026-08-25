@@ -14,11 +14,15 @@ import (
 
 var testResources = []string{"cores"}
 
+// testAccounting mirrors the production defaults, so a test that passes here
+// says something about the deployment rather than about a lenient fixture.
+var testAccounting = tree.Accounting{ChargeOSInUse: true, ChargeReleased: true}
+
 func newSvc(t *testing.T, rootAdmins common.TokenList) (*tree.Service, tree.Store) {
 	t.Helper()
 	log := zap.NewNop().Sugar()
 	store := tree.NewInMemoryStore(log)
-	svc := tree.NewService(store, roleprovider.NewMockRoleProvider(), testResources, rootAdmins, 5*time.Second, common.DefaultMaxAuthorizedUsers, true, log)
+	svc := tree.NewService(store, roleprovider.NewMockRoleProvider(), testResources, rootAdmins, 5*time.Second, common.DefaultMaxAuthorizedUsers, testAccounting, log)
 	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
@@ -34,7 +38,7 @@ func TestBootstrap_SyncsRootAdminScope(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	store := tree.NewInMemoryStore(log)
 
-	svc1 := tree.NewService(store, roleprovider.NewMockRoleProvider(), testResources, common.TokenList{"group:admins-v1"}, 5*time.Second, common.DefaultMaxAuthorizedUsers, true, log)
+	svc1 := tree.NewService(store, roleprovider.NewMockRoleProvider(), testResources, common.TokenList{"group:admins-v1"}, 5*time.Second, common.DefaultMaxAuthorizedUsers, testAccounting, log)
 	if err := svc1.Bootstrap(context.Background(), nil, nil); err != nil {
 		t.Fatalf("bootstrap v1: %v", err)
 	}
@@ -55,7 +59,7 @@ func TestBootstrap_SyncsRootAdminScope(t *testing.T) {
 	}
 
 	// "Restart" with a changed configuration → the scope is synced, not preserved.
-	svc2 := tree.NewService(store, roleprovider.NewMockRoleProvider(), testResources, common.TokenList{"group:admins-v2"}, 5*time.Second, common.DefaultMaxAuthorizedUsers, true, log)
+	svc2 := tree.NewService(store, roleprovider.NewMockRoleProvider(), testResources, common.TokenList{"group:admins-v2"}, 5*time.Second, common.DefaultMaxAuthorizedUsers, testAccounting, log)
 	if err := svc2.Bootstrap(context.Background(), nil, nil); err != nil {
 		t.Fatalf("bootstrap v2: %v", err)
 	}

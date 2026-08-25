@@ -128,6 +128,8 @@ spec:
                    opt-out back on. */}}
             - name: API_CHARGE_OS_IN_USE
               value: {{ dig "chargeOsInUse" true .Values.openstackManagementApi.api | toString | quote }}
+            - name: API_CHARGE_RELEASED
+              value: {{ dig "chargeReleased" true .Values.openstackManagementApi.api | toString | quote }}
             - name: CORS_ALLOWED_ORIGINS
               value: {{ join "," (.Values.openstackManagementApi.api.corsAllowedOrigins | default list) | quote }}
 

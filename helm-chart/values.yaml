@@ -113,6 +113,14 @@ openstackManagementApi:
     # the reconciler ever reports inflated usage — that would lock budgets that
     # are genuinely within their limits.
     chargeOsInUse: true
+    # Keep a released project booked against its budget until OpenStack has
+    # really deleted it. On by default: releasing only tags the project for
+    # deletion, so the servers keep running and the capacity stays occupied —
+    # freeing the budget at that moment books the same hardware twice. The
+    # charge ends on its own once the reconciler sees the project is gone and
+    # drops the record. Turn it off to free budgets the moment they are
+    # released, accepting the over-booking while the deletion is pending.
+    chargeReleased: true
     # Browser origins allowed to call /v1 cross-origin, as full origins
     # ("https://selfservice.example.cloud"). Empty = no cross-origin access,
     # which is right whenever the SPA reaches this API same-origin through a

@@ -82,6 +82,7 @@
             "mode": { "type": "string", "enum": ["production", "development"] },
             "maxAuthorizedUsers": { "type": "integer", "minimum": 1 },
             "chargeOsInUse": { "type": "boolean" },
+            "chargeReleased": { "type": "boolean" },
             "corsAllowedOrigins": {
               "type": "array",
               "items": { "type": "string", "pattern": "^https?://[^/]+$" }

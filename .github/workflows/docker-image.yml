@@ -44,12 +44,36 @@ jobs:
           username: ${{ github.actor }} # The GitHub user that triggered the workflow
           password: ${{ secrets.GITHUB_TOKEN }} # The special GitHub token for workflows
 
+      # The same invariant the chart step below already enforces, asked the same
+      # way: of the registry, not of the diff. Without it every push to main
+      # rebuilt ghcr.io/…:$VERSION and silently replaced the contents of a tag
+      # that production is running — the pod keeps going, but the next restart or
+      # rescheduling pulls different code under the same number.
+      #
+      # The build itself still runs, so a broken Dockerfile is caught on the
+      # commit that broke it. Only the push is withheld.
+      - name: Check whether this image version is already published
+        id: image_published
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}"
+          VERSION="${{ steps.get_version.outputs.VERSION }}"
+          if docker buildx imagetools inspect "$IMAGE:$VERSION" >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$IMAGE:$VERSION is already published — building to verify, not pushing. Bump VERSION to release."
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
-          push: true
+          # Never on a pull request either: that pushed to the registry too, and
+          # a PR is by definition not a release.
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.image_published.outputs.published != 'true' }}
           # amd64 only — the k3s nodes are x86_64, so the emulated arm64 build
           # is unnecessary (and, under qemu, was the main source of build-time
           # memory pressure).

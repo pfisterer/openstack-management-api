@@ -20,6 +20,12 @@ const userDataKey = "__api_userData"
 const userTokensKey = "__api_userTokens"
 const authContextKey = "__api_authContext"
 
+// readOnlyKey carries whether the caller authenticated with a read-only API
+// token. Set on every authenticated request, including OIDC ones (false there),
+// so a handler asking the question never has to tell "not read-only" from
+// "nobody set it".
+const readOnlyKey = "__api_readOnly"
+
 // AuthContext holds the resolved identity for a single request, set once by
 // EffectiveAuthMiddleware and read by handlers via mustGetAuthContext.
 //
@@ -53,6 +59,39 @@ func EffectiveAuthMiddleware(svc APIService) gin.HandlerFunc {
 			OriginalTokens:  originalTokens,
 			EffectiveTokens: effectiveTokens,
 		})
+		c.Next()
+	}
+}
+
+// IsReadOnlyToken reports whether this request was authenticated with a
+// read-only API token. For routes where the HTTP method does not say what the
+// operation does — MCP, where every tool call is a POST — this is the question
+// to ask, once per operation, against that operation's own answer.
+func IsReadOnlyToken(c *gin.Context) bool {
+	v, ok := c.Get(readOnlyKey)
+	if !ok {
+		return false
+	}
+	readOnly, ok := v.(bool)
+	return ok && readOnly
+}
+
+// RejectWritesForReadOnlyTokens refuses anything but GET for a read-only token.
+//
+// This is the REST rule, and it lives on the REST group rather than in the auth
+// middleware because it is an approximation: the method stands in for "does this
+// change anything", which holds for these routes and nowhere else. It was in the
+// auth middleware, which made it look like a property of the credential — and
+// would have refused every MCP tool call, reads included, since those are all
+// POSTs.
+func RejectWritesForReadOnlyTokens(log *zap.SugaredLogger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.Method != http.MethodGet && IsReadOnlyToken(c) {
+			log.Warnf("Attempt to use read-only token for non-GET operation: %s %s",
+				c.Request.Method, c.Request.URL.Path)
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "token is read-only"})
+			return
+		}
 		c.Next()
 	}
 }
@@ -223,12 +262,10 @@ func CombinedAuthMiddleware(oidcVerifier *oidcAuthVerifier, tokenLookup common.T
 				return
 			}
 
-			// Check whether the operation is GET (read-only) and the token is read-only
-			if c.Request.Method != http.MethodGet && token.ReadOnly {
-				log.Warnf("Attempt to use read-only token for non-GET operation: %s %s", c.Request.Method, c.Request.URL.Path)
-				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "token is read-only"})
-				return
-			}
+			// Recorded here, enforced by the route group: what counts as a write
+			// is a property of the OPERATION, and only the REST routes can read
+			// that off the HTTP method (see RejectWritesForReadOnlyTokens).
+			c.Set(readOnlyKey, token.ReadOnly)
 
 			// Email, not PreferredUsername. Claims.Identity prefers the e-mail
 			// and the role provider resolves groups by it, so a token filled
@@ -253,6 +290,8 @@ func CombinedAuthMiddleware(oidcVerifier *oidcAuthVerifier, tokenLookup common.T
 				return
 			}
 			claims = verifiedClaims
+			// An interactive login carries no read-only flag; a token does.
+			c.Set(readOnlyKey, false)
 		}
 
 		resolvedTokens, err := userTokenResolver(ctx, claims)
@@ -313,6 +352,7 @@ func DummyAuthMiddleware() gin.HandlerFunc {
 
 		// Set the claims and tokens in the context for downstream handlers to use.
 		fmt.Printf("DummyAuthMiddleware: setting dummy auth for user '%s' with tokens: %v\n", dev_user, userTokens)
+		c.Set(readOnlyKey, false)
 		c.Set(userDataKey, claims)
 		c.Set(userTokensKey, userTokens)
 		c.Next()

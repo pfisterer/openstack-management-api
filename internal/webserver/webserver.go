@@ -164,6 +164,11 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 		apiV1Group.Use(cfg.AuthMiddleware)
 	}
 
+	// The read-only rule for REST, mounted here rather than inside the auth
+	// middleware: "anything but GET is a write" is true of these routes and of
+	// nothing else, so it belongs to the group it describes.
+	apiV1Group.Use(RejectWritesForReadOnlyTokens(cfg.Log))
+
 	// Register API routes with the provided tree service and role switch groups configuration
 	RegisterApiRoutes(apiV1Group, cfg.API, cfg.Log)
 
@@ -174,6 +179,16 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 	// Always register reconciler admin endpoints so CORS headers are present even
 	// when the reconciler is disabled. Handlers return 503 when Reconciler is nil.
 	RegisterReconcilerRoutes(apiV1Group, cfg.Reconciler, cfg.RootAdminTokens, cfg.Log)
+
+	// The MCP endpoint: same authentication as /v1, deliberately WITHOUT
+	// RejectWritesForReadOnlyTokens. Every MCP call is a POST, so the method
+	// cannot say whether an operation writes — the tool does, and mcp.go checks
+	// it there. No CORS: this is for a local MCP client, not a browser.
+	mcpGroup := router.Group("/mcp")
+	if cfg.AuthMiddleware != nil {
+		mcpGroup.Use(cfg.AuthMiddleware)
+	}
+	RegisterMCPRoutes(mcpGroup, cfg.API, cfg.Log)
 
 	return router
 }

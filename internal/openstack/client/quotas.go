@@ -158,15 +158,20 @@ func (c *OpenStackClient) GetProjectQuotaDetail(projectID string) (*ProjectQuota
 	detail.InUse.RAM = compute.RAM.InUse
 	detail.InUse.Instances = compute.Instances.InUse
 
-	// gophercloud's block-storage quotasets package only exposes Get (limits), not GetDetail
-	// (limits + in-use). We therefore only populate the limit for storage; InUse.Gigabytes
-	// remains 0 (unknown). Overcommit detection for storage is skipped as a result.
-	blk, err := blockquotas.Get(c.Block, projectID).Extract()
+	// GetUsage, not Get: Cinder answers GET /os-quota-sets/{id}?usage=true with
+	// limit AND in_use, and gophercloud has exposed it all along — under a name
+	// that does not match the compute package's GetDetail, which is how it came
+	// to be believed missing. Until 2026-08-26 this read Get (limits only) and
+	// hard-coded InUse.Gigabytes = 0, so a project with volumes reported no
+	// storage in use: the accounting billed the declared limit, and the
+	// shrink-after-filling loophole stayed open for storage while it was closed
+	// for cores and RAM. Measured on staging: 3 GB of volumes, reported as 0.
+	usage, err := blockquotas.GetUsage(c.Block, projectID).Extract()
 	if err != nil {
-		return nil, fmt.Errorf("block storage quota detail: %w", err)
+		return nil, fmt.Errorf("block storage quota usage: %w", err)
 	}
-	detail.Limit.Gigabytes = blk.Gigabytes
-	detail.InUse.Gigabytes = 0 // not available via this API
+	detail.Limit.Gigabytes = usage.Gigabytes.Limit
+	detail.InUse.Gigabytes = usage.Gigabytes.InUse
 
 	return detail, nil
 }

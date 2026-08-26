@@ -133,8 +133,12 @@ func QuotaSetToProjectQuota(resources []common.ManagedProject, qs osclient.Quota
 //
 // Only resources marked OSOvercommitCheck are mapped; the rest have no in-use
 // counter we could read, and reporting 0 for them would look like "nothing is
-// used" rather than "not measured". Storage is among the missing ones on some
-// clouds — see the note in quotas.go.
+// used" rather than "not measured" — the distinction the accounting depends on.
+//
+// Storage used to be among the unreadable ones and no longer is: the value came
+// back as a hard-coded 0, which is exactly the confusion this comment warns
+// about, and it went unnoticed because 0 is also what an empty project reports.
+// See the note in quotas.go for what it actually took.
 func ProjectInUse(resources []common.ManagedProject, detail *osclient.ProjectQuotaDetail) common.ProjectQuota {
 	if detail == nil {
 		return nil

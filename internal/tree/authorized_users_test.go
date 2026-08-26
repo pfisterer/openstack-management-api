@@ -21,7 +21,7 @@ func budgetForMembers(t *testing.T, svc *tree.Service, requester common.TokenLis
 		Limit:              cores(100),
 		AdminScope:         common.TokenList{"group:root"},
 		EligibleRequesters: requester,
-	}, "root@x", "root@x", common.TokenList{"group:root"})
+	}, tree.UIActor("root@x"), "root@x", common.TokenList{"group:root"})
 	if err != nil {
 		t.Fatalf("create budget: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestAuthorizedUsersAreValidated(t *testing.T) {
 				Reason:          "lab work",
 				Limit:           cores(1),
 				AuthorizedUsers: tc.users,
-			}, "student@x", "student@x", requester)
+			}, tree.UIActor("student@x"), "student@x", requester)
 
 			if tc.wantErr == "" {
 				if err != nil {

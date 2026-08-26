@@ -344,7 +344,7 @@ func createNode(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		node, err := svc.CreateNode(req, auth.UserEmail, auth.UserEmail, auth.EffectiveTokens)
+		node, err := svc.CreateNode(req, tree.UIActor(auth.UserEmail), auth.UserEmail, auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -384,7 +384,7 @@ func updateNode(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		node, err := svc.UpdateNode(c.Param("id"), req, auth.UserEmail, auth.EffectiveTokens)
+		node, err := svc.UpdateNode(c.Param("id"), req, tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -424,7 +424,7 @@ func requestNodeChange(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		node, err := svc.RequestChange(c.Param("id"), req, auth.UserEmail, auth.EffectiveTokens)
+		node, err := svc.RequestChange(c.Param("id"), req, tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -461,7 +461,7 @@ func approveNode(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		node, err := svc.ApproveNode(c.Param("id"), req, auth.UserEmail, auth.EffectiveTokens)
+		node, err := svc.ApproveNode(c.Param("id"), req, tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -498,7 +498,7 @@ func rejectNode(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		node, err := svc.RejectNode(c.Param("id"), req, auth.UserEmail, auth.EffectiveTokens)
+		node, err := svc.RejectNode(c.Param("id"), req, tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -529,7 +529,7 @@ func releaseNode(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		node, err := svc.ReleaseNode(c.Param("id"), auth.UserEmail, auth.EffectiveTokens)
+		node, err := svc.ReleaseNode(c.Param("id"), tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -569,7 +569,7 @@ func reparentNode(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		node, err := svc.ReparentNode(c.Param("id"), req, auth.UserEmail, auth.EffectiveTokens)
+		node, err := svc.ReparentNode(c.Param("id"), req, tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -609,7 +609,7 @@ func transferNodeOwner(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		node, err := svc.TransferOwner(c.Param("id"), req, auth.UserEmail, auth.EffectiveTokens)
+		node, err := svc.TransferOwner(c.Param("id"), req, tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -648,7 +648,7 @@ func promoteNode(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		node, err := svc.PromoteNode(c.Param("id"), req, auth.UserEmail, auth.EffectiveTokens)
+		node, err := svc.PromoteNode(c.Param("id"), req, tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -679,7 +679,7 @@ func deleteNode(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		if err := svc.DeleteNode(c.Param("id"), auth.UserEmail, auth.EffectiveTokens); err != nil {
+		if err := svc.DeleteNode(c.Param("id"), tree.UIActor(auth.UserEmail), auth.EffectiveTokens); err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
 		}

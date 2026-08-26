@@ -21,6 +21,13 @@ import (
 // mcpTestServer serves the real router — /mcp included — behind the real token
 // auth middleware, so the test goes through the same path an MCP client does.
 func mcpTestServer(t *testing.T) *httptest.Server {
+	srv, _ := mcpTestServerWithService(t)
+	return srv
+}
+
+// mcpTestServerWithService is the same fixture, handing back the service too —
+// which is how a test looks at what a tool actually wrote.
+func mcpTestServerWithService(t *testing.T) (*httptest.Server, *tree.Service) {
 	t.Helper()
 	store, sugar := newTestStore(t)
 	ids, nodes := mockdata.DefaultMockTreeState()
@@ -56,7 +63,7 @@ func mcpTestServer(t *testing.T) *httptest.Server {
 	})
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, svc
 }
 
 // bearerTransport puts the API token on every request, the way an MCP client
@@ -318,5 +325,74 @@ func TestMCP_ToolsDeclareTheirRequiredArguments(t *testing.T) {
 				t.Errorf("required = %v, want %v", got, expectedSorted)
 			}
 		})
+	}
+}
+
+// The provenance half of the audit trail, end to end: a change made through a
+// tool has to land in the history marked as such, while the same change from
+// the UI does not.
+//
+// Worth going through the real endpoint rather than testing tree.Actor alone:
+// the mechanism is one line in the tree package, but WHICH actor the MCP path
+// builds is decided here, in serviceActor, and that is the part a future tool
+// could get wrong.
+func TestMCP_ChangesAreRecordedAsComingFromAnAgent(t *testing.T) {
+	srv, svc := mcpTestServerWithService(t)
+	session := mcpSession(t, srv, writeSecret)
+
+	budgets, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "list_my_budgets", Arguments: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("list budgets: %v", err)
+	}
+	var list struct {
+		Projects []struct {
+			ID string `json:"id"`
+		} `json:"projects"`
+	}
+	if err := json.Unmarshal(mustJSON(t, budgets.StructuredContent), &list); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(list.Projects) == 0 {
+		t.Fatal("the test identity manages no budget; the fixture cannot exercise this")
+	}
+
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name: "create_project",
+		Arguments: map[string]any{
+			"budget_id": list.Projects[0].ID,
+			"name":      "provenance-probe",
+			"reason":    "checking that the history says where this came from",
+			"limit":     map[string]any{"cores": 1},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create_project: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("create_project failed: %+v", res.Content)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(mustJSON(t, res.StructuredContent), &created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	node, err := svc.GetNode(created.ID, rootAdminTokens)
+	if err != nil || node == nil {
+		t.Fatalf("read back %q: %v", created.ID, err)
+	}
+	if len(node.History) == 0 {
+		t.Fatal("the new project has no history")
+	}
+	entry := node.History[0]
+	if entry.Via != tree.ChannelMCP {
+		t.Errorf("history says via=%q, want %q — an agent's change is indistinguishable from a person's",
+			entry.Via, tree.ChannelMCP)
+	}
+	if entry.Actor == "" {
+		t.Error("history has no actor")
 	}
 }

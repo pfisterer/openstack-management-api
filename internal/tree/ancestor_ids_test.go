@@ -30,7 +30,7 @@ func TestListMyBudgets_AncestorsSpanUnmanagedLevels(t *testing.T) {
 	mannheim, err := svc.CreateNode(tree.CreateNodeRequest{
 		Kind: tree.KindBudget, ParentID: tree.RootNodeID, Name: "Mannheim",
 		Reason: "faculty", Limit: cores(64), AdminScope: other,
-	}, "root@dhbw.de", "root@dhbw.de", admin)
+	}, tree.UIActor("root@dhbw.de"), "root@dhbw.de", admin)
 	if err != nil {
 		t.Fatalf("create Mannheim: %v", err)
 	}
@@ -38,7 +38,7 @@ func TestListMyBudgets_AncestorsSpanUnmanagedLevels(t *testing.T) {
 	wi, err := svc.CreateNode(tree.CreateNodeRequest{
 		Kind: tree.KindBudget, ParentID: mannheim.ID, Name: "WI-Budget",
 		Reason: "course", Limit: cores(16), AdminScope: mine,
-	}, "root@dhbw.de", "root@dhbw.de", admin)
+	}, tree.UIActor("root@dhbw.de"), "root@dhbw.de", admin)
 	if err != nil {
 		t.Fatalf("create WI-Budget: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestListMyBudgets_ReturnsOnlyManagedNodes(t *testing.T) {
 	mannheim, err := svc.CreateNode(tree.CreateNodeRequest{
 		Kind: tree.KindBudget, ParentID: tree.RootNodeID, Name: "Mannheim",
 		Reason: "faculty", Limit: cores(64), AdminScope: common.TokenList{"user:clemens@dhbw.de"},
-	}, "root@dhbw.de", "root@dhbw.de", admin)
+	}, tree.UIActor("root@dhbw.de"), "root@dhbw.de", admin)
 	if err != nil {
 		t.Fatalf("create Mannheim: %v", err)
 	}

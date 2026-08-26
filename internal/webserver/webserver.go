@@ -82,16 +82,16 @@ type APIService interface {
 	SearchNodes(userTokens common.TokenList, query string, limit, offset int) (tree.NodePage, error)
 
 	// Node lifecycle
-	CreateNode(req tree.CreateNodeRequest, actor string, userEmail string, userTokens common.TokenList) (tree.Node, error)
-	UpdateNode(id string, req tree.UpdateNodeRequest, actor string, userTokens common.TokenList) (tree.Node, error)
-	RequestChange(id string, req tree.ChangeNodeRequest, actor string, userTokens common.TokenList) (tree.Node, error)
-	ApproveNode(id string, req tree.ApproveNodeRequest, actor string, userTokens common.TokenList) (tree.Node, error)
-	RejectNode(id string, req tree.RejectNodeRequest, actor string, userTokens common.TokenList) (tree.Node, error)
-	ReleaseNode(id string, actor string, userTokens common.TokenList) (tree.Node, error)
-	ReparentNode(id string, req tree.ReparentNodeRequest, actor string, userTokens common.TokenList) (tree.Node, error)
-	TransferOwner(id string, req tree.TransferOwnerRequest, actor string, userTokens common.TokenList) (tree.Node, error)
-	PromoteNode(id string, req tree.PromoteNodeRequest, actor string, userTokens common.TokenList) (tree.Node, error)
-	DeleteNode(id string, actor string, userTokens common.TokenList) error
+	CreateNode(req tree.CreateNodeRequest, actor tree.Actor, userEmail string, userTokens common.TokenList) (tree.Node, error)
+	UpdateNode(id string, req tree.UpdateNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
+	RequestChange(id string, req tree.ChangeNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
+	ApproveNode(id string, req tree.ApproveNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
+	RejectNode(id string, req tree.RejectNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
+	ReleaseNode(id string, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
+	ReparentNode(id string, req tree.ReparentNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
+	TransferOwner(id string, req tree.TransferOwnerRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
+	PromoteNode(id string, req tree.PromoteNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
+	DeleteNode(id string, actor tree.Actor, userTokens common.TokenList) error
 
 	// Role switch related operations
 	GetUserGroupSwitchForActor(actorEmail string) *string

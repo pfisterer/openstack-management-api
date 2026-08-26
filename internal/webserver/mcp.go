@@ -49,11 +49,17 @@ type mcpCaller struct {
 // change. Every REST write passes auth.UserEmail (api_nodes.go), i.e. the
 // EFFECTIVE identity — under a role switch the change is recorded as the
 // impersonated user, not as whoever is really typing. Right or wrong, the same
-// action through MCP has to land in the history the same way, or which channel
-// was used becomes visible in the audit trail by accident.
+// action through MCP has to land in the history the same way.
+//
+// What it adds is the channel, and that is the point: the change is exactly as
+// authorised as the same one from the UI, but it was made by something acting
+// for a person rather than by the person. Every tool goes through here, so a
+// tool cannot forget it.
 //
 // actorEmail stays for OUR log lines, where the real caller is the useful one.
-func (c mcpCaller) serviceActor() string { return c.userEmail }
+func (c mcpCaller) serviceActor() tree.Actor {
+	return tree.Actor{Email: c.userEmail, Via: tree.ChannelMCP}
+}
 
 // ReadOnly satisfies mcpserve.Caller: whether this request's credential may
 // change anything. It is the only thing the shared wiring knows about a caller —

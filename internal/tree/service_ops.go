@@ -344,7 +344,7 @@ func nodeMatches(n Node, needle string) bool {
 // CreateNode creates a child node under req.ParentID. Managers of the parent (or
 // its ancestors) create directly approved children; eligible requesters submit a
 // pending request, which may be auto-approved by the parent's AutoApprove policy.
-func (s *Service) CreateNode(req CreateNodeRequest, actor string, userEmail string, userTokens common.TokenList) (Node, error) {
+func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail string, userTokens common.TokenList) (Node, error) {
 	if strings.TrimSpace(userEmail) == "" || len(userTokens) == 0 {
 		return Node{}, common.ErrForbidden
 	}
@@ -500,7 +500,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor string, userEmail stri
 			}
 			if err := s.checkCapacity(ctx, ancestors, node.Limit, nil); err == nil {
 				node.Status = StatusApproved
-				autoEntry := newHistoryEntry("approved", "system:auto-approval", StatusApproved)
+				autoEntry := newHistoryEntry("approved", Actor{Email: "system:auto-approval", Via: actor.Channel()}, StatusApproved)
 				autoEntry.StatusFrom = ptr(StatusPending)
 				autoEntry.Reason = ptr("Auto-approved (within per-requester limit)")
 				node.History = append(node.History, autoEntry)
@@ -536,7 +536,7 @@ func isRenameOnly(req UpdateNodeRequest) bool {
 // through the approval cycle would put a manager in front of a typo fix and,
 // worse, park the project in change_pending until they got around to it.
 // Everything else about a leaf still goes through RequestChange.
-func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor string, userTokens common.TokenList) (Node, error) {
+func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, userTokens common.TokenList) (Node, error) {
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
@@ -671,7 +671,7 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor string, use
 // On a pending node the request is amended in place (it is not yet approved); on
 // an approved or change_pending node the proposal is stored as pending changes and
 // the node transitions to (or stays in) change_pending.
-func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor string, userTokens common.TokenList) (Node, error) {
+func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor Actor, userTokens common.TokenList) (Node, error) {
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
@@ -803,7 +803,7 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor string, 
 // node. Only managers of the PARENT chain may approve — a node's own admin scope
 // deliberately does not count, so nobody approves their own budget or a peer's
 // auto-approved request. ModifiedLimit lets the approver grant a different limit.
-func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor string, userTokens common.TokenList) (Node, error) {
+func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor Actor, userTokens common.TokenList) (Node, error) {
 	s.approvalMu.Lock()
 	defer s.approvalMu.Unlock()
 
@@ -918,7 +918,7 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor string, u
 // RejectNode rejects a pending node (→ rejected, terminal) or discards the pending
 // changes of a change_pending node (→ back to approved — the previously approved
 // state stays valid; the old model killed the whole project here).
-func (s *Service) RejectNode(id string, req RejectNodeRequest, actor string, userTokens common.TokenList) (Node, error) {
+func (s *Service) RejectNode(id string, req RejectNodeRequest, actor Actor, userTokens common.TokenList) (Node, error) {
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
@@ -965,7 +965,7 @@ func (s *Service) RejectNode(id string, req RejectNodeRequest, actor string, use
 // ReleaseNode marks an approved leaf as released, returning its capacity and
 // driving OpenStack deprovisioning on the next reconcile. The owner or a manager
 // of the parent chain may release.
-func (s *Service) ReleaseNode(id string, actor string, userTokens common.TokenList) (Node, error) {
+func (s *Service) ReleaseNode(id string, actor Actor, userTokens common.TokenList) (Node, error) {
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
@@ -1015,7 +1015,7 @@ func (s *Service) ReleaseNode(id string, actor string, userTokens common.TokenLi
 // ReparentNode moves a node under a new parent budget. Requires management rights
 // on the node's CURRENT parent chain (you give it away) AND on the new parent (you
 // receive it). Active nodes are capacity-checked against the new ancestor chain.
-func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor string, userTokens common.TokenList) (Node, error) {
+func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor Actor, userTokens common.TokenList) (Node, error) {
 	s.approvalMu.Lock()
 	defer s.approvalMu.Unlock()
 
@@ -1120,7 +1120,7 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor string,
 
 // TransferOwner hands a leaf to a new responsible person. Only managers of the
 // parent chain may transfer (e.g. when the current owner leaves the organization).
-func (s *Service) TransferOwner(id string, req TransferOwnerRequest, actor string, userTokens common.TokenList) (Node, error) {
+func (s *Service) TransferOwner(id string, req TransferOwnerRequest, actor Actor, userTokens common.TokenList) (Node, error) {
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
@@ -1174,7 +1174,7 @@ func (s *Service) TransferOwner(id string, req TransferOwnerRequest, actor strin
 // tags the existing OpenStack project and transitions the leaf to pending, after
 // which the normal approval cycle applies. Requires management rights on the
 // unassigned chain (root admins) and on the target budget.
-func (s *Service) PromoteNode(id string, req PromoteNodeRequest, actor string, userTokens common.TokenList) (Node, error) {
+func (s *Service) PromoteNode(id string, req PromoteNodeRequest, actor Actor, userTokens common.TokenList) (Node, error) {
 	s.approvalMu.Lock()
 	defer s.approvalMu.Unlock()
 
@@ -1270,7 +1270,7 @@ func (s *Service) PromoteNode(id string, req PromoteNodeRequest, actor string, u
 // DeleteNode removes a budget subtree. Refused while any node in the subtree is
 // still pending, awaiting a change decision, active, or an unpromoted import —
 // those must be decided/released first so nothing is silently discarded.
-func (s *Service) DeleteNode(id string, actor string, userTokens common.TokenList) error {
+func (s *Service) DeleteNode(id string, actor Actor, userTokens common.TokenList) error {
 	_ = actor
 	ctx, cancel := s.newCtx()
 	defer cancel()

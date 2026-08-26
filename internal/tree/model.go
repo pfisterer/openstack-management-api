@@ -118,11 +118,64 @@ type PendingChanges struct {
 	AuthorizedUsers *[]common.AuthorizedUser `json:"authorized_users,omitempty"`
 }
 
+// Actor is who made a change, and through which door they came.
+//
+// The two halves are recorded for different reasons. Email is the person the
+// change is attributed to and the only one that carries authority. Via is
+// provenance: a change an agent made with someone's token is exactly as
+// authorised as one they made in the UI — the token carries their identity and
+// their rights are fetched fresh — but "a person did this" and "something did
+// this for them" are not the same sentence, and an audit trail that cannot tell
+// them apart answers the first question anyone asks of it with a guess.
+//
+// It is a struct rather than a second string parameter because the two are both
+// strings and both about the caller: side by side in a call, swapping them
+// compiles cleanly and silently attributes every change to a channel name.
+type Actor struct {
+	// Email identifies the person. Under a role switch this is the EFFECTIVE
+	// identity, matching what the REST handlers record.
+	Email string
+	// Via names the channel. Empty means the web UI and the REST API; see
+	// Channel, which is what actually reaches the history.
+	Via string
+}
+
+// ChannelUI is what an unset channel means: a person acting in the web UI or
+// through the REST API directly.
+const ChannelUI = "ui"
+
+// ChannelMCP is an agent acting with a person's API token.
+const ChannelMCP = "mcp"
+
+// Channel returns the channel to record, defaulting an unset one to ChannelUI.
+//
+// Written out rather than left empty on purpose: an empty string in a stored
+// entry already means something else — that the entry predates this field —
+// and folding "the UI" together with "we did not know yet" would throw away the
+// distinction on the day it becomes interesting.
+func (a Actor) Channel() string {
+	if a.Via == "" {
+		return ChannelUI
+	}
+	return a.Via
+}
+
+// UIActor is the caller for a change arriving through the web UI or the REST
+// API. Named rather than spelled out at each of some fifty call sites, so that
+// the ones that are NOT the UI stand out.
+func UIActor(email string) Actor { return Actor{Email: email} }
+
 // HistoryEntry records a lifecycle event on a node.
 type HistoryEntry struct {
-	Timestamp           string               `json:"timestamp"`
-	Event               string               `json:"event"`
-	Actor               string               `json:"actor"`
+	Timestamp string `json:"timestamp"`
+	Event     string `json:"event"`
+	Actor     string `json:"actor"`
+	// Via is the channel the change came through — "ui" or "mcp"; see Actor.
+	// Entries written before this field existed have no key at all, which is
+	// why an unset channel is stored as "ui" rather than left empty: the two
+	// mean different things. The node lives in a jsonb column, so nothing
+	// needed migrating.
+	Via                 string               `json:"via,omitempty"`
 	StatusFrom          *string              `json:"status_from,omitempty"`
 	StatusTo            string               `json:"status_to"`
 	LimitFrom           *common.ProjectQuota `json:"limit_from,omitempty"`

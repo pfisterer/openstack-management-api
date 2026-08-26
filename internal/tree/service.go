@@ -709,11 +709,12 @@ func (s *Service) newCtx() (context.Context, context.CancelFunc) {
 }
 
 // newHistoryEntry creates a HistoryEntry with the current timestamp.
-func newHistoryEntry(event, actor, statusTo string) HistoryEntry {
+func newHistoryEntry(event string, actor Actor, statusTo string) HistoryEntry {
 	return HistoryEntry{
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Event:     event,
-		Actor:     actor,
+		Actor:     actor.Email,
+		Via:       actor.Channel(),
 		StatusTo:  statusTo,
 	}
 }

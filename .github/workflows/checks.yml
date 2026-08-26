@@ -54,12 +54,62 @@ jobs:
       # catches both ways it goes wrong — the pin moved without regenerating, or
       # the file was edited by hand. No Node, no codegen, a couple of seconds.
       #
-      # What it deliberately does not cover is client.gen.go itself; verifying
-      # that means regenerating, which needs npx swagger2openapi. The spec is the
-      # input, and an input that matches is most of the answer.
+      # It does not cover client.gen.go — that needs Node and a codegen run, so
+      # it is its own job below. Kept anyway rather than folded into it: this one
+      # costs a couple of seconds and names the discrepancy directly, where the
+      # other reports it as a diff in generated Go.
       - name: Role-provider spec matches the pinned release
         if: '!cancelled()'
         run: |
           set -euo pipefail
           curl -fsSL "$(make --no-print-directory print-rp-swagger-url)" -o "$RUNNER_TEMP/rp.json"
           diff -u internal/roleprovider/api/swagger.json "$RUNNER_TEMP/rp.json"
+
+  # The generated role-provider client, held against the spec it claims to come
+  # from. Everything about the client is committed, and nothing forced the two to
+  # agree: regenerating is a manual step, so moving RP_VERSION without running it
+  # left a client that describes the previous release while the pin says
+  # otherwise. That mismatch compiles, and shows up as a 404 at runtime.
+  #
+  # Its own job because it needs Node (swagger2openapi) and the checks job
+  # deliberately has none. The generator is pinned in the Makefile: its version
+  # goes into the file's header, so an unpinned one would turn every upstream
+  # release into a red build here.
+  generated-client:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Regenerate the role-provider client
+        run: make generate-role-provider-client
+
+      # --exit-code on the three generated files by name, not on the whole tree:
+      # `npm install` in that target may touch package-lock.json, which is not
+      # what this job is asking about.
+      - name: It matches what is committed
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- \
+            internal/roleprovider/api/swagger.json \
+            internal/roleprovider/api/openapi3.json \
+            internal/roleprovider/api/client.gen.go \
+          || {
+            echo "::error::The committed role-provider client does not match RP_VERSION."
+            echo "Run 'make generate-role-provider-client' and commit the result."
+            exit 1
+          }

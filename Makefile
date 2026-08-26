@@ -43,6 +43,11 @@ RP_API_DIR        := ./internal/roleprovider/api
 # generated client is committed, an override made mid-flight shows up in the
 # diff instead of hiding in someone's working copy.
 RP_VERSION        ?= v0.6.7
+# The generator, pinned. Its version is written into client.gen.go's header, so
+# an unpinned `@latest` makes the committed file depend on when someone last ran
+# the target — and the CI check below would then fail on an upstream release
+# rather than on anything in this repository.
+RP_CODEGEN_VERSION ?= v2.6.0
 RP_SWAGGER_URL    ?= https://github.com/pfisterer/role-provider-service/releases/download/$(RP_VERSION)/swagger.json
 
 .DEFAULT_GOAL := all
@@ -144,9 +149,12 @@ generate-role-provider-client: install-npm
 	@npx swagger2openapi $(RP_API_DIR)/swagger.json \
 		--outfile $(RP_API_DIR)/openapi3.json \
 		--yaml=false --patch --warnOnly
-	@echo "📦 Generating Go client..."
-	@command -v oapi-codegen >/dev/null 2>&1 || go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
-	@oapi-codegen -config $(RP_API_DIR)/oapi-codegen.yaml $(RP_API_DIR)/openapi3.json
+	@echo "📦 Generating Go client ($(RP_CODEGEN_VERSION))..."
+	@# `go run pkg@version` rather than installing on PATH: a machine that
+	@# already has some oapi-codegen would otherwise generate with THAT one,
+	@# silently, because the install was guarded by `command -v`.
+	@go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@$(RP_CODEGEN_VERSION) \
+		-config $(RP_API_DIR)/oapi-codegen.yaml $(RP_API_DIR)/openapi3.json
 	@echo "✅ Go client generated in $(RP_API_DIR)/client.gen.go"
 
 # ── npm client package ──────────────────────────────────────────────────────

@@ -59,6 +59,29 @@ openstackManagementApi:
     # Stored in a Secret
     applicationCredentialSecret: ""
     projectId: ""
+
+    # Password auth for a service user — the alternative to the application
+    # credential above, and the only way to get a domain- or system-scoped
+    # token. Configure exactly ONE of the two: with both complete, the
+    # application credential wins.
+    #
+    # A service user that is admin on ONE domain is what makes a small blast
+    # radius possible: it can create projects and assign roles inside that
+    # domain and nowhere else. An application credential cannot express that,
+    # because it is always scoped to a single project.
+    username: ""
+    # Stored in a Secret
+    password: ""
+    # The domain the USER lives in (not the scope). Empty falls back to "Default".
+    userDomainName: ""
+    # Scope of the requested token, applied in this order:
+    # systemScope ("all") > domainName > project (projectId, or projectName with
+    # projectDomainName). Leave the ones you do not want empty.
+    systemScope: ""
+    domainName: ""
+    projectName: ""
+    projectDomainName: ""
+
     region: "microstack"
     insecure: false
 

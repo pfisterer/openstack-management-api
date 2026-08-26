@@ -88,6 +88,41 @@ spec:
                 secretKeyRef:
                   name: {{ $secretName }}
                   key: openstack-application-credential-secret
+            # Password auth for a service user, the alternative to the
+            # application credential above. Configure exactly ONE of the two:
+            # when both are complete the application credential wins silently
+            # (OpenstackConfiguration.AuthMethod).
+            #
+            # It exists because an application credential is always scoped to one
+            # project and cannot carry a domain or system scope — and creating
+            # projects or assigning roles across projects needs one of those on a
+            # cloud that enforces the modern RBAC defaults. It is also what makes
+            # a smaller blast radius possible at all: a service user that is admin
+            # on ONE domain can do everything the reconciler needs inside that
+            # domain and nothing outside it.
+            - name: OPENSTACK_USERNAME
+              value: {{ .Values.openstackManagementApi.openstack.username | quote }}
+            - name: OPENSTACK_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: openstack-password
+                  # optional so deployments using an application credential — and
+                  # any existingSecret written before this key existed — still start.
+                  optional: true
+            - name: OPENSTACK_USER_DOMAIN_NAME
+              value: {{ .Values.openstackManagementApi.openstack.userDomainName | quote }}
+            # Scope of the requested token, applied in this order:
+            # systemScope > domainName > project (projectId, or projectName with
+            # projectDomainName). Password auth only; empty means "not this one".
+            - name: OPENSTACK_SYSTEM_SCOPE
+              value: {{ .Values.openstackManagementApi.openstack.systemScope | quote }}
+            - name: OPENSTACK_DOMAIN_NAME
+              value: {{ .Values.openstackManagementApi.openstack.domainName | quote }}
+            - name: OPENSTACK_PROJECT_NAME
+              value: {{ .Values.openstackManagementApi.openstack.projectName | quote }}
+            - name: OPENSTACK_PROJECT_DOMAIN_NAME
+              value: {{ .Values.openstackManagementApi.openstack.projectDomainName | quote }}
             - name: OPENSTACK_PROJECT_ID
               value: {{ .Values.openstackManagementApi.openstack.projectId | quote }}
             - name: OPENSTACK_REGION

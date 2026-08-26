@@ -3,7 +3,10 @@
   "title": "openstack-management-api values",
   "type": "object",
   "additionalProperties": false,
-  "required": ["openstackManagementApi", "ingress"],
+  "required": [
+    "openstackManagementApi",
+    "ingress"
+  ],
   "properties": {
     "global": {
       "type": "object",
@@ -13,7 +16,9 @@
       "type": "boolean",
       "description": "Dependency condition of the cloud-self-service umbrella chart, which passes it down into this namespace — so it has to be allowed here for the same reason global does. A standalone install ignores it."
     },
-    "nameOverride": { "type": "string" },
+    "nameOverride": {
+      "type": "string"
+    },
     "fullnameOverride": {
       "type": "string",
       "description": "Pins the resource base name. The umbrella chart sets this so adopting these releases does not rename every object."
@@ -21,22 +26,66 @@
     "openstackManagementApi": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["image", "version", "hostname", "replicas", "db", "openstack", "api", "oidc", "reconciler"],
+      "required": [
+        "image",
+        "version",
+        "hostname",
+        "replicas",
+        "db",
+        "openstack",
+        "api",
+        "oidc",
+        "reconciler"
+      ],
       "properties": {
-        "image": { "type": "string", "minLength": 1 },
-        "imagePullPolicy": { "type": "string", "enum": ["Always", "IfNotPresent", "Never"] },
-        "version": { "type": "string", "description": "Image tag. Empty falls back to the chart appVersion, which is how a pinned chart version pins the image." },
-        "hostname": { "type": "string", "minLength": 1 },
-        "replicas": { "type": "integer", "minimum": 0 },
-        "rootAdminTokens": { "type": "string" },
-        "serviceTimeoutSeconds": { "type": "integer", "minimum": 1 },
-        "existingSecret": { "type": "string" },
+        "image": {
+          "type": "string",
+          "minLength": 1
+        },
+        "imagePullPolicy": {
+          "type": "string",
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        },
+        "version": {
+          "type": "string",
+          "description": "Image tag. Empty falls back to the chart appVersion, which is how a pinned chart version pins the image."
+        },
+        "hostname": {
+          "type": "string",
+          "minLength": 1
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "rootAdminTokens": {
+          "type": "string"
+        },
+        "serviceTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "existingSecret": {
+          "type": "string"
+        },
         "roleProvider": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "type": { "type": "string", "enum": ["mock", "http"] },
-            "url": { "type": "string" },
+            "type": {
+              "type": "string",
+              "enum": [
+                "mock",
+                "http"
+              ]
+            },
+            "url": {
+              "type": "string"
+            },
             "apiToken": {
               "type": "string",
               "description": "Read-only token for the role provider's API, stored in the Secret as role-provider-api-token. Ignored when existingSecret is set."
@@ -46,84 +95,232 @@
         "db": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["type", "connectionString"],
+          "required": [
+            "type",
+            "connectionString"
+          ],
           "properties": {
-            "type": { "type": "string", "enum": ["postgres", "memory"] },
-            "connectionString": { "type": "string", "minLength": 1 },
-            "addMockData": { "type": "boolean" }
+            "type": {
+              "type": "string",
+              "enum": [
+                "postgres",
+                "memory"
+              ]
+            },
+            "connectionString": {
+              "type": "string",
+              "minLength": 1
+            },
+            "addMockData": {
+              "type": "boolean"
+            }
           }
         },
         "openstack": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "authUrl": { "type": "string" },
-            "applicationCredentialId": { "type": "string" },
-            "applicationCredentialSecret": { "type": "string" },
-            "projectId": { "type": "string" },
-            "region": { "type": "string" },
-            "insecure": { "type": "boolean" },
-            "federatedProvisioning": { "type": "boolean" },
-            "federatedIdpId": { "type": "string" },
-            "federatedProtocolId": { "type": "string" },
-            "federatedDomainId": { "type": "string" }
+            "authUrl": {
+              "type": "string"
+            },
+            "applicationCredentialId": {
+              "type": "string"
+            },
+            "applicationCredentialSecret": {
+              "type": "string"
+            },
+            "projectId": {
+              "type": "string"
+            },
+            "region": {
+              "type": "string"
+            },
+            "insecure": {
+              "type": "boolean"
+            },
+            "federatedProvisioning": {
+              "type": "boolean"
+            },
+            "federatedIdpId": {
+              "type": "string"
+            },
+            "federatedProtocolId": {
+              "type": "string"
+            },
+            "federatedDomainId": {
+              "type": "string"
+            },
+            "username": {
+              "type": "string"
+            },
+            "password": {
+              "type": "string"
+            },
+            "userDomainName": {
+              "type": "string"
+            },
+            "systemScope": {
+              "type": "string"
+            },
+            "domainName": {
+              "type": "string"
+            },
+            "projectName": {
+              "type": "string"
+            },
+            "projectDomainName": {
+              "type": "string"
+            }
           }
         },
         "api": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "bind": { "type": "string" },
-            "baseUrl": { "type": "string" },
-            "tokenTTLHours": { "type": "integer", "minimum": 1 },
-            "tokenMaxTTLHours": { "type": "integer", "minimum": 1 },
-            "tokenAllowNeverExpires": { "type": "boolean" },
-            "dummyAuth": { "type": "boolean" },
-            "mode": { "type": "string", "enum": ["production", "development"] },
-            "maxAuthorizedUsers": { "type": "integer", "minimum": 1 },
-            "chargeOsInUse": { "type": "boolean" },
-            "chargeReleased": { "type": "boolean" },
+            "bind": {
+              "type": "string"
+            },
+            "baseUrl": {
+              "type": "string"
+            },
+            "tokenTTLHours": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "tokenMaxTTLHours": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "tokenAllowNeverExpires": {
+              "type": "boolean"
+            },
+            "dummyAuth": {
+              "type": "boolean"
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "production",
+                "development"
+              ]
+            },
+            "maxAuthorizedUsers": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "chargeOsInUse": {
+              "type": "boolean"
+            },
+            "chargeReleased": {
+              "type": "boolean"
+            },
             "corsAllowedOrigins": {
               "type": "array",
-              "items": { "type": "string", "pattern": "^https?://[^/]+$" }
+              "items": {
+                "type": "string",
+                "pattern": "^https?://[^/]+$"
+              }
             }
           }
         },
         "oidc": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["issuerUrl", "clientId"],
+          "required": [
+            "issuerUrl",
+            "clientId"
+          ],
           "properties": {
-            "issuerUrl": { "type": "string", "minLength": 1 },
-            "clientId": { "type": "string", "minLength": 1 }
+            "issuerUrl": {
+              "type": "string",
+              "minLength": 1
+            },
+            "clientId": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         },
         "reconciler": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["enabled"],
+          "required": [
+            "enabled"
+          ],
           "properties": {
-            "enabled": { "type": "boolean" },
-            "intervalSeconds": { "type": "integer", "minimum": 1 },
-            "groupPrefix": { "type": "string" },
-            "scopeParentId": { "type": "string" },
-            "scopeParentName": { "type": "string" },
-            "dryRun": { "type": "boolean" },
-            "noDelete": { "type": "boolean" },
-            "managedProjectTag": { "type": "string" },
-            "resourceIdTagPrefix": { "type": "string" },
-            "deleteReleasedProjects": { "type": "boolean" },
-            "pendingDeletionGraceDays": { "type": "integer", "minimum": 0 },
-            "pendingDeletionTagPrefix": { "type": "string" },
-            "contactTagPrefix": { "type": "string" },
-            "defaultNetworks": { "type": "integer", "minimum": 0 },
-            "defaultSubnets": { "type": "integer", "minimum": 0 },
-            "defaultPorts": { "type": "integer", "minimum": 0 },
-            "defaultRouters": { "type": "integer", "minimum": 0 },
-            "defaultFloatingIps": { "type": "integer", "minimum": 0 },
-            "defaultSecurityGroups": { "type": "integer", "minimum": 0 },
-            "defaultVolumes": { "type": "integer", "minimum": 0 },
-            "defaultSnapshots": { "type": "integer", "minimum": 0 }
+            "enabled": {
+              "type": "boolean"
+            },
+            "intervalSeconds": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "groupPrefix": {
+              "type": "string"
+            },
+            "scopeParentId": {
+              "type": "string"
+            },
+            "scopeParentName": {
+              "type": "string"
+            },
+            "dryRun": {
+              "type": "boolean"
+            },
+            "noDelete": {
+              "type": "boolean"
+            },
+            "managedProjectTag": {
+              "type": "string"
+            },
+            "resourceIdTagPrefix": {
+              "type": "string"
+            },
+            "deleteReleasedProjects": {
+              "type": "boolean"
+            },
+            "pendingDeletionGraceDays": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "pendingDeletionTagPrefix": {
+              "type": "string"
+            },
+            "contactTagPrefix": {
+              "type": "string"
+            },
+            "defaultNetworks": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "defaultSubnets": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "defaultPorts": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "defaultRouters": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "defaultFloatingIps": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "defaultSecurityGroups": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "defaultVolumes": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "defaultSnapshots": {
+              "type": "integer",
+              "minimum": 0
+            }
           }
         }
       }
@@ -131,13 +328,21 @@
     "ingress": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["enabled"],
+      "required": [
+        "enabled"
+      ],
       "properties": {
-        "enabled": { "type": "boolean" },
-        "className": { "type": "string" },
+        "enabled": {
+          "type": "boolean"
+        },
+        "className": {
+          "type": "string"
+        },
         "annotations": {
           "type": "object",
-          "additionalProperties": { "type": "string" }
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       }
     }

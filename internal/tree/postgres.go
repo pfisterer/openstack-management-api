@@ -88,6 +88,12 @@ func NewPostgresStore(dsn string, log *zap.SugaredLogger) (*PostgresStore, error
 	if err := db.AutoMigrate(&nodeRow{}, &identityRow{}); err != nil {
 		return nil, fmt.Errorf("postgres: migrate: %w", err)
 	}
+	// AutoMigrate above adds what the model needs; this removes what it no
+	// longer has. The second half does not happen by itself — see the note on
+	// legacyTables.
+	if err := dropLegacyTables(db, log); err != nil {
+		return nil, fmt.Errorf("postgres: %w", err)
+	}
 	return &PostgresStore{db: db, log: log}, nil
 }
 

@@ -39,18 +39,24 @@ func (c *OpenStackClient) HasGrant(grant common.Grant, projectID string) (bool, 
 	}
 }
 
-// AddGrant gives a project one availability. Adding what is already there is not
-// an error — the reconciler runs every few minutes, and a grant created between
-// its read and its write must not fail the whole pass.
-func (c *OpenStackClient) AddGrant(grant common.Grant, projectID string) error {
+// AddGrant gives a project one availability and reports whether anything
+// changed. Adding what is already there is not an error — the reconciler runs
+// every few minutes, and a grant created between its read and its write must not
+// fail the whole pass.
+//
+// The bool is what makes an access change visible: the reconciler calls this on
+// every pass, so logging each call would be noise, and logging nothing leaves a
+// change to who may reach a network with no trace at all. Every branch below
+// already knows the answer — it was being thrown away.
+func (c *OpenStackClient) AddGrant(grant common.Grant, projectID string) (bool, error) {
 	switch grant.Type {
 	case common.GrantNetwork:
 		existing, err := c.findNetworkRBAC(grant.Target, projectID)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if existing != "" {
-			return nil
+			return false, nil
 		}
 		_, err = rbacpolicies.Create(c.Network, rbacpolicies.CreateOpts{
 			Action:       rbacpolicies.ActionAccessShared,
@@ -58,12 +64,13 @@ func (c *OpenStackClient) AddGrant(grant common.Grant, projectID string) error {
 			ObjectID:     grant.Target,
 			TargetTenant: projectID,
 		}).Extract()
-		return wrapGrant("share network", grant, projectID, err)
+		return err == nil, wrapGrant("share network", grant, projectID, err)
 
 	case common.GrantImage:
 		err := members.Create(c.Image, grant.Target, projectID).Err
+		fresh := err == nil
 		if err != nil && !isConflict(err) {
-			return wrapGrant("add image member", grant, projectID, err)
+			return false, wrapGrant("add image member", grant, projectID, err)
 		}
 		// Glance members start as "pending" and only count once accepted. The
 		// project itself would normally accept; as the admin creating it we say
@@ -71,47 +78,48 @@ func (c *OpenStackClient) AddGrant(grant common.Grant, projectID string) error {
 		// granted it to.
 		err = members.Update(c.Image, grant.Target, projectID,
 			members.UpdateOpts{Status: "accepted"}).Err
-		return wrapGrant("accept image member", grant, projectID, err)
+		return fresh && err == nil, wrapGrant("accept image member", grant, projectID, err)
 
 	case common.GrantFlavor:
 		err := flavors.AddAccess(c.Compute, grant.Target,
 			flavors.AddAccessOpts{Tenant: projectID}).Err
 		if isConflict(err) {
-			return nil
+			return false, nil
 		}
-		return wrapGrant("add flavor access", grant, projectID, err)
+		return err == nil, wrapGrant("add flavor access", grant, projectID, err)
 
 	default:
-		return fmt.Errorf("unknown grant type %q", grant.Type)
+		return false, fmt.Errorf("unknown grant type %q", grant.Type)
 	}
 }
 
-// RemoveGrant takes one availability away again. Removing what is not there is
-// not an error, for the same reason adding twice is not.
-func (c *OpenStackClient) RemoveGrant(grant common.Grant, projectID string) error {
+// RemoveGrant takes one availability away again and reports whether anything
+// changed. Removing what is not there is not an error, for the same reason
+// adding twice is not.
+func (c *OpenStackClient) RemoveGrant(grant common.Grant, projectID string) (bool, error) {
 	switch grant.Type {
 	case common.GrantNetwork:
 		id, err := c.findNetworkRBAC(grant.Target, projectID)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if id == "" {
-			return nil
+			return false, nil
 		}
 		err = rbacpolicies.Delete(c.Network, id).Err
-		return wrapGrant("unshare network", grant, projectID, ignoreNotFound(err))
+		return err == nil, wrapGrant("unshare network", grant, projectID, ignoreNotFound(err))
 
 	case common.GrantImage:
 		err := members.Delete(c.Image, grant.Target, projectID).Err
-		return wrapGrant("remove image member", grant, projectID, ignoreNotFound(err))
+		return err == nil, wrapGrant("remove image member", grant, projectID, ignoreNotFound(err))
 
 	case common.GrantFlavor:
 		err := flavors.RemoveAccess(c.Compute, grant.Target,
 			flavors.RemoveAccessOpts{Tenant: projectID}).Err
-		return wrapGrant("remove flavor access", grant, projectID, ignoreNotFound(err))
+		return err == nil, wrapGrant("remove flavor access", grant, projectID, ignoreNotFound(err))
 
 	default:
-		return fmt.Errorf("unknown grant type %q", grant.Type)
+		return false, fmt.Errorf("unknown grant type %q", grant.Type)
 	}
 }
 

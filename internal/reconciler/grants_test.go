@@ -30,19 +30,21 @@ func (f *fakeGrants) HasGrant(g common.Grant, project string) (bool, error) {
 	return f.held[key(g, project)], nil
 }
 
-func (f *fakeGrants) AddGrant(g common.Grant, project string) error {
+func (f *fakeGrants) AddGrant(g common.Grant, project string) (bool, error) {
 	if f.failAdd {
-		return errors.New("nope")
+		return false, errors.New("nope")
 	}
 	f.added = append(f.added, g)
+	already := f.held[key(g, project)]
 	f.held[key(g, project)] = true
-	return nil
+	return !already, nil
 }
 
-func (f *fakeGrants) RemoveGrant(g common.Grant, project string) error {
+func (f *fakeGrants) RemoveGrant(g common.Grant, project string) (bool, error) {
 	f.removed = append(f.removed, g)
+	had := f.held[key(g, project)]
 	delete(f.held, key(g, project))
-	return nil
+	return had, nil
 }
 
 var (
@@ -136,5 +138,39 @@ func TestSyncGrants_KeepsGoingAfterAFailure(t *testing.T) {
 
 	if len(f.removed) != 1 {
 		t.Fatalf("a failed grant stopped the revoke that followed it: removed=%v", f.removed)
+	}
+}
+
+// Changing who may reach a network is not a detail, and the reconciler runs
+// against every project every few minutes — so a real change has to be
+// distinguishable from the twenty passes that changed nothing.
+func TestSyncGrants_ReportsOnlyRealChanges(t *testing.T) {
+	f := newFakeGrants()
+	leaf := leafWithLimit(common.ProjectQuota{"dhbw-ipv4": 1})
+	log := zap.NewNop().Sugar()
+
+	// First pass grants it.
+	syncGrants(f, grantCatalogue, leaf, "os-project", false, log)
+	if !f.held[key(netGrant, "os-project")] {
+		t.Fatal("the first pass did not grant it")
+	}
+
+	// Second pass, same desired state: the client must report no change, or the
+	// log would claim a grant on every tick.
+	changed, err := f.AddGrant(netGrant, "os-project")
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if changed {
+		t.Error("granting what is already granted reported a change")
+	}
+
+	// And removing what was never there is not a change either.
+	gone, err := f.RemoveGrant(flavorGrant, "os-project")
+	if err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if gone {
+		t.Error("removing an absent grant reported a change")
 	}
 }

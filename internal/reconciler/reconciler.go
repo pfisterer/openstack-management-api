@@ -1319,8 +1319,10 @@ func applyOSSyncState(leaf *tree.Node, osProjectID string, overcommitted bool, i
 // or revoke, and say so in a dry run — can be tested without a cloud.
 type grantClient interface {
 	HasGrant(grant common.Grant, projectID string) (bool, error)
-	AddGrant(grant common.Grant, projectID string) error
-	RemoveGrant(grant common.Grant, projectID string) error
+	// Both report whether they CHANGED anything, so a pass that alters access in
+	// OpenStack leaves a line in the log and the twenty that do not stay quiet.
+	AddGrant(grant common.Grant, projectID string) (bool, error)
+	RemoveGrant(grant common.Grant, projectID string) (bool, error)
 }
 
 func (r *Reconciler) syncGrants(leaf tree.Node, osProjectID string) {
@@ -1370,16 +1372,29 @@ func syncGrants(c grantClient, defs []common.ManagedProject, leaf tree.Node, osP
 			continue
 		}
 
+		var changed bool
 		var err error
 		if wanted {
-			err = c.AddGrant(*def.Grant, osProjectID)
+			changed, err = c.AddGrant(*def.Grant, osProjectID)
 		} else {
-			err = c.RemoveGrant(*def.Grant, osProjectID)
+			changed, err = c.RemoveGrant(*def.Grant, osProjectID)
 		}
 		if err != nil {
 			log.Warnw("Failed to sync availability",
 				"node_id", leaf.ID, "os_project_id", osProjectID,
 				"resource", def.ID, "granted", wanted, "error", err)
+			continue
+		}
+		if changed {
+			// Who may reach a network is not a detail. Logged only on a real
+			// change, because this runs against every project every few minutes.
+			verb := "Revoked"
+			if wanted {
+				verb = "Granted"
+			}
+			log.Infow(verb+" availability",
+				"node_id", leaf.ID, "os_project_id", osProjectID,
+				"resource", def.ID, "grant_type", def.Grant.Type, "target", def.Grant.Target)
 		}
 	}
 }

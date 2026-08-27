@@ -305,6 +305,21 @@ type Node struct {
 	// of ParentID, so a client can name the budget a node is paid from without
 	// fetching each parent separately. Empty for roots.
 	ParentName string `json:"parent_name,omitempty"`
+
+	// AvailableResources is attached to API responses (never persisted): the
+	// resources that are in scope AT THIS NODE, root-most first as the catalogue
+	// orders them.
+	//
+	// It exists because a catalogue that holds every GPU flavour and every
+	// network in the organisation is unreadable at a budget that was granted two
+	// of them. A resource is in scope at the root — where the whole catalogue
+	// lives and everything is delegated FROM — and below that only where this
+	// node's own limit actually carries it.
+	//
+	// Presentation only. What may be requested is decided server-side by
+	// validateKnownResources and validateChildBudgetLimit; hiding a field has
+	// never been a permission check.
+	AvailableResources []string `json:"available_resources,omitempty"`
 }
 
 // IsLeaf reports whether the node is a project leaf.

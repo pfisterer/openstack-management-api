@@ -26,8 +26,26 @@ const (
 	userStudent = "cs-student@cs.com"
 )
 
-// quotaResourceIDs matches the resource IDs used in mock data.
+// quotaResourceIDs matches the resource IDs used in mock data. Kept as plain
+// ids for the places that sum (UsageByStatus.Total takes the arithmetic set).
 var quotaResourceIDs = []string{"cores", "ram", "storage", "gpu"}
+
+// quotaResources is the same set as a catalogue, for constructing the service.
+var quotaResources = func() []common.ManagedProject {
+	defs := make([]common.ManagedProject, 0, len(quotaResourceIDs)+1)
+	for _, id := range quotaResourceIDs {
+		defs = append(defs, common.ManagedProject{ID: id, Name: id, Group: "Compute", ShowOnUI: true})
+	}
+	// One availability, so the catalogue the handlers see is the mixed kind the
+	// deployment actually carries — a fixture of quantities alone would let a
+	// bug in the availability path pass every test here.
+	defs = append(defs, common.ManagedProject{
+		ID: "dhbw-ipv4", Name: "DHBW IPv4", Kind: common.KindBool, Group: "Networks",
+		ShowOnUI: true,
+		Grant:    &common.Grant{Type: common.GrantNetwork, Target: "net-uuid-not-for-browsers"},
+	})
+	return defs
+}()
 
 // testAccounting mirrors the production defaults, so a test that passes here
 // says something about the deployment rather than about a lenient fixture.
@@ -55,7 +73,7 @@ func setupRouterCORS(t *testing.T, corsOrigins ...string) http.Handler {
 func corsRouter(t *testing.T, devMode bool, corsOrigins ...string) http.Handler {
 	t.Helper()
 	store, sugar := newTestStore(t)
-	svc := tree.NewService(store, roleprovider.NewMockRoleProvider(), quotaResourceIDs,
+	svc := tree.NewService(store, roleprovider.NewMockRoleProvider(), quotaResources,
 		rootAdminTokens, 10*time.Second, common.DefaultMaxAuthorizedUsers, testAccounting, sugar)
 	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
 		t.Fatalf("bootstrap tree: %v", err)
@@ -116,7 +134,7 @@ func routerFromStore(t *testing.T, sugar *zap.SugaredLogger, store tree.Store, r
 	svc := tree.NewService(
 		store,
 		roleprovider.NewMockRoleProvider(),
-		quotaResourceIDs,
+		quotaResources,
 		rootAdminTokens,
 		10*time.Second,
 		common.DefaultMaxAuthorizedUsers,
@@ -133,7 +151,8 @@ func routerFromStore(t *testing.T, sugar *zap.SugaredLogger, store tree.Store, r
 		Log:          sugar,
 		StaticConfig: webserver.StaticConfig{},
 		API: webserver.APIConfig{
-			Service: svc,
+			Service:            svc,
+			ProjectDefinitions: quotaResources,
 			// Role-switch allowlist = the (mixed user+group) root admin tokens,
 			// exactly as app.go wires it. canUseRoleSwitch accepts either kind.
 			RoleSwitchGroups: rootAdminTokens,

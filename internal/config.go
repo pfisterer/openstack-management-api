@@ -240,6 +240,14 @@ func loadAppConfiguration() (AppConfiguration, error) {
 	}
 
 	// Generate the application configuration struct from environment variables.
+	// Loaded before the struct so a bad catalogue stops the process here, with a
+	// message naming the offending resource, rather than surfacing later as a
+	// resource that exists in the portal and governs nothing.
+	resourceCatalogue, err := loadResourceCatalogue()
+	if err != nil {
+		return AppConfiguration{}, err
+	}
+
 	cfg := AppConfiguration{
 		Storage: common.StorageConfiguration{
 			Type:             strings.ToLower(strings.TrimSpace(envconf.String("DB_TYPE", "memory"))),
@@ -301,7 +309,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 		},
 		DevMode:               getEnvString("API_MODE", "API_MODE", "production") == "development",
 		RootAdminTokens:       parseCSVEnv(envconf.String("ROOT_ADMIN_TOKENS", "")),
-		ProjectDefinitions:    loadProjectDefinitionsOrDefaults(),
+		ProjectDefinitions:    resourceCatalogue,
 		ServiceTimeoutSeconds: envconf.Int("SERVICE_TIMEOUT_SECONDS", 30),
 		MaxAuthorizedUsers:    envconf.Int("API_MAX_AUTHORIZED_USERS", common.DefaultMaxAuthorizedUsers),
 		ChargeOSInUse:         envconf.Bool("API_CHARGE_OS_IN_USE", true),
@@ -315,7 +323,46 @@ func loadAppConfiguration() (AppConfiguration, error) {
 	return cfg, nil
 }
 
-func loadProjectDefinitionsOrDefaults() []common.ManagedProject {
+// resourceCatalogueEnv holds the catalogue as a JSON array of ManagedProject.
+// Empty falls back to the built-in defaults below.
+const resourceCatalogueEnv = "RESOURCE_DEFINITIONS"
+
+// loadResourceCatalogue reads the managed resources for this deployment.
+//
+// It used to be a function called loadProjectDefinitionsOrDefaults that had no
+// load path at all — the name promised a fallback to defaults, and defaults were
+// the only thing it ever returned. The catalogue is deployment configuration
+// now: staging and production carry different GPU flavours and different
+// networks, and adding one should be an Ansible run, not a release.
+//
+// A malformed or invalid catalogue is a startup failure. The alternative — log
+// and fall back to the defaults — would replace the operator's catalogue with a
+// different one while reporting success, and the difference would only show when
+// somebody's resource had quietly stopped existing.
+func loadResourceCatalogue() ([]common.ManagedProject, error) {
+	raw := strings.TrimSpace(envconf.String(resourceCatalogueEnv, ""))
+	if raw == "" {
+		// Validated too, and not as ceremony: the defaults are edited by hand in
+		// this file, and the same mistakes are available there.
+		defs := defaultResourceCatalogue()
+		if err := common.ValidateManagedProjects(defs); err != nil {
+			return nil, fmt.Errorf("built-in resource catalogue is invalid: %w", err)
+		}
+		return defs, nil
+	}
+
+	var defs []common.ManagedProject
+	if err := json.Unmarshal([]byte(raw), &defs); err != nil {
+		return nil, fmt.Errorf("%s is not a valid JSON array of resource definitions: %w", resourceCatalogueEnv, err)
+	}
+	if err := common.ValidateManagedProjects(defs); err != nil {
+		return nil, fmt.Errorf("%s: %w", resourceCatalogueEnv, err)
+	}
+
+	return defs, nil
+}
+
+func defaultResourceCatalogue() []common.ManagedProject {
 
 	// Default set — single source of truth for UI display AND OpenStack quota mapping.
 	// ShowOnUI: true  → returned to the frontend via /v1/config (user-configurable).
@@ -324,6 +371,7 @@ func loadProjectDefinitionsOrDefaults() []common.ManagedProject {
 		// ── User-configurable resources (shown on UI) ────────────
 		{
 			ID: "cores", Name: "Cores", Default: 4, Min: 1, Max: 100000,
+			Group:             "Compute",
 			Message:           "1 - 100000 cores",
 			ShowOnUI:          true,
 			OSQuotaField:      "cores",
@@ -332,6 +380,7 @@ func loadProjectDefinitionsOrDefaults() []common.ManagedProject {
 		},
 		{
 			ID: "ram", Name: "RAM", Default: 16, Min: 1, Max: 256000,
+			Group:             "Compute",
 			Unit:              "GB",
 			Message:           "1 GB - 256 TB",
 			ShowOnUI:          true,
@@ -341,6 +390,7 @@ func loadProjectDefinitionsOrDefaults() []common.ManagedProject {
 		},
 		{
 			ID: "storage", Name: "Storage", Default: 50, Min: 1, Max: 100000,
+			Group:    "Storage",
 			Unit:     "GB",
 			Message:  "1 GB - 100 TB",
 			ShowOnUI: true,
@@ -359,6 +409,7 @@ func loadProjectDefinitionsOrDefaults() []common.ManagedProject {
 		},
 		{
 			ID: "gpu", Name: "GPUs", Default: 0, Min: 0, Max: 1000,
+			Group:    "Compute",
 			Unit:     "units",
 			Message:  "0 - 1000 GPUs",
 			ShowOnUI: true,
@@ -368,21 +419,21 @@ func loadProjectDefinitionsOrDefaults() []common.ManagedProject {
 		// ── Static network/storage quotas (not shown on UI, fixed at project creation) ─
 		// To change a default, update the Default field here. The OSQuotaField drives the
 		// mapping to OpenStack — no other file needs to change.
-		{ID: "networks", Name: "Networks", Default: envconf.Int("RECONCILER_DEFAULT_NETWORKS", 2),
+		{Group: "Infrastructure", ID: "networks", Name: "Networks", Default: envconf.Int("RECONCILER_DEFAULT_NETWORKS", 2),
 			Static: true, OSQuotaField: "networks"},
-		{ID: "subnets", Name: "Subnets", Default: envconf.Int("RECONCILER_DEFAULT_SUBNETS", 4),
+		{Group: "Infrastructure", ID: "subnets", Name: "Subnets", Default: envconf.Int("RECONCILER_DEFAULT_SUBNETS", 4),
 			Static: true, OSQuotaField: "subnets"},
-		{ID: "ports", Name: "Ports", Default: envconf.Int("RECONCILER_DEFAULT_PORTS", 50),
+		{Group: "Infrastructure", ID: "ports", Name: "Ports", Default: envconf.Int("RECONCILER_DEFAULT_PORTS", 50),
 			Static: true, OSQuotaField: "ports"},
-		{ID: "routers", Name: "Routers", Default: envconf.Int("RECONCILER_DEFAULT_ROUTERS", 1),
+		{Group: "Infrastructure", ID: "routers", Name: "Routers", Default: envconf.Int("RECONCILER_DEFAULT_ROUTERS", 1),
 			Static: true, OSQuotaField: "routers"},
-		{ID: "floating_ips", Name: "Floating IPs", Default: envconf.Int("RECONCILER_DEFAULT_FLOATING_IPS", 2),
+		{Group: "Infrastructure", ID: "floating_ips", Name: "Floating IPs", Default: envconf.Int("RECONCILER_DEFAULT_FLOATING_IPS", 2),
 			Static: true, OSQuotaField: "floating_ips"},
-		{ID: "security_groups", Name: "Security Groups", Default: envconf.Int("RECONCILER_DEFAULT_SECURITY_GROUPS", 10),
+		{Group: "Infrastructure", ID: "security_groups", Name: "Security Groups", Default: envconf.Int("RECONCILER_DEFAULT_SECURITY_GROUPS", 10),
 			Static: true, OSQuotaField: "security_groups"},
-		{ID: "volumes", Name: "Volumes", Default: envconf.Int("RECONCILER_DEFAULT_VOLUMES", 10),
+		{Group: "Infrastructure", ID: "volumes", Name: "Volumes", Default: envconf.Int("RECONCILER_DEFAULT_VOLUMES", 10),
 			Static: true, OSQuotaField: "volumes"},
-		{ID: "snapshots", Name: "Snapshots", Default: envconf.Int("RECONCILER_DEFAULT_SNAPSHOTS", 10),
+		{Group: "Infrastructure", ID: "snapshots", Name: "Snapshots", Default: envconf.Int("RECONCILER_DEFAULT_SNAPSHOTS", 10),
 			Static: true, OSQuotaField: "snapshots"},
 	}
 }

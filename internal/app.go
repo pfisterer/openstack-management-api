@@ -169,11 +169,6 @@ func RunApplication() {
 	}
 	logger.Infof("Using storage backend: %s", config.Storage.Type)
 
-	resourceTypeIDs := make([]string, 0, len(config.ProjectDefinitions))
-	for _, definition := range config.ProjectDefinitions {
-		resourceTypeIDs = append(resourceTypeIDs, definition.ID)
-	}
-
 	// Create role provider based on ROLE_PROVIDER env var ("http" or "mock").
 	var roleProvider common.RoleProvider
 	switch strings.ToLower(strings.TrimSpace(config.RoleProvider.Type)) {
@@ -202,7 +197,7 @@ func RunApplication() {
 	}
 
 	requestTimeout := time.Duration(config.ServiceTimeoutSeconds) * time.Second
-	treeSvc := tree.NewService(nodeStore, roleProvider, resourceTypeIDs, config.RootAdminTokens, requestTimeout, config.MaxAuthorizedUsers, tree.Accounting{
+	treeSvc := tree.NewService(nodeStore, roleProvider, config.ProjectDefinitions, config.RootAdminTokens, requestTimeout, config.MaxAuthorizedUsers, tree.Accounting{
 		ChargeOSInUse:  config.ChargeOSInUse,
 		ChargeReleased: config.ChargeReleased,
 	}, logger)

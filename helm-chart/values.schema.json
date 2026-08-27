@@ -208,6 +208,40 @@
               "type": "integer",
               "minimum": 1
             },
+            "resourceDefinitions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "name"],
+                "properties": {
+                  "id": { "type": "string", "minLength": 1 },
+                  "name": { "type": "string", "minLength": 1 },
+                  "kind": { "enum": ["count", "bool"] },
+                  "group": { "type": "string" },
+                  "unit": { "type": "string" },
+                  "message": { "type": "string" },
+                  "default": { "type": "integer" },
+                  "min": { "type": "integer" },
+                  "max": { "type": "integer" },
+                  "show_on_ui": { "type": "boolean" },
+                  "static": { "type": "boolean" },
+                  "os_quota_field": { "type": "string" },
+                  "os_multiplier": { "type": "integer" },
+                  "os_linked_field": { "type": "string" },
+                  "os_overcommit_check": { "type": "boolean" },
+                  "grant": {
+                    "type": "object",
+                    "required": ["type", "target"],
+                    "properties": {
+                      "type": { "enum": ["network", "image", "flavor"] },
+                      "target": { "type": "string", "minLength": 1 }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
             "chargeOsInUse": {
               "type": "boolean"
             },

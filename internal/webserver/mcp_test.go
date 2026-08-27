@@ -34,7 +34,7 @@ func mcpTestServerWithService(t *testing.T) (*httptest.Server, *tree.Service) {
 	if err := store.Seed(context.Background(), ids, nodes); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	svc := tree.NewService(store, roleprovider.NewMockRoleProvider(), quotaResourceIDs,
+	svc := tree.NewService(store, roleprovider.NewMockRoleProvider(), quotaResources,
 		rootAdminTokens, 10*time.Second, common.DefaultMaxAuthorizedUsers, testAccounting, sugar)
 	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
 		t.Fatalf("bootstrap: %v", err)

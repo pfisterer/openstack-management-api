@@ -22,9 +22,22 @@ import (
 type Service struct {
 	*identity.Service
 
-	store           Store
-	roles           common.RoleProvider
-	resourceIDs     []string
+	store Store
+	roles common.RoleProvider
+
+	// resources is the deployment's resource catalogue. Validation and anything
+	// that has to know WHAT a resource is reads this.
+	resources []common.ManagedProject
+
+	// countIDs are the resources that take part in arithmetic — summing across
+	// siblings, capacity checks, usage roll-ups. Availabilities are absent.
+	//
+	// Precomputed and kept beside the catalogue rather than filtered at each
+	// call site, because it is read on every rollup. The name is the guard rail:
+	// a plain `resourceIDs` was what let an availability slip into a sum, since
+	// nothing at the call site said which set it was.
+	countIDs []string
+
 	rootAdminTokens common.TokenList
 	requestTimeout  time.Duration
 	// maxAuthorizedUsers bounds how many participants one node may list.
@@ -75,12 +88,18 @@ type Accounting struct {
 // NewService constructs the tree service.
 // rootAdminTokens is synchronized into the root node's AdminScope on every
 // Bootstrap — the configuration is the source of truth for that one scope.
-func NewService(store Store, roles common.RoleProvider, resourceIDs []string, rootAdminTokens common.TokenList, requestTimeout time.Duration, maxAuthorizedUsers int, accounting Accounting, log *zap.SugaredLogger) *Service {
+func NewService(store Store, roles common.RoleProvider, resources []common.ManagedProject, rootAdminTokens common.TokenList, requestTimeout time.Duration, maxAuthorizedUsers int, accounting Accounting, log *zap.SugaredLogger) *Service {
 	if store == nil {
 		panic("tree.NewService requires a non-nil store")
 	}
-	if len(resourceIDs) == 0 {
+	if len(resources) == 0 {
 		panic("tree.NewService requires at least one configured resource type")
+	}
+	countIDs := make([]string, 0, len(resources))
+	for _, r := range resources {
+		if r.IsCount() {
+			countIDs = append(countIDs, r.ID)
+		}
 	}
 	if requestTimeout <= 0 {
 		requestTimeout = 30 * time.Second
@@ -92,7 +111,8 @@ func NewService(store Store, roles common.RoleProvider, resourceIDs []string, ro
 		Service:            identity.NewService(store, roles, requestTimeout, log),
 		store:              store,
 		roles:              roles,
-		resourceIDs:        resourceIDs,
+		resources:          resources,
+		countIDs:           countIDs,
 		rootAdminTokens:    rootAdminTokens,
 		requestTimeout:     requestTimeout,
 		maxAuthorizedUsers: maxAuthorizedUsers,
@@ -143,9 +163,17 @@ func (s *Service) ensureBootstrapNodes(ctx context.Context) error {
 		return fmt.Errorf("check root node: %w", err)
 	}
 	if root == nil {
-		limit := make(common.ProjectQuota, len(s.resourceIDs))
-		for _, id := range s.resourceIDs {
-			limit[id] = common.UnlimitedQuota
+		// The root holds everything there is: no cap on any quantity, and every
+		// availability granted. UnlimitedQuota would be rejected on an
+		// availability (it is 0 or 1), and it would mean nothing anyway — the
+		// root is where the full catalogue is visible and delegated from.
+		limit := make(common.ProjectQuota, len(s.resources))
+		for _, r := range s.resources {
+			if r.IsBool() {
+				limit[r.ID] = 1
+				continue
+			}
+			limit[r.ID] = common.UnlimitedQuota
 		}
 		rootNode := Node{
 			ID:         RootNodeID,
@@ -177,9 +205,11 @@ func (s *Service) ensureBootstrapNodes(ctx context.Context) error {
 		return fmt.Errorf("check unassigned node: %w", err)
 	}
 	if unassigned == nil {
-		zeroLimit := make(common.ProjectQuota, len(s.resourceIDs))
-		for _, id := range s.resourceIDs {
-			zeroLimit[id] = 0
+		// Zero for quantities and withheld for availabilities — same value, and
+		// both say the same thing here: nothing can be approved under this node.
+		zeroLimit := make(common.ProjectQuota, len(s.resources))
+		for _, r := range s.resources {
+			zeroLimit[r.ID] = 0
 		}
 		parent := RootNodeID
 		unassignedNode := Node{
@@ -388,7 +418,7 @@ func (s *Service) loadSubtreeUsage(ctx context.Context, roots []Node) (UsagePerN
 		return nil, fmt.Errorf("load active leaves for usage rollup: %w", err)
 	}
 
-	return buildRolledUpUsage(leaves, parentMap, s.resourceIDs, s.accounting.ChargeOSInUse), nil
+	return buildRolledUpUsage(leaves, parentMap, s.countIDs, s.accounting.ChargeOSInUse), nil
 }
 
 // buildRolledUpUsage attributes each leaf's limit and ID to its parent budget and
@@ -550,7 +580,8 @@ func (s *Service) attachAncestorIDs(ctx context.Context, nodes []Node) ([]Node, 
 }
 
 // attachUsage adds the derived fields every view needs on top of the stored
-// node: the subtree usage rollup, the direct child count and the parent's name.
+// node: the subtree usage rollup, the direct child count, the parent's name and
+// the resources in scope at that node.
 func (s *Service) attachUsage(ctx context.Context, nodes []Node) ([]Node, error) {
 	budgets := make([]Node, 0, len(nodes))
 	for _, n := range nodes {
@@ -573,7 +604,137 @@ func (s *Service) attachUsage(ctx context.Context, nodes []Node) ([]Node, error)
 	if err != nil {
 		return nil, err
 	}
-	return s.attachParentNames(ctx, out)
+	out, err = s.attachParentNames(ctx, out)
+	if err != nil {
+		return nil, err
+	}
+	return s.attachAvailableResources(out), nil
+}
+
+// availableResourcesFor lists the resources in scope at one node.
+//
+// The root sees the whole catalogue: it is where delegation starts, so hiding
+// anything there would make it ungrantable. Every other node sees what its own
+// limit carries — a quantity above zero, an unlimited quantity, or a granted
+// availability.
+//
+// Zero means "not delegated" and therefore disappears. That is consistent rather
+// than harsh: the only place a resource can be handed down is the parent, and
+// there it is visible by this same rule, or the parent would not have it either.
+func (s *Service) availableResourcesFor(n Node) []string {
+	out := make([]string, 0, len(s.resources))
+	for _, r := range s.resources {
+		if n.ID == RootNodeID {
+			out = append(out, r.ID)
+			continue
+		}
+		v, ok := n.Limit[r.ID]
+		if !ok {
+			continue
+		}
+		if v > 0 || v == common.UnlimitedQuota {
+			out = append(out, r.ID)
+		}
+	}
+	return out
+}
+
+// attachAvailableResources fills the derived scope list on every node. Ordered
+// by the catalogue rather than by the node's map, so two nodes list the same
+// resources in the same order and the UI does not reshuffle between them.
+func (s *Service) attachAvailableResources(nodes []Node) []Node {
+	out := make([]Node, 0, len(nodes))
+	for _, n := range nodes {
+		n.AvailableResources = s.availableResourcesFor(n)
+		out = append(out, n)
+	}
+	return out
+}
+
+// checkAvailabilityWithdrawal refuses to take an availability away from a budget
+// while something below it still holds it.
+//
+// The parent-child rule is enforced when a CHILD is written, so it cannot catch
+// this direction: lowering a parent from 1 to 0 leaves every existing descendant
+// holding a resource its parent no longer has, and nothing would ever notice.
+// Quantities have the same problem and the same answer — "new limit is below
+// current active usage" — so this is that check for the other kind.
+//
+// Refusing rather than cascading is deliberate. A cascade would silently revoke
+// a network or a GPU flavour across a whole subtree, in projects whose owners
+// never asked for the change; making the withdrawal fail puts the decision back
+// with the person who has to take it away one node at a time.
+func (s *Service) checkAvailabilityWithdrawal(ctx context.Context, node Node, newLimit common.ProjectQuota) error {
+	withdrawn := make([]string, 0, len(s.resources))
+	for _, r := range s.resources {
+		if !r.IsBool() {
+			continue
+		}
+		if node.Limit[r.ID] == 1 && newLimit[r.ID] != 1 {
+			withdrawn = append(withdrawn, r.ID)
+		}
+	}
+	if len(withdrawn) == 0 {
+		return nil
+	}
+
+	holders, err := s.descendantsHolding(ctx, node, withdrawn)
+	if err != nil {
+		return err
+	}
+	for _, id := range withdrawn {
+		if names := holders[id]; len(names) > 0 {
+			return fmt.Errorf("%q cannot be withdrawn while %d node(s) below still hold it (e.g. %s)",
+				id, len(names), names[0])
+		}
+	}
+	return nil
+}
+
+// descendantsHolding reports, per resource id, the names of nodes in the subtree
+// that carry it. The node itself is excluded — it is the one being changed.
+func (s *Service) descendantsHolding(ctx context.Context, root Node, resourceIDs []string) (map[string][]string, error) {
+	parentMap, err := s.buildSubtreeParentMap(ctx, []Node{root})
+	if err != nil {
+		return nil, fmt.Errorf("walk subtree: %w", err)
+	}
+
+	budgetIDs := make([]string, 0, len(parentMap))
+	for id := range parentMap {
+		budgetIDs = append(budgetIDs, id)
+	}
+	// Leaves are not in the parent map — it walks budgets only — so they are
+	// fetched in one go under every budget of the subtree.
+	leaves, err := s.store.ListNodes(ctx, NodeQuery{ParentIDs: budgetIDs, Kinds: []string{KindProject}}, 0, 0)
+	if err != nil {
+		return nil, fmt.Errorf("load subtree leaves: %w", err)
+	}
+	budgets, err := s.store.ListNodes(ctx, NodeQuery{IDs: budgetIDs}, 0, 0)
+	if err != nil {
+		return nil, fmt.Errorf("load subtree budgets: %w", err)
+	}
+
+	out := make(map[string][]string, len(resourceIDs))
+	for _, n := range append(budgets, leaves...) {
+		if n.ID == root.ID {
+			continue
+		}
+		for _, id := range resourceIDs {
+			if n.Limit[id] == 1 {
+				out[id] = append(out[id], nodeLabel(n))
+			}
+		}
+	}
+	return out, nil
+}
+
+// nodeLabel names a node for an error message: its name where it has one,
+// otherwise its id. Leaves often carry no name.
+func nodeLabel(n Node) string {
+	if n.Name != "" {
+		return n.Name
+	}
+	return n.ID
 }
 
 // ── Capacity & limit validation ───────────────────────────────────────────────
@@ -591,12 +752,12 @@ func (s *Service) checkCapacity(ctx context.Context, ancestors []Node, addLimit,
 		return fmt.Errorf("compute subtree usage for capacity check: %w", err)
 	}
 	for _, ancestor := range ancestors {
-		committed := subtreeUsage[ancestor.ID].Total(s.resourceIDs)
-		for _, resourceID := range s.resourceIDs {
+		committed := subtreeUsage[ancestor.ID].Total(s.countIDs)
+		for _, resourceID := range s.countIDs {
 			committed[resourceID] -= subtractLimit[resourceID]
 		}
-		needed := quotaAdd(committed, addLimit, s.resourceIDs)
-		if !quotaFits(needed, ancestor.Limit, s.resourceIDs) {
+		needed := quotaAdd(committed, addLimit, s.countIDs)
+		if !quotaFits(needed, ancestor.Limit, s.countIDs) {
 			return fmt.Errorf("budget %q (%s) capacity exceeded", ancestor.ID, ancestor.Name)
 		}
 	}
@@ -611,7 +772,13 @@ func (s *Service) validateLeafLimit(q common.ProjectQuota) error {
 	if err := s.validateKnownResources(q); err != nil {
 		return err
 	}
+	if err := s.validateAvailabilities(q); err != nil {
+		return err
+	}
 	for key, val := range q {
+		if s.isBool(key) {
+			continue
+		}
 		if val < 0 {
 			return fmt.Errorf("limit for %q must not be negative (got %d)", key, val)
 		}
@@ -625,7 +792,13 @@ func (s *Service) validateBudgetLimit(q common.ProjectQuota) error {
 	if err := s.validateKnownResources(q); err != nil {
 		return err
 	}
+	if err := s.validateAvailabilities(q); err != nil {
+		return err
+	}
 	for key, val := range q {
+		if s.isBool(key) {
+			continue
+		}
 		if val < 0 && val != common.UnlimitedQuota {
 			return fmt.Errorf("limit for %q must be >= 0 or %d for unlimited (got %d)", key, common.UnlimitedQuota, val)
 		}
@@ -633,10 +806,42 @@ func (s *Service) validateBudgetLimit(q common.ProjectQuota) error {
 	return nil
 }
 
+// validateAvailabilities holds availabilities to 0 or 1.
+//
+// The value that matters here is UnlimitedQuota. "Unlimited access to a network"
+// is not a thing, and letting it through would be worse than meaningless: the
+// parent-child rule reads UnlimitedQuota as "no cap", so a -1 on an availability
+// would act as a wildcard that hands the resource to every descendant.
+//
+// Anything above 1 is refused for the same reason a boolean has two values —
+// a 2 would sort above a 1 in the edge check and mean nothing at all.
+func (s *Service) validateAvailabilities(q common.ProjectQuota) error {
+	for key, val := range q {
+		if !s.isBool(key) {
+			continue
+		}
+		if val != 0 && val != 1 {
+			return fmt.Errorf("%q is an availability: it is granted (1) or not (0), got %d", key, val)
+		}
+	}
+	return nil
+}
+
+// isBool reports whether a resource id names an availability. Unknown ids answer
+// false; validateKnownResources is what rejects those, and it runs first.
+func (s *Service) isBool(id string) bool {
+	for _, r := range s.resources {
+		if r.ID == id {
+			return r.IsBool()
+		}
+	}
+	return false
+}
+
 func (s *Service) validateKnownResources(q common.ProjectQuota) error {
-	known := make(map[string]struct{}, len(s.resourceIDs))
-	for _, id := range s.resourceIDs {
-		known[id] = struct{}{}
+	known := make(map[string]struct{}, len(s.resources))
+	for _, r := range s.resources {
+		known[r.ID] = struct{}{}
 	}
 	for key := range q {
 		if _, ok := known[key]; !ok {
@@ -651,7 +856,8 @@ func (s *Service) validateKnownResources(q common.ProjectQuota) error {
 // unlimited under a limited parent). Enforced on every edge — create, approve,
 // direct limit edit and reparent — so it holds inductively across the tree.
 func (s *Service) validateChildBudgetLimit(parent *Node, childLimit common.ProjectQuota) error {
-	for _, id := range s.resourceIDs {
+	for _, r := range s.resources {
+		id := r.ID
 		parentCap := parent.Limit[id]
 		childCap := childLimit[id]
 		if parentCap == common.UnlimitedQuota {
@@ -691,10 +897,10 @@ func (s *Service) ownerActiveUsage(ctx context.Context, budgetID string, ownerTo
 	if err != nil {
 		return nil, err
 	}
-	usage := make(common.ProjectQuota, len(s.resourceIDs))
+	usage := make(common.ProjectQuota, len(s.countIDs))
 	for _, leaf := range leaves {
-		charged := chargedQuota(leaf, s.resourceIDs, s.accounting.ChargeOSInUse)
-		for _, id := range s.resourceIDs {
+		charged := chargedQuota(leaf, s.countIDs, s.accounting.ChargeOSInUse)
+		for _, id := range s.countIDs {
 			usage[id] += charged[id]
 		}
 	}

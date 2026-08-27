@@ -492,8 +492,8 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 		if err != nil {
 			return Node{}, fmt.Errorf("compute per-requester usage: %w", err)
 		}
-		cumulative := quotaAdd(usage, node.Limit, s.resourceIDs)
-		if quotaFits(cumulative, parent.AutoApprove.PerRequesterLimit, s.resourceIDs) {
+		cumulative := quotaAdd(usage, node.Limit, s.countIDs)
+		if quotaFits(cumulative, parent.AutoApprove.PerRequesterLimit, s.countIDs) {
 			ancestors, err := s.nodeChain(ctx, parent.ID)
 			if err != nil {
 				return Node{}, err
@@ -643,13 +643,19 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, user
 		historyEntry.LimitTo = req.Limit
 		updated.Limit = *req.Limit
 
+		// The same question for availabilities: they cannot fall below a usage,
+		// but they can be taken away from descendants that still hold them.
+		if err := s.checkAvailabilityWithdrawal(ctx, *current, updated.Limit); err != nil {
+			return Node{}, err
+		}
+
 		// A reduction must not fall below the subtree's current active usage.
 		subtreeUsage, err := s.loadSubtreeUsage(ctx, []Node{updated})
 		if err != nil {
 			return Node{}, fmt.Errorf("compute current usage for limit check: %w", err)
 		}
-		activeUsage := subtreeUsage[updated.ID].Total(s.resourceIDs)
-		for _, resourceID := range s.resourceIDs {
+		activeUsage := subtreeUsage[updated.ID].Total(s.countIDs)
+		for _, resourceID := range s.countIDs {
 			newCap := updated.Limit[resourceID]
 			if newCap != common.UnlimitedQuota && activeUsage[resourceID] > newCap {
 				return Node{}, fmt.Errorf("new limit for %q (%d) is below current active usage (%d)", resourceID, newCap, activeUsage[resourceID])
@@ -878,14 +884,18 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor Actor, us
 		// A budget shrinking below its subtree's active usage would strand
 		// already-approved leaves.
 		if current.Status == StatusChangePending {
+			if err := s.checkAvailabilityWithdrawal(ctx, *current, finalLimit); err != nil {
+				return Node{}, err
+			}
+
 			probe := *current
 			probe.Limit = finalLimit
 			subtreeUsage, err := s.loadSubtreeUsage(ctx, []Node{probe})
 			if err != nil {
 				return Node{}, fmt.Errorf("compute subtree usage for limit check: %w", err)
 			}
-			activeUsage := subtreeUsage[probe.ID].Total(s.resourceIDs)
-			for _, resourceID := range s.resourceIDs {
+			activeUsage := subtreeUsage[probe.ID].Total(s.countIDs)
+			for _, resourceID := range s.countIDs {
 				newCap := finalLimit[resourceID]
 				if newCap != common.UnlimitedQuota && activeUsage[resourceID] > newCap {
 					return Node{}, fmt.Errorf("new limit for %q (%d) is below current active usage (%d)", resourceID, newCap, activeUsage[resourceID])
@@ -1097,7 +1107,7 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor Actor, 
 			if err != nil {
 				return Node{}, fmt.Errorf("compute subtree usage for move: %w", err)
 			}
-			moved := subtreeUsage[current.ID].Total(s.resourceIDs)
+			moved := subtreeUsage[current.ID].Total(s.countIDs)
 			if err := s.checkCapacity(ctx, newParentChain, moved, nil); err != nil {
 				return Node{}, err
 			}

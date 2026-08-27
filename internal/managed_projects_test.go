@@ -17,7 +17,7 @@ import "testing"
 func TestDefaultResources_MeasureEverythingOpenStackCounts(t *testing.T) {
 	measured := map[string]bool{}
 	fields := map[string]string{}
-	for _, r := range loadProjectDefinitionsOrDefaults() {
+	for _, r := range defaultResourceCatalogue() {
 		fields[r.ID] = r.OSQuotaField
 		if r.OSOvercommitCheck && r.OSQuotaField != "" {
 			measured[r.ID] = true

@@ -12,7 +12,10 @@ import (
 	"go.uber.org/zap"
 )
 
-var testResources = []string{"cores"}
+// One counted resource is enough for the arithmetic these tests exercise.
+// Availabilities have their own file, because what they must NOT do — sum — is a
+// different question from what quantities must.
+var testResources = []common.ManagedProject{{ID: "cores", Name: "Cores"}}
 
 // testAccounting mirrors the production defaults, so a test that passes here
 // says something about the deployment rather than about a lenient fixture.

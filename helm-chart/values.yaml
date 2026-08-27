@@ -129,6 +129,42 @@ openstackManagementApi:
     # Maximum number of authorized_users entries per project. A course or
     # department belongs in as one group token, not as N individual entries.
     maxAuthorizedUsers: 32
+    # The managed resources of this deployment. Empty uses the built-in set
+    # (cores, ram, storage, gpu plus the static network/storage quotas).
+    #
+    # A resource is either a quantity or an availability:
+    #
+    #   - kind: count (or omitted) — sums across projects, capped by the budget
+    #   - kind: bool               — granted or not; needs a `grant` saying what
+    #                                that means in OpenStack
+    #
+    # An availability is NOT a quota. It maps to a Neutron RBAC policy, a Glance
+    # image member or a Nova flavour access, named by ID:
+    #
+    #   resourceDefinitions:
+    #     - id: cores
+    #       name: Cores
+    #       group: Compute
+    #       default: 4
+    #       min: 1
+    #       max: 100000
+    #       show_on_ui: true
+    #       os_quota_field: cores      # the OpenStack quota this maps to
+  #       os_linked_field: instances # a second field receiving the same value
+  #     - id: dhbw-ipv4
+    #       name: DHBW IPv4
+    #       kind: bool
+    #       group: Networks
+    #       show_on_ui: true
+    #       grant:
+    #         type: network          # network | image | flavor
+    #         target: <neutron-network-uuid>
+    #
+    # A catalogue REPLACES the built-in set rather than extending it — otherwise a
+    # resource could never be removed. An invalid entry stops the service at
+    # startup instead of quietly dropping the resource.
+    resourceDefinitions: []
+
     # Bill a project the LARGER of its declared limit and what OpenStack reports
     # it actually uses, in both the auto-approve check and the budget rollup.
     # On by default: with it off, shrinking a limit after filling the project

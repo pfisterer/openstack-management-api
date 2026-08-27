@@ -463,6 +463,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 			}
 			r.syncMembers(leaf, osProject.ID)
 			r.syncGroupAssignments(leaf, osProject.ID, groupTokenToOSID)
+			r.syncGrants(leaf, osProject.ID)
 			res.projectsSynced++
 		}
 	}
@@ -1313,6 +1314,76 @@ func applyOSSyncState(leaf *tree.Node, osProjectID string, overcommitted bool, i
 // (quota detail unavailable). Callers MUST NOT store the values in that case:
 // an empty in-use map is indistinguishable from a genuine zero once written,
 // and writing it undoes the whole point of billing max(limit, in-use).
+// grantClient is the slice of the OpenStack client that availabilities need.
+// Narrow and declared here, like scopeParentClient above, so the decision — grant
+// or revoke, and say so in a dry run — can be tested without a cloud.
+type grantClient interface {
+	HasGrant(grant common.Grant, projectID string) (bool, error)
+	AddGrant(grant common.Grant, projectID string) error
+	RemoveGrant(grant common.Grant, projectID string) error
+}
+
+func (r *Reconciler) syncGrants(leaf tree.Node, osProjectID string) {
+	syncGrants(r.osClient, r.managedProjects, leaf, osProjectID, r.cfg.DryRun, r.log)
+}
+
+// syncGrants brings a project's availabilities in line with what the leaf was
+// granted: a network, an image or a GPU flavour it may use.
+//
+// Only resources IN THE CATALOGUE are ever touched, and that is the whole of the
+// safety story. Flavour access and image members carry no tag saying who created
+// them, so there is no way to tell our grant from one an operator made by hand —
+// the only defensible rule is never to look at a target the catalogue does not
+// name. An access granted on some other image stays exactly as it was, the same
+// way syncGroupAssignments leaves external assignments alone.
+//
+// Failures are logged per resource and do not abort the pass. One unreachable
+// service must not stop the other twenty projects from being reconciled, and the
+// next run tries again — the desired state is in the tree, not in this call.
+func syncGrants(c grantClient, defs []common.ManagedProject, leaf tree.Node, osProjectID string, dryRun bool, log *zap.SugaredLogger) {
+	for _, def := range defs {
+		if !def.IsBool() || def.Grant == nil {
+			continue
+		}
+		wanted := leaf.Limit[def.ID] == 1
+
+		if dryRun {
+			// Read-only in dry run, and it reports only DIFFERENCES: listing
+			// every availability on every project would bury the handful that
+			// are about to change. Reading is safe, and the difference is the
+			// point of the run.
+			has, err := c.HasGrant(*def.Grant, osProjectID)
+			if err != nil {
+				log.Warnw("Dry run: cannot read grant",
+					"node_id", leaf.ID, "resource", def.ID, "error", err)
+				continue
+			}
+			if has != wanted {
+				verb := "would revoke"
+				if wanted {
+					verb = "would grant"
+				}
+				log.Infow("Dry run: "+verb+" availability",
+					"node_id", leaf.ID, "os_project_id", osProjectID,
+					"resource", def.ID, "grant_type", def.Grant.Type)
+			}
+			continue
+		}
+
+		var err error
+		if wanted {
+			err = c.AddGrant(*def.Grant, osProjectID)
+		} else {
+			err = c.RemoveGrant(*def.Grant, osProjectID)
+		}
+		if err != nil {
+			log.Warnw("Failed to sync availability",
+				"node_id", leaf.ID, "os_project_id", osProjectID,
+				"resource", def.ID, "granted", wanted, "error", err)
+		}
+	}
+}
+
 func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo) (overcommitted bool, inUse common.ProjectQuota, measured bool, err error) {
 	osProjectID := osProject.ID
 	quotaSet := ProjectQuotaToQuotaSet(r.managedProjects, leaf.Limit)

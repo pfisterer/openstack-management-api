@@ -55,9 +55,9 @@ type SetupConfig struct {
 
 // ConfigResponse contains system-wide resource configuration for the frontend.
 type ConfigResponse struct {
-	Resources      []common.ManagedProject `json:"resources"`
-	OpenstackRoles []string                `json:"openstackRoles"`
-	DummyDevUsers  []string                `json:"dummyDevUsers,omitempty"`
+	Resources      []uiResource `json:"resources"`
+	OpenstackRoles []string     `json:"openstackRoles"`
+	DummyDevUsers  []string     `json:"dummyDevUsers,omitempty"`
 	// ProvisioningEnabled reports whether the reconciler is running. Only then
 	// does an approved project eventually get an OpenStack project — without it
 	// the UI would show every project as "waiting for OpenStack" forever.
@@ -243,13 +243,51 @@ func RegisterApiRoutes(v1 *gin.RouterGroup, cfg APIConfig, log *zap.SugaredLogge
 //	@Success		200	{object}	ConfigResponse	"Resource configuration."
 //	@ID				getConfig
 //	@Router			/v1/config [get]
+//
+// uiResource is what a resource looks like to the browser.
+//
+// A type of its own rather than the catalogue entry with the private parts
+// removed. Both produce the same JSON today; the difference is what happens when
+// somebody adds a field to ManagedProject. Stripping is a list of things NOT to
+// send, so a new field ships by default and the omission is silent — that is how
+// the OpenStack grant targets nearly went out. Here a new field reaches the
+// browser only when someone writes it down.
+type uiResource struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Default  int    `json:"default"`
+	Min      int    `json:"min"`
+	Max      int    `json:"max"`
+	Unit     string `json:"unit,omitempty"`
+	Message  string `json:"message,omitempty"`
+	Kind     string `json:"kind,omitempty"`
+	Group    string `json:"group,omitempty"`
+	ShowOnUI bool   `json:"show_on_ui,omitempty"`
+}
+
+func uiResourceFrom(r common.ManagedProject) uiResource {
+	return uiResource{
+		ID:       r.ID,
+		Name:     r.Name,
+		Default:  r.Default,
+		Min:      r.Min,
+		Max:      r.Max,
+		Unit:     r.Unit,
+		Message:  r.Message,
+		Kind:     r.Kind,
+		Group:    r.Group,
+		ShowOnUI: r.ShowOnUI,
+	}
+}
+
 func getConfig(cfg APIConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		resources := make([]common.ManagedProject, 0, len(cfg.ProjectDefinitions))
+		resources := make([]uiResource, 0, len(cfg.ProjectDefinitions))
 		for _, r := range cfg.ProjectDefinitions {
-			if r.ShowOnUI {
-				resources = append(resources, r)
+			if !r.ShowOnUI {
+				continue
 			}
+			resources = append(resources, uiResourceFrom(r))
 		}
 
 		// Same list the API validates authorized_users against, so the UI can

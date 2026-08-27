@@ -39,6 +39,7 @@ type OpenStackClient struct {
 	Compute  *gophercloud.ServiceClient
 	Network  *gophercloud.ServiceClient
 	Block    *gophercloud.ServiceClient
+	Image    *gophercloud.ServiceClient
 	logger   *zap.Logger
 	log      *zap.SugaredLogger
 	region   string
@@ -113,34 +114,60 @@ func NewOSAdminWithRegion(authURL, token, projectID, region string, insecure boo
 		Region:       region,
 	}
 
-	identityClient, err := openstack.NewIdentityV3(provider, gophercloud.EndpointOpts{})
+	client, err := buildServiceClients(provider, endpointOpts)
+	if err != nil {
+		return nil, err
+	}
+	client.region = region
+	client.logger = logger
+	client.log = sugaredLogger
+	return client, nil
+}
+
+// buildServiceClients resolves every OpenStack service this package talks to.
+//
+// One place, because there are two ways in — an application credential and a
+// service user's password — and both build the same struct. Adding the image
+// client to only one of them would have left password auth with a nil Image and
+// a panic on the first image grant, which is precisely the path production uses.
+func buildServiceClients(provider *gophercloud.ProviderClient, eo gophercloud.EndpointOpts) (*OpenStackClient, error) {
+	// Identity takes no endpoint options, which is what the application-credential
+	// path did before this was one function. The password path passed the region
+	// instead — the two had drifted apart, and unifying them means picking one.
+	// This one, because it is the path every current deployment runs on.
+	//
+	// The difference only shows on a cloud whose catalogue carries more than one
+	// identity endpoint; Keystone is not region-scoped, so on ours both resolve
+	// the same entry.
+	identity, err := openstack.NewIdentityV3(provider, gophercloud.EndpointOpts{})
 	if err != nil {
 		return nil, fmt.Errorf("create identity client: %w", err)
 	}
-
-	computeClient, err := openstack.NewComputeV2(provider, endpointOpts)
+	compute, err := openstack.NewComputeV2(provider, eo)
 	if err != nil {
 		return nil, fmt.Errorf("create compute client: %w", err)
 	}
-
-	blockClient, err := newBlockStorageV3(provider, endpointOpts)
-	if err != nil {
-		return nil, fmt.Errorf("create block storage client: %w", err)
-	}
-
-	networkClient, err := openstack.NewNetworkV2(provider, endpointOpts)
+	network, err := openstack.NewNetworkV2(provider, eo)
 	if err != nil {
 		return nil, fmt.Errorf("create network client: %w", err)
 	}
+	block, err := newBlockStorageV3(provider, eo)
+	if err != nil {
+		return nil, fmt.Errorf("create block storage client: %w", err)
+	}
+	// Glance, for image availabilities: granting one is an image MEMBER, which
+	// no other service can express.
+	image, err := openstack.NewImageServiceV2(provider, eo)
+	if err != nil {
+		return nil, fmt.Errorf("create image client: %w", err)
+	}
 
 	return &OpenStackClient{
-		Identity: identityClient,
-		Compute:  computeClient,
-		Network:  networkClient,
-		Block:    blockClient,
-		region:   region,
-		logger:   logger,
-		log:      sugaredLogger,
+		Identity: identity,
+		Compute:  compute,
+		Network:  network,
+		Block:    block,
+		Image:    image,
 	}, nil
 }
 
@@ -264,32 +291,14 @@ func newOSAdmin(
 		Availability: gophercloud.AvailabilityPublic,
 	}
 
-	identity, err := openstack.NewIdentityV3(provider, eo)
+	client, err := buildServiceClients(provider, eo)
 	if err != nil {
 		return nil, err
 	}
-	compute, err := openstack.NewComputeV2(provider, eo)
-	if err != nil {
-		return nil, err
-	}
-	network, err := openstack.NewNetworkV2(provider, eo)
-	if err != nil {
-		return nil, err
-	}
-	block, err := newBlockStorageV3(provider, eo)
-	if err != nil {
-		return nil, err
-	}
-
-	return &OpenStackClient{
-		Identity: identity,
-		Compute:  compute,
-		Network:  network,
-		Block:    block,
-		region:   region,
-		logger:   logger,
-		log:      sugaredLogger,
-	}, nil
+	client.region = region
+	client.logger = logger
+	client.log = sugaredLogger
+	return client, nil
 }
 
 func normalizeLoggers(logger *zap.Logger, sugaredLogger *zap.SugaredLogger) (*zap.Logger, *zap.SugaredLogger) {

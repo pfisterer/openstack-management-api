@@ -190,14 +190,27 @@ func (s *Service) ensureBootstrapNodes(ctx context.Context) error {
 			return fmt.Errorf("bootstrap root node: %w", err)
 		}
 		s.log.Infow("bootstrapped root node", "admin_scope", rootNode.AdminScope)
-	} else if !tokenListsEqual(root.AdminScope, s.rootAdminTokens) {
+	} else {
 		updated := *root
-		updated.AdminScope = append(common.TokenList{}, s.rootAdminTokens...)
-		if err := s.store.UpsertNode(ctx, updated); err != nil {
-			return fmt.Errorf("sync root admin scope: %w", err)
+		changed := false
+
+		if !tokenListsEqual(root.AdminScope, s.rootAdminTokens) {
+			updated.AdminScope = append(common.TokenList{}, s.rootAdminTokens...)
+			changed = true
+			s.log.Infow("synchronized root admin scope from configuration",
+				"previous", root.AdminScope, "current", updated.AdminScope)
 		}
-		s.log.Infow("synchronized root admin scope from configuration",
-			"previous", root.AdminScope, "current", updated.AdminScope)
+
+		if added := s.adoptNewCatalogueResources(&updated); len(added) > 0 {
+			changed = true
+			s.log.Infow("root adopted resources new to the catalogue", "resources", added)
+		}
+
+		if changed {
+			if err := s.store.UpsertNode(ctx, updated); err != nil {
+				return fmt.Errorf("sync root node: %w", err)
+			}
+		}
 	}
 
 	unassigned, err := s.store.GetNode(ctx, UnassignedNodeID)
@@ -238,6 +251,37 @@ func (s *Service) ensureBootstrapNodes(ctx context.Context) error {
 
 // nodeChain returns the chain of nodes starting at startID (inclusive) walking up
 // to the root. Guards against cycles.
+// adoptNewCatalogueResources gives the root whatever the catalogue has gained
+// since the root was created, and returns what it added.
+//
+// Without it a resource added to a running deployment is unreachable. The root
+// is where delegation starts and every edge is bounded by its parent, so a
+// resource the root does not hold cannot be granted to anyone — the catalogue
+// would list it, the portal would show it at the root, and every attempt to pass
+// it down would be refused. The root's limit is only written when the root is
+// CREATED, which on any existing tree happened long ago.
+//
+// It only ADDS keys. An operator who capped the root at a hundred cores meant it,
+// and this is not the place to overrule them.
+func (s *Service) adoptNewCatalogueResources(root *Node) []string {
+	if root.Limit == nil {
+		root.Limit = common.ProjectQuota{}
+	}
+	var added []string
+	for _, r := range s.resources {
+		if _, present := root.Limit[r.ID]; present {
+			continue
+		}
+		if r.IsBool() {
+			root.Limit[r.ID] = 1
+		} else {
+			root.Limit[r.ID] = common.UnlimitedQuota
+		}
+		added = append(added, r.ID)
+	}
+	return added
+}
+
 func (s *Service) nodeChain(ctx context.Context, startID string) ([]Node, error) {
 	var chain []Node
 	seen := map[string]struct{}{}

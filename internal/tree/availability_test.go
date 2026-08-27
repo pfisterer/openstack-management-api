@@ -252,3 +252,58 @@ func TestAvailability_WithdrawalLeavesQuantitiesAlone(t *testing.T) {
 		t.Fatalf("lowering a quantity tripped the availability guard: %v", err)
 	}
 }
+
+// A resource added to a RUNNING deployment has to reach the root, or it can
+// never be granted to anyone: every edge is bounded by its parent, and the root
+// is where delegation starts. The root's limit is written when the root is
+// created, which on any existing tree was long ago.
+func TestBootstrap_RootAdoptsResourcesNewToTheCatalogue(t *testing.T) {
+	ctx := context.Background()
+	store := NewInMemoryStore(zap.NewNop().Sugar())
+
+	// A tree that predates the availability: the root exists with the old set.
+	before := NewService(store, noRoles{}, []common.ManagedProject{{ID: "cores", Name: "Cores"}},
+		common.TokenList{"group:root-admin"}, 5*time.Second,
+		common.DefaultMaxAuthorizedUsers,
+		Accounting{}, zap.NewNop().Sugar())
+	if err := before.Bootstrap(ctx, nil, nil); err != nil {
+		t.Fatalf("initial bootstrap: %v", err)
+	}
+
+	// The catalogue grows, the service restarts.
+	after := NewService(store, noRoles{}, availabilityCatalogue,
+		common.TokenList{"group:root-admin"}, 5*time.Second,
+		common.DefaultMaxAuthorizedUsers,
+		Accounting{}, zap.NewNop().Sugar())
+	if err := after.Bootstrap(ctx, nil, nil); err != nil {
+		t.Fatalf("bootstrap after the catalogue grew: %v", err)
+	}
+
+	root, err := store.GetNode(ctx, RootNodeID)
+	if err != nil || root == nil {
+		t.Fatalf("load root: %v", err)
+	}
+	if root.Limit["dhbw-ipv4"] != 1 {
+		t.Fatalf("the root did not adopt the new availability, so nobody can be granted it: %v", root.Limit)
+	}
+	// And a child can now actually be given it.
+	if err := after.validateChildBudgetLimit(root, common.ProjectQuota{"dhbw-ipv4": 1}); err != nil {
+		t.Errorf("the root holds it but cannot pass it on: %v", err)
+	}
+}
+
+// Adopting must not overrule a deliberate cap: an operator who limited the root
+// meant it.
+func TestBootstrap_RootAdoptionLeavesExistingLimitsAlone(t *testing.T) {
+	svc := availabilityService(t)
+	root := Node{ID: RootNodeID, Limit: common.ProjectQuota{"cores": 100, "dhbw-ipv4": 0}}
+
+	added := svc.adoptNewCatalogueResources(&root)
+
+	if len(added) != 0 {
+		t.Errorf("added %v although every resource was already present", added)
+	}
+	if root.Limit["cores"] != 100 || root.Limit["dhbw-ipv4"] != 0 {
+		t.Errorf("existing values were overwritten: %v", root.Limit)
+	}
+}

@@ -3,14 +3,13 @@ package webserver
 import (
 	"fmt"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gin-contrib/cors"
 	ginzap "github.com/gin-contrib/zap"
 	"github.com/gin-gonic/gin"
+	"github.com/pfisterer/cloud-self-service-golib/ginweb"
 	"github.com/pfisterer/cloud-self-service-golib/logging"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/reconciler"
@@ -49,7 +48,7 @@ type SetupConfig struct {
 	// Tokens configures /v1/tokens. A nil Service omits the endpoints.
 	Tokens TokenConfig
 	// CORSAllowedOrigins are the browser origins allowed to call /v1
-	// cross-origin. Empty means none — see enableCors.
+	// cross-origin. Empty means none — see ginweb.EnableCORS.
 	CORSAllowedOrigins []string
 }
 
@@ -130,7 +129,7 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 
 	if cfg.DevMode {
 		cfg.Log.Debugf("Disabling caching in development mode.")
-		router.Use(disableCachingMiddleware())
+		router.Use(ginweb.DisableCaching())
 	}
 
 	// Pipe Gin internals through Zap logger outputs.
@@ -142,14 +141,15 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 	// Setup static file serving routes
 	staticGroup := router.Group("/")
 	staticGroup.Use(cors.Default())
-	// The generated API client (client/*.gen.mjs) is imported by the SPA at runtime.
-	// It MUST never be served stale: when the API grows an operation, a browser holding
-	// a cached older SDK silently lacks the new method and the UI feature no-ops (this
-	// masked the role-switch impersonation picker). In DevMode the whole router already
-	// gets this; in production only the static assets need it (API responses set their
-	// own no-store where relevant), so force revalidation on this group unconditionally.
+	// These routes serve the landing page, swagger.json and config.json — all of
+	// which embed the running version. Served uncached so a deploy is visible on
+	// the next reload instead of whenever a browser cache expires. (The generated
+	// TypeScript client used to be served here too and had the same problem
+	// harder — a stale cached SDK once masked the role-switch impersonation
+	// picker; it is an npm package consumed at build time now.) In DevMode the
+	// whole router already gets this middleware.
 	if !cfg.DevMode {
-		staticGroup.Use(disableCachingMiddleware())
+		staticGroup.Use(ginweb.DisableCaching())
 	}
 	RegisterStaticRoutes(staticGroup, cfg.StaticConfig)
 
@@ -157,7 +157,12 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 	apiV1Group := router.Group("/v1")
 
 	// Cross-origin access for the API is restricted to configured origins.
-	enableCors(apiV1Group, cfg.CORSAllowedOrigins, cfg.DevMode, cfg.Log)
+	ginweb.EnableCORS(apiV1Group, ginweb.CORSOptions{
+		AllowedOrigins: cfg.CORSAllowedOrigins,
+		DevMode:        cfg.DevMode,
+		AllowHeaders:   []string{"Origin", "Content-Type", "Authorization", "X-DNS-Key-Name", "X-DNS-Key-Algorithm", "X-DNS-Key", "X-Dummy-Auth-User"},
+		Log:            cfg.Log,
+	})
 
 	// Apply authentication middleware to API routes if provided
 	if cfg.AuthMiddleware != nil {
@@ -167,7 +172,7 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 	// The read-only rule for REST, mounted here rather than inside the auth
 	// middleware: "anything but GET is a write" is true of these routes and of
 	// nothing else, so it belongs to the group it describes.
-	apiV1Group.Use(RejectWritesForReadOnlyTokens(cfg.Log))
+	apiV1Group.Use(ginweb.RejectWritesForReadOnlyTokens(cfg.Log))
 
 	// Register API routes with the provided tree service and role switch groups configuration
 	RegisterApiRoutes(apiV1Group, cfg.API, cfg.Log)
@@ -306,82 +311,6 @@ func getConfig(cfg APIConfig) gin.HandlerFunc {
 		}
 		c.JSON(http.StatusOK, config)
 	}
-}
-
-func disableCachingMiddleware() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-		c.Header("Pragma", "no-cache")
-		c.Header("Expires", "0")
-		c.Next()
-	}
-}
-
-// enableCors restricts cross-origin API access to allowedOrigins (exact origin
-// matches, e.g. "https://selfservice.dhbw.cloud").
-//
-// The previous version reflected ANY origin and combined that with
-// AllowCredentials — the combination a browser only tolerates because the
-// reflection makes it look like a deliberate per-origin decision. It is not one:
-// with the UI reachable through a BFF that turns a session cookie into a Bearer,
-// a credentialed cross-origin request from an arbitrary page reaches the API
-// authenticated, and reflected headers let that page READ the answer. An empty
-// allowlist is therefore the correct default: in BFF mode the SPA is same-origin
-// with the API and needs no CORS at all.
-//
-// In development the local Vite dev server (http://localhost:8084) is a genuine
-// cross-origin caller, so devMode additionally allows any loopback origin —
-// nobody should have to configure an allowlist to run the UI locally.
-func enableCors(router *gin.RouterGroup, allowedOrigins []string, devMode bool, log *zap.SugaredLogger) {
-	allowed := make(map[string]bool, len(allowedOrigins))
-	for _, origin := range allowedOrigins {
-		if trimmed := strings.TrimRight(strings.TrimSpace(origin), "/"); trimmed != "" {
-			allowed[trimmed] = true
-		}
-	}
-
-	switch {
-	case devMode:
-		log.Infof("CORS: development mode — allowing loopback origins plus %v", allowedOrigins)
-	case len(allowed) == 0:
-		log.Info("CORS: no allowed origins configured — cross-origin API access is disabled")
-	default:
-		log.Infof("CORS: allowing cross-origin API access from %v", allowedOrigins)
-	}
-
-	router.Use(cors.New(cors.Config{
-		AllowOriginFunc: func(origin string) bool {
-			origin = strings.TrimRight(origin, "/")
-			return allowed[origin] || (devMode && isLoopbackOrigin(origin))
-		},
-		AllowCredentials: true,
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "X-DNS-Key-Name", "X-DNS-Key-Algorithm", "X-DNS-Key", "X-Dummy-Auth-User"},
-		MaxAge:           1 * time.Hour,
-	}))
-
-	// Gin runs group middleware only for requests that MATCH a route, and no
-	// handler is registered for OPTIONS — without this catch-all a preflight
-	// would 404 before the CORS middleware ever ran, and every allowed origin
-	// would break too. The handler itself sets nothing: for an allowed origin
-	// the middleware has already answered 204 with the headers, and for any
-	// other origin it aborted with 403. That is the difference to the previous
-	// version, whose catch-all wrote reflected headers on its own.
-	router.OPTIONS("/*path", func(c *gin.Context) { c.Status(http.StatusNoContent) })
-}
-
-// isLoopbackOrigin reports whether an origin points at this machine — the dev
-// server and any local tooling. Only consulted in development mode.
-func isLoopbackOrigin(origin string) bool {
-	u, err := url.Parse(origin)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-		return false
-	}
-	switch u.Hostname() {
-	case "localhost", "127.0.0.1", "::1":
-		return true
-	}
-	return false
 }
 
 func parsePagination(c *gin.Context) (int, int, error) {

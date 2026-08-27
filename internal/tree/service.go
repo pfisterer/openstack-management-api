@@ -1149,8 +1149,3 @@ func (s *Service) groupTokenExists(ctx context.Context, token string) (bool, err
 	}
 	return false, nil
 }
-
-// ptr returns a pointer to the provided value for inline literals.
-func ptr[T any](v T) *T {
-	return &v
-}

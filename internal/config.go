@@ -10,6 +10,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/joho/godotenv"
 	"github.com/pfisterer/cloud-self-service-golib/envconf"
+	"github.com/pfisterer/cloud-self-service-golib/redact"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"go.uber.org/zap"
 )
@@ -438,27 +439,15 @@ func defaultResourceCatalogue() []common.ManagedProject {
 	}
 }
 
-// redactSecret masks a secret for logging, showing at most the first 4 characters
-// as a hint. Safe for empty/short strings (the old first-5 slice panicked on those).
-func redactSecret(s string) string {
-	if s == "" {
-		return ""
-	}
-	if len(s) <= 4 {
-		return "****"
-	}
-	return s[:4] + "****"
-}
-
 func logAppConfig(appConfig AppConfiguration, log *zap.SugaredLogger) {
 	var appConfigJson []byte
 	var err error
 
 	// Redact ALL secrets before marshalling — the whole config is logged below.
-	appConfig.Openstack.ApplicationCredentialSecret = redactSecret(appConfig.Openstack.ApplicationCredentialSecret)
-	appConfig.Openstack.Password = redactSecret(appConfig.Openstack.Password)
-	appConfig.RoleProvider.APIToken = redactSecret(appConfig.RoleProvider.APIToken)
-	appConfig.Storage.ConnectionString = redactSecret(appConfig.Storage.ConnectionString)
+	appConfig.Openstack.ApplicationCredentialSecret = redact.Secret(appConfig.Openstack.ApplicationCredentialSecret)
+	appConfig.Openstack.Password = redact.Secret(appConfig.Openstack.Password)
+	appConfig.RoleProvider.APIToken = redact.Secret(appConfig.RoleProvider.APIToken)
+	appConfig.Storage.ConnectionString = redact.ConnString(appConfig.Storage.ConnectionString)
 
 	if appConfig.DevMode {
 		appConfigJson, err = json.MarshalIndent(appConfig, "", "  ")

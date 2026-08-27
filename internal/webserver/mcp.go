@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/pfisterer/cloud-self-service-golib/ginweb"
 	"github.com/pfisterer/cloud-self-service-golib/mcpserve"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/tree"
@@ -94,7 +95,7 @@ func RegisterMCPRoutes(group *gin.RouterGroup, cfg APIConfig, log *zap.SugaredLo
 			actorEmail: auth.ActorEmail,
 			userEmail:  auth.UserEmail,
 			tokens:     auth.EffectiveTokens,
-			readOnly:   IsReadOnlyToken(c),
+			readOnly:   ginweb.IsReadOnly(c),
 		}
 		ctx := mcpserve.WithCaller(c.Request.Context(), caller)
 		handler.ServeHTTP(c.Writer, c.Request.WithContext(ctx))

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pfisterer/cloud-self-service-golib/ginweb"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 	"go.uber.org/zap"
@@ -39,14 +40,14 @@ func readOnlyRouter(t *testing.T, useRESTRule bool) http.Handler {
 	g := r.Group("/v1")
 	g.Use(webserver.CombinedAuthMiddleware(nil, lookup, resolve, log))
 	if useRESTRule {
-		g.Use(webserver.RejectWritesForReadOnlyTokens(log))
+		g.Use(ginweb.RejectWritesForReadOnlyTokens(log))
 	}
 	g.GET("/thing", func(c *gin.Context) { c.Status(http.StatusOK) })
 	g.POST("/thing", func(c *gin.Context) { c.Status(http.StatusOK) })
 	// Stands in for /mcp: a POST that is a read, and answers the read-only
 	// question itself instead of letting the method answer it.
 	g.POST("/tool", func(c *gin.Context) {
-		if webserver.IsReadOnlyToken(c) {
+		if ginweb.IsReadOnly(c) {
 			c.JSON(http.StatusOK, gin.H{"read_only": true})
 			return
 		}

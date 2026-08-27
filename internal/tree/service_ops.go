@@ -442,7 +442,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 
 	createdEntry := newHistoryEntry("created", actor, StatusPending)
 	createdEntry.LimitTo = &req.Limit
-	createdEntry.Reason = ptr(req.Reason)
+	createdEntry.Reason = common.Ptr(req.Reason)
 
 	if req.Kind == KindProject {
 		node.ID = "p_" + uuid.New().String()
@@ -481,8 +481,8 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 		}
 		node.Status = StatusApproved
 		approvedEntry := newHistoryEntry("approved", actor, StatusApproved)
-		approvedEntry.StatusFrom = ptr(StatusPending)
-		approvedEntry.Reason = ptr("Created directly by a manager")
+		approvedEntry.StatusFrom = common.Ptr(StatusPending)
+		approvedEntry.Reason = common.Ptr("Created directly by a manager")
 		node.History = append(node.History, approvedEntry)
 
 	case req.Kind == KindProject && parent.AutoApprove != nil:
@@ -501,8 +501,8 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 			if err := s.checkCapacity(ctx, ancestors, node.Limit, nil); err == nil {
 				node.Status = StatusApproved
 				autoEntry := newHistoryEntry("approved", Actor{Email: "system:auto-approval", Via: actor.Channel()}, StatusApproved)
-				autoEntry.StatusFrom = ptr(StatusPending)
-				autoEntry.Reason = ptr("Auto-approved (within per-requester limit)")
+				autoEntry.StatusFrom = common.Ptr(StatusPending)
+				autoEntry.Reason = common.Ptr("Auto-approved (within per-requester limit)")
 				node.History = append(node.History, autoEntry)
 			}
 		}
@@ -741,7 +741,7 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor Actor, u
 	if current.Status == StatusPending {
 		// Amend the not-yet-approved request in place.
 		historyEntry := newHistoryEntry("amended", actor, StatusPending)
-		historyEntry.StatusFrom = ptr(StatusPending)
+		historyEntry.StatusFrom = common.Ptr(StatusPending)
 		if req.Limit != nil {
 			historyEntry.LimitFrom = &current.Limit
 			historyEntry.LimitTo = req.Limit
@@ -1006,7 +1006,7 @@ func (s *Service) ReleaseNode(id string, actor Actor, userTokens common.TokenLis
 	}
 
 	historyEntry := newHistoryEntry("released", actor, StatusReleased)
-	historyEntry.StatusFrom = ptr(StatusApproved)
+	historyEntry.StatusFrom = common.Ptr(StatusApproved)
 	historyEntry.LimitFrom = &current.Limit
 
 	updated := *current
@@ -1257,7 +1257,7 @@ func (s *Service) PromoteNode(id string, req PromoteNodeRequest, actor Actor, us
 	historyEntry.ParentFrom = current.ParentID
 	historyEntry.ParentTo = &newParent.ID
 	historyEntry.OwnerTo = &owner
-	historyEntry.Reason = ptr(req.Reason)
+	historyEntry.Reason = common.Ptr(req.Reason)
 
 	updated := *current
 	updated.ParentID = &newParent.ID

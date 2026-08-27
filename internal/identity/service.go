@@ -129,7 +129,7 @@ func (s *Service) ResolveEffectiveUserTokens(actorEmail string, originalTokens c
 		return tokens
 	}
 
-	return ApplyRoleSwitchOverride(originalTokens, ptr(override))
+	return ApplyRoleSwitchOverride(originalTokens, common.Ptr(override))
 }
 
 // ResolveEffectiveEmail returns the email the actor is acting AS. It equals the
@@ -221,7 +221,7 @@ func (s *Service) GetUserGroupSwitchForActor(actorEmail string) *string {
 		return nil
 	}
 	if override := s.currentGroupOverrides()[actor]; override != "" {
-		return ptr(override)
+		return common.Ptr(override)
 	}
 	return nil
 }
@@ -308,9 +308,4 @@ func cloneGroupOverrides(current map[string]string, extraCapacity int) map[strin
 // canonicalActorEmail normalizes actor identifiers used as override map keys.
 func canonicalActorEmail(actorEmail string) string {
 	return strings.ToLower(strings.TrimSpace(actorEmail))
-}
-
-// ptr returns a pointer to the provided value for inline literals.
-func ptr[T any](v T) *T {
-	return &v
 }

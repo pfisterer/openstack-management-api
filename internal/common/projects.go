@@ -166,8 +166,40 @@ func ValidateManagedProjects(defs []ManagedProject) error {
 		if err := validateGrant(d); err != nil {
 			return err
 		}
+		if err := validateQuotaMapping(d); err != nil {
+			return err
+		}
 	}
 
+	return nil
+}
+
+// validateQuotaMapping rejects a mapping that cannot mean anything.
+//
+// Both cases describe a resource whose OpenStack side is half-written, which is
+// what a hand-authored catalogue produces: a multiplier converts a value for a
+// quota field, and measuring in-use reads one back. Neither does anything
+// without the field, and neither fails loudly — the resource is simply never
+// written to OpenStack, and with the overcommit flag ignored the accounting goes
+// back to billing the declared limit.
+//
+// What this does NOT catch is the whole mapping being absent: a resource may
+// legitimately have none (GPUs have no quota field at all), so "cores without a
+// quota field" is indistinguishable from a deliberate choice. That one is caught
+// by reading the startup log, where the effective catalogue is printed.
+func validateQuotaMapping(d ManagedProject) error {
+	if d.OSQuotaField != "" {
+		return nil
+	}
+	if d.OSMultiplier != 0 {
+		return fmt.Errorf("resource %q: os_multiplier converts a value for a quota field, but none is set", d.ID)
+	}
+	if d.OSOvercommitCheck {
+		return fmt.Errorf("resource %q: os_overcommit_check measures a quota field, but none is set", d.ID)
+	}
+	if d.OSLinkedField != "" {
+		return fmt.Errorf("resource %q: os_linked_field mirrors a quota field, but none is set", d.ID)
+	}
 	return nil
 }
 

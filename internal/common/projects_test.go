@@ -108,3 +108,28 @@ func TestValidateManagedProjects_Rejects(t *testing.T) {
 		})
 	}
 }
+
+// A half-written mapping is what a hand-authored catalogue produces, and it does
+// nothing loudly: the resource is never written to OpenStack, and an ignored
+// overcommit flag sends the accounting back to billing declared limits.
+func TestValidateManagedProjects_RejectsAHalfWrittenMapping(t *testing.T) {
+	cases := map[string]ManagedProject{
+		"a multiplier with nothing to convert for": {ID: "ram", Name: "RAM", OSMultiplier: 1024},
+		"measuring a field that is not named":      {ID: "ram", Name: "RAM", OSOvercommitCheck: true},
+		"mirroring into nothing":                   {ID: "cores", Name: "Cores", OSLinkedField: "instances"},
+	}
+
+	for name, def := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateManagedProjects([]ManagedProject{def}); err == nil {
+				t.Fatalf("accepted %s", name)
+			}
+		})
+	}
+
+	// A resource with no OpenStack side at all stays valid: GPUs have no quota
+	// field, and refusing that would make the built-in catalogue invalid.
+	if err := ValidateManagedProjects([]ManagedProject{{ID: "gpu", Name: "GPUs"}}); err != nil {
+		t.Errorf("a resource without any mapping must remain valid: %v", err)
+	}
+}

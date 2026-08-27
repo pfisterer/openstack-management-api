@@ -84,10 +84,18 @@ func TestLoadResourceCatalogue_StopsOnBadInput(t *testing.T) {
 // proving nothing. Checked by removing the guard: with the OIDC values in place
 // the test goes red, without them it stays green either way.
 func TestLoadAppConfiguration_TheCatalogueDecidesWhetherItStarts(t *testing.T) {
+	// Every OTHER required setting, so the catalogue is the only variable.
+	//
+	// Spelled out rather than relying on what happens to be in the environment:
+	// loadAppConfiguration reads the repository's .env, so a developer's file
+	// supplies these locally and CI has none. The first version of this test was
+	// green here and red there for exactly that reason.
 	setMinimumConfig := func(t *testing.T) {
 		t.Helper()
 		t.Setenv("OIDC_ISSUER_URL", "https://sso.example/realms/test")
 		t.Setenv("OIDC_CLIENT_ID", "test-client")
+		t.Setenv("OPENSTACK_AUTH_URL", "https://openstack.example/v3")
+		t.Setenv("OPENSTACK_REGION", "TestRegion")
 	}
 
 	t.Run("a valid catalogue does not block startup", func(t *testing.T) {

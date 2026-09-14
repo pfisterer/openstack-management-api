@@ -361,6 +361,21 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 		return res, fmt.Errorf("resolve scope parent: %w", err)
 	}
 
+	// Under the modern RBAC defaults Nova/Neutron/Cinder only accept quota and
+	// grant calls from a PROJECT-scoped admin token, while the primary client
+	// may be domain-scoped (that is what project creation needs). The client
+	// can build a second, project-scoped provider for exactly those services —
+	// scoped to the scope parent, the one project that outlives all managed
+	// ones. A no-op for every other auth method, and a failure only means
+	// quota calls keep being refused (and retried), which the sync path
+	// already reports loudly.
+	if scopeParentID != "" {
+		if err := r.osClient.EnsureProjectScope(scopeParentID); err != nil {
+			r.log.Warnw("Project-scoped service clients unavailable; quota and grant calls may be refused",
+				"scope_project_id", scopeParentID, "error", err)
+		}
+	}
+
 	osProjects, err := r.loadScopedOSProjects(scopeParentID)
 	if err != nil {
 		return res, fmt.Errorf("list OS projects: %w", err)
@@ -1265,10 +1280,10 @@ func (r *Reconciler) createOpenstackProjectForLeaf(_ context.Context, leaf tree.
 			"os_project_id", project.ID, "node_id", leaf.ID, "error", quotaErr)
 		// Return the project so the caller persists OSProjectID. The next reconcile cycle
 		// will find the project via its tag and call syncQuota, which retries quota updates.
+	} else {
+		r.log.Infow("OS project created and quota set",
+			"node_id", leaf.ID, "os_project_id", project.ID)
 	}
-
-	r.log.Infow("OS project created and quota set",
-		"node_id", leaf.ID, "os_project_id", project.ID)
 	return osclient.ProjectInfo{ID: project.ID, Name: project.Name, Tags: project.Tags}, nil
 }
 

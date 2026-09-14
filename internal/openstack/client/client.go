@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"sync/atomic"
 
 	"github.com/gophercloud/gophercloud"
 	"github.com/gophercloud/gophercloud/openstack"
@@ -51,6 +52,101 @@ type OpenStackClient struct {
 	federatedIdPID        string
 	federatedProtocolID   string
 	federatedDomainID     string
+
+	// Clouds enforcing the modern RBAC defaults split the world in two: Keystone
+	// wants the DOMAIN scope for creating projects (which also makes children
+	// inherit the domain), while Nova/Neutron/Cinder accept quota and grant
+	// calls only from a PROJECT-scoped admin token — the project does not have
+	// to be the target, but the scope TYPE must be project. So a domain-scoped
+	// client carries the recipe for a second, project-scoped provider here and
+	// builds it lazily via EnsureProjectScope once a stable project (the scope
+	// parent) exists. Nil for every other auth method: then the primary clients
+	// serve everything, as before.
+	projectScopeAuth *PasswordAuthOpts
+	authURL          string
+	insecure         bool
+	projectScoped    atomic.Pointer[projectScopedServices]
+}
+
+// projectScopedServices are the service clients backed by the project-scoped
+// token. Compute/network/block only: Keystone stays on the primary scope.
+type projectScopedServices struct {
+	compute *gophercloud.ServiceClient
+	network *gophercloud.ServiceClient
+	block   *gophercloud.ServiceClient
+}
+
+// computeSvc/networkSvc/blockSvc return the project-scoped client once
+// EnsureProjectScope has built it, and the primary one before that (or forever,
+// for auth methods that never need the split).
+func (c *OpenStackClient) computeSvc() *gophercloud.ServiceClient {
+	if s := c.projectScoped.Load(); s != nil {
+		return s.compute
+	}
+	return c.Compute
+}
+
+func (c *OpenStackClient) networkSvc() *gophercloud.ServiceClient {
+	if s := c.projectScoped.Load(); s != nil {
+		return s.network
+	}
+	return c.Network
+}
+
+func (c *OpenStackClient) blockSvc() *gophercloud.ServiceClient {
+	if s := c.projectScoped.Load(); s != nil {
+		return s.block
+	}
+	return c.Block
+}
+
+// EnsureProjectScope authenticates the second, PROJECT-scoped provider (see the
+// struct comment) against the given project and swaps the compute/network/block
+// clients over to it. A no-op when the client does not need the split or has
+// already built it. The project should be one that outlives every managed
+// project — the scope parent — because the token re-authenticates against it
+// for as long as the process runs.
+func (c *OpenStackClient) EnsureProjectScope(projectID string) error {
+	if c.projectScopeAuth == nil || c.projectScoped.Load() != nil || projectID == "" {
+		return nil
+	}
+	opts := c.projectScopeAuth
+	authOpts := gophercloud.AuthOptions{
+		IdentityEndpoint: c.authURL,
+		Username:         opts.Username,
+		Password:         opts.Password,
+		DomainName:       opts.UserDomainName,
+		AllowReauth:      true,
+		Scope:            &gophercloud.AuthScope{ProjectID: projectID},
+	}
+	provider, err := openstack.NewClient(c.authURL)
+	if err != nil {
+		return fmt.Errorf("project-scoped provider: %w", err)
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if c.insecure {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
+	provider.HTTPClient = http.Client{Transport: transport}
+	if err := openstack.Authenticate(provider, authOpts); err != nil {
+		return fmt.Errorf("project-scoped authentication: %w", err)
+	}
+	eo := gophercloud.EndpointOpts{Region: c.region, Availability: gophercloud.AvailabilityPublic}
+	compute, err := openstack.NewComputeV2(provider, eo)
+	if err != nil {
+		return fmt.Errorf("project-scoped compute client: %w", err)
+	}
+	network, err := openstack.NewNetworkV2(provider, eo)
+	if err != nil {
+		return fmt.Errorf("project-scoped network client: %w", err)
+	}
+	block, err := newBlockStorageV3(provider, eo)
+	if err != nil {
+		return fmt.Errorf("project-scoped block storage client: %w", err)
+	}
+	c.projectScoped.Store(&projectScopedServices{compute: compute, network: network, block: block})
+	c.log.Infow("Project-scoped service clients ready", "scope_project_id", projectID)
+	return nil
 }
 
 // SetTagConfig sets the managed-project tag and resource-ID tag prefix from config.
@@ -121,6 +217,8 @@ func NewOSAdminWithRegion(authURL, token, projectID, region string, insecure boo
 	client.region = region
 	client.logger = logger
 	client.log = sugaredLogger
+	client.authURL = authURL
+	client.insecure = insecure
 	return client, nil
 }
 
@@ -243,7 +341,14 @@ func NewOSAdminWithPassword(
 	// Note: AuthOptions.DomainName stays set — it identifies the *user's* domain
 	// and is required for username auth; the scope above is independent of it.
 
-	return newOSAdmin(authURL, authOpts, region, insecure, logger, sugaredLogger)
+	client, err := newOSAdmin(authURL, authOpts, region, insecure, logger, sugaredLogger)
+	if err != nil {
+		return nil, err
+	}
+	if !opts.SystemScope && opts.DomainName != "" {
+		client.projectScopeAuth = &opts
+	}
+	return client, nil
 }
 
 // newOSAdmin authenticates with the given options and builds the service clients.
@@ -298,6 +403,8 @@ func newOSAdmin(
 	client.region = region
 	client.logger = logger
 	client.log = sugaredLogger
+	client.authURL = authURL
+	client.insecure = insecure
 	return client, nil
 }
 

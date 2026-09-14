@@ -41,7 +41,7 @@ type QuotaSet struct {
 func (c *OpenStackClient) GetProjectQuotas(projectID string) (*QuotaSet, error) {
 	result := QuotaSet{ProjectID: projectID}
 
-	compute, err := computequotas.GetDetail(c.Compute, projectID).Extract()
+	compute, err := computequotas.GetDetail(c.computeSvc(), projectID).Extract()
 	if err != nil {
 		return nil, fmt.Errorf("compute quotas: %w", err)
 	}
@@ -49,7 +49,7 @@ func (c *OpenStackClient) GetProjectQuotas(projectID string) (*QuotaSet, error) 
 	result.Cores = compute.Cores.Limit
 	result.RAM = compute.RAM.Limit
 
-	net, err := networkquotas.Get(c.Network, projectID).Extract()
+	net, err := networkquotas.Get(c.networkSvc(), projectID).Extract()
 	if err != nil {
 		return nil, fmt.Errorf("network quotas: %w", err)
 	}
@@ -60,7 +60,7 @@ func (c *OpenStackClient) GetProjectQuotas(projectID string) (*QuotaSet, error) 
 	result.FloatingIPs = net.FloatingIP
 	result.SecurityGroups = net.SecurityGroup
 
-	blk, err := blockquotas.Get(c.Block, projectID).Extract()
+	blk, err := blockquotas.Get(c.blockSvc(), projectID).Extract()
 	if err != nil {
 		return nil, fmt.Errorf("block storage quotas: %w", err)
 	}
@@ -78,7 +78,7 @@ func (c *OpenStackClient) UpdateProjectQuotas(projectID string, quotas QuotaSet)
 		Cores:     &quotas.Cores,
 		RAM:       &quotas.RAM,
 	}
-	if _, err := computequotas.Update(c.Compute, projectID, computeOpts).Extract(); err != nil {
+	if _, err := computequotas.Update(c.computeSvc(), projectID, computeOpts).Extract(); err != nil {
 		return fmt.Errorf("compute quotas: %w", err)
 	}
 
@@ -90,7 +90,7 @@ func (c *OpenStackClient) UpdateProjectQuotas(projectID string, quotas QuotaSet)
 		FloatingIP:    &quotas.FloatingIPs,
 		SecurityGroup: &quotas.SecurityGroups,
 	}
-	if _, err := networkquotas.Update(c.Network, projectID, networkOpts).Extract(); err != nil {
+	if _, err := networkquotas.Update(c.networkSvc(), projectID, networkOpts).Extract(); err != nil {
 		return fmt.Errorf("network quotas: %w", err)
 	}
 
@@ -99,7 +99,7 @@ func (c *OpenStackClient) UpdateProjectQuotas(projectID string, quotas QuotaSet)
 		Snapshots: &quotas.Snapshots,
 		Gigabytes: &quotas.Gigabytes,
 	}
-	if _, err := blockquotas.Update(c.Block, projectID, blockOpts).Extract(); err != nil {
+	if _, err := blockquotas.Update(c.blockSvc(), projectID, blockOpts).Extract(); err != nil {
 		return fmt.Errorf("block storage quotas: %w", err)
 	}
 
@@ -121,14 +121,14 @@ func (c *OpenStackClient) UpdateManagedQuotas(projectID string, quotas QuotaSet)
 		Cores:     &quotas.Cores,
 		RAM:       &quotas.RAM,
 	}
-	if _, err := computequotas.Update(c.Compute, projectID, computeOpts).Extract(); err != nil {
+	if _, err := computequotas.Update(c.computeSvc(), projectID, computeOpts).Extract(); err != nil {
 		return fmt.Errorf("compute quotas: %w", err)
 	}
 
 	blockOpts := blockquotas.UpdateOpts{
 		Gigabytes: &quotas.Gigabytes,
 	}
-	if _, err := blockquotas.Update(c.Block, projectID, blockOpts).Extract(); err != nil {
+	if _, err := blockquotas.Update(c.blockSvc(), projectID, blockOpts).Extract(); err != nil {
 		return fmt.Errorf("block storage quotas: %w", err)
 	}
 
@@ -147,7 +147,7 @@ func (c *OpenStackClient) UpdateManagedQuotas(projectID string, quotas QuotaSet)
 func (c *OpenStackClient) GetProjectQuotaDetail(projectID string) (*ProjectQuotaDetail, error) {
 	detail := &ProjectQuotaDetail{ProjectID: projectID}
 
-	compute, err := computequotas.GetDetail(c.Compute, projectID).Extract()
+	compute, err := computequotas.GetDetail(c.computeSvc(), projectID).Extract()
 	if err != nil {
 		return nil, fmt.Errorf("compute quota detail: %w", err)
 	}
@@ -166,7 +166,7 @@ func (c *OpenStackClient) GetProjectQuotaDetail(projectID string) (*ProjectQuota
 	// storage in use: the accounting billed the declared limit, and the
 	// shrink-after-filling loophole stayed open for storage while it was closed
 	// for cores and RAM. Measured on staging: 3 GB of volumes, reported as 0.
-	usage, err := blockquotas.GetUsage(c.Block, projectID).Extract()
+	usage, err := blockquotas.GetUsage(c.blockSvc(), projectID).Extract()
 	if err != nil {
 		return nil, fmt.Errorf("block storage quota usage: %w", err)
 	}

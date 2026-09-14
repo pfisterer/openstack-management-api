@@ -58,7 +58,7 @@ func (c *OpenStackClient) AddGrant(grant common.Grant, projectID string) (bool, 
 		if existing != "" {
 			return false, nil
 		}
-		_, err = rbacpolicies.Create(c.Network, rbacpolicies.CreateOpts{
+		_, err = rbacpolicies.Create(c.networkSvc(), rbacpolicies.CreateOpts{
 			Action:       rbacpolicies.ActionAccessShared,
 			ObjectType:   "network",
 			ObjectID:     grant.Target,
@@ -81,7 +81,7 @@ func (c *OpenStackClient) AddGrant(grant common.Grant, projectID string) (bool, 
 		return fresh && err == nil, wrapGrant("accept image member", grant, projectID, err)
 
 	case common.GrantFlavor:
-		err := flavors.AddAccess(c.Compute, grant.Target,
+		err := flavors.AddAccess(c.computeSvc(), grant.Target,
 			flavors.AddAccessOpts{Tenant: projectID}).Err
 		if isConflict(err) {
 			return false, nil
@@ -106,7 +106,7 @@ func (c *OpenStackClient) RemoveGrant(grant common.Grant, projectID string) (boo
 		if id == "" {
 			return false, nil
 		}
-		err = rbacpolicies.Delete(c.Network, id).Err
+		err = rbacpolicies.Delete(c.networkSvc(), id).Err
 		return err == nil, wrapGrant("unshare network", grant, projectID, ignoreNotFound(err))
 
 	case common.GrantImage:
@@ -114,7 +114,7 @@ func (c *OpenStackClient) RemoveGrant(grant common.Grant, projectID string) (boo
 		return err == nil, wrapGrant("remove image member", grant, projectID, ignoreNotFound(err))
 
 	case common.GrantFlavor:
-		err := flavors.RemoveAccess(c.Compute, grant.Target,
+		err := flavors.RemoveAccess(c.computeSvc(), grant.Target,
 			flavors.RemoveAccessOpts{Tenant: projectID}).Err
 		return err == nil, wrapGrant("remove flavor access", grant, projectID, ignoreNotFound(err))
 
@@ -131,7 +131,7 @@ func (c *OpenStackClient) RemoveGrant(grant common.Grant, projectID string) (boo
 // needed because deletion takes the POLICY, not the pair that describes it.
 func (c *OpenStackClient) findNetworkRBAC(networkID, projectID string) (string, error) {
 	var found string
-	err := rbacpolicies.List(c.Network, rbacpolicies.ListOpts{
+	err := rbacpolicies.List(c.networkSvc(), rbacpolicies.ListOpts{
 		ObjectType:   "network",
 		ObjectID:     networkID,
 		TargetTenant: projectID,
@@ -170,7 +170,7 @@ func (c *OpenStackClient) hasImageMember(imageID, projectID string) (bool, error
 
 func (c *OpenStackClient) hasFlavorAccess(flavorID, projectID string) (bool, error) {
 	var found bool
-	err := flavors.ListAccesses(c.Compute, flavorID).EachPage(func(page pagination.Page) (bool, error) {
+	err := flavors.ListAccesses(c.computeSvc(), flavorID).EachPage(func(page pagination.Page) (bool, error) {
 		accesses, err := flavors.ExtractAccesses(page)
 		if err != nil {
 			return false, err

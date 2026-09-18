@@ -917,6 +917,37 @@ func (s *Service) validateChildBudgetLimit(parent *Node, childLimit common.Proje
 	return nil
 }
 
+// validateLeafAvailabilities refuses a project limit that grants an availability
+// the project's budget does not hold.
+//
+// Budgets get this rule on every edge from validateChildBudgetLimit; projects
+// need it separately, because nothing else would catch it — the capacity and
+// per-requester checks count quantities only, and availabilities never sum.
+// Without it anyone who may request under a budget could grant themselves any
+// availability by naming it, and an auto-approve budget would even approve it
+// on the spot. The UI hides what a budget does not carry, but that is only
+// presentation.
+//
+// The root holds the whole catalogue (see availableResourcesFor).
+func (s *Service) validateLeafAvailabilities(parent *Node, limit common.ProjectQuota) error {
+	for _, r := range s.resources {
+		if !s.isBool(r.ID) || limit[r.ID] != 1 {
+			continue
+		}
+		if parent == nil {
+			return fmt.Errorf("%q cannot be granted without a budget", r.ID)
+		}
+		if parent.ID == RootNodeID {
+			continue
+		}
+		if held := parent.Limit[r.ID]; held == 1 || held == common.UnlimitedQuota {
+			continue
+		}
+		return fmt.Errorf("%q is not available in budget %q — it has to be delegated to that budget first", r.ID, nodeLabel(*parent))
+	}
+	return nil
+}
+
 // validateAutoApprove checks the per-requester limit of an auto-approve policy.
 func (s *Service) validateAutoApprove(a *AutoApprove) error {
 	if a == nil {

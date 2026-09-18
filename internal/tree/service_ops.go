@@ -420,6 +420,11 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 	if !isManager && !isEligibleRequester(userTokens, parent) {
 		return Node{}, common.ErrForbidden
 	}
+	if req.Kind == KindProject {
+		if err := s.validateLeafAvailabilities(parent, req.Limit); err != nil {
+			return Node{}, err
+		}
+	}
 	// Requesters may be limited to leaves: a course budget usually wants
 	// projects from its students, not a sub-budget tree underneath. Managers are
 	// exempt — they own the structure and create sub-budgets directly.
@@ -716,6 +721,13 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor Actor, u
 		var validationErr error
 		if current.IsLeaf() {
 			validationErr = s.validateLeafLimit(*req.Limit)
+			if validationErr == nil && current.ParentID != nil {
+				parent, err := s.store.GetNode(ctx, *current.ParentID)
+				if err != nil {
+					return Node{}, fmt.Errorf("load parent node: %w", err)
+				}
+				validationErr = s.validateLeafAvailabilities(parent, *req.Limit)
+			}
 		} else {
 			validationErr = s.validateBudgetLimit(*req.Limit)
 		}
@@ -874,6 +886,11 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor Actor, us
 		}
 		if err := s.checkCapacity(ctx, ancestors, finalLimit, subtract); err != nil {
 			return Node{}, err
+		}
+		if len(ancestors) > 0 {
+			if err := s.validateLeafAvailabilities(&ancestors[0], finalLimit); err != nil {
+				return Node{}, err
+			}
 		}
 	} else {
 		if len(ancestors) > 0 {
@@ -1098,6 +1115,11 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor Actor, 
 		if current.IsLeaf() {
 			if err := s.checkCapacity(ctx, newParentChain, current.Limit, nil); err != nil {
 				return Node{}, err
+			}
+			if current.Status == StatusApproved || current.Status == StatusChangePending {
+				if err := s.validateLeafAvailabilities(newParent, current.Limit); err != nil {
+					return Node{}, err
+				}
 			}
 		} else {
 			if err := s.validateChildBudgetLimit(newParent, current.Limit); err != nil {

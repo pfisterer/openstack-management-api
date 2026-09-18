@@ -145,8 +145,6 @@ spec:
               value: {{ .Values.openstackManagementApi.api.baseUrl | quote }}
             - name: API_TOKEN_TTL_HOURS
               value: {{ .Values.openstackManagementApi.api.tokenTTLHours | toString | quote }}
-            - name: API_TOKEN_MAX_TTL_HOURS
-              value: {{ .Values.openstackManagementApi.api.tokenMaxTTLHours | toString | quote }}
             - name: API_TOKEN_ALLOW_NEVER_EXPIRES
               value: {{ .Values.openstackManagementApi.api.tokenAllowNeverExpires | toString | quote }}
             - name: API_DUMMY_AUTH

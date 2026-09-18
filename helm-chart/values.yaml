@@ -106,12 +106,11 @@ openstackManagementApi:
   api:
     bind: ":8083"
     baseUrl: "http://localhost:8083"
-    # Lifetime of an API token when the request does not ask for one, and the
-    # longest one a caller may ask for. A request over the maximum is refused
-    # rather than shortened — a token that dies earlier than the person was told
-    # is an outage nobody traces back to the moment they created it.
+    # Lifetime of an API token when the request does not ask for one. A caller
+    # may ask for any other lifetime; there is no upper bound, because a token
+    # without expiry is allowed below and a cap on finite lifetimes would only
+    # push people towards it.
     tokenTTLHours: 720
-    tokenMaxTTLHours: 8760
     # Whether a token may be issued with no expiry at all. On, because the
     # non-interactive callers this exists for — a CI job, a cron script, an
     # agent — have nobody to notice a silent expiry, and an expiry nobody is

@@ -163,9 +163,6 @@ type WebServerConfig struct {
 	// request does not say. It matches dynamic-zones' API_TOKEN_TTL_HOURS so
 	// that the two services do not answer the same question differently.
 	APITokenTTLHours int `json:"api_token_ttl_hours"`
-	// APITokenMaxTTLHours is the longest lifetime a caller may ask for. Zero
-	// means no bound.
-	APITokenMaxTTLHours int `json:"api_token_max_ttl_hours"`
 	// APITokenAllowNeverExpires permits tokens with no expiry.
 	//
 	// The code default is off, deliberately more conservative than the chart:
@@ -282,7 +279,6 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			GinBindString:             envconf.String("API_BIND", ":8083"),
 			CORSAllowedOrigins:        parseCSVEnv(envconf.String("CORS_ALLOWED_ORIGINS", "")),
 			APITokenTTLHours:          envconf.Int("API_TOKEN_TTL_HOURS", 24),
-			APITokenMaxTTLHours:       envconf.Int("API_TOKEN_MAX_TTL_HOURS", 8760),
 			APITokenAllowNeverExpires: envconf.Bool("API_TOKEN_ALLOW_NEVER_EXPIRES", false),
 		},
 

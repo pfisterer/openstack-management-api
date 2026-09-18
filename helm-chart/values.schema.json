@@ -187,10 +187,6 @@
               "type": "integer",
               "minimum": 1
             },
-            "tokenMaxTTLHours": {
-              "type": "integer",
-              "minimum": 1
-            },
             "tokenAllowNeverExpires": {
               "type": "boolean"
             },

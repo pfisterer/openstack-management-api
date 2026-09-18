@@ -291,7 +291,6 @@ func RunApplication() {
 			Service: apiTokens,
 			TTL: token.TTLPolicy{
 				Default:    time.Duration(config.WebServer.APITokenTTLHours) * time.Hour,
-				Max:        time.Duration(config.WebServer.APITokenMaxTTLHours) * time.Hour,
 				AllowNever: config.WebServer.APITokenAllowNeverExpires,
 			},
 		},

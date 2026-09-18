@@ -2,6 +2,7 @@ package tree
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sort"
 	"strings"
@@ -29,6 +30,9 @@ type NodeQuery struct {
 	EligibleAny common.TokenList
 }
 
+// ErrSkipUpdate is returned from an UpdateNode callback to leave the node unchanged.
+var ErrSkipUpdate = errors.New("skip update")
+
 // Store is the persistence interface of the tree model.
 type Store interface {
 	// IsEmpty reports whether no nodes exist yet (drives mock seeding).
@@ -53,6 +57,17 @@ type Store interface {
 	CountNodes(ctx context.Context, q NodeQuery) (int, error)
 	UpsertNode(ctx context.Context, n Node) error
 	DeleteNodes(ctx context.Context, ids []string) error
+	// UpdateNode applies fn to the node's CURRENT stored state and writes the
+	// result back in one step. It exists for writers that decided what to change
+	// long before they write — the reconciler, after slow OpenStack round-trips —
+	// so they change their own fields on today's node instead of writing back a
+	// copy that may predate a user's change. fn returning ErrSkipUpdate leaves the
+	// node as it is. Reports whether a write happened; a missing node is not an
+	// error.
+	UpdateNode(ctx context.Context, id string, fn func(n *Node) error) (bool, error)
+	// DeleteNodeIf deletes the node only if pred holds for its current state, for
+	// the same reason. Reports whether it deleted.
+	DeleteNodeIf(ctx context.Context, id string, pred func(n Node) bool) (bool, error)
 	// CountChildren returns the number of direct children per parent ID, in one
 	// query for the whole set. Parents without children are absent from the map.
 	CountChildren(ctx context.Context, parentIDs []string) (map[string]int, error)

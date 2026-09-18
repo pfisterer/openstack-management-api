@@ -48,6 +48,12 @@ type ReconcilerStore interface {
 	ListNodes(ctx context.Context, q tree.NodeQuery, limit, offset int) ([]tree.Node, error)
 	UpsertNode(ctx context.Context, n tree.Node) error
 	DeleteNodes(ctx context.Context, ids []string) error
+	// Every write to a node that existed when the pass started goes through
+	// these two: the pass loads its nodes once and then spends seconds per leaf
+	// in OpenStack, and writing that early copy back would undo whatever a user
+	// changed meanwhile — a change request, an approval, a release.
+	UpdateNode(ctx context.Context, id string, fn func(n *tree.Node) error) (bool, error)
+	DeleteNodeIf(ctx context.Context, id string, pred func(n tree.Node) bool) (bool, error)
 }
 
 // Config holds all tunables for the reconciler.
@@ -459,9 +465,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 			res.projectsCreated++
 			leaf.OSProjectID = created.ID
 			if !r.cfg.DryRun {
-				if err := r.store.UpsertNode(ctx, leaf); err != nil {
-					r.log.Warnw("Failed to persist OSProjectID on leaf", "node_id", leaf.ID, "error", err)
-				}
+				r.persistOSProjectID(ctx, leaf.ID, created.ID)
 			}
 			r.syncMembers(leaf, created.ID)
 			r.syncGroupAssignments(leaf, created.ID, groupTokenToOSID)
@@ -472,9 +476,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 				continue
 			}
 			if applyOSSyncState(&leaf, osProject.ID, overcommitted, inUse, measured) && !r.cfg.DryRun {
-				if err := r.store.UpsertNode(ctx, leaf); err != nil {
-					r.log.Warnw("Failed to persist OS sync state on leaf", "node_id", leaf.ID, "error", err)
-				}
+				r.persistOSSyncState(ctx, leaf.ID, osProject.ID, overcommitted, inUse, measured)
 			}
 			r.syncMembers(leaf, osProject.ID)
 			r.syncGroupAssignments(leaf, osProject.ID, groupTokenToOSID)
@@ -511,20 +513,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 	}
 
 	// Clean up imported leaves whose OS projects are no longer in scope.
-	for osID, staleLeaf := range importedByOSProjectID {
-		if _, stillInScope := osProjectByOSID[osID]; stillInScope {
-			continue
-		}
-		r.log.Infow("Removing stale imported leaf (OS project gone from scope)",
-			"node_id", staleLeaf.ID, "os_project_id", osID)
-		if !r.cfg.DryRun {
-			if err := r.store.DeleteNodes(ctx, []string{staleLeaf.ID}); err != nil {
-				r.log.Warnw("Failed to delete stale imported leaf",
-					"id", staleLeaf.ID, "error", err)
-			}
-		}
-		res.importedRemoved++
-	}
+	r.removeStaleImports(ctx, importedByOSProjectID, osProjectByOSID, &res)
 
 	// Released leaves whose OpenStack project has been deleted are removed too.
 	//
@@ -598,9 +587,13 @@ func (r *Reconciler) removeReleasedLeavesWithoutProject(
 			"node_id", leaf.ID, "name", leaf.Name, "os_project_id", leaf.OSProjectID,
 			"dry_run", r.cfg.DryRun)
 		if !r.cfg.DryRun {
-			if err := r.store.DeleteNodes(ctx, []string{leaf.ID}); err != nil {
+			deleted, err := r.store.DeleteNodeIf(ctx, leaf.ID, func(n tree.Node) bool { return n.Status == tree.StatusReleased })
+			if err != nil {
 				r.log.Warnw("Failed to remove released leaf",
 					"node_id", leaf.ID, "error", err)
+				continue
+			}
+			if !deleted {
 				continue
 			}
 		}
@@ -700,9 +693,13 @@ func (r *Reconciler) recoverUntaggedProject(
 			r.log.Infow("Removing the imported leaf that shadowed a managed project",
 				"node_id", leaf.ID, "shadow_node_id", shadow.ID, "os_project_id", osProject.ID)
 			if !r.cfg.DryRun {
-				if err := r.store.DeleteNodes(ctx, []string{shadow.ID}); err != nil {
+				deleted, err := r.store.DeleteNodeIf(ctx, shadow.ID, isStillImported)
+				if err != nil {
 					r.log.Warnw("Failed to delete the shadowing imported leaf",
 						"shadow_node_id", shadow.ID, "error", err)
+				}
+				if err != nil || !deleted {
+					return osProject, true
 				}
 			}
 			res.importedRemoved++
@@ -763,14 +760,23 @@ func (r *Reconciler) promoteImportedLeaves(
 			}
 		}
 
-		promoted := leaf
-		promoted.Status = tree.StatusPending
-		promoted.Flags = removeFlag(leaf.Flags, tree.FlagPromoteOnReconcile)
-
 		if !r.cfg.DryRun {
-			if err := r.store.UpsertNode(ctx, promoted); err != nil {
+			promoted, err := r.store.UpdateNode(ctx, leaf.ID, func(n *tree.Node) error {
+				// The promotion may have been withdrawn while this pass talked to
+				// OpenStack; then there is nothing to promote any more.
+				if n.Status != tree.StatusImported || !slices.Contains(n.Flags, tree.FlagPromoteOnReconcile) {
+					return tree.ErrSkipUpdate
+				}
+				n.Status = tree.StatusPending
+				n.Flags = removeFlag(n.Flags, tree.FlagPromoteOnReconcile)
+				return nil
+			})
+			if err != nil {
 				r.log.Warnw("Failed to persist promoted leaf",
 					"node_id", leaf.ID, "error", err)
+				continue
+			}
+			if !promoted {
 				continue
 			}
 		}
@@ -1317,6 +1323,62 @@ func applyOSSyncState(leaf *tree.Node, osProjectID string, overcommitted bool, i
 	return true
 }
 
+// removeStaleImports deletes imported leaves whose OpenStack project is no longer
+// in scope — each only if it is still an import when the delete happens.
+func (r *Reconciler) removeStaleImports(ctx context.Context, importedByOSProjectID map[string]tree.Node, osProjectByOSID map[string]osclient.ProjectInfo, res *reconcileResult) {
+	for osID, staleLeaf := range importedByOSProjectID {
+		if _, stillInScope := osProjectByOSID[osID]; stillInScope {
+			continue
+		}
+		r.log.Infow("Removing stale imported leaf (OS project gone from scope)",
+			"node_id", staleLeaf.ID, "os_project_id", osID)
+		if !r.cfg.DryRun {
+			deleted, err := r.store.DeleteNodeIf(ctx, staleLeaf.ID, isStillImported)
+			if err != nil {
+				r.log.Warnw("Failed to delete stale imported leaf",
+					"id", staleLeaf.ID, "error", err)
+				continue
+			}
+			if !deleted {
+				// Promoted or moved since the pass loaded it: no longer an import.
+				continue
+			}
+		}
+		res.importedRemoved++
+	}
+}
+
+// persistOSProjectID records the project created for a leaf. Written onto the
+// node as it is now and regardless of its status: a leaf released meanwhile
+// still needs the ID, or its project could never be cleaned up.
+func (r *Reconciler) persistOSProjectID(ctx context.Context, leafID, osProjectID string) {
+	if _, err := r.store.UpdateNode(ctx, leafID, func(n *tree.Node) error {
+		n.OSProjectID = osProjectID
+		return nil
+	}); err != nil {
+		r.log.Warnw("Failed to persist OSProjectID on leaf", "node_id", leafID, "error", err)
+	}
+}
+
+// persistOSSyncState writes what the pass measured in OpenStack onto the node as
+// it is now, touching only those fields.
+func (r *Reconciler) persistOSSyncState(ctx context.Context, leafID, osProjectID string, overcommitted bool, inUse common.ProjectQuota, measured bool) {
+	if _, err := r.store.UpdateNode(ctx, leafID, func(n *tree.Node) error {
+		if !applyOSSyncState(n, osProjectID, overcommitted, inUse, measured) {
+			return tree.ErrSkipUpdate
+		}
+		return nil
+	}); err != nil {
+		r.log.Warnw("Failed to persist OS sync state on leaf", "node_id", leafID, "error", err)
+	}
+}
+
+// isStillImported is the guard for deleting or refreshing an imported leaf: once
+// promoted it belongs to the managed tree and the import logic must leave it be.
+func isStillImported(n tree.Node) bool {
+	return n.Status == tree.StatusImported
+}
+
 // syncQuota pushes the current approved limit to an existing OS project and returns
 // whether the project is currently overcommitted (in-use > new limit).
 // For change_pending leaves the current approved limit (leaf.Limit) is used —
@@ -1624,24 +1686,39 @@ func (r *Reconciler) upsertImported(
 		OSProjectName:            osProject.Name,
 	}
 
-	// Preserve existing history, flags, promote state and creation time so they
-	// aren't wiped on every reconcile cycle.
-	if prev, ok := existing[osProject.ID]; ok {
-		leaf.History = prev.History
-		leaf.Flags = prev.Flags
-		leaf.ParentID = prev.ParentID
-		leaf.Owner = prev.Owner
-		leaf.CreatedAt = prev.CreatedAt
-	} else {
-		leaf.CreatedAt = time.Now().UTC().Format(time.RFC3339)
-	}
-
 	r.log.Infow("Upserting imported leaf",
 		"node_id", syntheticID, "os_project_id", osProject.ID,
 		"project_name", osProject.Name, "dry_run", r.cfg.DryRun)
 
+	_, known := existing[osProject.ID]
+	if !known {
+		leaf.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
+
 	if !r.cfg.DryRun {
-		if err := r.store.UpsertNode(ctx, leaf); err != nil {
+		if known {
+			// Refresh only what OpenStack says about the project, on the node as it
+			// is now: history, parent, owner and flags belong to the tree, and a
+			// promotion requested during this pass must survive it.
+			_, err := r.store.UpdateNode(ctx, syntheticID, func(n *tree.Node) error {
+				if !isStillImported(*n) || slices.Contains(n.Flags, tree.FlagPromoteOnReconcile) {
+					return tree.ErrSkipUpdate
+				}
+				n.Name = leaf.Name
+				n.Reason = leaf.Reason
+				n.Limit = leaf.Limit
+				n.AuthorizedUsers = leaf.AuthorizedUsers
+				n.ExternalGroupAssignments = leaf.ExternalGroupAssignments
+				n.OSProjectID = leaf.OSProjectID
+				n.OSProjectName = leaf.OSProjectName
+				return nil
+			})
+			if err != nil {
+				r.log.Warnw("Failed to update imported leaf",
+					"id", syntheticID, "error", err)
+				return
+			}
+		} else if err := r.store.UpsertNode(ctx, leaf); err != nil {
 			r.log.Warnw("Failed to upsert imported leaf",
 				"id", syntheticID, "error", err)
 			return

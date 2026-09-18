@@ -35,6 +35,13 @@ func (s *deletedStore) DeleteNodes(_ context.Context, ids []string) error {
 	return nil
 }
 
+// DeleteNodeIf records like DeleteNodes: this fake has no nodes to check the
+// predicate against, so every guarded delete counts as allowed.
+func (s *deletedStore) DeleteNodeIf(_ context.Context, id string, _ func(n tree.Node) bool) (bool, error) {
+	s.deleted = append(s.deleted, id)
+	return true, nil
+}
+
 const testTagPrefix = "managed-resource-id:"
 
 func testTagReader() fakeTagReader { return fakeTagReader{prefix: testTagPrefix} }

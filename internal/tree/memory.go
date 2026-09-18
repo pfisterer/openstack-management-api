@@ -2,6 +2,7 @@ package tree
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"sync"
 
@@ -109,6 +110,45 @@ func (s *InMemoryStore) UpsertNode(_ context.Context, n Node) error {
 	}
 	s.nodes = append(s.nodes, n)
 	return nil
+}
+
+func (s *InMemoryStore) UpdateNode(_ context.Context, id string, fn func(n *Node) error) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := range s.nodes {
+		if s.nodes[i].ID != id {
+			continue
+		}
+		n := s.nodes[i]
+		if err := fn(&n); err != nil {
+			if errors.Is(err, ErrSkipUpdate) {
+				return false, nil
+			}
+			return false, err
+		}
+		n.ID = id
+		s.nodes[i] = n
+		return true, nil
+	}
+	return false, nil
+}
+
+func (s *InMemoryStore) DeleteNodeIf(_ context.Context, id string, pred func(n Node) bool) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for i := range s.nodes {
+		if s.nodes[i].ID != id {
+			continue
+		}
+		if !pred(s.nodes[i]) {
+			return false, nil
+		}
+		s.nodes = append(s.nodes[:i], s.nodes[i+1:]...)
+		return true, nil
+	}
+	return false, nil
 }
 
 // CountChildren counts direct children per parent in a single pass.

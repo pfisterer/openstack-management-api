@@ -308,6 +308,70 @@ func (s *PostgresStore) UpsertNode(ctx context.Context, n Node) error {
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{UpdateAll: true}).Create(&row).Error
 }
 
+// UpdateNode reads the row under a row lock (SELECT … FOR UPDATE) and writes
+// fn's result in the same transaction, so nothing another writer committed in
+// between can be overwritten by a stale copy.
+func (s *PostgresStore) UpdateNode(ctx context.Context, id string, fn func(n *Node) error) (bool, error) {
+	updated := false
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var row nodeRow
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, "id = ?", id).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		n, err := fromNodeRow(row)
+		if err != nil {
+			return err
+		}
+		if err := fn(&n); err != nil {
+			if errors.Is(err, ErrSkipUpdate) {
+				return nil
+			}
+			return err
+		}
+		n.ID = id
+		out := toNodeRow(n)
+		if err := tx.Clauses(clause.OnConflict{UpdateAll: true}).Create(&out).Error; err != nil {
+			return err
+		}
+		updated = true
+		return nil
+	})
+	return updated, err
+}
+
+// DeleteNodeIf deletes under the same row lock, after checking pred against the
+// row as it is now.
+func (s *PostgresStore) DeleteNodeIf(ctx context.Context, id string, pred func(n Node) bool) (bool, error) {
+	deleted := false
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var row nodeRow
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, "id = ?", id).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		n, err := fromNodeRow(row)
+		if err != nil {
+			return err
+		}
+		if !pred(n) {
+			return nil
+		}
+		if err := tx.Where("id = ?", id).Delete(&nodeRow{}).Error; err != nil {
+			return err
+		}
+		deleted = true
+		return nil
+	})
+	return deleted, err
+}
+
 // CountChildren counts direct children per parent in one grouped query.
 func (s *PostgresStore) CountChildren(ctx context.Context, parentIDs []string) (map[string]int, error) {
 	if len(parentIDs) == 0 {

@@ -45,20 +45,23 @@ type CreateNodeRequest struct {
 	AutoApprove        *AutoApprove     `json:"auto_approve"`
 	// AllowSubBudgetRequests defaults to true when omitted.
 	AllowSubBudgetRequests *bool `json:"allow_sub_budget_requests"`
+	// AllowRequestsBeyondAutoApprove defaults to true when omitted.
+	AllowRequestsBeyondAutoApprove *bool `json:"allow_requests_beyond_auto_approve"`
 }
 
 // UpdateNodeRequest is a direct edit that takes effect immediately (no approval
 // cycle). Policy fields require a manager of the node or its ancestors; Limit
 // requires a manager of the parent chain (you cannot raise your own budget).
 type UpdateNodeRequest struct {
-	Name                   *string              `json:"name"`
-	AdminScope             *common.TokenList    `json:"admin_scope"`
-	EligibleRequesters     *common.TokenList    `json:"eligible_requesters"`
-	AutoApprove            *AutoApprove         `json:"auto_approve"`
-	ClearAutoApprove       bool                 `json:"clear_auto_approve"`
-	AllowSubBudgetRequests *bool                `json:"allow_sub_budget_requests"`
-	Limit                  *common.ProjectQuota `json:"limit"`
-	TerminationDate        *string              `json:"termination_date"`
+	Name                           *string              `json:"name"`
+	AdminScope                     *common.TokenList    `json:"admin_scope"`
+	EligibleRequesters             *common.TokenList    `json:"eligible_requesters"`
+	AutoApprove                    *AutoApprove         `json:"auto_approve"`
+	ClearAutoApprove               bool                 `json:"clear_auto_approve"`
+	AllowSubBudgetRequests         *bool                `json:"allow_sub_budget_requests"`
+	AllowRequestsBeyondAutoApprove *bool                `json:"allow_requests_beyond_auto_approve"`
+	Limit                          *common.ProjectQuota `json:"limit"`
+	TerminationDate                *string              `json:"termination_date"`
 	// ClearTerminationDate removes an existing end date: the node then runs
 	// until somebody changes it. A nil TerminationDate cannot express this —
 	// it means "leave as is" — so removal needs its own flag, like

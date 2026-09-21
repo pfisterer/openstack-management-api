@@ -37,7 +37,7 @@ like.
 
 The whole domain is **one tree of nodes** (`internal/tree`):
 
-- **Budget** — an inner node: a delegated pool of capacity. Its `admin_scope` tokens manage it (approve or reject children, edit it, delegate further); its `eligible_requesters` tokens may request child nodes under it. Delegation *is* creating a sub-budget with someone else in `admin_scope` — there is no separate concept for it. A budget may carry `auto_approve`: without a `per_requester_limit` it grants whatever it has room for (a pool), with one only up to that per-person cap. It covers later changes to a project as well.
+- **Budget** — an inner node: a delegated pool of capacity. Its `admin_scope` tokens manage it (approve or reject children, edit it, delegate further); its `eligible_requesters` tokens may request child nodes under it. Delegation *is* creating a sub-budget with someone else in `admin_scope` — there is no separate concept for it. A budget may carry `auto_approve`: without a `per_requester_limit` it grants whatever it has room for (a pool), with one only up to that per-person cap. It covers later changes to a project as well, and `allow_requests_beyond_auto_approve: false` turns it into a hard limit: what it does not cover is refused instead of waiting for a manager.
 - **Project** — a leaf: a concrete allocation with exactly one `owner`.
   Lifecycle `pending → approved → released`, plus `change_pending` while a change
   is proposed (rejecting a change returns the node to `approved`). Budgets go

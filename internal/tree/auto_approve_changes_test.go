@@ -1,6 +1,7 @@
 package tree_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
@@ -183,5 +184,63 @@ func TestChange_DirectChangeReplacesWaitingProposal(t *testing.T) {
 	n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(1))})
 	if n.Status != tree.StatusApproved || n.Pending != nil || n.Limit["cores"] != 1 {
 		t.Fatalf("a shrink should replace the waiting proposal, got %q, pending %v, limit %v", n.Status, n.Pending, n.Limit)
+	}
+}
+
+// newHardLimitFixture is newChangeFixture with requests beyond the policy
+// switched off: the policy is then a hard limit for the requesters.
+func newHardLimitFixture(t *testing.T, policy *tree.AutoApprove) changeFixture {
+	t.Helper()
+	f := newChangeFixture(t, policy, nil)
+	no := false
+	budget, err := f.svc.UpdateNode(f.budget.ID, tree.UpdateNodeRequest{AllowRequestsBeyondAutoApprove: &no},
+		tree.UIActor("root@x"), common.TokenList{"user:root@x", "group:root"})
+	if err != nil {
+		t.Fatalf("switch off requests beyond auto-approve: %v", err)
+	}
+	f.budget = budget
+	return f
+}
+
+// With the hard limit, a new project beyond the policy is refused outright
+// instead of waiting for a manager.
+func TestHardLimit_RefusesNewProjectBeyondPolicy(t *testing.T) {
+	f := newHardLimitFixture(t, &tree.AutoApprove{PerRequesterLimit: cores(4)})
+
+	if n := f.request(t, 4, nil); n.Status != tree.StatusApproved {
+		t.Fatalf("a request within the share should still be granted, got %q", n.Status)
+	}
+	_, err := f.svc.CreateNode(tree.CreateNodeRequest{
+		ParentID: f.budget.ID, Kind: tree.KindProject, Name: "vm", Reason: "vm", Limit: cores(1),
+	}, tree.UIActor("stud@x"), "stud@x", studTokens)
+	if err == nil || !errors.Is(err, common.ErrForbidden) {
+		t.Fatalf("a request beyond the share should be refused as forbidden, got %v", err)
+	}
+}
+
+// Growth beyond the policy is refused too; giving back still works, and the
+// budget's managers are not bound by the limit.
+func TestHardLimit_Changes(t *testing.T) {
+	f := newHardLimitFixture(t, &tree.AutoApprove{})
+	p := f.approved(t, 8, nil)
+
+	if _, err := f.svc.RequestChange(p.ID, tree.ChangeNodeRequest{Limit: quota(cores(11))}, tree.UIActor("stud@x"), studTokens); !errors.Is(err, common.ErrForbidden) {
+		t.Fatalf("growth past the pool should be refused, got %v", err)
+	}
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(6))}); n.Status != tree.StatusApproved {
+		t.Fatalf("a shrink should still apply at once, got %q", n.Status)
+	}
+	n, err := f.svc.RequestChange(p.ID, tree.ChangeNodeRequest{Limit: quota(cores(11))}, tree.UIActor("root@x"), common.TokenList{"user:root@x", "group:root"})
+	if err != nil || n.Status != tree.StatusChangePending {
+		t.Fatalf("a manager may still propose beyond the policy, got %v / %q", err, n.Status)
+	}
+}
+
+// Without an auto-approve policy the switch has nothing to limit: requests
+// keep waiting for a manager.
+func TestHardLimit_NoEffectWithoutPolicy(t *testing.T) {
+	f := newHardLimitFixture(t, nil)
+	if n := f.request(t, 1, nil); n.Status != tree.StatusPending {
+		t.Fatalf("without a policy a request should wait for a manager, got %q", n.Status)
 	}
 }

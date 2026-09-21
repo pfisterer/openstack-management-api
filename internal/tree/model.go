@@ -25,6 +25,15 @@ func (n *Node) SubBudgetRequestsAllowed() bool {
 	return n == nil || n.AllowSubBudgetRequests == nil || *n.AllowSubBudgetRequests
 }
 
+// RequestsBeyondAutoApproveAllowed reports whether eligible requesters may ask
+// this budget for more than its auto-approve policy grants — a request that
+// then waits for a manager. Without a policy there is nothing to go beyond, so
+// it is always true there. Unset means allowed, as before the field existed.
+func (n *Node) RequestsBeyondAutoApproveAllowed() bool {
+	return n == nil || n.AutoApprove == nil ||
+		n.AllowRequestsBeyondAutoApprove == nil || *n.AllowRequestsBeyondAutoApprove
+}
+
 // Node kinds.
 const (
 	KindBudget  = "budget"  // inner node: a delegated budget
@@ -262,6 +271,12 @@ type Node struct {
 	// nil means allowed — the default, and the meaning of every node written
 	// before this field existed.
 	AllowSubBudgetRequests *bool `json:"allow_sub_budget_requests,omitempty"`
+	// AllowRequestsBeyondAutoApprove controls whether EligibleRequesters may
+	// ask for more than AutoApprove grants. False makes the policy a hard
+	// limit: such a request — a new project or a change — is refused rather
+	// than queued for a manager. Managers are not restricted, and without an
+	// AutoApprove policy the field has no effect. nil means allowed.
+	AllowRequestsBeyondAutoApprove *bool `json:"allow_requests_beyond_auto_approve,omitempty"`
 
 	// Owner is the single responsible person of a leaf ("user:<email>").
 	// Additional participants are granted via AuthorizedUsers. Managers of the

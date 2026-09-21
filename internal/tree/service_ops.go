@@ -463,6 +463,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 		node.EligibleRequesters = req.EligibleRequesters
 		node.AutoApprove = req.AutoApprove
 		node.AllowSubBudgetRequests = req.AllowSubBudgetRequests
+		node.AllowRequestsBeyondAutoApprove = req.AllowRequestsBeyondAutoApprove
 	}
 	node.History = []HistoryEntry{createdEntry}
 
@@ -498,6 +499,8 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 		if ok {
 			node.Status = StatusApproved
 			node.History = append(node.History, autoApprovedEntry(actor, StatusPending, autoApproveReason(parent)))
+		} else if !parent.RequestsBeyondAutoApproveAllowed() {
+			return Node{}, errBeyondAutoApprove
 		}
 	}
 
@@ -515,7 +518,7 @@ func isRenameOnly(req UpdateNodeRequest) bool {
 	return req.Name != nil &&
 		req.AdminScope == nil && req.EligibleRequesters == nil &&
 		req.AutoApprove == nil && !req.ClearAutoApprove &&
-		req.AllowSubBudgetRequests == nil &&
+		req.AllowSubBudgetRequests == nil && req.AllowRequestsBeyondAutoApprove == nil &&
 		req.Limit == nil && req.TerminationDate == nil && !req.ClearTerminationDate
 }
 
@@ -553,7 +556,8 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, user
 	}
 
 	wantsPolicyEdit := req.Name != nil || req.AdminScope != nil || req.EligibleRequesters != nil ||
-		req.AutoApprove != nil || req.ClearAutoApprove || req.AllowSubBudgetRequests != nil
+		req.AutoApprove != nil || req.ClearAutoApprove || req.AllowSubBudgetRequests != nil ||
+		req.AllowRequestsBeyondAutoApprove != nil
 	wantsCapacityEdit := req.Limit != nil || req.TerminationDate != nil || req.ClearTerminationDate
 
 	if wantsPolicyEdit {
@@ -600,6 +604,9 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, user
 	}
 	if req.AllowSubBudgetRequests != nil {
 		updated.AllowSubBudgetRequests = req.AllowSubBudgetRequests
+	}
+	if req.AllowRequestsBeyondAutoApprove != nil {
+		updated.AllowRequestsBeyondAutoApprove = req.AllowRequestsBeyondAutoApprove
 	}
 	if req.ClearAutoApprove {
 		updated.AutoApprove = nil
@@ -812,6 +819,17 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor Actor, u
 			return Node{}, err
 		}
 	}
+	if !direct && current.IsLeaf() && !parent.RequestsBeyondAutoApproveAllowed() {
+		// A manager of the budget may still propose — and then approve — it;
+		// the hard limit is for the people who request from it.
+		manages, err := s.managesParentChain(ctx, userTokens, current)
+		if err != nil {
+			return Node{}, err
+		}
+		if !manages {
+			return Node{}, errBeyondAutoApprove
+		}
+	}
 	if direct {
 		// Applied as proposed — this also replaces an earlier proposal still
 		// waiting for a decision, exactly as a new proposal would.
@@ -837,6 +855,10 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor Actor, u
 	}
 	return updated, nil
 }
+
+// errBeyondAutoApprove refuses a request that a budget with a hard
+// auto-approve limit would otherwise queue for a manager.
+var errBeyondAutoApprove = fmt.Errorf("%w: this is more than the budget grants automatically, and it takes no requests beyond that — give something back or ask one of its managers to raise your share", common.ErrForbidden)
 
 // leafChangeDecision decides whether a proposed change to an active leaf takes
 // effect without a manager, and why. Every part of the change has to qualify —

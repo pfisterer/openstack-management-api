@@ -35,8 +35,10 @@ type CreateNodeRequest struct {
 	Name     string `json:"name"`
 	Reason   string `json:"reason" binding:"required"`
 	// Limit is the requested allocation (leaves) or cap (budgets).
-	Limit           common.ProjectQuota `json:"limit" binding:"required"`
-	TerminationDate *string             `json:"termination_date"`
+	Limit common.ProjectQuota `json:"limit" binding:"required"`
+	// TerminationDate may not lie after the end of any budget above. Omitted
+	// under a budget that ends, it is that budget's end.
+	TerminationDate *string `json:"termination_date"`
 	// Leaf fields.
 	AuthorizedUsers []common.AuthorizedUser `json:"authorized_users"`
 	// Budget fields.
@@ -62,10 +64,13 @@ type UpdateNodeRequest struct {
 	AllowRequestsBeyondAutoApprove *bool                `json:"allow_requests_beyond_auto_approve"`
 	Limit                          *common.ProjectQuota `json:"limit"`
 	TerminationDate                *string              `json:"termination_date"`
+	// TerminationDate may not lie after the end of any budget above. A budget's
+	// new end is carried down: every node below it that ends later, or never,
+	// ends with it, waiting requests and proposals included.
 	// ClearTerminationDate removes an existing end date: the node then runs
-	// until somebody changes it. A nil TerminationDate cannot express this —
-	// it means "leave as is" — so removal needs its own flag, like
-	// ClearAutoApprove.
+	// until somebody changes it — only allowed where no budget above ends. A
+	// nil TerminationDate cannot express this — it means "leave as is" — so
+	// removal needs its own flag, like ClearAutoApprove.
 	ClearTerminationDate bool `json:"clear_termination_date"`
 }
 

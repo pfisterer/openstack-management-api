@@ -2,6 +2,7 @@ package tree
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -432,6 +433,17 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 		return Node{}, fmt.Errorf("%w: this budget does not accept sub-budget requests — request a project instead", common.ErrForbidden)
 	}
 
+	// Nothing outlives the budget it draws from: no end asked means the
+	// budget's, a later one is refused.
+	parentChain, err := s.nodeChain(ctx, parent.ID)
+	if err != nil {
+		return Node{}, err
+	}
+	terminationDate, err := fitEnd(req.TerminationDate, chainEnd(parentChain))
+	if err != nil {
+		return Node{}, err
+	}
+
 	now := time.Now().UTC().Format(time.RFC3339)
 	node := Node{
 		Kind:            req.Kind,
@@ -440,7 +452,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 		Name:            strings.TrimSpace(req.Name),
 		Reason:          req.Reason,
 		Limit:           req.Limit,
-		TerminationDate: req.TerminationDate,
+		TerminationDate: terminationDate,
 		CreatedBy:       userEmail,
 		CreatedAt:       now,
 	}
@@ -473,11 +485,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 		// Direct creation by a manager of the parent chain — approved immediately,
 		// subject to the same checks an explicit approval would run.
 		if req.Kind == KindProject {
-			ancestors, err := s.nodeChain(ctx, parent.ID)
-			if err != nil {
-				return Node{}, err
-			}
-			if err := s.checkCapacity(ctx, ancestors, node.Limit, nil); err != nil {
+			if err := s.checkCapacity(ctx, parentChain, node.Limit, nil); err != nil {
 				return Node{}, err
 			}
 		} else {
@@ -533,6 +541,11 @@ func isRenameOnly(req UpdateNodeRequest) bool {
 // worse, park the project in change_pending until they got around to it.
 // Everything else about a leaf still goes through RequestChange.
 func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, userTokens common.TokenList) (Node, error) {
+	// A new end date is carried down the subtree, which must not interleave
+	// with an approval deciding on one of its nodes.
+	s.approvalMu.Lock()
+	defer s.approvalMu.Unlock()
+
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
@@ -616,6 +629,20 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, user
 		}
 		updated.AutoApprove = req.AutoApprove
 	}
+	if req.ClearTerminationDate || req.TerminationDate != nil {
+		chain, err := s.parentChainNodes(ctx, current)
+		if err != nil {
+			return Node{}, err
+		}
+		if bound := chainEnd(chain); req.ClearTerminationDate && bound != nil {
+			return Node{}, fmt.Errorf("the budget above ends on %s, so this one needs an end date too", dateOnly(*bound))
+		}
+		if req.TerminationDate != nil {
+			if _, err := fitEnd(req.TerminationDate, chainEnd(chain)); err != nil {
+				return Node{}, err
+			}
+		}
+	}
 	if req.ClearTerminationDate {
 		updated.TerminationDate = nil
 	} else if req.TerminationDate != nil {
@@ -623,6 +650,10 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, user
 	}
 
 	historyEntry := newHistoryEntry("updated", actor, updated.Status)
+	if req.ClearTerminationDate || req.TerminationDate != nil {
+		historyEntry.TerminationDateFrom = current.TerminationDate
+		historyEntry.TerminationDateTo = updated.TerminationDate
+	}
 
 	if req.Limit != nil {
 		if err := s.validateBudgetLimit(*req.Limit); err != nil {
@@ -668,7 +699,18 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, user
 	if err := s.store.UpsertNode(ctx, updated); err != nil {
 		return Node{}, fmt.Errorf("persist node: %w", err)
 	}
+	if req.TerminationDate != nil {
+		if _, err := s.shortenSubtreeEnds(ctx, []string{updated.ID}, *updated.TerminationDate, actor, endsWithReason(updated)); err != nil {
+			return Node{}, err
+		}
+	}
 	return updated, nil
+}
+
+// endsWithReason is the history note on a node whose end date followed the
+// budget it draws from.
+func endsWithReason(budget Node) string {
+	return fmt.Sprintf("Ends with budget %q", nodeLabel(budget))
 }
 
 // ── Change requests ───────────────────────────────────────────────────────────
@@ -724,6 +766,16 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor Actor, u
 	if current.IsLeaf() && current.ParentID != nil {
 		if parent, err = s.store.GetNode(ctx, *current.ParentID); err != nil {
 			return Node{}, fmt.Errorf("load parent node: %w", err)
+		}
+	}
+
+	if req.TerminationDate != nil {
+		chain, err := s.parentChainNodes(ctx, current)
+		if err != nil {
+			return Node{}, err
+		}
+		if _, err := fitEnd(req.TerminationDate, chainEnd(chain)); err != nil {
+			return Node{}, err
 		}
 	}
 
@@ -953,6 +1005,12 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor Actor, us
 	if err != nil {
 		return Node{}, err
 	}
+	// Requests made before the budget above got (or moved up) its end still
+	// ask for more: they are granted to the budget's end, not refused whole.
+	if bound := chainEnd(ancestors); bound != nil &&
+		(finalTerminationDate == nil || !endsNoLater(*finalTerminationDate, bound)) {
+		finalTerminationDate = bound
+	}
 
 	if current.IsLeaf() {
 		// Capacity: a change_pending leaf's CURRENT limit is already committed and
@@ -1004,6 +1062,10 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor Actor, us
 		historyEntry.LimitFrom = &current.Limit
 		historyEntry.LimitTo = &finalLimit
 	}
+	if !sameEnd(current.TerminationDate, finalTerminationDate) {
+		historyEntry.TerminationDateFrom = current.TerminationDate
+		historyEntry.TerminationDateTo = finalTerminationDate
+	}
 
 	updated := *current
 	updated.Status = StatusApproved
@@ -1016,7 +1078,20 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor Actor, us
 	if err := s.store.UpsertNode(ctx, updated); err != nil {
 		return Node{}, fmt.Errorf("persist node: %w", err)
 	}
+	if !current.IsLeaf() && finalTerminationDate != nil {
+		if _, err := s.shortenSubtreeEnds(ctx, []string{updated.ID}, *finalTerminationDate, actor, endsWithReason(updated)); err != nil {
+			return Node{}, err
+		}
+	}
 	return updated, nil
+}
+
+// sameEnd reports whether two optional end dates are the same.
+func sameEnd(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 // RejectNode rejects a pending node (→ rejected, terminal) or discards the pending
@@ -1220,9 +1295,22 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor Actor, 
 	updated := *current
 	updated.ParentID = &newParent.ID
 	updated.History = append(slices.Clone(current.History), historyEntry)
+	// Under a budget that ends sooner, the moved node and everything below it
+	// end with it.
+	bound := chainEnd(newParentChain)
+	if bound != nil {
+		if err := shortenEnd(&updated, *bound, actor, endsWithReason(*newParent)); err != nil && !errors.Is(err, ErrSkipUpdate) {
+			return Node{}, err
+		}
+	}
 
 	if err := s.store.UpsertNode(ctx, updated); err != nil {
 		return Node{}, fmt.Errorf("persist node: %w", err)
+	}
+	if bound != nil && !updated.IsLeaf() {
+		if _, err := s.shortenSubtreeEnds(ctx, []string{updated.ID}, *bound, actor, endsWithReason(*newParent)); err != nil {
+			return Node{}, err
+		}
 	}
 	return updated, nil
 }
@@ -1346,6 +1434,10 @@ func (s *Service) PromoteNode(id string, req PromoteNodeRequest, actor Actor, us
 	if err := s.checkCapacity(ctx, newParentChain, effectiveLimit, nil); err != nil {
 		return Node{}, err
 	}
+	terminationDate, err := fitEnd(req.TerminationDate, chainEnd(newParentChain))
+	if err != nil {
+		return Node{}, err
+	}
 
 	normalizedAuthorizedUsers, err := s.normalizeAuthorizedUsers(ctx, req.AuthorizedUsers)
 	if err != nil {
@@ -1362,7 +1454,7 @@ func (s *Service) PromoteNode(id string, req PromoteNodeRequest, actor Actor, us
 	updated.ParentID = &newParent.ID
 	updated.Owner = owner
 	updated.Reason = req.Reason
-	updated.TerminationDate = req.TerminationDate
+	updated.TerminationDate = terminationDate
 	updated.Limit = effectiveLimit
 	updated.AuthorizedUsers = normalizedAuthorizedUsers
 	if !slices.Contains(updated.Flags, FlagPromoteOnReconcile) {

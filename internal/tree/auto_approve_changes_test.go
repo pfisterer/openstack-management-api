@@ -156,7 +156,8 @@ func TestChange_GrowthInPool(t *testing.T) {
 	}
 }
 
-// With a policy, a later end is granted up to the budget's own end.
+// With a policy, a later end is granted up to the budget's own end; past it
+// there is nothing to grant.
 func TestChange_ExtensionWithinBudgetEnd(t *testing.T) {
 	budgetEnd := "2027-09-30T00:00:00Z"
 	end := "2027-03-31T00:00:00Z"
@@ -167,8 +168,8 @@ func TestChange_ExtensionWithinBudgetEnd(t *testing.T) {
 		t.Fatalf("extending to the budget's end should apply at once, got %q", n.Status)
 	}
 	beyond := "2027-10-31T00:00:00Z"
-	if n := f.change(t, p.ID, tree.ChangeNodeRequest{TerminationDate: &beyond}); n.Status != tree.StatusChangePending {
-		t.Fatalf("extending past the budget's end should wait, got %q", n.Status)
+	if _, err := f.svc.RequestChange(p.ID, tree.ChangeNodeRequest{TerminationDate: &beyond}, tree.UIActor("stud@x"), studTokens); err == nil {
+		t.Fatal("extending past the budget's end should be refused — nothing outlives its budget")
 	}
 }
 

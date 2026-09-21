@@ -203,7 +203,7 @@ type mcpRequestInput struct {
 	// configuration (get_project shows what an existing one uses), and
 	// hard-coding cores/ram/storage here would be a second place to change.
 	Limit           map[string]int `json:"limit" jsonschema:"requested resources by id, e.g. {\"cores\": 4, \"ram\": 8192}"`
-	TerminationDate string         `json:"termination_date,omitempty" jsonschema:"optional intended end of life, RFC3339"`
+	TerminationDate string         `json:"termination_date,omitempty" jsonschema:"optional intended end of life, RFC3339; at most the budget's own end, which is also the default when the budget ends"`
 }
 
 type mcpChangeInput struct {

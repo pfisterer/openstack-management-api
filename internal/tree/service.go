@@ -1036,6 +1036,115 @@ func endsNoLater(next string, bound *string) bool {
 	return !n.After(b)
 }
 
+// chainEnd is the earliest end date along a chain of budgets — the date no node
+// below them may outlive. Nil when none of them ends. Unparseable dates bound
+// nothing; the budget form never writes one.
+func chainEnd(chain []Node) *string {
+	var earliest *string
+	var earliestAt time.Time
+	for _, n := range chain {
+		if n.TerminationDate == nil {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339, *n.TerminationDate)
+		if err != nil {
+			continue
+		}
+		if earliest == nil || at.Before(earliestAt) {
+			earliest, earliestAt = n.TerminationDate, at
+		}
+	}
+	return earliest
+}
+
+// fitEnd applies the lifetime rule to the end date asked for a node below a
+// budget chain ending at bound: nothing outlives the budget it draws from.
+// Asking for no end there means the budget's end; asking for a later one is
+// refused rather than cut, so nobody finds a date they did not pick.
+func fitEnd(end, bound *string) (*string, error) {
+	if bound == nil {
+		return end, nil
+	}
+	if end == nil {
+		return bound, nil
+	}
+	if !endsNoLater(*end, bound) {
+		return nil, fmt.Errorf("the end date %s is after the end of the budget above (%s) — nothing can outlive the budget it draws from", dateOnly(*end), dateOnly(*bound))
+	}
+	return end, nil
+}
+
+// dateOnly prints an RFC 3339 timestamp as its day for messages.
+func dateOnly(ts string) string {
+	if t, err := time.Parse(time.RFC3339, ts); err == nil {
+		return t.Format(time.DateOnly)
+	}
+	return ts
+}
+
+// shortenSubtreeEnds makes every live node below the given parents end no later
+// than end: a budget that ends earlier takes its sub-budgets and projects with
+// it, pending requests and proposals included. Each node is changed on its
+// current stored state (the reconciler writes too) and says why in its history.
+// Returns how many nodes it changed. Callers hold approvalMu.
+func (s *Service) shortenSubtreeEnds(ctx context.Context, parentIDs []string, end string, actor Actor, reason string) (int, error) {
+	changed := 0
+	for len(parentIDs) > 0 {
+		children, err := s.store.ListNodes(ctx, NodeQuery{ParentIDs: parentIDs}, 0, 0)
+		if err != nil {
+			return changed, fmt.Errorf("load children for end date: %w", err)
+		}
+		parentIDs = nil
+		for _, child := range children {
+			if IsTerminalStatus(child.Status) || child.Status == StatusImported {
+				continue
+			}
+			if child.Kind == KindBudget {
+				parentIDs = append(parentIDs, child.ID)
+			}
+			wrote, err := s.store.UpdateNode(ctx, child.ID, func(n *Node) error {
+				return shortenEnd(n, end, actor, reason)
+			})
+			if err != nil {
+				return changed, fmt.Errorf("shorten end of %s: %w", nodeLabel(child), err)
+			}
+			if wrote {
+				changed++
+			}
+		}
+	}
+	return changed, nil
+}
+
+// shortenEnd moves n's end date — and that of a proposal waiting on it — to end
+// where it runs longer or has none. ErrSkipUpdate when nothing runs longer.
+func shortenEnd(n *Node, end string, actor Actor, reason string) error {
+	longer := func(d *string) bool { return d == nil || !endsNoLater(*d, &end) }
+	cutProposal := n.Pending != nil && n.Pending.TerminationDate != nil && longer(n.Pending.TerminationDate)
+	cutNode := longer(n.TerminationDate)
+	if !cutNode && !cutProposal {
+		return ErrSkipUpdate
+	}
+	entry := newHistoryEntry("end_shortened", actor, n.Status)
+	entry.Reason = &reason
+	if cutNode {
+		entry.TerminationDateFrom = n.TerminationDate
+		entry.TerminationDateTo = &end
+		n.TerminationDate = &end
+	}
+	if cutProposal {
+		if !cutNode {
+			entry.TerminationDateFrom = n.Pending.TerminationDate
+			entry.TerminationDateTo = &end
+		}
+		pending := *n.Pending
+		pending.TerminationDate = &end
+		n.Pending = &pending
+	}
+	n.History = append(slices.Clone(n.History), entry)
+	return nil
+}
+
 // ownerActiveUsage sums the owner's committed (active) leaf limits directly under
 // the given budget, so auto-approval enforces a cumulative per-requester cap.
 // Matching is by the single Owner token — group memberships do not blur the count.

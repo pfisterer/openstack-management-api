@@ -666,11 +666,17 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, user
 
 // ── Change requests ───────────────────────────────────────────────────────────
 
-// RequestChange proposes modifications that require approval by the parent chain.
-// On a pending node the request is amended in place (it is not yet approved); on
-// an approved or change_pending node the proposal is stored as pending changes and
-// the node transitions to (or stays in) change_pending.
+// RequestChange proposes modifications to a node. On a pending node the request
+// is amended in place (it is not yet approved). On an approved or change_pending
+// leaf a change that needs nobody's decision (see leafChangeDecision) is applied
+// at once; any other proposal is stored as pending changes and the node
+// transitions to (or stays in) change_pending until the parent chain decides.
 func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor Actor, userTokens common.TokenList) (Node, error) {
+	// A change may take effect on the spot (see leafChangeDecision), which
+	// commits capacity just like an approval does.
+	s.approvalMu.Lock()
+	defer s.approvalMu.Unlock()
+
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
@@ -705,15 +711,20 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor Actor, u
 		return Node{}, common.ErrForbidden
 	}
 
+	// The budget a leaf draws from: it bounds a new limit, and its policy
+	// decides whether the change needs anybody's approval.
+	var parent *Node
+	if current.IsLeaf() && current.ParentID != nil {
+		if parent, err = s.store.GetNode(ctx, *current.ParentID); err != nil {
+			return Node{}, fmt.Errorf("load parent node: %w", err)
+		}
+	}
+
 	if req.Limit != nil {
 		var validationErr error
 		if current.IsLeaf() {
 			validationErr = s.validateLeafLimit(*req.Limit)
-			if validationErr == nil && current.ParentID != nil {
-				parent, err := s.store.GetNode(ctx, *current.ParentID)
-				if err != nil {
-					return Node{}, fmt.Errorf("load parent node: %w", err)
-				}
+			if validationErr == nil && parent != nil {
 				validationErr = s.validateLeafAvailabilities(parent, *req.Limit)
 			}
 		} else {
@@ -793,14 +804,70 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor Actor, u
 		historyEntry.Reason = req.Reason
 	}
 
-	updated.Pending = pending
-	updated.Status = StatusChangePending
 	updated.History = append(slices.Clone(current.History), historyEntry)
+
+	direct, reason := false, ""
+	if current.IsLeaf() {
+		if direct, reason, err = s.leafChangeDecision(ctx, current, parent, pending); err != nil {
+			return Node{}, err
+		}
+	}
+	if direct {
+		// Applied as proposed — this also replaces an earlier proposal still
+		// waiting for a decision, exactly as a new proposal would.
+		if pending.Limit != nil {
+			updated.Limit = *pending.Limit
+		}
+		if pending.TerminationDate != nil {
+			updated.TerminationDate = pending.TerminationDate
+		}
+		if pending.AuthorizedUsers != nil {
+			updated.AuthorizedUsers = *pending.AuthorizedUsers
+		}
+		updated.Pending = nil
+		updated.Status = StatusApproved
+		updated.History = append(updated.History, autoApprovedEntry(actor, StatusChangePending, reason))
+	} else {
+		updated.Pending = pending
+		updated.Status = StatusChangePending
+	}
 
 	if err := s.store.UpsertNode(ctx, updated); err != nil {
 		return Node{}, fmt.Errorf("persist node: %w", err)
 	}
 	return updated, nil
+}
+
+// leafChangeDecision decides whether a proposed change to an active leaf takes
+// effect without a manager, and why. Every part of the change has to qualify —
+// one part that needs a decision sends the whole proposal to a manager, who
+// sees it as the owner wrote it:
+//
+//   - members: always — who works in a project is its owner's business;
+//   - resources: a pure shrink always; growth when the budget's auto-approve
+//     policy would grant the new size as a new request;
+//   - end date: an earlier one always; a later one when the budget has an
+//     auto-approve policy and the date stays within the budget's own end.
+func (s *Service) leafChangeDecision(ctx context.Context, current, parent *Node, change *PendingChanges) (bool, string, error) {
+	viaPolicy := false
+	if change.Limit != nil && !s.limitShrinks(current.Limit, *change.Limit) {
+		ok, err := s.autoApprovable(ctx, parent, current.Owner, *change.Limit, current.Limit)
+		if err != nil || !ok {
+			return false, "", err
+		}
+		viaPolicy = true
+	}
+	if change.TerminationDate != nil && !endsNoLater(*change.TerminationDate, current.TerminationDate) {
+		if parent == nil || parent.AutoApprove == nil || parent.Status != StatusApproved ||
+			!endsNoLater(*change.TerminationDate, parent.TerminationDate) {
+			return false, "", nil
+		}
+		viaPolicy = true
+	}
+	if viaPolicy {
+		return true, autoApproveReason(parent), nil
+	}
+	return true, "Applied directly (gives resources back, ends sooner or changes members only)", nil
 }
 
 // ── Approve / reject / release ────────────────────────────────────────────────

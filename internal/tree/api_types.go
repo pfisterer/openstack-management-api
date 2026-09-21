@@ -66,8 +66,10 @@ type UpdateNodeRequest struct {
 	ClearTerminationDate bool `json:"clear_termination_date"`
 }
 
-// ChangeNodeRequest proposes changes that require approval by a manager of the
-// parent chain; the node transitions to change_pending.
+// ChangeNodeRequest proposes changes to a node. On an active leaf a change that
+// gives something back, changes members only, or that the budget's auto-approve
+// policy covers takes effect at once; anything else waits for a manager of the
+// parent chain in change_pending.
 type ChangeNodeRequest struct {
 	Limit           *common.ProjectQuota     `json:"limit"`
 	TerminationDate *string                  `json:"termination_date"`

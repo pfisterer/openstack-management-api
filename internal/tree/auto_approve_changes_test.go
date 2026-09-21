@@ -85,3 +85,103 @@ func TestAutoApprove_PoolGrantsUpToTheBudget(t *testing.T) {
 		t.Fatalf("a request beyond the budget should wait for a manager, got %q", n.Status)
 	}
 }
+
+// Without any policy, giving back, ending sooner and changing members still
+// take effect at once; growing and extending wait for a manager.
+func TestChange_WithoutPolicy(t *testing.T) {
+	end := "2027-06-30T00:00:00Z"
+	f := newChangeFixture(t, nil, nil)
+	p := f.approved(t, 4, &end)
+
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(2))}); n.Status != tree.StatusApproved || n.Limit["cores"] != 2 {
+		t.Fatalf("a shrink should apply at once, got %q with %v", n.Status, n.Limit)
+	}
+	sooner := "2027-03-31T00:00:00Z"
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{TerminationDate: &sooner}); n.Status != tree.StatusApproved || *n.TerminationDate != sooner {
+		t.Fatalf("an earlier end should apply at once, got %q", n.Status)
+	}
+	members := []common.AuthorizedUser{{Token: "user:friend@x", OpenstackRole: "member"}}
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{AuthorizedUsers: &members}); n.Status != tree.StatusApproved || len(n.AuthorizedUsers) != 1 {
+		t.Fatalf("a member change should apply at once, got %q with %v", n.Status, n.AuthorizedUsers)
+	}
+
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(3))}); n.Status != tree.StatusChangePending || n.Limit["cores"] != 2 {
+		t.Fatalf("growth without a policy should wait and keep the old limit, got %q with %v", n.Status, n.Limit)
+	}
+	later := "2027-12-31T00:00:00Z"
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{TerminationDate: &later}); n.Status != tree.StatusChangePending {
+		t.Fatalf("an extension without a policy should wait, got %q", n.Status)
+	}
+}
+
+// One part that needs a decision sends the whole proposal to a manager —
+// nothing of it is applied behind their back.
+func TestChange_MixedProposalWaitsAsAWhole(t *testing.T) {
+	f := newChangeFixture(t, nil, nil)
+	p := f.approved(t, 4, nil)
+
+	members := []common.AuthorizedUser{{Token: "user:friend@x", OpenstackRole: "member"}}
+	n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(6)), AuthorizedUsers: &members})
+	if n.Status != tree.StatusChangePending || len(n.AuthorizedUsers) != 0 {
+		t.Fatalf("growth plus members should wait as one, got %q with members %v", n.Status, n.AuthorizedUsers)
+	}
+}
+
+// Under an individual limit, growth is granted while the person's total stays
+// within it — the project's own current size counts once, not twice.
+func TestChange_GrowthWithinIndividualLimit(t *testing.T) {
+	f := newChangeFixture(t, &tree.AutoApprove{PerRequesterLimit: cores(4)}, nil)
+	p := f.approved(t, 2, nil)
+
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(4))}); n.Status != tree.StatusApproved || n.Limit["cores"] != 4 {
+		t.Fatalf("growing to the personal limit should apply at once, got %q with %v", n.Status, n.Limit)
+	}
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(5))}); n.Status != tree.StatusChangePending || n.Limit["cores"] != 4 {
+		t.Fatalf("growing past the personal limit should wait, got %q with %v", n.Status, n.Limit)
+	}
+}
+
+// Under a pool, growth is bounded by the budget's free capacity only.
+func TestChange_GrowthInPool(t *testing.T) {
+	f := newChangeFixture(t, &tree.AutoApprove{}, nil)
+	p := f.approved(t, 2, nil)
+	f.approved(t, 5, nil)
+
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(5))}); n.Status != tree.StatusApproved {
+		t.Fatalf("growing into the pool's free room should apply at once, got %q", n.Status)
+	}
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(6))}); n.Status != tree.StatusChangePending {
+		t.Fatalf("growing past the pool should wait, got %q", n.Status)
+	}
+}
+
+// With a policy, a later end is granted up to the budget's own end.
+func TestChange_ExtensionWithinBudgetEnd(t *testing.T) {
+	budgetEnd := "2027-09-30T00:00:00Z"
+	end := "2027-03-31T00:00:00Z"
+	f := newChangeFixture(t, &tree.AutoApprove{}, &budgetEnd)
+	p := f.approved(t, 1, &end)
+
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{TerminationDate: &budgetEnd}); n.Status != tree.StatusApproved {
+		t.Fatalf("extending to the budget's end should apply at once, got %q", n.Status)
+	}
+	beyond := "2027-10-31T00:00:00Z"
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{TerminationDate: &beyond}); n.Status != tree.StatusChangePending {
+		t.Fatalf("extending past the budget's end should wait, got %q", n.Status)
+	}
+}
+
+// A direct change replaces a proposal that is still waiting: the node leaves
+// change_pending and nothing of the old proposal survives.
+func TestChange_DirectChangeReplacesWaitingProposal(t *testing.T) {
+	f := newChangeFixture(t, nil, nil)
+	p := f.approved(t, 4, nil)
+
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(8))}); n.Status != tree.StatusChangePending {
+		t.Fatalf("setup: growth should wait, got %q", n.Status)
+	}
+	n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(1))})
+	if n.Status != tree.StatusApproved || n.Pending != nil || n.Limit["cores"] != 1 {
+		t.Fatalf("a shrink should replace the waiting proposal, got %q, pending %v, limit %v", n.Status, n.Pending, n.Limit)
+	}
+}

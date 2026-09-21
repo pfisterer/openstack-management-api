@@ -1000,6 +1000,42 @@ func autoApprovedEntry(actor Actor, statusFrom, reason string) HistoryEntry {
 	return entry
 }
 
+// limitShrinks reports whether next asks for nothing that current does not
+// already hold: no count grows and no availability is newly switched on.
+// Giving something back never needs anybody's permission.
+func (s *Service) limitShrinks(current, next common.ProjectQuota) bool {
+	for id, v := range next {
+		if s.isBool(id) {
+			if v > 0 && current[id] <= 0 {
+				return false
+			}
+			continue
+		}
+		if v > current[id] {
+			return false
+		}
+	}
+	return true
+}
+
+// endsNoLater reports whether the RFC 3339 date next is not after bound; a nil
+// bound means "no end" and bounds nothing. Unparseable dates answer false, so
+// they take the path through a human rather than past one.
+func endsNoLater(next string, bound *string) bool {
+	if bound == nil {
+		return true
+	}
+	n, err := time.Parse(time.RFC3339, next)
+	if err != nil {
+		return false
+	}
+	b, err := time.Parse(time.RFC3339, *bound)
+	if err != nil {
+		return false
+	}
+	return !n.After(b)
+}
+
 // ownerActiveUsage sums the owner's committed (active) leaf limits directly under
 // the given budget, so auto-approval enforces a cumulative per-requester cap.
 // Matching is by the single Owner token — group memberships do not blur the count.

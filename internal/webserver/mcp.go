@@ -385,8 +385,10 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
 		Name: "request_project_change",
-		Description: "Propose new resource amounts for an existing project. The project keeps running on its " +
-			"currently approved limits until someone accepts the proposal.",
+		Description: "Propose new resource amounts for an existing project. Giving resources back, or growing " +
+			"within what the budget approves automatically, takes effect at once (status approved); otherwise " +
+			"the project keeps running on its currently approved limits until someone accepts the proposal " +
+			"(status change_pending).",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpChangeInput) (*mcp.CallToolResult, mcpProject, error) {
 		limit := common.ProjectQuota(in.Limit)
 		req := tree.ChangeNodeRequest{Limit: &limit}

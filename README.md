@@ -37,7 +37,7 @@ like.
 
 The whole domain is **one tree of nodes** (`internal/tree`):
 
-- **Budget** — an inner node: a delegated pool of capacity. Its `admin_scope` tokens manage it (approve or reject children, edit it, delegate further); its `eligible_requesters` tokens may request child nodes under it. Delegation *is* creating a sub-budget with someone else in `admin_scope` — there is no separate concept for it. A budget may carry `auto_approve`: without a `per_requester_limit` it grants whatever it has room for (a pool), with one only up to that per-person cap.
+- **Budget** — an inner node: a delegated pool of capacity. Its `admin_scope` tokens manage it (approve or reject children, edit it, delegate further); its `eligible_requesters` tokens may request child nodes under it. Delegation *is* creating a sub-budget with someone else in `admin_scope` — there is no separate concept for it. A budget may carry `auto_approve`: without a `per_requester_limit` it grants whatever it has room for (a pool), with one only up to that per-person cap. It covers later changes to a project as well.
 - **Project** — a leaf: a concrete allocation with exactly one `owner`.
   Lifecycle `pending → approved → released`, plus `change_pending` while a change
   is proposed (rejecting a change returns the node to `approved`). Budgets go
@@ -53,7 +53,7 @@ The whole domain is **one tree of nodes** (`internal/tree`):
 - **Role provider** — pluggable source of a caller's group tokens and of group search: `mock` (built-in test identities, no external dependency) or `http` (the external [role-provider-service](https://github.com/pfisterer/role-provider-service)).
 - **History** — every node keeps a history of its lifecycle events, recording who made a change and through which channel (`ui` for the web UI and REST API, `mcp` for an agent acting with a person's token).
 
-Editing follows the same idea. A project leaf accepts exactly one direct edit — a rename, because a name is a label, not an allocation. Everything else goes through a change request, which for a *pending* node is amended in place: that is how a manager trims an over-sized request instead of rejecting it.
+Editing follows the same idea. A project leaf accepts exactly one direct edit — a rename, because a name is a label, not an allocation. Everything else goes through a change request, which for a *pending* node is amended in place: that is how a manager trims an over-sized request instead of rejecting it. On an active project a change that gives resources back, ends sooner or only changes members takes effect at once, and so does growth or an extension the budget's auto-approve covers; the rest waits for a manager.
 
 ➡️ **Architecture:** [`ARCHITECTURE.md`](ARCHITECTURE.md) — domain model,
 authorization rules, API surface, storage, reconciler, SDK pipeline.

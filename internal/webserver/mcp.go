@@ -244,7 +244,7 @@ type mcpCreateBudgetInput struct {
 	// down once. Found the first time this ran against staging.
 	AdminScope         []string       `json:"admin_scope" jsonschema:"tokens that may approve requests here, e.g. group:dept_cs_admin or user:a@b.c"`
 	EligibleRequesters []string       `json:"eligible_requesters,omitempty" jsonschema:"tokens that may request something here, without any say over decisions"`
-	AutoApproveLimit   map[string]int `json:"auto_approve_limit,omitempty" jsonschema:"optional: requests up to this size per requester are approved without a human"`
+	AutoApproveLimit   map[string]int `json:"auto_approve_limit,omitempty" jsonschema:"optional: requests up to this size per requester are approved without a human; {} approves any request the budget has room for"`
 }
 
 type mcpMoveInput struct {
@@ -480,7 +480,8 @@ func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log 
 			AdminScope:         common.TokenList(in.AdminScope),
 			EligibleRequesters: common.TokenList(in.EligibleRequesters),
 		}
-		if len(in.AutoApproveLimit) > 0 {
+		// nil is "no auto-approve"; an empty map is the pool flavour.
+		if in.AutoApproveLimit != nil {
 			req.AutoApprove = &tree.AutoApprove{PerRequesterLimit: common.ProjectQuota(in.AutoApproveLimit)}
 		}
 		log.Infow("MCP create_budget", "actor", caller.actorEmail, "parent_id", in.ParentID)

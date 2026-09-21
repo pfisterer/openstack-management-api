@@ -491,25 +491,13 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 		node.History = append(node.History, approvedEntry)
 
 	case req.Kind == KindProject && parent.AutoApprove != nil:
-		// Auto-approve: cumulative per-owner usage under this budget must stay
-		// within the per-requester limit, and every ancestor must have capacity.
-		usage, err := s.ownerActiveUsage(ctx, parent.ID, node.Owner)
+		ok, err := s.autoApprovable(ctx, parent, node.Owner, node.Limit, nil)
 		if err != nil {
-			return Node{}, fmt.Errorf("compute per-requester usage: %w", err)
+			return Node{}, err
 		}
-		cumulative := quotaAdd(usage, node.Limit, s.countIDs)
-		if quotaFits(cumulative, parent.AutoApprove.PerRequesterLimit, s.countIDs) {
-			ancestors, err := s.nodeChain(ctx, parent.ID)
-			if err != nil {
-				return Node{}, err
-			}
-			if err := s.checkCapacity(ctx, ancestors, node.Limit, nil); err == nil {
-				node.Status = StatusApproved
-				autoEntry := newHistoryEntry("approved", Actor{Email: "system:auto-approval", Via: actor.Channel()}, StatusApproved)
-				autoEntry.StatusFrom = common.Ptr(StatusPending)
-				autoEntry.Reason = common.Ptr("Auto-approved (within per-requester limit)")
-				node.History = append(node.History, autoEntry)
-			}
+		if ok {
+			node.Status = StatusApproved
+			node.History = append(node.History, autoApprovedEntry(actor, StatusPending, autoApproveReason(parent)))
 		}
 	}
 

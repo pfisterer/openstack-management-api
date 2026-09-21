@@ -949,14 +949,55 @@ func (s *Service) validateLeafAvailabilities(parent *Node, limit common.ProjectQ
 }
 
 // validateAutoApprove checks the per-requester limit of an auto-approve policy.
+// An empty limit is valid: it is the pool flavour, bounded by the budget alone.
 func (s *Service) validateAutoApprove(a *AutoApprove) error {
-	if a == nil {
+	if a == nil || a.IsPool() {
 		return nil
 	}
-	if len(a.PerRequesterLimit) == 0 {
-		return fmt.Errorf("auto_approve requires a non-empty per_requester_limit")
-	}
 	return s.validateLeafLimit(a.PerRequesterLimit)
+}
+
+// autoApprovable reports whether budget's auto-approve policy grants a leaf of
+// owner going from subtractLimit (what it holds now; nil for a new leaf) to
+// addLimit: within the per-requester limit, if the policy has one, and within
+// the capacity of every budget up the chain.
+func (s *Service) autoApprovable(ctx context.Context, budget *Node, owner string, addLimit, subtractLimit common.ProjectQuota) (bool, error) {
+	if budget == nil || budget.AutoApprove == nil || budget.Status != StatusApproved {
+		return false, nil
+	}
+	if !budget.AutoApprove.IsPool() {
+		usage, err := s.ownerActiveUsage(ctx, budget.ID, owner)
+		if err != nil {
+			return false, fmt.Errorf("compute per-requester usage: %w", err)
+		}
+		for _, id := range s.countIDs {
+			usage[id] -= subtractLimit[id]
+		}
+		if !quotaFits(quotaAdd(usage, addLimit, s.countIDs), budget.AutoApprove.PerRequesterLimit, s.countIDs) {
+			return false, nil
+		}
+	}
+	ancestors, err := s.nodeChain(ctx, budget.ID)
+	if err != nil {
+		return false, err
+	}
+	return s.checkCapacity(ctx, ancestors, addLimit, subtractLimit) == nil, nil
+}
+
+// autoApproveReason is the history note of a grant made by budget's policy.
+func autoApproveReason(budget *Node) string {
+	if budget.AutoApprove.IsPool() {
+		return "Auto-approved (the budget has room)"
+	}
+	return "Auto-approved (within per-requester limit)"
+}
+
+// autoApprovedEntry records an approval nobody had to give.
+func autoApprovedEntry(actor Actor, statusFrom, reason string) HistoryEntry {
+	entry := newHistoryEntry("approved", Actor{Email: "system:auto-approval", Via: actor.Channel()}, StatusApproved)
+	entry.StatusFrom = common.Ptr(statusFrom)
+	entry.Reason = common.Ptr(reason)
+	return entry
 }
 
 // ownerActiveUsage sums the owner's committed (active) leaf limits directly under

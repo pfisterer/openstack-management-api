@@ -10,8 +10,8 @@
 //     AdminScope of the root node — there is no separate bypass code path.
 //  3. Requesting under N requires a token in N.EligibleRequesters; the child starts
 //     pending. If N carries an AutoApprove policy and the requester's cumulative
-//     active usage under N stays within the per-requester limit (and every ancestor
-//     has capacity), the request is approved immediately.
+//     active usage under N stays within the per-requester limit, if it has one
+//     (and every ancestor has capacity), the request is approved immediately.
 package tree
 
 import (
@@ -102,13 +102,26 @@ var KnownStatuses = []string{
 }
 
 // AutoApprove is the auto-approve policy of a budget node. When set, an eligible
-// requester's leaf is approved immediately as long as the requester's cumulative
-// active usage under this budget (matched by Owner) stays within PerRequesterLimit
-// and all ancestors have remaining capacity. This replaces the former "allowance"
-// delegation strategy — the per-requester cap and the budget's own total Limit are
-// now two separate, independently meaningful values.
+// requester's leaf is approved immediately as long as all ancestors have
+// remaining capacity. It comes in two flavours:
+//
+//   - pool (PerRequesterLimit empty): the budget's own capacity is the only
+//     bound — the shape of a budget handed to one person, or to a team that
+//     shares it, where a per-person cap would only restate the budget.
+//   - individual limits (PerRequesterLimit set): additionally, the requester's
+//     cumulative active usage under this budget (matched by Owner) must stay
+//     within it — the shape of a course budget split among its students.
+//
+// The per-requester cap and the budget's own total Limit are two separate,
+// independently meaningful values.
 type AutoApprove struct {
-	PerRequesterLimit common.ProjectQuota `json:"per_requester_limit"`
+	PerRequesterLimit common.ProjectQuota `json:"per_requester_limit,omitempty"`
+}
+
+// IsPool reports whether the policy grants from the whole budget, with no
+// per-person cap on top.
+func (a *AutoApprove) IsPool() bool {
+	return a != nil && len(a.PerRequesterLimit) == 0
 }
 
 // PendingChanges holds proposed modifications awaiting approval (status change_pending).
@@ -240,7 +253,8 @@ type Node struct {
 	// EligibleRequesters holds the tokens allowed to request child nodes under
 	// this node.
 	EligibleRequesters common.TokenList `json:"eligible_requesters,omitempty"`
-	// AutoApprove, when set on a budget, enables per-requester auto-approval.
+	// AutoApprove, when set on a budget, enables auto-approval — from the whole
+	// budget (pool) or up to a per-requester limit.
 	AutoApprove *AutoApprove `json:"auto_approve,omitempty"`
 	// AllowSubBudgetRequests controls whether EligibleRequesters may ask for a
 	// sub-budget here, or only for projects. It does NOT restrict managers: they

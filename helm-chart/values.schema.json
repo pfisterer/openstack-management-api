@@ -123,6 +123,9 @@
             "authUrl": {
               "type": "string"
             },
+            "dashboardUrl": {
+              "type": "string"
+            },
             "applicationCredentialId": {
               "type": "string"
             },

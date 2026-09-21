@@ -61,6 +61,9 @@ type ConfigResponse struct {
 	// does an approved project eventually get an OpenStack project — without it
 	// the UI would show every project as "waiting for OpenStack" forever.
 	ProvisioningEnabled bool `json:"provisioningEnabled"`
+	// OpenstackDashboardURL is where a project can be opened in OpenStack;
+	// empty when none is configured.
+	OpenstackDashboardURL string `json:"openstackDashboardUrl,omitempty"`
 }
 
 // APIService provides the business operations consumed by the HTTP handlers.
@@ -112,6 +115,8 @@ type APIConfig struct {
 	// server starts, and a value frozen at startup would tell every client for
 	// the rest of the pod's life that provisioning does not exist.
 	ProvisioningEnabled func() bool
+	// OpenstackDashboardURL is passed through to the UI (see ConfigResponse).
+	OpenstackDashboardURL string
 }
 
 // SetupGinWebserver configures and returns the application router.
@@ -300,9 +305,10 @@ func getConfig(cfg APIConfig) gin.HandlerFunc {
 		openstackRoles := common.OpenstackRoles
 
 		config := ConfigResponse{
-			Resources:           resources,
-			OpenstackRoles:      openstackRoles,
-			ProvisioningEnabled: cfg.ProvisioningEnabled != nil && cfg.ProvisioningEnabled(),
+			Resources:             resources,
+			OpenstackRoles:        openstackRoles,
+			ProvisioningEnabled:   cfg.ProvisioningEnabled != nil && cfg.ProvisioningEnabled(),
+			OpenstackDashboardURL: cfg.OpenstackDashboardURL,
 		}
 
 		// Include dummy dev users in config if set, to inform frontend of available users for testing.

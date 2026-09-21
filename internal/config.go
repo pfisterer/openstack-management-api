@@ -172,6 +172,13 @@ type WebServerConfig struct {
 	// expiry (every token lists its description and last use, and revoking is
 	// one request).
 	APITokenAllowNeverExpires bool `json:"api_token_allow_never_expires"`
+	// OpenstackDashboardURL is the public address of the OpenStack dashboard
+	// (Horizon), e.g. "https://newstack.dhbw.cloud". Set, the UI links every
+	// project that exists in OpenStack straight to it; empty, it links nothing.
+	// Configured rather than derived from the Keystone URL: the dashboard is a
+	// different service on a different address, and a guess that is wrong
+	// sends people to a page that does not exist.
+	OpenstackDashboardURL string `json:"openstack_dashboard_url" validate:"omitempty,url"`
 }
 
 // RoleProviderConfig selects which RoleProvider implementation to use.
@@ -280,6 +287,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			CORSAllowedOrigins:        parseCSVEnv(envconf.String("CORS_ALLOWED_ORIGINS", "")),
 			APITokenTTLHours:          envconf.Int("API_TOKEN_TTL_HOURS", 24),
 			APITokenAllowNeverExpires: envconf.Bool("API_TOKEN_ALLOW_NEVER_EXPIRES", false),
+			OpenstackDashboardURL:     strings.TrimRight(envconf.String("OPENSTACK_DASHBOARD_URL", ""), "/"),
 		},
 
 		Reconciler: ReconcilerConfiguration{

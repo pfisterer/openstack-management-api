@@ -152,6 +152,7 @@ matters when a sourced `openrc` is in the same shell.
 | `ROOT_ADMIN_TOKENS` | — | Comma-separated `user:`/`group:` tokens that become root admins |
 | `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID` | — | Bearer-token verification; required at startup |
 | `API_TOKEN_TTL_HOURS`, `API_TOKEN_ALLOW_NEVER_EXPIRES` | `24`, `false` | API token lifetime when a request names none (any other lifetime may be requested), and whether tokens without expiry may be issued |
+| `OPENSTACK_DASHBOARD_URL` | — | Public address of the OpenStack dashboard (Horizon); set, the UI links each project that exists in OpenStack to it |
 | `API_MAX_AUTHORIZED_USERS` | `32` | Cap on additional members per project |
 | `API_CHARGE_OS_IN_USE` | `true` | Charge a leaf the larger of its limit and its measured OpenStack usage |
 | `API_CHARGE_RELEASED` | `true` | Keep a released leaf charged until its OpenStack project is gone |

@@ -81,6 +81,8 @@ spec:
             # ── OpenStack ────────────────────────────────────────────────────
             - name: OPENSTACK_AUTH_URL
               value: {{ .Values.openstackManagementApi.openstack.authUrl | quote }}
+            - name: OPENSTACK_DASHBOARD_URL
+              value: {{ .Values.openstackManagementApi.openstack.dashboardUrl | quote }}
             - name: OPENSTACK_APPLICATION_CREDENTIAL_ID
               value: {{ .Values.openstackManagementApi.openstack.applicationCredentialId | quote }}
             - name: OPENSTACK_APPLICATION_CREDENTIAL_SECRET

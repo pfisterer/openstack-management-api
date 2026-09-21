@@ -55,6 +55,10 @@ openstackManagementApi:
   #------------------------------------
   openstack:
     authUrl: ""
+    # Public address of the OpenStack dashboard (Horizon), e.g.
+    # "https://newstack.dhbw.cloud". Set, the UI links each project that exists
+    # in OpenStack to it; empty, it links nothing.
+    dashboardUrl: ""
     applicationCredentialId: ""
     # Stored in a Secret
     applicationCredentialSecret: ""

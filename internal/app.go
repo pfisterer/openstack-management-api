@@ -285,7 +285,8 @@ func RunApplication() {
 			Service:            treeSvc,
 			DummyDevUsers:      dummyDevUsers,
 			// Asked per request: the reconciler may still be connecting.
-			ProvisioningEnabled: func() bool { return reconcilerAPI != nil && reconcilerAPI.Ready() },
+			ProvisioningEnabled:   func() bool { return reconcilerAPI != nil && reconcilerAPI.Ready() },
+			OpenstackDashboardURL: config.WebServer.OpenstackDashboardURL,
 		},
 		Tokens: webserver.TokenConfig{
 			Service: apiTokens,

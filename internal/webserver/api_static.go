@@ -17,6 +17,10 @@ var appVersion = strings.TrimSpace(generated_docs.Version)
 type StaticConfig struct {
 	OIDCIssuerURL string
 	OIDCClientID  string
+	// SignInAvailable reports whether the identity provider is answering. On
+	// the public config.json rather than /v1/config because the latter needs a
+	// verified token — exactly what cannot be had while the provider is away.
+	SignInAvailable func() bool
 }
 
 // RegisterStaticRoutes wires all static/documentation routes on the given group.
@@ -42,6 +46,10 @@ func RegisterStaticRoutes(group *gin.RouterGroup, cfg StaticConfig) *gin.RouterG
 				"auth_provider": "oidc",
 				"issuer_url":    cfg.OIDCIssuerURL,
 				"client_id":     cfg.OIDCClientID,
+				// False while the identity provider cannot be reached. Sessions
+				// that already exist keep working; what fails is signing in, and
+				// the UI says so rather than offering a login that cannot work.
+				"sign_in_available": cfg.SignInAvailable == nil || cfg.SignInAvailable(),
 			},
 		})
 	})

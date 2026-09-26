@@ -1,6 +1,6 @@
 module github.com/pfisterer/openstack-management-api
 
-go 1.25.5
+go 1.26.0
 
 require (
 	github.com/coreos/go-oidc v2.5.0+incompatible
@@ -13,7 +13,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/oapi-codegen/runtime v1.7.0
-	github.com/pfisterer/cloud-self-service-golib v0.7.0
+	github.com/pfisterer/cloud-self-service-golib v0.8.0
 	go.uber.org/zap v1.28.0
 	gorm.io/driver/postgres v1.6.2
 	gorm.io/gorm v1.31.2
@@ -47,7 +47,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
 	github.com/pquerna/cachecontrol v0.2.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
-	github.com/quic-go/quic-go v0.61.0 // indirect
+	github.com/quic-go/quic-go v0.62.0 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect

@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/cloud-self-service-golib/logging"
+	"github.com/pfisterer/cloud-self-service-golib/oidcauth"
 	"github.com/pfisterer/cloud-self-service-golib/token"
 	"github.com/pfisterer/cloud-self-service-golib/tokengorm"
 	"github.com/pfisterer/openstack-management-api/internal/common"
@@ -75,29 +76,37 @@ func tokenLookupFor(tokens *token.Service) common.TokenLookupFunc {
 	}
 }
 
-func configureAuthMiddleware(cfg *WebServerConfig, tokenLookup common.TokenLookupFunc, userTokenResolver common.UserTokenResolverFunc, log *zap.SugaredLogger) (gin.HandlerFunc, error) {
+// configureAuthMiddleware returns the middleware and, where one exists, the
+// verifier behind it — the webserver reports its state to the UI, so a login
+// that cannot work says why instead of just failing.
+func configureAuthMiddleware(cfg *WebServerConfig, tokenLookup common.TokenLookupFunc, userTokenResolver common.UserTokenResolverFunc, log *zap.SugaredLogger) (gin.HandlerFunc, *oidcauth.Verifier, error) {
 
 	// Setup Web server
 	var authMiddleware gin.HandlerFunc
+	var verifier *oidcauth.Verifier
 
 	if cfg.DummyAuth {
 		log.Warn("DummyAuth enabled: using DummyAuthMiddleware (no SSO, user=group:uni_root)")
 		authMiddleware = webserver.DummyAuthMiddleware()
 	} else {
 
-		// Create OIDC Auth Verifier
+		// Create OIDC Auth Verifier. With OIDC_JWKS_URL configured this makes no
+		// network call, so a provider that is down cannot stop this service
+		// from starting (see the oidcauth package).
 		oidcAuthVerifier, err := webserver.NewOIDCAuthVerifier(webserver.OIDCVerifierConfig{
 			IssuerURL: cfg.OIDCIssuerURL,
 			ClientID:  cfg.OIDCClientID,
+			JWKSURL:   cfg.OIDCJWKSURL,
 		}, log)
 
 		if err != nil {
 			log.Fatalf("Failed to initialize OIDCAuthVerifier: %v", err)
 		}
 
+		verifier = oidcAuthVerifier
 		authMiddleware = webserver.CombinedAuthMiddleware(oidcAuthVerifier, tokenLookup, userTokenResolver, log)
 	}
-	return authMiddleware, nil
+	return authMiddleware, verifier, nil
 }
 
 // newOpenstackClient builds the OpenStack client for the configured
@@ -214,7 +223,7 @@ func RunApplication() {
 	}
 
 	//Create authentication middleware based on configuration.
-	authMiddleware, err := configureAuthMiddleware(&config.WebServer, tokenLookupFor(apiTokens), roleProvider.GetUserTokens, logger)
+	authMiddleware, oidcVerifier, err := configureAuthMiddleware(&config.WebServer, tokenLookupFor(apiTokens), roleProvider.GetUserTokens, logger)
 	if err != nil {
 		logger.Fatal("Failed to initialize authentication middleware", zap.Error(err))
 	}
@@ -278,6 +287,9 @@ func RunApplication() {
 		StaticConfig: webserver.StaticConfig{
 			OIDCIssuerURL: config.WebServer.OIDCIssuerURL,
 			OIDCClientID:  config.WebServer.OIDCClientID,
+			// Asked per request: whether the identity provider answers is a
+			// state that changes while a pod runs.
+			SignInAvailable: func() bool { return oidcVerifier == nil || !oidcVerifier.KeysUnavailable() },
 		},
 		API: webserver.APIConfig{
 			RoleSwitchGroups:   config.RootAdminTokens,

@@ -195,6 +195,14 @@ openstackManagementApi:
   oidc:
     issuerUrl: "https://sso.example.cloud/realms/example"
     clientId: "example-cloud-dns"
+    # The provider's key set, e.g.
+    # https://sso.example.cloud/realms/example/protocol/openid-connect/certs
+    #
+    # Set it and this service starts without asking the provider anything —
+    # which is what keeps an identity provider that is down from taking the API
+    # with it. Empty means the address is discovered from the issuer at startup
+    # and the provider has to be up in that second.
+    jwksUrl: ""
 
   #------------------------------------
   # Reconciler

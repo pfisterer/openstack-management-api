@@ -182,6 +182,10 @@ spec:
               value: {{ .Values.openstackManagementApi.oidc.issuerUrl | quote }}
             - name: OIDC_CLIENT_ID
               value: {{ .Values.openstackManagementApi.oidc.clientId | quote }}
+            {{- with .Values.openstackManagementApi.oidc.jwksUrl }}
+            - name: OIDC_JWKS_URL
+              value: {{ . | quote }}
+            {{- end }}
 
             # ── Reconciler ───────────────────────────────────────────────────
             - name: RECONCILER_ENABLED

@@ -151,6 +151,7 @@ matters when a sourced `openrc` is in the same shell.
 | `ROLE_PROVIDER_URL`, `ROLE_PROVIDER_API_TOKEN` | — | Required for `http` |
 | `ROOT_ADMIN_TOKENS` | — | Comma-separated `user:`/`group:` tokens that become root admins |
 | `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID` | — | Bearer-token verification; required at startup |
+| `OIDC_JWKS_URL` | — | The provider's key set (`…/protocol/openid-connect/certs` on Keycloak). Set it and startup asks the provider nothing; empty discovers it from the issuer, which needs the provider to be up right then |
 | `API_TOKEN_TTL_HOURS`, `API_TOKEN_ALLOW_NEVER_EXPIRES` | `24`, `false` | API token lifetime when a request names none (any other lifetime may be requested), and whether tokens without expiry may be issued |
 | `OPENSTACK_DASHBOARD_URL` | — | Public address of the OpenStack dashboard (Horizon); set, the UI links each project that exists in OpenStack to it |
 | `API_MAX_AUTHORIZED_USERS` | `32` | Cap on additional members per project |
@@ -178,7 +179,7 @@ matters when a sourced `openrc` is in the same shell.
 
 ## Authentication
 
-Callers authenticate with an **OIDC bearer token**, verified against `OIDC_ISSUER_URL`, or with an **API token** issued by this service. Either way their group tokens come from the configured role provider, fetched fresh per request; `ROOT_ADMIN_TOKENS` elevates matching callers to root admin and enables the role switch.
+Callers authenticate with an **OIDC bearer token**, verified against `OIDC_ISSUER_URL`, or with an **API token** issued by this service. While the identity provider is unreachable, an OIDC token that needs a key not yet cached is answered with **503**, never 401: a 401 tells the browser to drop its session and sign in again, which is the one thing that cannot work just then. API tokens are unaffected — they are checked against this service's own database — so scripts and MCP clients keep working through an outage of the provider, and the public `/config.json` reports `auth.sign_in_available: false` so the UI can say what is wrong. Either way their group tokens come from the configured role provider, fetched fresh per request; `ROOT_ADMIN_TOKENS` elevates matching callers to root admin and enables the role switch.
 
 API tokens (prefix `os_mgt_`) are for non-interactive callers — a CI job, a script, an MCP client. They are created, listed and revoked under `/v1/tokens`, carry a description and a lifetime (see the `API_TOKEN_*` settings), record when they were last used, and can be read-only, which rejects every write. A token always belongs to the real caller, never to an identity assumed through the role switch: a temporary view must not turn into a permanent credential. With `DB_TYPE=memory` tokens do not survive a restart.
 

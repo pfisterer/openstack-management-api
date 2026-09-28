@@ -1663,7 +1663,7 @@ func (r *Reconciler) upsertImported(
 				continue
 			}
 			authorizedUsers = append(authorizedUsers, common.AuthorizedUser{
-				Token:         "group:" + osGroup.Name,
+				Token:         groupTokenForKeystoneName(r.cfg.GroupPrefix, osGroup.Name),
 				OpenstackRole: g.RoleName,
 			})
 		}
@@ -1732,6 +1732,53 @@ func (r *Reconciler) upsertImported(
 	}
 }
 
+// relationSeparator stands in for "#" in Keystone group names:
+// group:wwi23seb#dozent becomes "<prefix>wwi23seb--dozent". A group ID that
+// itself ends in "--<relation>" would read back as a relation; relation names
+// are lowercase words, so that takes a deliberately odd group name.
+const relationSeparator = "--"
+
+// keystoneGroupName is the Keystone group a group token is provisioned as.
+// Plain groups keep the name they always had, so no existing group is renamed.
+func keystoneGroupName(prefix, token string) string {
+	group, relation := common.SplitGroupToken(token)
+	name := prefix + strings.TrimPrefix(group, common.GroupPrefix)
+	if relation != common.RelationMember {
+		name += relationSeparator + relation
+	}
+	return name
+}
+
+// groupTokenForKeystoneName maps a Keystone group found on an imported project
+// back to a token: one of ours (carrying the prefix) to the token it was
+// provisioned for, a foreign one to "group:<name>" as before.
+func groupTokenForKeystoneName(prefix, name string) string {
+	base, ours := strings.CutPrefix(name, prefix)
+	if !ours || prefix == "" {
+		return common.GroupPrefix + name
+	}
+	if i := strings.LastIndex(base, relationSeparator); i > 0 {
+		relation := base[i+len(relationSeparator):]
+		if isRelationName(relation) {
+			return common.JoinGroupToken(common.GroupPrefix+base[:i], relation)
+		}
+	}
+	return common.GroupPrefix + base
+}
+
+// isRelationName matches the role-provider's rule for relation names.
+func isRelationName(s string) bool {
+	if s == "" || s[0] < 'a' || s[0] > 'z' {
+		return false
+	}
+	for _, c := range s {
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
+}
+
 // collectGroupTokens returns the set of unique group: tokens referenced by any
 // AuthorizedUsers entry across the given leaves.
 func collectGroupTokens(leaves []tree.Node) map[string]struct{} {
@@ -1759,10 +1806,9 @@ func (r *Reconciler) syncGroups(ctx context.Context, activeLeaves []tree.Node, r
 	groupTokenToOSID := make(map[string]string, len(groupTokens))
 
 	for token := range groupTokens {
-		baseName, _ := strings.CutPrefix(token, "group:")
 		// Groups have no scope parent and carry no tags, so the prefix is what
 		// marks them as ours and keeps them out of the way of foreign groups.
-		osGroupName := r.cfg.GroupPrefix + baseName
+		osGroupName := keystoneGroupName(r.cfg.GroupPrefix, token)
 
 		// Find or create the Keystone group.
 		existing, err := r.osClient.FindGroupByName(osGroupName)

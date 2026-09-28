@@ -57,6 +57,20 @@ func TestAuthorizedUsersAreValidated(t *testing.T) {
 			users: []common.AuthorizedUser{{Token: "user:Someone@X.example", OpenstackRole: "READER"}},
 		},
 		{
+			name:  "a relation on a known group is accepted",
+			users: []common.AuthorizedUser{{Token: mockdata.CourseDozentGroup, OpenstackRole: "member"}},
+		},
+		{
+			name:    "an unknown relation on a known group is refused",
+			users:   []common.AuthorizedUser{{Token: mockdata.CourseGroup + "#tutor", OpenstackRole: "member"}},
+			wantErr: "unknown group",
+		},
+		{
+			name:    "a relation on an unknown group is refused",
+			users:   []common.AuthorizedUser{{Token: "group:does-not-exist#dozent", OpenstackRole: "member"}},
+			wantErr: "unknown group",
+		},
+		{
 			name:    "an unknown group is refused",
 			users:   []common.AuthorizedUser{{Token: "group:does-not-exist", OpenstackRole: "member"}},
 			wantErr: "unknown group",

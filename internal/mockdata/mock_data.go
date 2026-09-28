@@ -17,6 +17,11 @@ const (
 	DeptCSFaculty  = "group:dept_cs_faculty"
 	DeptBioGroup   = "group:dept_bio"
 	CSStudentGroup = "group:cs-student"
+	// CourseGroup has members with roles, mirroring the role-provider-service
+	// mock course: the tokens below are what its resolution returns.
+	CourseGroup            = "group:wwi23seb"
+	CourseDozentGroup      = "group:wwi23seb#dozent"
+	CourseStudierendeGroup = "group:wwi23seb#studierende"
 )
 
 // DefaultMockTreeState returns the seed data used for development/testing.
@@ -45,7 +50,7 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			ID:     "mock_cs_faculty",
 			Label:  "Mock Faculty (cs-faculty)",
 			Email:  "faculty@cs.example",
-			Tokens: common.TokenList{"user:faculty@cs.example", DeptCSFaculty},
+			Tokens: common.TokenList{"user:faculty@cs.example", DeptCSFaculty, CourseGroup, CourseDozentGroup},
 		},
 		{
 			ID:     "mock_bio_faculty",
@@ -57,7 +62,7 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			ID:     "mock_cs_student",
 			Label:  "Mock Student (cs-student)",
 			Email:  "cs-student@cs.com",
-			Tokens: common.TokenList{"user:cs-student@cs.com", CSStudentGroup},
+			Tokens: common.TokenList{"user:cs-student@cs.com", CSStudentGroup, CourseGroup, CourseStudierendeGroup},
 		},
 	}
 

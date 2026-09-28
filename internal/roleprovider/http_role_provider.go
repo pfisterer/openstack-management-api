@@ -116,12 +116,15 @@ func (h *HttpRoleProvider) SearchUsers(ctx context.Context, query string, limit 
 	return *resp.JSON200, nil
 }
 
-// GetGroupUsers calls GET /v1/groups/{token}/members?recursive=true and returns user emails.
+// GetGroupUsers calls GET /v1/groups/{token}/members?recursive=true and returns
+// user emails. A relation in the token ("group:x#dozent") goes into the
+// relation parameter: "#" has no place in a URL path.
 func (h *HttpRoleProvider) GetGroupUsers(ctx context.Context, groupToken string) ([]string, error) {
 	recursive := true
-	params := &roleclient.ListGroupMembersParams{Recursive: &recursive}
+	group, relation := common.SplitGroupToken(groupToken)
+	params := &roleclient.ListGroupMembersParams{Recursive: &recursive, Relation: &relation}
 
-	resp, err := h.client.ListGroupMembersWithResponse(ctx, groupToken, params)
+	resp, err := h.client.ListGroupMembersWithResponse(ctx, group, params)
 	if err != nil {
 		return nil, fmt.Errorf("HttpRoleProvider.GetGroupUsers: %w", err)
 	}
@@ -136,4 +139,16 @@ func (h *HttpRoleProvider) GetGroupUsers(ctx context.Context, groupToken string)
 		}
 	}
 	return emails, nil
+}
+
+// ListRelations calls GET /v1/relations.
+func (h *HttpRoleProvider) ListRelations(ctx context.Context) ([]string, error) {
+	resp, err := h.client.ListRelationsWithResponse(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("HttpRoleProvider.ListRelations: %w", err)
+	}
+	if resp.JSON200 == nil {
+		return nil, fmt.Errorf("HttpRoleProvider.ListRelations: unexpected status %d", resp.StatusCode())
+	}
+	return *resp.JSON200, nil
 }

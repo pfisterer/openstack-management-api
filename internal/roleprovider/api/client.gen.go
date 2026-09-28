@@ -38,14 +38,21 @@ type CommonGroup struct {
 
 // CommonSource defines model for common.Source.
 type CommonSource struct {
-	CreatedAt      *string `json:"created_at,omitempty"`
-	DnEmailRegexp  *string `json:"dn_email_regexp,omitempty"`
-	FilePath       *string `json:"file_path,omitempty"`
-	Id             *string `json:"id,omitempty"`
-	LastSyncStatus *string `json:"last_sync_status,omitempty"`
-	LastSyncedAt   *string `json:"last_synced_at,omitempty"`
-	Name           *string `json:"name,omitempty"`
-	Schedule       *string `json:"schedule,omitempty"`
+	CreatedAt     *string `json:"created_at,omitempty"`
+	DnEmailRegexp *string `json:"dn_email_regexp,omitempty"`
+	FilePath      *string `json:"file_path,omitempty"`
+
+	// GroupRelationRegexp GroupRelationRegexp (LDIF only) turns an LDAP group into a relation on
+	// another group: matched against the CN, its named captures "group" and
+	// "relation" name the target, e.g. `^(?P<group>.+)-(?P<relation>dozent)$`
+	// maps "wwi23seb-dozent" to wwi23seb#dozent. A CN that does not match stays
+	// a plain group.
+	GroupRelationRegexp *string `json:"group_relation_regexp,omitempty"`
+	Id                  *string `json:"id,omitempty"`
+	LastSyncStatus      *string `json:"last_sync_status,omitempty"`
+	LastSyncedAt        *string `json:"last_synced_at,omitempty"`
+	Name                *string `json:"name,omitempty"`
+	Schedule            *string `json:"schedule,omitempty"`
 
 	// Type "csv" | "ldif"
 	Type      *string `json:"type,omitempty"`
@@ -66,6 +73,9 @@ type CommonSyncLog struct {
 // WebserverAddMemberRequest defines model for webserver.addMemberRequest.
 type WebserverAddMemberRequest struct {
 	Member string `json:"member"`
+
+	// Relation Relation the member gets in the group; empty means "member".
+	Relation *string `json:"relation,omitempty"`
 }
 
 // WebserverCreateGroupRequest defines model for webserver.createGroupRequest.
@@ -79,9 +89,13 @@ type WebserverCreateGroupRequest struct {
 type WebserverCreateSourceRequest struct {
 	DnEmailRegexp *string `json:"dn_email_regexp,omitempty"`
 	FilePath      *string `json:"file_path,omitempty"`
-	Name          string  `json:"name"`
-	Schedule      *string `json:"schedule,omitempty"`
-	Type          string  `json:"type"`
+
+	// GroupRelationRegexp GroupRelationRegexp (LDIF only) maps a group CN onto a relation of another
+	// group via the named captures "group" and "relation".
+	GroupRelationRegexp *string `json:"group_relation_regexp,omitempty"`
+	Name                string  `json:"name"`
+	Schedule            *string `json:"schedule,omitempty"`
+	Type                string  `json:"type"`
 }
 
 // WebserverStatsResponse defines model for webserver.statsResponse.
@@ -101,8 +115,12 @@ type WebserverUpdateGroupRequest struct {
 type WebserverUpdateSourceRequest struct {
 	DnEmailRegexp *string `json:"dn_email_regexp,omitempty"`
 	FilePath      *string `json:"file_path,omitempty"`
-	Name          *string `json:"name,omitempty"`
-	Schedule      *string `json:"schedule,omitempty"`
+
+	// GroupRelationRegexp GroupRelationRegexp (LDIF only) maps a group CN onto a relation of another
+	// group via the named captures "group" and "relation".
+	GroupRelationRegexp *string `json:"group_relation_regexp,omitempty"`
+	Name                *string `json:"name,omitempty"`
+	Schedule            *string `json:"schedule,omitempty"`
 }
 
 // ListGroupsParams defines parameters for ListGroups.
@@ -121,6 +139,15 @@ type ListGroupsParams struct {
 type ListGroupMembersParams struct {
 	// Recursive Expand sub-groups recursively
 	Recursive *bool `form:"recursive,omitempty" json:"recursive,omitempty"`
+
+	// Relation Relation to list (see /v1/relations)
+	Relation *string `form:"relation,omitempty" json:"relation,omitempty"`
+}
+
+// RemoveGroupMemberParams defines parameters for RemoveGroupMember.
+type RemoveGroupMemberParams struct {
+	// Relation Relation to remove
+	Relation *string `form:"relation,omitempty" json:"relation,omitempty"`
 }
 
 // UploadAndSyncMultipartBody defines parameters for UploadAndSync.
@@ -263,7 +290,10 @@ type ClientInterface interface {
 	AddGroupMember(ctx context.Context, token string, body AddGroupMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RemoveGroupMember request
-	RemoveGroupMember(ctx context.Context, token string, member string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	RemoveGroupMember(ctx context.Context, token string, member string, params *RemoveGroupMemberParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListRelations request
+	ListRelations(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListSyncSources request
 	ListSyncSources(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -444,8 +474,20 @@ func (c *Client) AddGroupMember(ctx context.Context, token string, body AddGroup
 	return c.Client.Do(req)
 }
 
-func (c *Client) RemoveGroupMember(ctx context.Context, token string, member string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRemoveGroupMemberRequest(c.Server, token, member)
+func (c *Client) RemoveGroupMember(ctx context.Context, token string, member string, params *RemoveGroupMemberParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveGroupMemberRequest(c.Server, token, member, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ListRelations(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListRelationsRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -935,6 +977,22 @@ func NewListGroupMembersRequest(server string, token string, params *ListGroupMe
 
 		}
 
+		if params.Relation != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "relation", *params.Relation, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
 		queryURL.RawQuery = queryValues.Encode()
 	}
 
@@ -994,7 +1052,7 @@ func NewAddGroupMemberRequestWithBody(server string, token string, contentType s
 }
 
 // NewRemoveGroupMemberRequest generates requests for RemoveGroupMember
-func NewRemoveGroupMemberRequest(server string, token string, member string) (*http.Request, error) {
+func NewRemoveGroupMemberRequest(server string, token string, member string, params *RemoveGroupMemberParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -1026,7 +1084,56 @@ func NewRemoveGroupMemberRequest(server string, token string, member string) (*h
 		return nil, err
 	}
 
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Relation != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "relation", *params.Relation, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
 	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListRelationsRequest generates requests for ListRelations
+func NewListRelationsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/relations")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1496,7 +1603,10 @@ type ClientWithResponsesInterface interface {
 	AddGroupMemberWithResponse(ctx context.Context, token string, body AddGroupMemberJSONRequestBody, reqEditors ...RequestEditorFn) (*AddGroupMemberResponse, error)
 
 	// RemoveGroupMemberWithResponse request
-	RemoveGroupMemberWithResponse(ctx context.Context, token string, member string, reqEditors ...RequestEditorFn) (*RemoveGroupMemberResponse, error)
+	RemoveGroupMemberWithResponse(ctx context.Context, token string, member string, params *RemoveGroupMemberParams, reqEditors ...RequestEditorFn) (*RemoveGroupMemberResponse, error)
+
+	// ListRelationsWithResponse request
+	ListRelationsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListRelationsResponse, error)
 
 	// ListSyncSourcesWithResponse request
 	ListSyncSourcesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListSyncSourcesResponse, error)
@@ -1704,6 +1814,7 @@ type ListGroupMembersResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *[]string
+	JSON400      *map[string]interface{}
 	JSON401      *map[string]interface{}
 	JSON404      *map[string]interface{}
 	JSON500      *map[string]interface{}
@@ -1761,6 +1872,29 @@ func (r RemoveGroupMemberResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r RemoveGroupMemberResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ListRelationsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *[]string
+	JSON401      *map[string]interface{}
+}
+
+// Status returns HTTPResponse.Status
+func (r ListRelationsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListRelationsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -2117,12 +2251,21 @@ func (c *ClientWithResponses) AddGroupMemberWithResponse(ctx context.Context, to
 }
 
 // RemoveGroupMemberWithResponse request returning *RemoveGroupMemberResponse
-func (c *ClientWithResponses) RemoveGroupMemberWithResponse(ctx context.Context, token string, member string, reqEditors ...RequestEditorFn) (*RemoveGroupMemberResponse, error) {
-	rsp, err := c.RemoveGroupMember(ctx, token, member, reqEditors...)
+func (c *ClientWithResponses) RemoveGroupMemberWithResponse(ctx context.Context, token string, member string, params *RemoveGroupMemberParams, reqEditors ...RequestEditorFn) (*RemoveGroupMemberResponse, error) {
+	rsp, err := c.RemoveGroupMember(ctx, token, member, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseRemoveGroupMemberResponse(rsp)
+}
+
+// ListRelationsWithResponse request returning *ListRelationsResponse
+func (c *ClientWithResponses) ListRelationsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListRelationsResponse, error) {
+	rsp, err := c.ListRelations(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListRelationsResponse(rsp)
 }
 
 // ListSyncSourcesWithResponse request returning *ListSyncSourcesResponse
@@ -2522,6 +2665,13 @@ func ParseListGroupMembersResponse(rsp *http.Response) (*ListGroupMembersRespons
 		}
 		response.JSON200 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
 		var dest map[string]interface{}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -2575,6 +2725,39 @@ func ParseRemoveGroupMemberResponse(rsp *http.Response) (*RemoveGroupMemberRespo
 	response := &RemoveGroupMemberResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
+	}
+
+	return response, nil
+}
+
+// ParseListRelationsResponse parses an HTTP response from a ListRelationsWithResponse call
+func ParseListRelationsResponse(rsp *http.Response) (*ListRelationsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListRelationsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest []string
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
 	}
 
 	return response, nil

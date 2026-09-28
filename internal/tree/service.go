@@ -1324,6 +1324,9 @@ func (s *Service) normalizeAuthorizedUsers(ctx context.Context, users []common.A
 			token = common.UserPrefix + email
 
 		case strings.HasPrefix(token, common.GroupPrefix):
+			// "group:x#member" is spelled "group:x", so the same grant cannot
+			// appear under two names.
+			token = common.JoinGroupToken(common.SplitGroupToken(token))
 			if !seenGroups[token] {
 				exists, err := s.groupTokenExists(ctx, token)
 				if err != nil {
@@ -1348,12 +1351,23 @@ func (s *Service) normalizeAuthorizedUsers(ctx context.Context, users []common.A
 	return out, nil
 }
 
-// groupTokenExists asks the role provider whether a group token is real. The
-// search matches substrings, so the exact token still has to be picked out of
-// the results.
+// groupTokenExists asks the role provider whether a group token is real: the
+// group must exist and, for "group:x#dozent", the relation must be one the
+// provider knows. The search matches substrings, so the exact token still has
+// to be picked out of the results.
 func (s *Service) groupTokenExists(ctx context.Context, token string) (bool, error) {
 	if s.roles == nil {
 		return false, fmt.Errorf("no role provider configured")
+	}
+	token, relation := common.SplitGroupToken(token)
+	if relation != common.RelationMember {
+		relations, err := s.roles.ListRelations(ctx)
+		if err != nil {
+			return false, err
+		}
+		if !slices.Contains(relations, relation) {
+			return false, nil
+		}
 	}
 	groups, err := s.roles.SearchGroups(ctx, token, common.DefaultPageLimit)
 	if err != nil {

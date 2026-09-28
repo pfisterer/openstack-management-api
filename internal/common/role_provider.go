@@ -20,8 +20,12 @@ type RoleProvider interface {
 	SearchUsers(ctx context.Context, query string, limit int) ([]string, error)
 
 	// GetGroupUsers returns the email addresses of all users belonging to the given group token
-	// (e.g. "group:dept_cs_faculty"). Returns an empty slice when the group has no members.
+	// (e.g. "group:dept_cs_faculty"), or holding the relation a token names
+	// ("group:wwi23seb#dozent"). Returns an empty slice when there are none.
 	GetGroupUsers(ctx context.Context, groupToken string) ([]string, error)
+
+	// ListRelations returns the relations a group can carry, "member" first.
+	ListRelations(ctx context.Context) ([]string, error)
 }
 
 // GroupSummary is a group token together with its human-readable label (the

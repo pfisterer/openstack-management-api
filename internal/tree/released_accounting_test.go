@@ -23,6 +23,7 @@ func (noRoles) SearchGroups(context.Context, string, int) ([]common.GroupSummary
 }
 func (noRoles) SearchUsers(context.Context, string, int) ([]string, error) { return nil, nil }
 func (noRoles) GetGroupUsers(context.Context, string) ([]string, error)    { return nil, nil }
+func (noRoles) ListRelations(context.Context) ([]string, error)            { return nil, nil }
 
 // accountingSvc builds a service over an in-memory store holding one budget
 // with a single leaf in the given status.

@@ -463,7 +463,7 @@
                         "Bearer": []
                     }
                 ],
-                "description": "Returns all members of a group. By default resolves members transitively (recursive=true). Set recursive=false for direct members only.",
+                "description": "Returns the members of a group holding a relation (default \"member\", i.e. everyone in the group — every relation implies membership). By default resolves members transitively (recursive=true); a sub-group contributes all of its members. Set recursive=false for direct members only.",
                 "tags": [
                     "groups"
                 ],
@@ -487,6 +487,15 @@
                             "type": "boolean",
                             "default": true
                         }
+                    },
+                    {
+                        "description": "Relation to list (see /v1/relations)",
+                        "name": "relation",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "default": "member"
+                        }
                     }
                 ],
                 "responses": {
@@ -499,6 +508,17 @@
                                     "items": {
                                         "type": "string"
                                     }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Unknown relation",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
                                 }
                             }
                         }
@@ -544,7 +564,7 @@
                         "Bearer": []
                     }
                 ],
-                "description": "Adds a user or group token as a direct member of the group.",
+                "description": "Adds a user or group token to the group with a relation (default \"member\"). A group token as member means all of that group's members hold the relation.",
                 "tags": [
                     "groups"
                 ],
@@ -630,7 +650,7 @@
                         "Bearer": []
                     }
                 ],
-                "description": "Removes a user or group token from the group's direct membership.",
+                "description": "Removes one relation (default \"member\") of a user or group token from the group. Other relations the member holds stay.",
                 "tags": [
                     "groups"
                 ],
@@ -653,6 +673,15 @@
                         "required": true,
                         "schema": {
                             "type": "string"
+                        }
+                    },
+                    {
+                        "description": "Relation to remove",
+                        "name": "relation",
+                        "in": "query",
+                        "schema": {
+                            "type": "string",
+                            "default": "member"
                         }
                     }
                 ],
@@ -686,6 +715,47 @@
                         "description": "Internal server error",
                         "content": {
                             "*/*": {
+                                "schema": {
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/relations": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "Returns the relations a group can carry, \"member\" first. Every relation implies membership; a user holding relation R in group G gets the token \"group:G#R\" in addition to \"group:G\".",
+                "tags": [
+                    "groups"
+                ],
+                "summary": "List group relations",
+                "operationId": "listRelations",
+                "responses": {
+                    "200": {
+                        "description": "Relation names",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "content": {
+                            "application/json": {
                                 "schema": {
                                     "type": "object",
                                     "additionalProperties": true
@@ -1346,7 +1416,7 @@
                         "Bearer": []
                     }
                 ],
-                "description": "Returns all tokens for the given email: the user's own token (\"user:<email>\") plus all group tokens resolved transitively.",
+                "description": "Returns all tokens for the given email: the user's own token (\"user:<email>\") plus a \"group:<id>\" token for every group the user is a member of (resolved transitively; every relation implies membership) and a \"group:<id>#<relation>\" token for every other relation the user holds.",
                 "tags": [
                     "users"
                 ],
@@ -1464,6 +1534,10 @@
                     "file_path": {
                         "type": "string"
                     },
+                    "group_relation_regexp": {
+                        "description": "GroupRelationRegexp (LDIF only) turns an LDAP group into a relation on\nanother group: matched against the CN, its named captures \"group\" and\n\"relation\" name the target, e.g. `^(?P<group>.+)-(?P<relation>dozent)$`\nmaps \"wwi23seb-dozent\" to wwi23seb#dozent. A CN that does not match stays\na plain group.",
+                        "type": "string"
+                    },
                     "id": {
                         "type": "string"
                     },
@@ -1522,6 +1596,10 @@
                 "properties": {
                     "member": {
                         "type": "string"
+                    },
+                    "relation": {
+                        "description": "Relation the member gets in the group; empty means \"member\".",
+                        "type": "string"
                     }
                 }
             },
@@ -1553,6 +1631,10 @@
                         "type": "string"
                     },
                     "file_path": {
+                        "type": "string"
+                    },
+                    "group_relation_regexp": {
+                        "description": "GroupRelationRegexp (LDIF only) maps a group CN onto a relation of another\ngroup via the named captures \"group\" and \"relation\".",
                         "type": "string"
                     },
                     "name": {
@@ -1598,6 +1680,10 @@
                         "type": "string"
                     },
                     "file_path": {
+                        "type": "string"
+                    },
+                    "group_relation_regexp": {
+                        "description": "GroupRelationRegexp (LDIF only) maps a group CN onto a relation of another\ngroup via the named captures \"group\" and \"relation\".",
                         "type": "string"
                     },
                     "name": {

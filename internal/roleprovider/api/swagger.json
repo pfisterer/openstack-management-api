@@ -381,7 +381,7 @@
                         "Bearer": []
                     }
                 ],
-                "description": "Returns all members of a group. By default resolves members transitively (recursive=true). Set recursive=false for direct members only.",
+                "description": "Returns the members of a group holding a relation (default \"member\", i.e. everyone in the group — every relation implies membership). By default resolves members transitively (recursive=true); a sub-group contributes all of its members. Set recursive=false for direct members only.",
                 "produces": [
                     "application/json"
                 ],
@@ -404,6 +404,13 @@
                         "description": "Expand sub-groups recursively",
                         "name": "recursive",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "member",
+                        "description": "Relation to list (see /v1/relations)",
+                        "name": "relation",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -414,6 +421,13 @@
                             "items": {
                                 "type": "string"
                             }
+                        }
+                    },
+                    "400": {
+                        "description": "Unknown relation",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     },
                     "401": {
@@ -445,7 +459,7 @@
                         "Bearer": []
                     }
                 ],
-                "description": "Adds a user or group token as a direct member of the group.",
+                "description": "Adds a user or group token to the group with a relation (default \"member\"). A group token as member means all of that group's members hold the relation.",
                 "consumes": [
                     "application/json"
                 ],
@@ -514,7 +528,7 @@
                         "Bearer": []
                     }
                 ],
-                "description": "Removes a user or group token from the group's direct membership.",
+                "description": "Removes one relation (default \"member\") of a user or group token from the group. Other relations the member holds stay.",
                 "tags": [
                     "groups"
                 ],
@@ -534,6 +548,13 @@
                         "name": "member",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "default": "member",
+                        "description": "Relation to remove",
+                        "name": "relation",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -556,6 +577,42 @@
                     },
                     "500": {
                         "description": "Internal server error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/v1/relations": {
+            "get": {
+                "security": [
+                    {
+                        "Bearer": []
+                    }
+                ],
+                "description": "Returns the relations a group can carry, \"member\" first. Every relation implies membership; a user holding relation R in group G gets the token \"group:G#R\" in addition to \"group:G\".",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "groups"
+                ],
+                "summary": "List group relations",
+                "operationId": "listRelations",
+                "responses": {
+                    "200": {
+                        "description": "Relation names",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -1084,7 +1141,7 @@
                         "Bearer": []
                     }
                 ],
-                "description": "Returns all tokens for the given email: the user's own token (\"user:\u003cemail\u003e\") plus all group tokens resolved transitively.",
+                "description": "Returns all tokens for the given email: the user's own token (\"user:\u003cemail\u003e\") plus a \"group:\u003cid\u003e\" token for every group the user is a member of (resolved transitively; every relation implies membership) and a \"group:\u003cid\u003e#\u003crelation\u003e\" token for every other relation the user holds.",
                 "produces": [
                     "application/json"
                 ],
@@ -1178,6 +1235,10 @@
                 "file_path": {
                     "type": "string"
                 },
+                "group_relation_regexp": {
+                    "description": "GroupRelationRegexp (LDIF only) turns an LDAP group into a relation on\nanother group: matched against the CN, its named captures \"group\" and\n\"relation\" name the target, e.g. `^(?P\u003cgroup\u003e.+)-(?P\u003crelation\u003edozent)$`\nmaps \"wwi23seb-dozent\" to wwi23seb#dozent. A CN that does not match stays\na plain group.",
+                    "type": "string"
+                },
                 "id": {
                     "type": "string"
                 },
@@ -1236,6 +1297,10 @@
             "properties": {
                 "member": {
                     "type": "string"
+                },
+                "relation": {
+                    "description": "Relation the member gets in the group; empty means \"member\".",
+                    "type": "string"
                 }
             }
         },
@@ -1267,6 +1332,10 @@
                     "type": "string"
                 },
                 "file_path": {
+                    "type": "string"
+                },
+                "group_relation_regexp": {
+                    "description": "GroupRelationRegexp (LDIF only) maps a group CN onto a relation of another\ngroup via the named captures \"group\" and \"relation\".",
                     "type": "string"
                 },
                 "name": {
@@ -1312,6 +1381,10 @@
                     "type": "string"
                 },
                 "file_path": {
+                    "type": "string"
+                },
+                "group_relation_regexp": {
+                    "description": "GroupRelationRegexp (LDIF only) maps a group CN onto a relation of another\ngroup via the named captures \"group\" and \"relation\".",
                     "type": "string"
                 },
                 "name": {

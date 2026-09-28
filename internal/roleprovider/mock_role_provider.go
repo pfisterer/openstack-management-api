@@ -84,6 +84,7 @@ var mockGroupLabels = map[string]string{
 	mockdata.DeptCSFaculty:  "CS Faculty Pool",
 	mockdata.DeptBioGroup:   "Biology Dept",
 	mockdata.CSStudentGroup: "CS Students",
+	mockdata.CourseGroup:    "WWI23SEB",
 }
 
 // SearchGroups returns mock groups from mockdata identities, matching the query
@@ -94,7 +95,9 @@ func (m *MockRoleProvider) SearchGroups(_ context.Context, query string, limit i
 	groupSet := map[string]struct{}{}
 	for _, ident := range identities {
 		for _, token := range ident.Tokens {
-			if strings.HasPrefix(token, groupPrefix) {
+			// Relation tokens name a role in a group, not a group of their own —
+			// the real provider's search returns groups only.
+			if strings.HasPrefix(token, groupPrefix) && !strings.Contains(token, "#") {
 				groupSet[token] = struct{}{}
 			}
 		}
@@ -120,4 +123,10 @@ func (m *MockRoleProvider) SearchGroups(_ context.Context, query string, limit i
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+// ListRelations mirrors the role-provider-service mock setup
+// (GROUP_RELATIONS=dozent,studierende).
+func (m *MockRoleProvider) ListRelations(context.Context) ([]string, error) {
+	return []string{common.RelationMember, "dozent", "studierende"}, nil
 }

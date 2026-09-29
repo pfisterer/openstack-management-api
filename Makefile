@@ -42,7 +42,7 @@ RP_API_DIR        := ./internal/roleprovider/api
 # lands on main is always reproducible from something published — and since the
 # generated client is committed, an override made mid-flight shows up in the
 # diff instead of hiding in someone's working copy.
-RP_VERSION        ?= v0.6.7
+RP_VERSION        ?= v0.7.0
 # The generator, pinned. Its version is written into client.gen.go's header, so
 # an unpinned `@latest` makes the committed file depend on when someone last ran
 # the target — and the CI check below would then fail on an upstream release

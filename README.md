@@ -160,7 +160,7 @@ matters when a sourced `openrc` is in the same shell.
 | `RESOURCE_DEFINITIONS` | built-in set | The resource catalogue as a JSON array; replaces the built-in set, an invalid entry stops startup |
 | `SERVICE_TIMEOUT_SECONDS` | `30` | Timeout for calls to the role provider and for service requests |
 | `RECONCILER_ENABLED` | `false` | Turn the OpenStack loop on |
-| `RECONCILER_INTERVAL_SECONDS` | `300` | How often it runs |
+| `RECONCILER_INTERVAL_SECONDS` | `300` | How often it runs on its own; every change made through the API starts a run right away |
 | `RECONCILER_DRY_RUN` | `false` | Log what it would do, write nothing |
 | `RECONCILER_NO_DELETE` | `false` | Never delete in OpenStack (records of projects already gone are still cleaned up) |
 | `RECONCILER_SCOPE_PARENT_NAME` / `_ID` | — | Confine it to one parent project, created by name if missing (`_ID` wins); **never** point this at the domain root |

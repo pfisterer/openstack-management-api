@@ -302,7 +302,7 @@ Errors from the service are sentinel-wrapped and mapped centrally in [errors.go]
 
 ## 8. Reconciler (two-way OpenStack sync)
 
-[internal/reconciler/reconciler.go](internal/reconciler/reconciler.go). Optional (`RECONCILER_ENABLED`), runs every `RECONCILER_INTERVAL_SECONDS` and on demand.
+[internal/reconciler/reconciler.go](internal/reconciler/reconciler.go). Optional (`RECONCILER_ENABLED`), runs every `RECONCILER_INTERVAL_SECONDS`, and right away after every change made through the API (REST or MCP; see `tree.NotifyOnWrite`), and on demand.
 
 ### 8.1 Lifecycle and connection
 

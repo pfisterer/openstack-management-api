@@ -205,8 +205,20 @@ func RunApplication() {
 		logger.Fatalw("invalid ROLE_PROVIDER: must be 'http' or 'mock'", "value", config.RoleProvider.Type)
 	}
 
+	// A local ReconcilerAPI variable avoids passing a typed nil as the interface,
+	// which would make cfg.Reconciler != nil even when no reconciler exists.
+	// Declared this early for the service's store: a change made through the API
+	// starts a reconciler run right away (see tree.NotifyOnWrite). It is only
+	// read on writes, and the ones during bootstrap below find it still nil.
+	var reconcilerAPI webserver.ReconcilerAPI
+	triggerReconcile := func() {
+		if reconcilerAPI != nil {
+			reconcilerAPI.Trigger()
+		}
+	}
+
 	requestTimeout := time.Duration(config.ServiceTimeoutSeconds) * time.Second
-	treeSvc := tree.NewService(nodeStore, roleProvider, config.ProjectDefinitions, config.RootAdminTokens, requestTimeout, config.MaxAuthorizedUsers, tree.Accounting{
+	treeSvc := tree.NewService(tree.NotifyOnWrite(nodeStore, triggerReconcile), roleProvider, config.ProjectDefinitions, config.RootAdminTokens, requestTimeout, config.MaxAuthorizedUsers, tree.Accounting{
 		ChargeOSInUse:  config.ChargeOSInUse,
 		ChargeReleased: config.ChargeReleased,
 	}, logger)
@@ -241,9 +253,6 @@ func RunApplication() {
 	defer cancel()
 
 	// Setup Gin web server with configured dependencies.
-	// A local ReconcilerAPI variable avoids passing a typed nil as the interface,
-	// which would make cfg.Reconciler != nil even when no reconciler exists.
-	var reconcilerAPI webserver.ReconcilerAPI
 
 	if config.Reconciler.Enabled {
 		logger.Infow("Starting reconciler", "interval_seconds", config.Reconciler.IntervalSeconds, "dry_run", config.Reconciler.DryRun)

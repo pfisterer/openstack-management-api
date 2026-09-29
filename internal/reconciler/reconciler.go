@@ -230,7 +230,12 @@ func (r *Reconciler) Start(ctx context.Context) {
 }
 
 // Trigger requests an immediate reconciliation run. Non-blocking: if a run is already
-// queued the second signal is silently dropped.
+// queued the second signal is silently dropped. A trigger during a run is kept and
+// starts the next run once this one ends, so a change made mid-run is not lost:
+// the queued run has not read the state yet.
+//
+// Every API write triggers (tree.NotifyOnWrite). That holds per process — with
+// more than one replica, only the one that served the request would run.
 func (r *Reconciler) Trigger() {
 	select {
 	case r.trigger <- struct{}{}:

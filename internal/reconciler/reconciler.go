@@ -362,6 +362,16 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 		return res, fmt.Errorf("load imported leaves: %w", err)
 	}
 
+	// Every budget, so a project's description can name its path in the tree.
+	budgets, err := r.store.ListNodes(ctx, tree.NodeQuery{Kinds: []string{tree.KindBudget}}, 0, 0)
+	if err != nil {
+		return res, fmt.Errorf("load budgets: %w", err)
+	}
+	budgetByID := make(map[string]tree.Node, len(budgets))
+	for _, b := range budgets {
+		budgetByID[b.ID] = b
+	}
+
 	scopeParentID, err := r.ensureScopeParent()
 	if err != nil {
 		return res, fmt.Errorf("resolve scope parent: %w", err)
@@ -444,6 +454,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 	claimedOSProjects := make(map[string]string, len(activeLeaves))
 
 	for _, leaf := range activeLeaves {
+		description := buildDescription(leaf, budgetPath(budgetByID, leaf))
 		osProject, hasProject := osProjectByResourceID[leaf.ID]
 		if !hasProject {
 			// The tag is the only thing tying a project to its node, and it sits
@@ -457,7 +468,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 			}
 		}
 		if !hasProject {
-			created, err := r.createOpenstackProjectForLeaf(ctx, leaf)
+			created, err := r.createOpenstackProjectForLeaf(ctx, leaf, description)
 			if err != nil {
 				r.log.Warnw("Failed to create OS project for leaf", "node_id", leaf.ID, "error", err)
 				continue
@@ -470,7 +481,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 			r.syncMembers(leaf, created.ID)
 			r.syncGroupAssignments(leaf, created.ID, groupTokenToOSID)
 		} else {
-			overcommitted, inUse, measured, err := r.syncQuota(leaf, osProject)
+			overcommitted, inUse, measured, err := r.syncQuota(leaf, osProject, description)
 			if err != nil {
 				r.log.Warnw("Failed to sync quota for leaf", "node_id", leaf.ID, "os_project_id", osProject.ID, "error", err)
 				continue
@@ -1222,24 +1233,58 @@ func truncateRunes(s string, n int) string {
 	return strings.TrimRight(string(runes[:n]), " ")
 }
 
-// buildDescription constructs the OS project description for a leaf.
-// Format: "email: reason (managed project)" where email is the owner's address.
-func buildDescription(leaf tree.Node) string {
-	email := leaf.OwnerEmail()
-	switch {
-	case email != "" && leaf.Reason != "":
-		return email + ": " + leaf.Reason + managedDescriptionSuffix
-	case leaf.Reason != "":
-		return leaf.Reason + managedDescriptionSuffix
+// descriptionPathSeparator joins the budget path and the owner in a description.
+const descriptionPathSeparator = " -> "
+
+// budgetPath returns the names of the budgets a leaf hangs under, top-down and
+// without the root, e.g. ["DHBW Mannheim", "Fakultät Technik", "Prof-X"]. It is
+// what an operator in Horizon needs to tell where a project belongs. A budget
+// missing from budgetByID ends the walk, as does a cycle.
+func budgetPath(budgetByID map[string]tree.Node, leaf tree.Node) []string {
+	var path []string
+	seen := map[string]struct{}{}
+	for id := leaf.ParentID; id != nil && *id != tree.RootNodeID; {
+		if _, dup := seen[*id]; dup {
+			break
+		}
+		seen[*id] = struct{}{}
+		budget, ok := budgetByID[*id]
+		if !ok {
+			break
+		}
+		name := budget.Name
+		if name == "" {
+			name = budget.ID
+		}
+		path = append(path, name)
+		id = budget.ParentID
 	}
-	return fmt.Sprintf("Managed by DHBW resource management. Node: %s%s", leaf.ID, managedDescriptionSuffix)
+	slices.Reverse(path)
+	return path
+}
+
+// buildDescription constructs the OS project description for a leaf.
+// Format: "budget -> … -> email: reason (managed project)", where the budgets are
+// the leaf's path in the tree (see budgetPath) and email is the owner's address.
+func buildDescription(leaf tree.Node, path []string) string {
+	prefix := path
+	if email := leaf.OwnerEmail(); email != "" {
+		prefix = append(slices.Clip(path), email)
+	}
+	body := leaf.Reason
+	if body == "" {
+		body = "Managed by DHBW resource management. Node: " + leaf.ID
+	}
+	if len(prefix) > 0 {
+		body = strings.Join(prefix, descriptionPathSeparator) + ": " + body
+	}
+	return body + managedDescriptionSuffix
 }
 
 // createOpenstackProjectForLeaf creates a new OpenStack project for an approved leaf
 // and applies the full initial quota (managed fields + network defaults).
-func (r *Reconciler) createOpenstackProjectForLeaf(_ context.Context, leaf tree.Node) (osclient.ProjectInfo, error) {
+func (r *Reconciler) createOpenstackProjectForLeaf(_ context.Context, leaf tree.Node, description string) (osclient.ProjectInfo, error) {
 	name := buildProjectName(leaf)
-	description := buildDescription(leaf)
 
 	r.log.Infow("Creating OS project for leaf",
 		"node_id", leaf.ID, "project_name", name, "dry_run", r.cfg.DryRun)
@@ -1476,7 +1521,7 @@ func syncGrants(c grantClient, defs []common.ManagedProject, leaf tree.Node, osP
 	}
 }
 
-func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo) (overcommitted bool, inUse common.ProjectQuota, measured bool, err error) {
+func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo, description string) (overcommitted bool, inUse common.ProjectQuota, measured bool, err error) {
 	osProjectID := osProject.ID
 	quotaSet := ProjectQuotaToQuotaSet(r.managedProjects, leaf.Limit)
 
@@ -1496,7 +1541,6 @@ func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo) (
 	// Name is only sent when it actually changed: an unchanged name would be a no-op
 	// write every tick, and it lets an operator's manual rename of an *imported*
 	// project survive until the node itself is renamed.
-	description := buildDescription(leaf)
 	updateOpts := osclient.ProjectUpdateOpts{
 		BaseProjectOpts: osclient.BaseProjectOpts{Description: &description},
 	}

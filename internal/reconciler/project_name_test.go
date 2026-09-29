@@ -1,6 +1,7 @@
 package reconciler
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -104,7 +105,7 @@ func TestBuildDescription(t *testing.T) {
 		Reason: "Praktikum Cloud",
 		Owner:  "user:max.muster@dhbw.de",
 	}
-	got := buildDescription(leaf)
+	got := buildDescription(leaf, nil)
 	if !strings.HasPrefix(got, "max.muster@dhbw.de: ") {
 		t.Errorf("owner email missing from description: %q", got)
 	}
@@ -116,9 +117,46 @@ func TestBuildDescription(t *testing.T) {
 	}
 
 	// No owner, no reason: the fallback is still marked.
-	bare := buildDescription(tree.Node{ID: "p_002"})
+	bare := buildDescription(tree.Node{ID: "p_002"}, nil)
 	if !strings.HasSuffix(bare, managedDescriptionSuffix) {
 		t.Errorf("fallback description not marked as managed: %q", bare)
+	}
+}
+
+// The description names the leaf's budgets, top-down and without the root, so an
+// operator in Horizon can tell where the project belongs.
+func TestBuildDescriptionWithBudgetPath(t *testing.T) {
+	ptr := func(s string) *string { return &s }
+	budgetByID := map[string]tree.Node{
+		tree.RootNodeID: {ID: tree.RootNodeID, Name: "Organization Root"},
+		"b_ma":          {ID: "b_ma", Name: "DHBW Mannheim", ParentID: ptr(tree.RootNodeID)},
+		"b_tech":        {ID: "b_tech", Name: "Fakultät Technik", ParentID: ptr("b_ma")},
+		"b_prof":        {ID: "b_prof", Name: "Prof-X", ParentID: ptr("b_tech")},
+	}
+	leaf := tree.Node{
+		ID:       "p_001",
+		ParentID: ptr("b_prof"),
+		Reason:   "Linux-Übungen",
+		Owner:    "user:max.muster@dhbw.de",
+	}
+	got := buildDescription(leaf, budgetPath(budgetByID, leaf))
+	want := "DHBW Mannheim -> Fakultät Technik -> Prof-X -> max.muster@dhbw.de: Linux-Übungen (managed project)"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+
+	// Without an owner the path still leads the description.
+	leaf.Owner = ""
+	got = buildDescription(leaf, budgetPath(budgetByID, leaf))
+	want = "DHBW Mannheim -> Fakultät Technik -> Prof-X: Linux-Übungen (managed project)"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+
+	// A budget that did not load ends the path rather than failing it.
+	delete(budgetByID, "b_tech")
+	if path := budgetPath(budgetByID, leaf); !slices.Equal(path, []string{"Prof-X"}) {
+		t.Errorf("path with a missing budget = %q", path)
 	}
 }
 

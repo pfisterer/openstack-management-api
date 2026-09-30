@@ -34,11 +34,10 @@ type toolInputContract struct {
 var toolInputContracts = []toolInputContract{
 	{
 		tool: "create_project", domain: tree.CreateNodeRequest{}, input: mcpRequestInput{},
-		renamed: map[string]string{"parent_id": "budget_id"},
+		renamed: map[string]string{"parent_id": "budget_id", "admin_scope": "admins"},
 		omitted: map[string]string{
 			"kind":                               "the tool sets it; offering it would let a model create a budget through the project tool",
 			"authorized_users":                   "participants are managed in the UI, where the person can see who they are adding",
-			"admin_scope":                        "budget-only",
 			"eligible_requesters":                "budget-only",
 			"auto_approve":                       "budget-only",
 			"allow_sub_budget_requests":          "budget-only",
@@ -87,13 +86,28 @@ var toolInputContracts = []toolInputContract{
 	{
 		tool: "rename_project", domain: tree.UpdateNodeRequest{}, input: mcpRenameInput{},
 		omitted: map[string]string{
-			"admin_scope":                        "changing who may approve is not done by an agent",
+			"admin_scope":                        "set_project_admins offers it for projects; who may approve on a budget is not changed by an agent",
 			"eligible_requesters":                "changing who may request is not done by an agent",
 			"auto_approve":                       "granting automatic approval is not done by an agent",
 			"clear_auto_approve":                 "see auto_approve",
 			"allow_sub_budget_requests":          "policy, not a value",
 			"allow_requests_beyond_auto_approve": "policy, not a value",
 			"limit":                              "resources change through request_project_change, which records a reason",
+			"termination_date":                   "not offered yet",
+			"clear_termination_date":             "see termination_date",
+		},
+	},
+	{
+		tool: "set_project_admins", domain: tree.UpdateNodeRequest{}, input: mcpSetAdminsInput{},
+		renamed: map[string]string{"admin_scope": "admins"},
+		omitted: map[string]string{
+			"name":                               "rename_project",
+			"eligible_requesters":                "budget-only",
+			"auto_approve":                       "budget-only",
+			"clear_auto_approve":                 "budget-only",
+			"allow_sub_budget_requests":          "budget-only",
+			"allow_requests_beyond_auto_approve": "budget-only",
+			"limit":                              "request_project_change",
 			"termination_date":                   "not offered yet",
 			"clear_termination_date":             "see termination_date",
 		},

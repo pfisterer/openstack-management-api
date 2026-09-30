@@ -111,13 +111,20 @@ func toolNames(t *testing.T, session *mcp.ClientSession) []string {
 	return names
 }
 
+// mcpReadTools are the tools that change nothing, and so the only ones a
+// read-only token is offered.
+var mcpReadTools = []string{
+	"get_project", "list_budget_contents", "list_my_budgets", "list_my_projects",
+	"list_requestable_budgets", "list_requests_to_decide", "search_projects",
+}
+
 // The whole reason the read-only rule moved off the HTTP method: every MCP call
 // is a POST, so under the old code a read-only token could not even list tools.
 func TestMCP_ReadOnlyTokenCanRead(t *testing.T) {
 	session := mcpSession(t, mcpTestServer(t), readOnlySecret)
 
 	names := toolNames(t, session)
-	for _, want := range []string{"get_project", "list_my_budgets", "list_my_projects", "search_projects"} {
+	for _, want := range mcpReadTools {
 		if !slices.Contains(names, want) {
 			t.Errorf("read tool %q missing from %v", want, names)
 		}
@@ -150,7 +157,7 @@ func TestMCP_WriteTokenIsOfferedMutatingTools(t *testing.T) {
 	names := toolNames(t, session)
 	for _, want := range []string{
 		"create_project", "request_project_change", "approve_request", "reject_request", "rename_project",
-		"create_budget", "move_to_budget", "transfer_ownership", "adopt_imported_project",
+		"create_budget", "move_to_budget", "transfer_ownership", "adopt_imported_project", "set_project_admins",
 	} {
 		if !slices.Contains(names, want) {
 			t.Errorf("write tool %q missing for a write token, got %v", want, names)
@@ -169,7 +176,7 @@ func TestMCP_ReadOnlyTokenLosesEveryWriteTool(t *testing.T) {
 			continue // correctly withheld
 		}
 		// Present for both: it must be one of the reads.
-		if !slices.Contains([]string{"get_project", "list_my_budgets", "list_my_projects", "search_projects"}, name) {
+		if !slices.Contains(mcpReadTools, name) {
 			t.Errorf("%q is offered to a read-only token but is not a read tool", name)
 		}
 	}
@@ -287,18 +294,22 @@ func TestMCP_ToolsDeclareTheirRequiredArguments(t *testing.T) {
 	}
 
 	want := map[string][]string{
-		"create_budget":          {"parent_id", "name", "reason", "limit", "admin_scope"},
-		"create_project":         {"budget_id", "name", "reason", "limit"},
-		"release_project":        {"id", "confirm_name"},
-		"delete_budget":          {"id", "confirm_name"},
-		"rename_project":         {"id", "name"},
-		"move_to_budget":         {"id", "new_budget_id"},
-		"transfer_ownership":     {"id", "new_owner"},
-		"request_project_change": {"id", "limit"},
-		"get_project":            {"id"},
-		"search_projects":        {"query"},
-		"list_my_projects":       {},
-		"list_my_budgets":        {},
+		"create_budget":            {"parent_id", "name", "reason", "limit", "admin_scope"},
+		"create_project":           {"budget_id", "name", "reason", "limit"},
+		"release_project":          {"id", "confirm_name"},
+		"delete_budget":            {"id", "confirm_name"},
+		"rename_project":           {"id", "name"},
+		"move_to_budget":           {"id", "new_budget_id"},
+		"transfer_ownership":       {"id", "new_owner"},
+		"request_project_change":   {"id", "limit"},
+		"get_project":              {"id"},
+		"search_projects":          {"query"},
+		"list_my_projects":         {},
+		"list_my_budgets":          {},
+		"set_project_admins":       {"id", "admins"},
+		"list_budget_contents":     {"id"},
+		"list_requests_to_decide":  {},
+		"list_requestable_budgets": {},
 	}
 
 	for _, tool := range res.Tools {
@@ -394,5 +405,77 @@ func TestMCP_ChangesAreRecordedAsComingFromAnAgent(t *testing.T) {
 	}
 	if entry.Actor == "" {
 		t.Error("history has no actor")
+	}
+}
+
+// set_project_admins shares the service's admin_scope with budgets, where it
+// says who approves. The tool is the only thing keeping it on projects, so a
+// budget id has to be refused by the tool — and the new list has to arrive on a
+// project, in canonical spelling.
+func TestMCP_SetProjectAdmins(t *testing.T) {
+	session := mcpSession(t, mcpTestServer(t), writeSecret)
+	call := func(name string, args map[string]any) *mcp.CallToolResult {
+		t.Helper()
+		res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: args})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		return res
+	}
+	var list struct {
+		Projects []struct {
+			ID     string   `json:"id"`
+			Kind   string   `json:"kind"`
+			Admins []string `json:"admins"`
+			Shared bool     `json:"shared"`
+		} `json:"projects"`
+	}
+
+	budgets := call("list_my_budgets", map[string]any{})
+	if err := json.Unmarshal(mustJSON(t, budgets.StructuredContent), &list); err != nil || len(list.Projects) == 0 {
+		t.Fatalf("no budget to test with: %v", err)
+	}
+	budgetID := list.Projects[0].ID
+	if list.Projects[0].Kind != tree.KindBudget {
+		t.Errorf("kind = %q, want budget", list.Projects[0].Kind)
+	}
+	if res := call("set_project_admins", map[string]any{"id": budgetID, "admins": []string{"user:x@y"}}); !res.IsError {
+		t.Fatal("set_project_admins changed who approves on a budget")
+	}
+
+	created := call("create_project", map[string]any{
+		"budget_id": budgetID, "name": "Shared lab", "reason": "a lab run by two", "limit": map[string]int{"cores": 1},
+		"admins": []string{"user:Co@Uni.example"},
+	})
+	if created.IsError {
+		t.Fatalf("create: %s", mustText(t, created))
+	}
+	var project struct {
+		ID     string   `json:"id"`
+		Admins []string `json:"admins"`
+		Shared bool     `json:"shared"`
+	}
+	if err := json.Unmarshal(mustJSON(t, created.StructuredContent), &project); err != nil {
+		t.Fatal(err)
+	}
+	if !project.Shared || !slices.Equal(project.Admins, []string{"user:co@uni.example"}) {
+		t.Errorf("created project: shared %v, admins %v", project.Shared, project.Admins)
+	}
+
+	cleared := call("set_project_admins", map[string]any{"id": project.ID, "admins": []string{}})
+	if cleared.IsError {
+		t.Fatalf("clear admins: %s", mustText(t, cleared))
+	}
+	// A fresh value: the empty fields are omitted, so decoding into the old
+	// one would keep what was there.
+	var after struct {
+		Admins []string `json:"admins"`
+		Shared bool     `json:"shared"`
+	}
+	if err := json.Unmarshal(mustJSON(t, cleared.StructuredContent), &after); err != nil {
+		t.Fatal(err)
+	}
+	if after.Shared || len(after.Admins) != 0 {
+		t.Errorf("after clearing: shared %v, admins %v", after.Shared, after.Admins)
 	}
 }

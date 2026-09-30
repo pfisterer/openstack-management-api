@@ -120,30 +120,53 @@ func newMCPServer(cfg APIConfig, caller mcpCaller, log *zap.SugaredLogger) *mcp.
 
 type mcpProject struct {
 	ID     string `json:"id" jsonschema:"the project's id, used to refer to it in other tools"`
+	Kind   string `json:"kind" jsonschema:"project or budget"`
 	Name   string `json:"name" jsonschema:"human-readable name"`
 	Status string `json:"status" jsonschema:"one of pending, approved, change_pending, rejected, released, imported"`
+	Reason string `json:"reason,omitempty" jsonschema:"why it was requested, as the requester wrote it"`
 	Owner  string `json:"owner,omitempty" jsonschema:"the person responsible, as user:<email>"`
+	// One list, two meanings, because the service keeps one: on a budget the
+	// people who decide there, on a project the people who run it with the
+	// owner. Named for what it is on both rather than for either.
+	Admins []string `json:"admins,omitempty" jsonschema:"on a project: who administers it together with the owner; on a budget: who approves requests there"`
+	Shared bool     `json:"shared,omitempty" jsonschema:"true for a project that others administer together with its owner"`
 	// PaidFrom is the id of the budget this project is charged to, not its name:
 	// the name is not unique and cannot be fed back into another tool.
-	PaidFrom        string         `json:"paid_from,omitempty" jsonschema:"id of the budget this is charged to"`
-	Limit           map[string]int `json:"limit,omitempty" jsonschema:"granted resources, e.g. cores, ram, storage"`
-	InUse           map[string]int `json:"in_use,omitempty" jsonschema:"what OpenStack reports as actually used; a missing key means not measured, not zero"`
-	OSProjectID     string         `json:"os_project_id,omitempty" jsonschema:"the OpenStack project, empty while it is still being created"`
-	TerminationDate string         `json:"termination_date,omitempty" jsonschema:"intended end of life"`
+	PaidFrom     string         `json:"paid_from,omitempty" jsonschema:"id of the budget this is charged to"`
+	PaidFromName string         `json:"paid_from_name,omitempty" jsonschema:"name of that budget, where known"`
+	Limit        map[string]int `json:"limit,omitempty" jsonschema:"granted resources, e.g. cores, ram, storage"`
+	// What a pending request or change asks for. Without it a manager asked to
+	// approve "with less" cannot know what "more" was.
+	RequestedLimit     map[string]int `json:"requested_limit,omitempty" jsonschema:"resources a pending request or change asks for; limit keeps what is granted until it is decided"`
+	InUse              map[string]int `json:"in_use,omitempty" jsonschema:"what OpenStack reports as actually used; a missing key means not measured, not zero"`
+	AvailableResources []string       `json:"available_resources,omitempty" jsonschema:"on a budget: the resource ids a request under it may name"`
+	OSProjectID        string         `json:"os_project_id,omitempty" jsonschema:"the OpenStack project, empty while it is still being created"`
+	OSProjectName      string         `json:"os_project_name,omitempty" jsonschema:"its name in OpenStack, which is what the dashboard and the CLI show"`
+	TerminationDate    string         `json:"termination_date,omitempty" jsonschema:"intended end of life"`
 }
 
 func toMCPProject(n tree.Node) mcpProject {
 	p := mcpProject{
-		ID:          n.ID,
-		Name:        n.Name,
-		Status:      n.Status,
-		Owner:       n.Owner,
-		Limit:       n.Limit,
-		InUse:       n.OSInUse,
-		OSProjectID: n.OSProjectID,
+		ID:                 n.ID,
+		Kind:               n.Kind,
+		Name:               n.Name,
+		Status:             n.Status,
+		Reason:             n.Reason,
+		Owner:              n.Owner,
+		Admins:             n.AdminScope,
+		Shared:             n.Kind == tree.KindProject && len(n.AdminScope) > 0,
+		PaidFromName:       n.ParentName,
+		Limit:              n.Limit,
+		InUse:              n.OSInUse,
+		AvailableResources: n.AvailableResources,
+		OSProjectID:        n.OSProjectID,
+		OSProjectName:      n.OSProjectName,
 	}
 	if n.ParentID != nil {
 		p.PaidFrom = *n.ParentID
+	}
+	if n.Pending != nil && n.Pending.Limit != nil {
+		p.RequestedLimit = *n.Pending.Limit
 	}
 	if n.TerminationDate != nil {
 		p.TerminationDate = *n.TerminationDate
@@ -195,8 +218,21 @@ type mcpSearchInput struct {
 	mcpPageInput
 }
 
+type mcpBudgetContentsInput struct {
+	ID string `json:"id" jsonschema:"id of the budget whose projects and sub-budgets to list"`
+	mcpPageInput
+}
+
+type mcpToDecideInput struct {
+	// Off by default for the reason ListToManage gives: below a delegated
+	// sub-budget the decision is that manager's, and for a root admin the wide
+	// list is the whole organisation.
+	IncludeSubtree bool `json:"include_subtree,omitempty" jsonschema:"also list what waits under sub-budgets that others manage, to see whether anything is stuck anywhere below"`
+	mcpPageInput
+}
+
 type mcpRequestInput struct {
-	BudgetID string `json:"budget_id" jsonschema:"id of the budget to charge this to; use list_my_budgets or search_projects to find it"`
+	BudgetID string `json:"budget_id" jsonschema:"id of the budget to charge this to; list_requestable_budgets lists the ones you may request under"`
 	Name     string `json:"name" jsonschema:"name for the new project"`
 	Reason   string `json:"reason" jsonschema:"why it is needed; a manager reads this when deciding"`
 	// A map, not named fields: which resources exist is deployment
@@ -204,6 +240,7 @@ type mcpRequestInput struct {
 	// hard-coding cores/ram/storage here would be a second place to change.
 	Limit           map[string]int `json:"limit" jsonschema:"requested resources by id, e.g. {\"cores\": 4, \"ram\": 8192}"`
 	TerminationDate string         `json:"termination_date,omitempty" jsonschema:"optional intended end of life, RFC3339; at most the budget's own end, which is also the default when the budget ends"`
+	Admins          []string       `json:"admins,omitempty" jsonschema:"optional: people or groups who administer the project together with you, e.g. user:a@b.c or group:x; they get no access in OpenStack by this"`
 }
 
 type mcpChangeInput struct {
@@ -227,6 +264,13 @@ type mcpRejectInput struct {
 type mcpRenameInput struct {
 	ID   string `json:"id" jsonschema:"id of the project or budget to rename"`
 	Name string `json:"name" jsonschema:"the new name"`
+}
+
+type mcpSetAdminsInput struct {
+	ID string `json:"id" jsonschema:"id of the project"`
+	// No omitempty: the list replaces the current one, and an empty list is a
+	// real answer (no co-admins any more), not a missing one.
+	Admins []string `json:"admins" jsonschema:"the complete new list, e.g. [\"user:a@b.c\", \"group:x\"]; an empty list removes all co-admins"`
 }
 
 type mcpCreateBudgetInput struct {
@@ -328,6 +372,44 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 		return nil, mcpProjectList{Projects: toMCPProjects(page), Total: page.Total}, nil
 	})
 
+	mcpserve.AddTool(s, caller, false, &mcp.Tool{
+		Name: "list_requestable_budgets",
+		Description: "List the budgets the calling user may request a project under. This is where a new " +
+			"project's budget_id comes from for anyone who does not manage a budget themselves.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpPageInput) (*mcp.CallToolResult, mcpProjectList, error) {
+		limit, offset := in.resolve()
+		page, err := cfg.Service.ListEligibleForMe(caller.tokens, limit, offset)
+		if err != nil {
+			return nil, mcpProjectList{}, fmt.Errorf("list requestable budgets: %w", err)
+		}
+		return nil, mcpProjectList{Projects: toMCPProjects(page), Total: page.Total}, nil
+	})
+
+	mcpserve.AddTool(s, caller, false, &mcp.Tool{
+		Name: "list_requests_to_decide",
+		Description: "List what waits for a decision by the calling user: new requests, proposed changes and " +
+			"imported projects under the budgets they manage. Decide with approve_request or reject_request.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpToDecideInput) (*mcp.CallToolResult, mcpProjectList, error) {
+		limit, offset := in.resolve()
+		page, err := cfg.Service.ListToManage(caller.tokens, in.IncludeSubtree, limit, offset)
+		if err != nil {
+			return nil, mcpProjectList{}, fmt.Errorf("list requests to decide: %w", err)
+		}
+		return nil, mcpProjectList{Projects: toMCPProjects(page), Total: page.Total}, nil
+	})
+
+	mcpserve.AddTool(s, caller, false, &mcp.Tool{
+		Name:        "list_budget_contents",
+		Description: "List the projects and sub-budgets directly under a budget, to walk the tree one level at a time.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpBudgetContentsInput) (*mcp.CallToolResult, mcpProjectList, error) {
+		limit, offset := in.resolve()
+		page, err := cfg.Service.ListChildren(in.ID, caller.tokens, limit, offset)
+		if err != nil {
+			return nil, mcpProjectList{}, fmt.Errorf("list contents of %q: %w", in.ID, err)
+		}
+		return nil, mcpProjectList{Projects: toMCPProjects(page), Total: page.Total}, nil
+	})
+
 	registerProjectWriteTools(s, cfg, caller, log)
 	registerTreeAdminTools(s, cfg, caller, log)
 	registerDestructiveTools(s, cfg, caller, log)
@@ -343,12 +425,8 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 // re-requested, a rename renames. Every one of them is capped by the quota tree,
 // which is the last line of defence and is meant to be.
 //
-// What is NOT here is release and delete. Not because writing is dangerous, but
-// because those two cannot be taken back: releasing deletes the OpenStack
-// project wherever deleteReleasedProjects is on, within one reconcile interval,
-// and an agent derives its calls from text people wrote — project names,
-// reasons, token labels are all free text. Those need their own scope and a
-// confirmation step (k6) before they are worth offering.
+// Release and delete are the exception and live apart, in
+// registerDestructiveTools: they cannot be taken back, so they ask for more.
 func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *zap.SugaredLogger) {
 	// Named for what it does, not for one of its outcomes: the same call creates
 	// the project outright when the caller manages the budget, leaves it waiting
@@ -371,6 +449,9 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 			Name:     in.Name,
 			Reason:   in.Reason,
 			Limit:    common.ProjectQuota(in.Limit),
+		}
+		if len(in.Admins) > 0 {
+			req.AdminScope = common.TokenList(in.Admins)
 		}
 		if in.TerminationDate != "" {
 			req.TerminationDate = &in.TerminationDate
@@ -450,6 +531,38 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 			caller.serviceActor(), caller.tokens)
 		if err != nil {
 			return nil, mcpProject{}, fmt.Errorf("rename %q: %w", in.ID, err)
+		}
+		return nil, toMCPProject(node), nil
+	})
+
+	// Projects only. The same field on a budget says who approves there, and
+	// that is not handed to an agent; the service would accept it from a
+	// manager, so the tool is what draws the line.
+	mcpserve.AddTool(s, caller, true, &mcp.Tool{
+		Name: "set_project_admins",
+		Description: "Set who administers a project together with its owner: they may rename it, request " +
+			"changes, edit this list and release it, but not approve its requests or hand it to someone else. " +
+			"It grants no access in OpenStack. The list replaces the current one.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpSetAdminsInput) (*mcp.CallToolResult, mcpProject, error) {
+		current, err := cfg.Service.GetNode(in.ID, caller.tokens)
+		if err != nil {
+			return nil, mcpProject{}, fmt.Errorf("look up %q: %w", in.ID, err)
+		}
+		if current == nil {
+			return nil, mcpProject{}, fmt.Errorf("no project with id %q, or it is not visible to you", in.ID)
+		}
+		if current.Kind != tree.KindProject {
+			return nil, mcpProject{}, fmt.Errorf("%q is a budget; who approves there is changed in the UI", in.ID)
+		}
+		admins := common.TokenList(in.Admins)
+		if admins == nil {
+			admins = common.TokenList{}
+		}
+		log.Infow("MCP set_project_admins", "actor", caller.actorEmail, "node_id", in.ID)
+		node, err := cfg.Service.UpdateNode(in.ID, tree.UpdateNodeRequest{AdminScope: &admins},
+			caller.serviceActor(), caller.tokens)
+		if err != nil {
+			return nil, mcpProject{}, fmt.Errorf("set admins of %q: %w", in.ID, err)
 		}
 		return nil, toMCPProject(node), nil
 	})

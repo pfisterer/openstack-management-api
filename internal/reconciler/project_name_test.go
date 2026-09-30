@@ -53,14 +53,37 @@ func TestBuildProjectName(t *testing.T) {
 		{
 			// A real node ID is a UUID; all of it would bury the purpose the
 			// name exists to convey.
-			name: "a uuid node id is shortened to its first block",
+			name: "a uuid node id is shortened to six hex digits",
 			leaf: tree.Node{ID: "p_7ad31c42-21e7-4fbd-aa3e-15a4660449be", Reason: "asfasf"},
-			want: "asfasf [p_7ad31c42]",
+			want: "asfasf [p_7ad31c]",
 		},
 		{
 			name: "a uuid node id without a name still identifies the project",
 			leaf: tree.Node{ID: "p_7ad31c42-21e7-4fbd-aa3e-15a4660449be"},
-			want: "p_7ad31c42",
+			want: "p_7ad31c",
+		},
+		{
+			name: "the owner is named by the part of the address before the @",
+			leaf: tree.Node{ID: "p_010", Name: "test", Owner: "user:s190000@student.dhbw-mannheim.de"},
+			want: "test @ s190000 [p_010]",
+		},
+		{
+			// Name and owner each get half of what is left; a short owner
+			// leaves the rest to the name.
+			name: "a short owner leaves its room to a long name",
+			leaf: tree.Node{ID: "p_011", Name: strings.Repeat("n", 80), Owner: "user:ab@x.de"},
+			want: strings.Repeat("n", 64-len(" @ ab [p_011]")) + " @ ab [p_011]",
+		},
+		{
+			name: "a long name and a long owner are cut to the same length",
+			leaf: tree.Node{ID: "p_012", Name: strings.Repeat("n", 80), Owner: "user:" + strings.Repeat("o", 80) + "@x.de"},
+			want: strings.Repeat("n", 26) + " @ " + strings.Repeat("o", 26) + " [p_012]",
+		},
+		{
+			// With a real ID the suffix is 11 characters, which leaves 25 each.
+			name: "a real id leaves 25 characters each to name and owner",
+			leaf: tree.Node{ID: "p_7ad31c42-21e7-4fbd-aa3e-15a4660449be", Name: strings.Repeat("n", 80), Owner: "user:" + strings.Repeat("o", 80) + "@x.de"},
+			want: strings.Repeat("n", 25) + " @ " + strings.Repeat("o", 25) + " [p_7ad31c]",
 		},
 	}
 
@@ -165,7 +188,7 @@ func TestBuildDescriptionWithBudgetPath(t *testing.T) {
 func TestBuildProjectNameFallsBackToReason(t *testing.T) {
 	leaf := tree.Node{ID: "p_7ad31c42", Reason: "Lab exercises for Distributed Systems"}
 	got := buildProjectName(leaf)
-	want := "Lab exercises for Distributed Systems [p_7ad31c42]"
+	want := "Lab exercises for Distributed Systems [p_7ad31c]"
 	if got != want {
 		t.Errorf("buildProjectName() = %q, want %q", got, want)
 	}
@@ -182,8 +205,8 @@ func TestBuildProjectNameFallsBackToReason(t *testing.T) {
 // with a name that points nowhere.
 func TestShortNodeID(t *testing.T) {
 	tests := map[string]string{
-		"p_7ad31c42-21e7-4fbd-aa3e-15a4660449be": "p_7ad31c42",
-		"b_03c80ac1-9311-4825-9dd6-ba749f9a7a2b": "b_03c80ac1",
+		"p_7ad31c42-21e7-4fbd-aa3e-15a4660449be": "p_7ad31c",
+		"b_03c80ac1-9311-4825-9dd6-ba749f9a7a2b": "b_03c80a",
 		"root":                                   "root",       // structural node, no UUID
 		"unassigned":                             "unassigned", // structural node, no UUID
 		"p_001":                                  "p_001",      // seeded/test IDs are not UUIDs

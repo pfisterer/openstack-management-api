@@ -79,8 +79,9 @@ func (s *Service) ListChildren(parentID string, userTokens common.TokenList, lim
 	return s.listPage(ctx, NodeQuery{ParentIDs: []string{parentID}}, limit, offset)
 }
 
-// ListMine returns the leaves owned by the given user (email-scoped view).
-func (s *Service) ListMine(userEmail string, limit, offset int) (NodePage, error) {
+// ListMine returns the leaves the user answers for: the ones they own, and the
+// ones whose admin scope names them or one of their groups.
+func (s *Service) ListMine(userEmail string, userTokens common.TokenList, limit, offset int) (NodePage, error) {
 	if strings.TrimSpace(userEmail) == "" {
 		return NodePage{}, fmt.Errorf("missing user email")
 	}
@@ -92,7 +93,10 @@ func (s *Service) ListMine(userEmail string, limit, offset int) (NodePage, error
 	if err != nil {
 		return NodePage{}, err
 	}
-	return s.listPage(ctx, NodeQuery{Kinds: []string{KindProject}, Owner: owner}, limit, offset)
+	return s.listPage(ctx, NodeQuery{
+		Kinds:       []string{KindProject},
+		Responsible: &ResponsibleQuery{Owner: owner, AdminAny: userTokens},
+	}, limit, offset)
 }
 
 // listPage runs one query twice — the page itself and the number of rows it was
@@ -469,6 +473,9 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 		}
 		node.Owner = owner
 		node.AuthorizedUsers = normalizedAuthorizedUsers
+		// Optional on a project: the people who administer it together with the
+		// owner. It grants self-service rights only, no OpenStack role.
+		node.AdminScope = req.AdminScope
 	} else {
 		node.ID = "b_" + uuid.New().String()
 		node.AdminScope = req.AdminScope
@@ -520,11 +527,12 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 
 // ── Direct edit ───────────────────────────────────────────────────────────────
 
-// isRenameOnly reports whether req touches nothing but the name — the only
-// direct edit a project leaf accepts.
-func isRenameOnly(req UpdateNodeRequest) bool {
-	return req.Name != nil &&
-		req.AdminScope == nil && req.EligibleRequesters == nil &&
+// isLeafDirectEdit reports whether req touches nothing but the name and the
+// admin scope — the direct edits a project leaf accepts. Neither costs anything,
+// so neither goes through the approval cycle.
+func isLeafDirectEdit(req UpdateNodeRequest) bool {
+	return (req.Name != nil || req.AdminScope != nil) &&
+		req.EligibleRequesters == nil &&
 		req.AutoApprove == nil && !req.ClearAutoApprove &&
 		req.AllowSubBudgetRequests == nil && req.AllowRequestsBeyondAutoApprove == nil &&
 		req.Limit == nil && req.TerminationDate == nil && !req.ClearTerminationDate
@@ -556,8 +564,8 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, user
 	if current == nil {
 		return Node{}, fmt.Errorf("node %w", common.ErrNotFound)
 	}
-	if current.Kind != KindBudget && !isRenameOnly(req) {
-		return Node{}, fmt.Errorf("only the name can be edited directly on a project; use request-change for anything else")
+	if current.Kind != KindBudget && !isLeafDirectEdit(req) {
+		return Node{}, fmt.Errorf("only the name and the admins can be edited directly on a project; use request-change for anything else")
 	}
 	// An imported leaf mirrors OpenStack until somebody promotes it; renaming it
 	// here would be overwritten by the next reconcile.
@@ -574,8 +582,9 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, user
 	wantsCapacityEdit := req.Limit != nil || req.TerminationDate != nil || req.ClearTerminationDate
 
 	if wantsPolicyEdit {
-		// Renaming their own project is the owner's business; every other edit
-		// (and every edit on a budget) belongs to a manager.
+		// Renaming their own project and choosing who administers it with them
+		// is the owner's business; a project's admins pass managesNode through
+		// its own admin scope. Every edit on a budget belongs to a manager.
 		allowed := current.IsLeaf() && isOwner(userTokens, current)
 		if !allowed {
 			manages, err := s.managesNode(ctx, userTokens, current)
@@ -1162,9 +1171,12 @@ func (s *Service) ReleaseNode(id string, actor Actor, userTokens common.TokenLis
 		return Node{}, fmt.Errorf("%w: cannot release node in status %q", common.ErrConflict, current.Status)
 	}
 
+	// The owner, the project's own admins and the managers above it. Inclusive
+	// (managesNode) on purpose: releasing needs no approval, so the admins the
+	// owner chose may end the project as the owner may.
 	allowed := isOwner(userTokens, current)
 	if !allowed {
-		if manages, err := s.managesParentChain(ctx, userTokens, current); err != nil {
+		if manages, err := s.managesNode(ctx, userTokens, current); err != nil {
 			return Node{}, err
 		} else {
 			allowed = manages

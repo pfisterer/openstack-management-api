@@ -53,7 +53,7 @@ The whole domain is **one tree of nodes** (`internal/tree`):
 - **Role provider** — pluggable source of a caller's group tokens and of group search: `mock` (built-in test identities, no external dependency) or `http` (the external [role-provider-service](https://github.com/pfisterer/role-provider-service)).
 - **History** — every node keeps a history of its lifecycle events, recording who made a change and through which channel (`ui` for the web UI and REST API, `mcp` for an agent acting with a person's token).
 
-Editing follows the same idea. A project leaf accepts exactly one direct edit — a rename, because a name is a label, not an allocation. Everything else goes through a change request, which for a *pending* node is amended in place: that is how a manager trims an over-sized request instead of rejecting it. On an active project a change that gives resources back, ends sooner or only changes members takes effect at once, and so does growth or an extension the budget's auto-approve covers; the rest waits for a manager.
+Editing follows the same idea. A project leaf accepts two direct edits — a rename and its list of project admins, the people who administer it together with the owner — because neither is an allocation. Everything else goes through a change request, which for a *pending* node is amended in place: that is how a manager trims an over-sized request instead of rejecting it. On an active project a change that gives resources back, ends sooner or only changes members takes effect at once, and so does growth or an extension the budget's auto-approve covers; the rest waits for a manager.
 
 ➡️ **Architecture:** [`ARCHITECTURE.md`](ARCHITECTURE.md) — domain model,
 authorization rules, API surface, storage, reconciler, SDK pipeline.

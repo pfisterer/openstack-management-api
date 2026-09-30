@@ -258,6 +258,12 @@ type Node struct {
 	// Consumption rights are deliberately NOT part of AdminScope (see
 	// EligibleRequesters) — the old model's dual use of admin scope let allowance
 	// members approve each other.
+	//
+	// On a project it names the people who administer it together with the
+	// owner: they may rename it, request changes, edit this list and release it.
+	// They cannot approve its requests (approval checks the chain ABOVE the
+	// project) or transfer it, and they get no OpenStack role from it — access to
+	// the project itself is AuthorizedUsers.
 	AdminScope common.TokenList `json:"admin_scope,omitempty"`
 	// EligibleRequesters holds the tokens allowed to request child nodes under
 	// this node.

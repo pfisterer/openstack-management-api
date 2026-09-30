@@ -373,7 +373,7 @@ func TestParentNameIsAttached(t *testing.T) {
 		t.Fatalf("create leaf: %v", err)
 	}
 
-	mine, err := svc.ListMine("student@x", 0, 0)
+	mine, err := svc.ListMine("student@x", nil, 0, 0)
 	if err != nil {
 		t.Fatalf("list mine: %v", err)
 	}

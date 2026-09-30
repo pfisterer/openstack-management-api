@@ -28,6 +28,15 @@ type NodeQuery struct {
 	AdminScopeAny common.TokenList
 	// EligibleAny restricts to nodes whose EligibleRequesters contains any of these tokens.
 	EligibleAny common.TokenList
+	// Responsible restricts to nodes owned by its Owner OR administered by any of
+	// its AdminAny tokens — the projects a person answers for, alone or together.
+	Responsible *ResponsibleQuery
+}
+
+// ResponsibleQuery is the OR of an owner and an admin scope, see NodeQuery.Responsible.
+type ResponsibleQuery struct {
+	Owner    string
+	AdminAny common.TokenList
 }
 
 // ErrSkipUpdate is returned from an UpdateNode callback to leave the node unchanged.
@@ -133,6 +142,10 @@ func matchesQuery(n Node, q NodeQuery) bool {
 		return false
 	}
 	if len(q.EligibleAny) > 0 && !tokenListContainsAny(n.EligibleRequesters, q.EligibleAny) {
+		return false
+	}
+	if r := q.Responsible; r != nil &&
+		!(r.Owner != "" && n.Owner == r.Owner) && !(len(r.AdminAny) > 0 && tokenListContainsAny(n.AdminScope, r.AdminAny)) {
 		return false
 	}
 	return true

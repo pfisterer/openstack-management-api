@@ -83,10 +83,10 @@ func listNodeChildren(cfg APIConfig) gin.HandlerFunc {
 	}
 }
 
-// listMyNodes returns the project leaves owned by the current user.
+// listMyNodes returns the project leaves the current user owns or administers.
 //
 //	@Summary		List my project leaves
-//	@Description	Retrieves the project leaves owned by the current (effective) user.
+//	@Description	Retrieves the project leaves the current (effective) user owns, or administers through the project's admin scope (directly or through a group).
 //	@Tags			nodes
 //	@Produce		json
 //	@Security		Bearer
@@ -109,7 +109,7 @@ func listMyNodes(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		nodes, err := svc.ListMine(auth.UserEmail, limit, offset)
+		nodes, err := svc.ListMine(auth.UserEmail, auth.EffectiveTokens, limit, offset)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -356,7 +356,7 @@ func createNode(cfg APIConfig) gin.HandlerFunc {
 // updateNode applies a direct edit to a budget node.
 //
 //	@Summary		Update node
-//	@Description	Direct edit of a budget. Policy fields (name, admin scope, eligible requesters, auto-approve) require a manager of the node or its ancestors; limit and termination date require a manager of the parent chain. A project leaf accepts a name-only edit (rename) by its owner or a manager.
+//	@Description	Direct edit of a budget. Policy fields (name, admin scope, eligible requesters, auto-approve) require a manager of the node or its ancestors; limit and termination date require a manager of the parent chain. A project leaf accepts only a rename and a change of its admin scope (who administers it with the owner), by its owner, its admins or a manager; neither needs approval.
 //	@Tags			nodes
 //	@Accept			json
 //	@Produce		json
@@ -510,7 +510,7 @@ func rejectNode(cfg APIConfig) gin.HandlerFunc {
 // releaseNode releases an approved project leaf.
 //
 //	@Summary		Release node
-//	@Description	Releases an approved project leaf, returning its capacity to the budget chain and driving OpenStack deprovisioning. Allowed for the owner or managers of the parent chain.
+//	@Description	Releases an approved project leaf, returning its capacity to the budget chain and driving OpenStack deprovisioning. Allowed for the owner, the project's admins and managers of the parent chain.
 //	@Tags			nodes
 //	@Security		Bearer
 //	@Param			id	path	string	true	"Node ID"

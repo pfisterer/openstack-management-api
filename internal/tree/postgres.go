@@ -159,8 +159,15 @@ func normalizeOffset(offset int) int {
 // The ORs are parenthesized explicitly so the clause composes correctly with
 // other AND-joined filters in the same query.
 func jsonbContainsAny(db *gorm.DB, column string, tokens []string) *gorm.DB {
+	cond, args := jsonbContainsAnyCond(column, tokens)
+	return db.Where(cond, args...)
+}
+
+// jsonbContainsAnyCond is jsonbContainsAny as a condition, for use inside a
+// larger OR.
+func jsonbContainsAnyCond(column string, tokens []string) (string, []any) {
 	if len(tokens) == 0 {
-		return db.Where("FALSE")
+		return "FALSE", nil
 	}
 	conds := make([]string, len(tokens))
 	args := make([]any, len(tokens))
@@ -168,7 +175,7 @@ func jsonbContainsAny(db *gorm.DB, column string, tokens []string) *gorm.DB {
 		conds[i] = column + " @> ?::jsonb"
 		args[i] = string(mustMarshalPG([]string{token}))
 	}
-	return db.Where("("+strings.Join(conds, " OR ")+")", args...)
+	return "(" + strings.Join(conds, " OR ") + ")", args
 }
 
 // ── Store implementation ───────────────────────────────────────────────────────
@@ -278,6 +285,10 @@ func applyNodeQuery(db *gorm.DB, q NodeQuery) *gorm.DB {
 	}
 	if len(q.EligibleAny) > 0 {
 		db = jsonbContainsAny(db, "eligible_requesters", q.EligibleAny)
+	}
+	if r := q.Responsible; r != nil {
+		adminCond, args := jsonbContainsAnyCond("admin_scope", r.AdminAny)
+		db = db.Where("(owner = ? OR "+adminCond+")", append([]any{r.Owner}, args...)...)
 	}
 	return db
 }

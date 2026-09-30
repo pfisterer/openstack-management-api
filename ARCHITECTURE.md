@@ -83,21 +83,23 @@ Key decisions:
 - **A pending request is amended in place.** `request-change` on a `pending` node rewrites the request itself (limit, termination date, members, reason) instead of stacking a proposal on it — that is how a manager trims an oversized request rather than rejecting it.
 - **Approve may modify.** An approver can pass `modified_limit` to grant something other than what was asked; the history records both values.
 - **Budget requests are native.** Eligible requesters may request sub-budgets unless the budget sets `allow_sub_budget_requests: false`; managers are not restricted by that flag.
-- **Release is for approved leaves only**, by the owner or a manager of the parent chain. Budgets are deleted instead. `rejected` and `released` are terminal statuses; a released leaf's *record* is removed by the reconciler once its OpenStack project is gone (§8.4).
+- **Release is for approved leaves only**, by the owner, the project's admins or a manager of the parent chain. Budgets are deleted instead. `rejected` and `released` are terminal statuses; a released leaf's *record* is removed by the reconciler once its OpenStack project is gone (§8.4).
 - `imported` leaves are read-only until promoted.
 
 ### 2.3 Roles and fields on a node
 
 | Field | Who | Grants |
 |---|---|---|
-| `admin_scope` | managers (tokens) | approve/reject children, edit the budget's policy, create children directly; inherited downward. Required on every budget created through the API |
+| `admin_scope` | managers (tokens) | on a budget: approve/reject children, edit the budget's policy, create children directly; inherited downward. Required on every budget created through the API. On a project (optional): the *project admins*, who administer it with the owner — see below |
 | `eligible_requesters` | consumers (tokens) | may request child nodes here, and read the budget — nothing else |
 | `owner` | exactly one `user:` token (leaves) | the responsible person; "my projects" scope; receives the Keystone role `member` in the project |
 | `authorized_users` | list of `user:`/`group:` token + OpenStack role | additional members of the OpenStack project; role is `member` or `reader` |
 
 The strict separation of `admin_scope` (manage) and `eligible_requesters` (consume) is the fix for the old model's worst bug. **Delegation** is not a separate concept: delegating capacity means creating a sub-budget with someone else's token in its `admin_scope`.
 
-**Owner** is single by design; it is set from the requester's email on creation, and managers of the parent chain can `transfer-owner`. It matters for the per-requester auto-approve cap (counted per owner token, not per group) and for the email-scoped "mine" view.
+**Owner** is single by design; it is set from the requester's email on creation, and managers of the parent chain can `transfer-owner`. It matters for the per-requester auto-approve cap (counted per owner token, not per group) and for the "mine" view.
+
+**Project admins** share a project without sharing its ownership. A project's `admin_scope` names users or groups who may do what the owner does — rename it, request changes, edit the admin list and release it — and who find it under "mine" (through a group too). Two things stay out of their reach: approving the project's requests, since approval checks the chain *above* the project (`managesParentChain`), and handing the project to someone else. They get no OpenStack role from it; access to the project itself is `authorized_users`. Both the name and the admin list are direct edits, because neither costs anything.
 
 **Authorized users are validated because they have consequences in OpenStack**: the reconciler creates a Keystone group per group token and an account per member. So a `user:` token must be a valid email address, a `group:` token must exist according to the role provider (checked fail-closed) — for a relation token such as `group:wwi23seb#dozent` the group and the relation both (§6.2), the role must be one of `common.OpenstackRoles`, and the list is capped (`API_MAX_AUTHORIZED_USERS`, default 32 — a course belongs in as one group token). `admin` is not offered: OpenStack's default policy treats `admin` as cloud-wide, not project-local.
 
@@ -105,7 +107,7 @@ The strict separation of `admin_scope` (manage) and `eligible_requesters` (consu
 
 Two kinds of change exist, and they are authorized differently ([service_ops.go](internal/tree/service_ops.go)):
 
-- **Direct edits** (`PUT /v1/nodes/{id}`, `UpdateNode`) take effect immediately. On a budget, policy fields (name, `admin_scope`, `eligible_requesters`, `auto_approve`, `allow_sub_budget_requests`) need a manager of the node or above; the limit and termination date need a manager of the *parent* chain, because nobody raises their own budget. A project leaf accepts exactly one direct edit — a rename, by its owner or a manager — because a name is a label, not an allocation. The root's `admin_scope` cannot be edited through the API (it is owned by configuration, §2.5).
+- **Direct edits** (`PUT /v1/nodes/{id}`, `UpdateNode`) take effect immediately. On a budget, policy fields (name, `admin_scope`, `eligible_requesters`, `auto_approve`, `allow_sub_budget_requests`) need a manager of the node or above; the limit and termination date need a manager of the *parent* chain, because nobody raises their own budget. A project leaf accepts two direct edits — a rename and its admin list, by its owner, its admins or a manager — because neither is an allocation. The root's `admin_scope` cannot be edited through the API (it is owned by configuration, §2.5).
 - **Change requests** (`POST /v1/nodes/{id}/request-change`, `RequestChange`) are how everything else about a leaf changes, and how a budget's managers ask their parent for more. On an approved node the proposal is stored in `pending` and the node moves to `change_pending`; the approved limit stays in force (and is what the reconciler applies) until a manager of the parent chain approves. On a project leaf some changes need nobody (`leafChangeDecision`): giving resources back, an earlier end and member changes always take effect at once; growth does when the budget's `auto_approve` would grant the difference, and a later end when the budget has `auto_approve` and the date stays within the budget's own. Every part of a proposal has to qualify — otherwise the whole of it waits, so a manager never decides on half a change.
 
 ### 2.5 Bootstrap nodes
@@ -266,7 +268,7 @@ All under `/v1`, JSON, authenticated as above. Swagger annotations on the handle
 | `GET /v1/config` | UI-visible catalogue entries, allowed OpenStack roles, `provisioningEnabled`, dummy dev users (dev only) |
 | `GET /v1/nodes/{id}` | one node; readable by its owner, authorized users, eligible requesters and managers of its chain |
 | `GET /v1/nodes/{id}/children` | direct children of a budget; managers only |
-| `GET /v1/nodes/mine` | leaves owned by the effective email |
+| `GET /v1/nodes/mine` | leaves owned by the effective email, or administered through the project's `admin_scope` |
 | `GET /v1/nodes/my-budgets` | budgets whose **own** `admin_scope` matches a caller token, with `ancestor_ids` |
 | `GET /v1/nodes/to-manage` | `pending`, `change_pending` and `imported` nodes awaiting the caller: with `scope=direct` (default) under the administered budgets and their undelegated sub-budgets, with `scope=subtree` anywhere below |
 | `GET /v1/nodes/eligible-for-me` · `GET /v1/nodes/eligible-for-owner?owner_token=…` | approved budgets accepting requests from the caller / from given tokens (root admins; used when promoting) |
@@ -368,7 +370,7 @@ Those clouds split the work: Keystone wants the **domain** scope for creating pr
 
 ## 9. Storage
 
-`tree.Store` ([store.go](internal/tree/store.go)) is a small interface: get, list and count by `NodeQuery`, upsert, delete, count children per parent, plus seeding and participant listing. `NodeQuery` fields combine with AND, values within a field with OR (ids, parent ids, kinds, statuses, owner, `AdminScopeAny`, `EligibleAny`). `ListNodes` and `CountNodes` share the same query translation, so a page and its total cannot disagree.
+`tree.Store` ([store.go](internal/tree/store.go)) is a small interface: get, list and count by `NodeQuery`, upsert, delete, count children per parent, plus seeding and participant listing. `NodeQuery` fields combine with AND, values within a field with OR (ids, parent ids, kinds, statuses, owner, `AdminScopeAny`, `EligibleAny`); `Responsible` is the one OR across fields — owner or admin scope — which is what "mine" asks. `ListNodes` and `CountNodes` share the same query translation, so a page and its total cannot disagree.
 
 - **memory** ([memory.go](internal/tree/memory.go)) — development and tests; returns copies so callers cannot mutate stored state.
 - **postgres** ([postgres.go](internal/tree/postgres.go)) — table `nodes`: indexed columns `id`, `parent_id`, `kind`, `status`, `owner`, the token lists `admin_scope` and `eligible_requesters` as JSONB (queried with `@>` containment), and the full node as JSONB `data`. Response-only fields are cleared before writing. Table `identities` holds seeded mock identities. GORM `AutoMigrate` creates both; because AutoMigrate never drops anything, `dropLegacyTables` removes the three tables of the pre-tree model (`delegations`, `projects`, `eligibility_rules`) at startup if present, logging their row counts first — an explicit list, so it can never touch a table still in use. The pool is capped at 10 open / 5 idle connections, since `database/sql` defaults to unlimited and the database may be shared. API tokens (`tokengorm`) use the same `*gorm.DB`.

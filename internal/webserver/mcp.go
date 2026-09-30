@@ -280,10 +280,10 @@ type mcpDeleteBudgetInput struct {
 func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *zap.SugaredLogger) {
 	mcpserve.AddTool(s, caller, false, &mcp.Tool{
 		Name:        "list_my_projects",
-		Description: "List the cloud projects the calling user owns, with their status and granted resources.",
+		Description: "List the cloud projects the calling user owns or administers, with their status and granted resources.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpPageInput) (*mcp.CallToolResult, mcpProjectList, error) {
 		limit, offset := in.resolve()
-		page, err := cfg.Service.ListMine(caller.userEmail, limit, offset)
+		page, err := cfg.Service.ListMine(caller.userEmail, caller.tokens, limit, offset)
 		if err != nil {
 			return nil, mcpProjectList{}, fmt.Errorf("list projects: %w", err)
 		}

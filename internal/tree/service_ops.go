@@ -176,7 +176,7 @@ func (s *Service) ListEligibleForOwner(callerTokens common.TokenList, ownerToken
 	if len(ownerTokens) == 0 {
 		return NodePage{}, fmt.Errorf("owner_tokens must not be empty")
 	}
-	return s.ListEligibleForMe(ownerTokens, limit, offset)
+	return s.ListEligibleForMe(common.CanonicalTokens(ownerTokens), limit, offset)
 }
 
 // ListToManage returns the nodes awaiting a decision by the caller: pending and
@@ -353,6 +353,8 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 	if strings.TrimSpace(userEmail) == "" || len(userTokens) == 0 {
 		return Node{}, common.ErrForbidden
 	}
+	req.AdminScope = common.CanonicalTokens(req.AdminScope)
+	req.EligibleRequesters = common.CanonicalTokens(req.EligibleRequesters)
 
 	// Validate the request shape before taking the approval lock.
 	//
@@ -549,6 +551,12 @@ func isLeafDirectEdit(req UpdateNodeRequest) bool {
 // worse, park the project in change_pending until they got around to it.
 // Everything else about a leaf still goes through RequestChange.
 func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, userTokens common.TokenList) (Node, error) {
+	if req.AdminScope != nil {
+		req.AdminScope = common.Ptr(common.CanonicalTokens(*req.AdminScope))
+	}
+	if req.EligibleRequesters != nil {
+		req.EligibleRequesters = common.Ptr(common.CanonicalTokens(*req.EligibleRequesters))
+	}
 	// A new end date is carried down the subtree, which must not interleave
 	// with an approval deciding on one of its nodes.
 	s.approvalMu.Lock()

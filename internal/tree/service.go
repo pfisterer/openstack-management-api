@@ -113,7 +113,7 @@ func NewService(store Store, roles common.RoleProvider, resources []common.Manag
 		roles:              roles,
 		resources:          resources,
 		countIDs:           countIDs,
-		rootAdminTokens:    rootAdminTokens,
+		rootAdminTokens:    common.CanonicalTokens(rootAdminTokens),
 		requestTimeout:     requestTimeout,
 		maxAuthorizedUsers: maxAuthorizedUsers,
 		accounting:         accounting,
@@ -138,7 +138,85 @@ func (s *Service) Bootstrap(ctx context.Context, mockIdentities []common.Identit
 			s.log.Infow("seeded mock tree state", "nodes", len(mockNodes))
 		}
 	}
-	return s.ensureBootstrapNodes(ctx)
+	if err := s.ensureBootstrapNodes(ctx); err != nil {
+		return err
+	}
+	return s.canonicalizeStoredTokens(ctx)
+}
+
+// canonicalizeStoredTokens rewrites tokens stored before every token was kept
+// in one spelling (common.CanonicalToken) — so a lookup in canonical spelling
+// finds them. A no-op once the data is clean, so it runs on every start instead
+// of being tracked as a one-off; the tree is hundreds of nodes, not millions.
+func (s *Service) canonicalizeStoredTokens(ctx context.Context) error {
+	nodes, err := s.store.ListNodes(ctx, NodeQuery{}, 0, 0)
+	if err != nil {
+		return fmt.Errorf("load nodes to canonicalize tokens: %w", err)
+	}
+	rewritten := 0
+	for _, n := range nodes {
+		if !canonicalizeNodeTokens(&n) {
+			continue
+		}
+		wrote, err := s.store.UpdateNode(ctx, n.ID, func(stored *Node) error {
+			if !canonicalizeNodeTokens(stored) {
+				return ErrSkipUpdate
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("canonicalize tokens of %s: %w", n.ID, err)
+		}
+		if wrote {
+			rewritten++
+		}
+	}
+	if rewritten > 0 {
+		s.log.Infow("rewrote stored tokens into canonical spelling", "nodes", rewritten)
+	}
+	return nil
+}
+
+// canonicalizeNodeTokens puts every token on the node into canonical spelling
+// and reports whether anything changed.
+func canonicalizeNodeTokens(n *Node) bool {
+	changed := false
+	list := func(tokens common.TokenList) common.TokenList {
+		out := common.CanonicalTokens(tokens)
+		if !slices.Equal(out, tokens) {
+			changed = true
+			return out
+		}
+		return tokens
+	}
+	// A new slice rather than an edit in place: the entries may be shared with
+	// whatever handed the node over.
+	users := func(entries []common.AuthorizedUser) []common.AuthorizedUser {
+		out := slices.Clone(entries)
+		for i := range out {
+			out[i].Token = common.CanonicalToken(out[i].Token)
+		}
+		if !slices.Equal(out, entries) {
+			changed = true
+			return out
+		}
+		return entries
+	}
+	if c := common.CanonicalToken(n.Owner); c != n.Owner {
+		n.Owner = c
+		changed = true
+	}
+	n.AdminScope = list(n.AdminScope)
+	n.EligibleRequesters = list(n.EligibleRequesters)
+	n.AuthorizedUsers = users(n.AuthorizedUsers)
+	if n.Pending != nil && n.Pending.AuthorizedUsers != nil {
+		if pending := users(*n.Pending.AuthorizedUsers); changed {
+			copied := *n.Pending
+			copied.AuthorizedUsers = &pending
+			n.Pending = &copied
+		}
+	}
+	return changed
 }
 
 // ensureBootstrapNodes guarantees the two structural nodes:
@@ -1305,7 +1383,7 @@ func (s *Service) normalizeAuthorizedUsers(ctx context.Context, users []common.A
 	seenGroups := make(map[string]bool, len(users))
 
 	for i, user := range users {
-		token := strings.TrimSpace(user.Token)
+		token := common.CanonicalToken(user.Token)
 		if token == "" {
 			return nil, fmt.Errorf("invalid authorized_users: entry %d has empty token", i)
 		}

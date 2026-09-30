@@ -2,6 +2,7 @@ package common
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/pfisterer/cloud-self-service-golib/authn"
 )
@@ -102,6 +103,36 @@ type ExternalGroupAssignment struct {
 
 // TokenList is an alias for a list of tokens (string).
 type TokenList []string
+
+// CanonicalToken is the one spelling a token is stored and compared in:
+// trimmed and lowercased, the whole of it. No token may tell two things apart by
+// case — an e-mail address compares case-insensitively and identity providers
+// release it in whatever case the directory holds, and a "group:Leiter-ZWR"
+// next to "group:leiter-zwr" is a typo that would grant nothing. The role
+// provider keeps its ids in the same spelling.
+func CanonicalToken(token string) string {
+	return strings.ToLower(strings.TrimSpace(token))
+}
+
+// CanonicalTokens returns the list in canonical spelling, without the
+// duplicates that folding case can reveal. nil stays nil, so an absent list
+// in a request stays absent.
+func CanonicalTokens(tokens TokenList) TokenList {
+	if tokens == nil {
+		return nil
+	}
+	out := make(TokenList, 0, len(tokens))
+	seen := make(map[string]bool, len(tokens))
+	for _, t := range tokens {
+		c := CanonicalToken(t)
+		if c == "" || seen[c] {
+			continue
+		}
+		seen[c] = true
+		out = append(out, c)
+	}
+	return out
+}
 
 // TokenSet is a set of tokens for O(1) membership tests.
 type TokenSet map[string]struct{}

@@ -70,7 +70,7 @@ func NewService(store Store, roles common.RoleProvider, requestTimeout time.Dura
 // NormalizeGroupToken normalizes a raw group token into canonical `group:<name>` form.
 // Returns "" when input is blank or has an unsupported token shape.
 func NormalizeGroupToken(raw string) string {
-	value := strings.TrimSpace(raw)
+	value := strings.ToLower(strings.TrimSpace(raw))
 	if value == "" {
 		return ""
 	}

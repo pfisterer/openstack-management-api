@@ -50,7 +50,10 @@ func EffectiveAuthMiddleware(svc APIService) gin.HandlerFunc {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		effectiveTokens := svc.ResolveEffectiveUserTokens(actorEmail, originalTokens)
+		// Canonical spelling on the way in, so a role provider that hands back
+		// "user:A.B@x" still matches the "user:a.b@x" stored on a node.
+		originalTokens = common.CanonicalTokens(originalTokens)
+		effectiveTokens := common.CanonicalTokens(svc.ResolveEffectiveUserTokens(actorEmail, originalTokens))
 		effectiveEmail := svc.ResolveEffectiveEmail(actorEmail)
 		c.Set(authContextKey, AuthContext{
 			ActorEmail:      actorEmail,

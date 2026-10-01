@@ -243,17 +243,6 @@ func RegisterApiRoutes(v1 *gin.RouterGroup, cfg APIConfig, log *zap.SugaredLogge
 	return v1
 }
 
-// getConfig returns the system-wide resource configuration.
-//
-//	@Summary		Get resource configuration
-//	@Description	Retrieves system-wide configuration including resource types and OpenStack roles.
-//	@Tags			config
-//	@Produce		json
-//	@Security		Bearer
-//	@Success		200	{object}	ConfigResponse	"Resource configuration."
-//	@ID				getConfig
-//	@Router			/v1/config [get]
-//
 // uiResource is what a resource looks like to the browser.
 //
 // A type of its own rather than the catalogue entry with the private parts
@@ -290,6 +279,16 @@ func uiResourceFrom(r common.ManagedProject) uiResource {
 	}
 }
 
+// getConfig returns the system-wide resource configuration.
+//
+//	@Summary		Get resource configuration
+//	@Description	Retrieves system-wide configuration including resource types and OpenStack roles.
+//	@Tags			config
+//	@Produce		json
+//	@Security		Bearer
+//	@Success		200	{object}	ConfigResponse	"Resource configuration."
+//	@ID				getConfig
+//	@Router			/v1/config [get]
 func getConfig(cfg APIConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		resources := make([]uiResource, 0, len(cfg.ProjectDefinitions))

@@ -152,9 +152,9 @@ func (s *InMemoryStore) DeleteNodeIf(_ context.Context, id string, pred func(n N
 }
 
 // CountChildren counts direct children per parent in a single pass.
-func (s *InMemoryStore) CountChildren(_ context.Context, parentIDs []string) (map[string]int, error) {
+func (s *InMemoryStore) CountChildren(_ context.Context, parentIDs []string) (map[string]ChildCounts, error) {
 	if len(parentIDs) == 0 {
-		return map[string]int{}, nil
+		return map[string]ChildCounts{}, nil
 	}
 	wanted := make(map[string]struct{}, len(parentIDs))
 	for _, id := range parentIDs {
@@ -164,13 +164,15 @@ func (s *InMemoryStore) CountChildren(_ context.Context, parentIDs []string) (ma
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	counts := make(map[string]int, len(parentIDs))
+	counts := make(map[string]ChildCounts, len(parentIDs))
 	for _, n := range s.nodes {
 		if n.ParentID == nil {
 			continue
 		}
 		if _, ok := wanted[*n.ParentID]; ok {
-			counts[*n.ParentID]++
+			c := counts[*n.ParentID]
+			c.add(n.Kind, 1)
+			counts[*n.ParentID] = c
 		}
 	}
 	return counts, nil

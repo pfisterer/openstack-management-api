@@ -24,6 +24,8 @@ type Service struct {
 
 	store Store
 	roles common.RoleProvider
+	// ownerTokens caches people's tokens for the "owner in group" filter.
+	ownerTokens *tokenCache
 
 	// resources is the deployment's resource catalogue. Validation and anything
 	// that has to know WHAT a resource is reads this.
@@ -111,6 +113,7 @@ func NewService(store Store, roles common.RoleProvider, resources []common.Manag
 		Service:            identity.NewService(store, roles, requestTimeout, log),
 		store:              store,
 		roles:              roles,
+		ownerTokens:        newTokenCache(2 * time.Minute),
 		resources:          resources,
 		countIDs:           countIDs,
 		rootAdminTokens:    common.CanonicalTokens(rootAdminTokens),
@@ -598,7 +601,10 @@ func (s *Service) attachChildCounts(ctx context.Context, nodes []Node) ([]Node, 
 	}
 	for i := range nodes {
 		if nodes[i].Kind == KindBudget {
-			nodes[i].ChildCount = counts[nodes[i].ID]
+			c := counts[nodes[i].ID]
+			nodes[i].ChildCount = c.Budgets + c.Projects
+			nodes[i].ChildBudgetCount = c.Budgets
+			nodes[i].ChildProjectCount = c.Projects
 		}
 	}
 	return nodes, nil

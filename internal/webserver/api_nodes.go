@@ -52,10 +52,18 @@ func getNode(cfg APIConfig) gin.HandlerFunc {
 //	@Tags			nodes
 //	@Produce		json
 //	@Security		Bearer
-//	@Param			id		path		string	true	"Parent node ID"
-//	@Param			limit	query		int	false	"Maximum number of entries to return" default(100)
-//	@Param			offset	query		int	false	"Offset into the result set" default(0)
+//	@Param			id			path		string	true	"Parent node ID"
+//	@Param			limit		query		int		false	"Maximum number of entries to return" default(100)
+//	@Param			offset		query		int		false	"Offset into the result set" default(0)
+//	@Param			kind		query		string	false	"Only budgets or only projects"	Enums(budget, project)
+//	@Param			q			query		string	false	"Text matched against name, purpose, id, owner, OpenStack project and tokens"
+//	@Param			status		query		string	false	"Comma-separated statuses to include"
+//	@Param			group		query		string	false	"A group (or any) token to filter by, see group_mode"
+//	@Param			group_mode	query		string	false	"access: the token is owner, admin or member of the project; owner: the owner holds the token"	Enums(access, owner)
+//	@Param			sort		query		string	false	"Sort key"	Enums(name, owner, status, termination_date, created_at)
+//	@Param			order		query		string	false	"Sort order"	Enums(asc, desc)
 //	@Success		200	{object}	tree.NodePage	"List of child nodes, with the total number of matches."
+//	@Failure		400	{object}	map[string]any	"Invalid filter."
 //	@Failure		401	{object}	map[string]any	"Unauthorized."
 //	@Failure		403	{object}	map[string]any	"Forbidden."
 //	@Failure		404	{object}	map[string]any	"Not found."
@@ -74,7 +82,24 @@ func listNodeChildren(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		children, err := svc.ListChildren(c.Param("id"), auth.EffectiveTokens, limit, offset)
+		filter := tree.ChildFilter{
+			Kind:      c.Query("kind"),
+			Query:     c.Query("q"),
+			Group:     c.Query("group"),
+			GroupMode: c.Query("group_mode"),
+			Sort:      c.Query("sort"),
+			Desc:      c.Query("order") == "desc",
+		}
+		for _, st := range strings.Split(c.Query("status"), ",") {
+			if st = strings.TrimSpace(st); st != "" {
+				filter.Statuses = append(filter.Statuses, st)
+			}
+		}
+		if err := filter.Validate(); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		children, err := svc.ListChildren(c.Param("id"), filter, auth.EffectiveTokens, limit, offset)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return

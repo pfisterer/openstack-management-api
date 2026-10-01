@@ -326,7 +326,7 @@ func TestChildCountIsAttached(t *testing.T) {
 		t.Fatalf("create empty child: %v", err)
 	}
 
-	page, err := svc.ListChildren(parent.ID, rootTokens, 0, 0)
+	page, err := svc.ListChildren(parent.ID, tree.ChildFilter{}, rootTokens, 0, 0)
 	if err != nil {
 		t.Fatalf("list children: %v", err)
 	}
@@ -344,7 +344,7 @@ func TestChildCountIsAttached(t *testing.T) {
 	}, tree.UIActor("root@x"), "root@x", rootTokens); err != nil {
 		t.Fatalf("create leaf: %v", err)
 	}
-	page, err = svc.ListChildren(parent.ID, rootTokens, 0, 0)
+	page, err = svc.ListChildren(parent.ID, tree.ChildFilter{}, rootTokens, 0, 0)
 	if err != nil {
 		t.Fatalf("list children: %v", err)
 	}

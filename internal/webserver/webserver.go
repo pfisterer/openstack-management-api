@@ -75,7 +75,7 @@ type APIService interface {
 
 	// Node reads / views
 	GetNode(id string, userTokens common.TokenList) (*tree.Node, error)
-	ListChildren(parentID string, userTokens common.TokenList, limit, offset int) (tree.NodePage, error)
+	ListChildren(parentID string, filter tree.ChildFilter, userTokens common.TokenList, limit, offset int) (tree.NodePage, error)
 	ListMine(userEmail string, userTokens common.TokenList, limit, offset int) (tree.NodePage, error)
 	ListMyBudgets(userTokens common.TokenList, limit, offset int) (tree.NodePage, error)
 	ListEligibleForMe(userTokens common.TokenList, limit, offset int) (tree.NodePage, error)

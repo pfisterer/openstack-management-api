@@ -322,6 +322,11 @@ type Node struct {
 	// children have not been fetched yet. Children are loaded lazily, so without
 	// this every budget looks expandable.
 	ChildCount int `json:"child_count"`
+	// ChildBudgetCount and ChildProjectCount split ChildCount by kind: a tree
+	// that shows budgets only needs to know whether there are any budgets to
+	// expand into, and how many projects to list beside it.
+	ChildBudgetCount  int `json:"child_budget_count"`
+	ChildProjectCount int `json:"child_project_count"`
 	// AncestorIDs is attached to /v1/nodes/my-budgets (never persisted): every
 	// node above this one, root-most first, excluding the node itself.
 	//

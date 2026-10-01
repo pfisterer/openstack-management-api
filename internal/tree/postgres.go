@@ -383,26 +383,29 @@ func (s *PostgresStore) DeleteNodeIf(ctx context.Context, id string, pred func(n
 	return deleted, err
 }
 
-// CountChildren counts direct children per parent in one grouped query.
-func (s *PostgresStore) CountChildren(ctx context.Context, parentIDs []string) (map[string]int, error) {
+// CountChildren counts direct children per parent and kind in one grouped query.
+func (s *PostgresStore) CountChildren(ctx context.Context, parentIDs []string) (map[string]ChildCounts, error) {
 	if len(parentIDs) == 0 {
-		return map[string]int{}, nil
+		return map[string]ChildCounts{}, nil
 	}
 	var rows []struct {
 		ParentID string
+		Kind     string
 		N        int
 	}
 	if err := s.db.WithContext(ctx).
 		Model(&nodeRow{}).
-		Select("parent_id, count(*) as n").
+		Select("parent_id, kind, count(*) as n").
 		Where("parent_id IN ?", parentIDs).
-		Group("parent_id").
+		Group("parent_id, kind").
 		Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("count children: %w", err)
 	}
-	counts := make(map[string]int, len(rows))
+	counts := make(map[string]ChildCounts, len(rows))
 	for _, r := range rows {
-		counts[r.ParentID] = r.N
+		c := counts[r.ParentID]
+		c.add(r.Kind, r.N)
+		counts[r.ParentID] = c
 	}
 	return counts, nil
 }

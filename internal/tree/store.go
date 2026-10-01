@@ -77,9 +77,24 @@ type Store interface {
 	// DeleteNodeIf deletes the node only if pred holds for its current state, for
 	// the same reason. Reports whether it deleted.
 	DeleteNodeIf(ctx context.Context, id string, pred func(n Node) bool) (bool, error)
-	// CountChildren returns the number of direct children per parent ID, in one
-	// query for the whole set. Parents without children are absent from the map.
-	CountChildren(ctx context.Context, parentIDs []string) (map[string]int, error)
+	// CountChildren returns the number of direct children per parent ID, by
+	// kind, in one query for the whole set. Parents without children are absent
+	// from the map.
+	CountChildren(ctx context.Context, parentIDs []string) (map[string]ChildCounts, error)
+}
+
+// ChildCounts is how many budgets and projects sit directly under a budget.
+type ChildCounts struct {
+	Budgets  int
+	Projects int
+}
+
+func (c *ChildCounts) add(kind string, n int) {
+	if kind == KindBudget {
+		c.Budgets += n
+	} else {
+		c.Projects += n
+	}
 }
 
 // ParticipantEmails returns the distinct, sorted set of user emails appearing as

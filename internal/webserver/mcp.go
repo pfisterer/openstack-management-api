@@ -403,7 +403,7 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 		Description: "List the projects and sub-budgets directly under a budget, to walk the tree one level at a time.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpBudgetContentsInput) (*mcp.CallToolResult, mcpProjectList, error) {
 		limit, offset := in.resolve()
-		page, err := cfg.Service.ListChildren(in.ID, caller.tokens, limit, offset)
+		page, err := cfg.Service.ListChildren(in.ID, tree.ChildFilter{}, caller.tokens, limit, offset)
 		if err != nil {
 			return nil, mcpProjectList{}, fmt.Errorf("list contents of %q: %w", in.ID, err)
 		}

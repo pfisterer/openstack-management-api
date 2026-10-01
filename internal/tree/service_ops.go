@@ -53,32 +53,6 @@ func (s *Service) GetNode(id string, userTokens common.TokenList) (*Node, error)
 	return &withUsage[0], nil
 }
 
-// ListChildren returns the direct children of a budget. Management view: only
-// managers of the budget (or its ancestors) may list children.
-func (s *Service) ListChildren(parentID string, userTokens common.TokenList, limit, offset int) (NodePage, error) {
-	if len(userTokens) == 0 {
-		return NodePage{}, common.ErrForbidden
-	}
-	limit, offset = normalizePagination(limit, offset)
-	ctx, cancel := s.newCtx()
-	defer cancel()
-
-	parent, err := s.store.GetNode(ctx, parentID)
-	if err != nil {
-		return NodePage{}, fmt.Errorf("load parent node: %w", err)
-	}
-	if parent == nil {
-		return NodePage{}, fmt.Errorf("node %w", common.ErrNotFound)
-	}
-	if manages, err := s.managesNode(ctx, userTokens, parent); err != nil {
-		return NodePage{}, err
-	} else if !manages {
-		return NodePage{}, common.ErrForbidden
-	}
-
-	return s.listPage(ctx, NodeQuery{ParentIDs: []string{parentID}}, limit, offset)
-}
-
 // ListMine returns the leaves the user answers for: the ones they own, and the
 // ones whose admin scope names them or one of their groups.
 func (s *Service) ListMine(userEmail string, userTokens common.TokenList, limit, offset int) (NodePage, error) {

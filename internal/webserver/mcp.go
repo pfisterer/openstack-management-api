@@ -143,6 +143,7 @@ type mcpProject struct {
 	OSProjectID        string         `json:"os_project_id,omitempty" jsonschema:"the OpenStack project, empty while it is still being created"`
 	OSProjectName      string         `json:"os_project_name,omitempty" jsonschema:"its name in OpenStack, which is what the dashboard and the CLI show"`
 	TerminationDate    string         `json:"termination_date,omitempty" jsonschema:"intended end of life"`
+	MaxProjectTermDays int            `json:"max_project_term_days,omitempty" jsonschema:"on a budget: a project below it may end at most this many days after the day it is requested or extended"`
 }
 
 func toMCPProject(n tree.Node) mcpProject {
@@ -170,6 +171,9 @@ func toMCPProject(n tree.Node) mcpProject {
 	}
 	if n.TerminationDate != nil {
 		p.TerminationDate = *n.TerminationDate
+	}
+	if n.MaxProjectTermDays != nil {
+		p.MaxProjectTermDays = *n.MaxProjectTermDays
 	}
 	return p
 }
@@ -239,7 +243,7 @@ type mcpRequestInput struct {
 	// configuration (get_project shows what an existing one uses), and
 	// hard-coding cores/ram/storage here would be a second place to change.
 	Limit           map[string]int `json:"limit" jsonschema:"requested resources by id, e.g. {\"cores\": 4, \"ram\": 8192}"`
-	TerminationDate string         `json:"termination_date,omitempty" jsonschema:"optional intended end of life, RFC3339; at most the budget's own end, which is also the default when the budget ends"`
+	TerminationDate string         `json:"termination_date,omitempty" jsonschema:"optional intended end of life, RFC3339; at most the budget's own end and, where the budget sets max_project_term_days, at most that many days from today; the latest allowed is also the default"`
 	Admins          []string       `json:"admins,omitempty" jsonschema:"optional: people or groups who administer the project together with you, e.g. user:a@b.c or group:x; they get no access in OpenStack by this"`
 }
 
@@ -289,6 +293,10 @@ type mcpCreateBudgetInput struct {
 	AdminScope         []string       `json:"admin_scope" jsonschema:"tokens that may approve requests here, e.g. group:dept_cs_admin or user:a@b.c"`
 	EligibleRequesters []string       `json:"eligible_requesters,omitempty" jsonschema:"tokens that may request something here, without any say over decisions"`
 	AutoApproveLimit   map[string]int `json:"auto_approve_limit,omitempty" jsonschema:"optional: requests up to this size per requester are approved without a human; {} approves any request the budget has room for"`
+	// A pointer: absent means the default (extensions are covered), false is
+	// a real answer.
+	AutoApproveExtensions *bool `json:"auto_approve_extensions,omitempty" jsonschema:"optional, with auto_approve_limit: false sends every later end date of a project to a manager; default true"`
+	MaxProjectTermDays    int   `json:"max_project_term_days,omitempty" jsonschema:"optional: a project below may end at most this many days after the day it is requested or extended; at most the cap of the budget above, which is also the default"`
 }
 
 type mcpMoveInput struct {
@@ -587,13 +595,17 @@ func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log 
 			return nil, mcpProject{}, fmt.Errorf("reason must not be empty")
 		}
 		req := tree.CreateNodeRequest{
-			ParentID:           in.ParentID,
-			Kind:               tree.KindBudget,
-			Name:               in.Name,
-			Reason:             in.Reason,
-			Limit:              common.ProjectQuota(in.Limit),
-			AdminScope:         common.TokenList(in.AdminScope),
-			EligibleRequesters: common.TokenList(in.EligibleRequesters),
+			ParentID:              in.ParentID,
+			Kind:                  tree.KindBudget,
+			Name:                  in.Name,
+			Reason:                in.Reason,
+			Limit:                 common.ProjectQuota(in.Limit),
+			AdminScope:            common.TokenList(in.AdminScope),
+			EligibleRequesters:    common.TokenList(in.EligibleRequesters),
+			AutoApproveExtensions: in.AutoApproveExtensions,
+		}
+		if in.MaxProjectTermDays != 0 {
+			req.MaxProjectTermDays = &in.MaxProjectTermDays
 		}
 		// nil is "no auto-approve"; an empty map is the pool flavour.
 		if in.AutoApproveLimit != nil {

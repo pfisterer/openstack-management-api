@@ -49,21 +49,34 @@ type CreateNodeRequest struct {
 	AllowSubBudgetRequests *bool `json:"allow_sub_budget_requests"`
 	// AllowRequestsBeyondAutoApprove defaults to true when omitted.
 	AllowRequestsBeyondAutoApprove *bool `json:"allow_requests_beyond_auto_approve"`
+	// AutoApproveExtensions defaults to true when omitted.
+	AutoApproveExtensions *bool `json:"auto_approve_extensions"`
+	// MaxProjectTermDays may not exceed the cap of a budget above; omitted
+	// under a budget with a cap, it is that cap.
+	MaxProjectTermDays *int `json:"max_project_term_days"`
 }
 
 // UpdateNodeRequest is a direct edit that takes effect immediately (no approval
 // cycle). Policy fields require a manager of the node or its ancestors; Limit
 // requires a manager of the parent chain (you cannot raise your own budget).
 type UpdateNodeRequest struct {
-	Name                           *string              `json:"name"`
-	AdminScope                     *common.TokenList    `json:"admin_scope"`
-	EligibleRequesters             *common.TokenList    `json:"eligible_requesters"`
-	AutoApprove                    *AutoApprove         `json:"auto_approve"`
-	ClearAutoApprove               bool                 `json:"clear_auto_approve"`
-	AllowSubBudgetRequests         *bool                `json:"allow_sub_budget_requests"`
-	AllowRequestsBeyondAutoApprove *bool                `json:"allow_requests_beyond_auto_approve"`
-	Limit                          *common.ProjectQuota `json:"limit"`
-	TerminationDate                *string              `json:"termination_date"`
+	Name                           *string           `json:"name"`
+	AdminScope                     *common.TokenList `json:"admin_scope"`
+	EligibleRequesters             *common.TokenList `json:"eligible_requesters"`
+	AutoApprove                    *AutoApprove      `json:"auto_approve"`
+	ClearAutoApprove               bool              `json:"clear_auto_approve"`
+	AllowSubBudgetRequests         *bool             `json:"allow_sub_budget_requests"`
+	AllowRequestsBeyondAutoApprove *bool             `json:"allow_requests_beyond_auto_approve"`
+	AutoApproveExtensions          *bool             `json:"auto_approve_extensions"`
+	// MaxProjectTermDays may not exceed the cap of a budget above. Lowering it
+	// is carried down: sub-budgets with a longer cap take the new one, and
+	// projects ending later than that many days from today are shortened.
+	// ClearMaxProjectTermDays removes the cap, only where no budget above has
+	// one.
+	MaxProjectTermDays      *int                 `json:"max_project_term_days"`
+	ClearMaxProjectTermDays bool                 `json:"clear_max_project_term_days"`
+	Limit                   *common.ProjectQuota `json:"limit"`
+	TerminationDate         *string              `json:"termination_date"`
 	// TerminationDate may not lie after the end of any budget above. A budget's
 	// new end is carried down: every node below it that ends later, or never,
 	// ends with it, waiting requests and proposals included.

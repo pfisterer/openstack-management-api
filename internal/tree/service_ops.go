@@ -344,6 +344,9 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 		if err := s.validateLeafLimit(req.Limit); err != nil {
 			return Node{}, err
 		}
+		if req.MaxProjectTermDays != nil {
+			return Node{}, fmt.Errorf("max_project_term_days is a budget setting")
+		}
 	case KindBudget:
 		// A budget without an admin scope is invisible in the UI: "My Budgets"
 		// matches AdminScope directly (the ancestor rule does not apply there),
@@ -413,13 +416,23 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 		return Node{}, fmt.Errorf("%w: this budget does not accept sub-budget requests — request a project instead", common.ErrForbidden)
 	}
 
-	// Nothing outlives the budget it draws from: no end asked means the
-	// budget's, a later one is refused.
+	// Nothing outlives the budget it draws from, and a project runs no longer
+	// than the budgets above allow: no end asked means the latest allowed, a
+	// later one is refused. A sub-budget inherits the term cap the same way.
 	parentChain, err := s.nodeChain(ctx, parent.ID)
 	if err != nil {
 		return Node{}, err
 	}
-	terminationDate, err := fitEnd(req.TerminationDate, chainEnd(parentChain))
+	var terminationDate *string
+	var maxTerm *int
+	if req.Kind == KindProject {
+		terminationDate, err = fitProjectEnd(req.TerminationDate, parentChain, time.Now())
+	} else {
+		terminationDate, err = fitEnd(req.TerminationDate, chainEnd(parentChain))
+		if err == nil {
+			maxTerm, err = fitMaxTerm(req.MaxProjectTermDays, chainMaxTerm(parentChain))
+		}
+	}
 	if err != nil {
 		return Node{}, err
 	}
@@ -459,6 +472,8 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 		node.AutoApprove = req.AutoApprove
 		node.AllowSubBudgetRequests = req.AllowSubBudgetRequests
 		node.AllowRequestsBeyondAutoApprove = req.AllowRequestsBeyondAutoApprove
+		node.AutoApproveExtensions = req.AutoApproveExtensions
+		node.MaxProjectTermDays = maxTerm
 	}
 	node.History = []HistoryEntry{createdEntry}
 
@@ -511,6 +526,7 @@ func isLeafDirectEdit(req UpdateNodeRequest) bool {
 		req.EligibleRequesters == nil &&
 		req.AutoApprove == nil && !req.ClearAutoApprove &&
 		req.AllowSubBudgetRequests == nil && req.AllowRequestsBeyondAutoApprove == nil &&
+		req.AutoApproveExtensions == nil && req.MaxProjectTermDays == nil && !req.ClearMaxProjectTermDays &&
 		req.Limit == nil && req.TerminationDate == nil && !req.ClearTerminationDate
 }
 
@@ -560,7 +576,8 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, user
 
 	wantsPolicyEdit := req.Name != nil || req.AdminScope != nil || req.EligibleRequesters != nil ||
 		req.AutoApprove != nil || req.ClearAutoApprove || req.AllowSubBudgetRequests != nil ||
-		req.AllowRequestsBeyondAutoApprove != nil
+		req.AllowRequestsBeyondAutoApprove != nil || req.AutoApproveExtensions != nil ||
+		req.MaxProjectTermDays != nil || req.ClearMaxProjectTermDays
 	wantsCapacityEdit := req.Limit != nil || req.TerminationDate != nil || req.ClearTerminationDate
 
 	if wantsPolicyEdit {
@@ -612,6 +629,9 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, user
 	if req.AllowRequestsBeyondAutoApprove != nil {
 		updated.AllowRequestsBeyondAutoApprove = req.AllowRequestsBeyondAutoApprove
 	}
+	if req.AutoApproveExtensions != nil {
+		updated.AutoApproveExtensions = req.AutoApproveExtensions
+	}
 	if req.ClearAutoApprove {
 		updated.AutoApprove = nil
 	} else if req.AutoApprove != nil {
@@ -620,11 +640,24 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, user
 		}
 		updated.AutoApprove = req.AutoApprove
 	}
-	if req.ClearTerminationDate || req.TerminationDate != nil {
-		chain, err := s.parentChainNodes(ctx, current)
-		if err != nil {
+	var chain []Node
+	if req.ClearTerminationDate || req.TerminationDate != nil || req.ClearMaxProjectTermDays || req.MaxProjectTermDays != nil {
+		if chain, err = s.parentChainNodes(ctx, current); err != nil {
 			return Node{}, err
 		}
+	}
+	if req.ClearMaxProjectTermDays {
+		if bound := chainMaxTerm(chain); bound != nil {
+			return Node{}, fmt.Errorf("projects can run at most %d days in the budget above, so this one needs that limit too", *bound)
+		}
+		updated.MaxProjectTermDays = nil
+	} else if req.MaxProjectTermDays != nil {
+		if _, err := fitMaxTerm(req.MaxProjectTermDays, chainMaxTerm(chain)); err != nil {
+			return Node{}, err
+		}
+		updated.MaxProjectTermDays = req.MaxProjectTermDays
+	}
+	if req.ClearTerminationDate || req.TerminationDate != nil {
 		if bound := chainEnd(chain); req.ClearTerminationDate && bound != nil {
 			return Node{}, fmt.Errorf("the budget above ends on %s, so this one needs an end date too", dateOnly(*bound))
 		}
@@ -695,6 +728,12 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, user
 			return Node{}, err
 		}
 	}
+	if req.MaxProjectTermDays != nil {
+		days := *updated.MaxProjectTermDays
+		if _, err := s.shortenSubtreeTerms(ctx, []string{updated.ID}, days, time.Now(), actor, termReason(updated, days)); err != nil {
+			return Node{}, err
+		}
+	}
 	return updated, nil
 }
 
@@ -702,6 +741,12 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, user
 // budget it draws from.
 func endsWithReason(budget Node) string {
 	return fmt.Sprintf("Ends with budget %q", nodeLabel(budget))
+}
+
+// termReason is the history note on a node shortened to the maximum project
+// term of a budget above it.
+func termReason(budget Node, days int) string {
+	return fmt.Sprintf("Projects in budget %q run at most %d days at a time", nodeLabel(budget), days)
 }
 
 // ── Change requests ───────────────────────────────────────────────────────────
@@ -765,7 +810,12 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor Actor, u
 		if err != nil {
 			return Node{}, err
 		}
-		if _, err := fitEnd(req.TerminationDate, chainEnd(chain)); err != nil {
+		if current.IsLeaf() {
+			_, err = fitProjectEnd(req.TerminationDate, chain, time.Now())
+		} else {
+			_, err = fitEnd(req.TerminationDate, chainEnd(chain))
+		}
+		if err != nil {
 			return Node{}, err
 		}
 	}
@@ -856,13 +906,13 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor Actor, u
 
 	updated.History = append(slices.Clone(current.History), historyEntry)
 
-	direct, reason := false, ""
+	direct, reason, beyondPolicy := false, "", false
 	if current.IsLeaf() {
-		if direct, reason, err = s.leafChangeDecision(ctx, current, parent, pending); err != nil {
+		if direct, reason, beyondPolicy, err = s.leafChangeDecision(ctx, current, parent, pending); err != nil {
 			return Node{}, err
 		}
 	}
-	if !direct && current.IsLeaf() && !parent.RequestsBeyondAutoApproveAllowed() {
+	if beyondPolicy && !parent.RequestsBeyondAutoApproveAllowed() {
 		// A manager of the budget may still propose — and then approve — it;
 		// the hard limit is for the people who request from it.
 		manages, err := s.managesParentChain(ctx, userTokens, current)
@@ -911,28 +961,37 @@ var errBeyondAutoApprove = fmt.Errorf("%w: this is more than the budget grants a
 //   - members: always — who works in a project is its owner's business;
 //   - resources: a pure shrink always; growth when the budget's auto-approve
 //     policy would grant the new size as a new request;
-//   - end date: an earlier one always; a later one when the budget has an
-//     auto-approve policy and the date stays within the budget's own end.
-func (s *Service) leafChangeDecision(ctx context.Context, current, parent *Node, change *PendingChanges) (bool, string, error) {
+//   - end date: an earlier one always; a later one when the budget's
+//     auto-approve policy covers extensions and the date stays within the
+//     budget's own end (the maximum term was checked before).
+//
+// beyondPolicy reports that the resources asked for are more than the policy
+// grants — what a budget that takes no requests beyond it refuses. An
+// extension the budget leaves to its managers is not that: it is a question
+// the budget wants asked, so it waits for them.
+func (s *Service) leafChangeDecision(ctx context.Context, current, parent *Node, change *PendingChanges) (direct bool, reason string, beyondPolicy bool, err error) {
 	viaPolicy := false
 	if change.Limit != nil && !s.limitShrinks(current.Limit, *change.Limit) {
 		ok, err := s.autoApprovable(ctx, parent, current.Owner, *change.Limit, current.Limit)
-		if err != nil || !ok {
-			return false, "", err
+		if err != nil {
+			return false, "", false, err
+		}
+		if !ok {
+			return false, "", true, nil
 		}
 		viaPolicy = true
 	}
 	if change.TerminationDate != nil && !endsNoLater(*change.TerminationDate, current.TerminationDate) {
-		if parent == nil || parent.AutoApprove == nil || parent.Status != StatusApproved ||
+		if !parent.ExtensionsAutoApproved() || parent.Status != StatusApproved ||
 			!endsNoLater(*change.TerminationDate, parent.TerminationDate) {
-			return false, "", nil
+			return false, "", false, nil
 		}
 		viaPolicy = true
 	}
 	if viaPolicy {
-		return true, autoApproveReason(parent), nil
+		return true, autoApproveReason(parent), false, nil
 	}
-	return true, "Applied directly (gives resources back, ends sooner or changes members only)", nil
+	return true, "Applied directly (gives resources back, ends sooner or changes members only)", false, nil
 }
 
 // ── Approve / reject / release ────────────────────────────────────────────────
@@ -998,7 +1057,12 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor Actor, us
 	}
 	// Requests made before the budget above got (or moved up) its end still
 	// ask for more: they are granted to the budget's end, not refused whole.
-	if bound := chainEnd(ancestors); bound != nil &&
+	// The same for a project's maximum term, counted from today.
+	bound := chainEnd(ancestors)
+	if current.IsLeaf() {
+		bound, _ = projectBound(ancestors, time.Now())
+	}
+	if bound != nil &&
 		(finalTerminationDate == nil || !endsNoLater(*finalTerminationDate, bound)) {
 		finalTerminationDate = bound
 	}
@@ -1290,10 +1354,23 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor Actor, 
 	updated.ParentID = &newParent.ID
 	updated.History = append(slices.Clone(current.History), historyEntry)
 	// Under a budget that ends sooner, the moved node and everything below it
-	// end with it.
-	bound := chainEnd(newParentChain)
+	// end with it; under a budget with a shorter maximum project term, the
+	// projects among them are shortened to it.
+	now := time.Now()
+	bound, reason := chainEnd(newParentChain), endsWithReason(*newParent)
+	maxTerm := chainMaxTerm(newParentChain)
+	if updated.IsLeaf() {
+		if b, term := projectBound(newParentChain, now); term != nil {
+			bound, reason = b, termReason(*newParent, *term)
+		}
+	}
 	if bound != nil {
-		if err := shortenEnd(&updated, *bound, actor, endsWithReason(*newParent)); err != nil && !errors.Is(err, ErrSkipUpdate) {
+		if err := shortenEnd(&updated, *bound, actor, reason); err != nil && !errors.Is(err, ErrSkipUpdate) {
+			return Node{}, err
+		}
+	}
+	if maxTerm != nil && !updated.IsLeaf() {
+		if err := shortenTerm(&updated, *maxTerm, actor, termReason(*newParent, *maxTerm)); err != nil && !errors.Is(err, ErrSkipUpdate) {
 			return Node{}, err
 		}
 	}
@@ -1302,7 +1379,13 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor Actor, 
 		return Node{}, fmt.Errorf("persist node: %w", err)
 	}
 	if bound != nil && !updated.IsLeaf() {
-		if _, err := s.shortenSubtreeEnds(ctx, []string{updated.ID}, *bound, actor, endsWithReason(*newParent)); err != nil {
+		if _, err := s.shortenSubtreeEnds(ctx, []string{updated.ID}, *bound, actor, reason); err != nil {
+			return Node{}, err
+		}
+	}
+	if updated.MaxProjectTermDays != nil && !updated.IsLeaf() {
+		days := *updated.MaxProjectTermDays
+		if _, err := s.shortenSubtreeTerms(ctx, []string{updated.ID}, days, now, actor, termReason(updated, days)); err != nil {
 			return Node{}, err
 		}
 	}
@@ -1428,7 +1511,7 @@ func (s *Service) PromoteNode(id string, req PromoteNodeRequest, actor Actor, us
 	if err := s.checkCapacity(ctx, newParentChain, effectiveLimit, nil); err != nil {
 		return Node{}, err
 	}
-	terminationDate, err := fitEnd(req.TerminationDate, chainEnd(newParentChain))
+	terminationDate, err := fitProjectEnd(req.TerminationDate, newParentChain, time.Now())
 	if err != nil {
 		return Node{}, err
 	}

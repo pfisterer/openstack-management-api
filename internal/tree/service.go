@@ -1158,6 +1158,79 @@ func fitEnd(end, bound *string) (*string, error) {
 	return end, nil
 }
 
+// chainMaxTerm is the shortest maximum project term along a chain of budgets —
+// the one every project below them obeys. Nil when none of them sets one.
+func chainMaxTerm(chain []Node) *int {
+	var shortest *int
+	for _, n := range chain {
+		if n.MaxProjectTermDays != nil && (shortest == nil || *n.MaxProjectTermDays < *shortest) {
+			shortest = n.MaxProjectTermDays
+		}
+	}
+	return shortest
+}
+
+// termEnd is the latest end a term of days allows for a project created or
+// extended at now: the end of that day, in UTC. The whole day rather than the
+// second, so a date picked in a browser whose clock runs a little ahead — or
+// a request that waited a few minutes for its approval — is not refused over
+// the time of day.
+func termEnd(now time.Time, days int) string {
+	day := now.UTC().AddDate(0, 0, days)
+	return time.Date(day.Year(), day.Month(), day.Day(), 23, 59, 59, 0, time.UTC).Format(time.RFC3339)
+}
+
+// projectBound is the latest end a project below the chain may have at now:
+// the earliest budget end, or the end of the shortest term, whichever comes
+// first. term reports which of the two it is, for the message that names it.
+func projectBound(chain []Node, now time.Time) (bound *string, term *int) {
+	end := chainEnd(chain)
+	days := chainMaxTerm(chain)
+	if days == nil {
+		return end, nil
+	}
+	byTerm := termEnd(now, *days)
+	if end != nil && endsNoLater(*end, &byTerm) {
+		return end, nil
+	}
+	return &byTerm, days
+}
+
+// fitProjectEnd is fitEnd for a project, which also obeys the maximum term of
+// the budgets above: no end asked means the bound, a later one is refused.
+func fitProjectEnd(end *string, chain []Node, now time.Time) (*string, error) {
+	bound, term := projectBound(chain, now)
+	if term == nil {
+		return fitEnd(end, bound)
+	}
+	if end == nil {
+		return bound, nil
+	}
+	if !endsNoLater(*end, bound) {
+		return nil, fmt.Errorf("the end date %s is too far ahead: projects in this budget run at most %d days at a time, so until %s at the latest", dateOnly(*end), *term, dateOnly(*bound))
+	}
+	return end, nil
+}
+
+// fitMaxTerm applies the term rule to the cap asked for a budget below a chain
+// whose shortest cap is bound: no cap asked means the bound, a longer one is
+// refused — a sub-budget may tighten the rule, not escape it.
+func fitMaxTerm(days, bound *int) (*int, error) {
+	if days != nil && *days < 1 {
+		return nil, fmt.Errorf("the maximum project term must be at least one day")
+	}
+	if bound == nil {
+		return days, nil
+	}
+	if days == nil {
+		return bound, nil
+	}
+	if *days > *bound {
+		return nil, fmt.Errorf("projects can run at most %d days in the budget above, so this one cannot allow %d", *bound, *days)
+	}
+	return days, nil
+}
+
 // dateOnly prints an RFC 3339 timestamp as its day for messages.
 func dateOnly(ts string) string {
 	if t, err := time.Parse(time.RFC3339, ts); err == nil {
@@ -1198,6 +1271,54 @@ func (s *Service) shortenSubtreeEnds(ctx context.Context, parentIDs []string, en
 		}
 	}
 	return changed, nil
+}
+
+// shortenSubtreeTerms carries a lowered maximum project term down: sub-budgets
+// with a longer cap (or none) take the new one, and every live project below
+// that ends later than the term allows from now — or never — is shortened to
+// it, waiting requests and proposals included. Returns how many nodes it
+// changed. Callers hold approvalMu.
+func (s *Service) shortenSubtreeTerms(ctx context.Context, parentIDs []string, days int, now time.Time, actor Actor, reason string) (int, error) {
+	end := termEnd(now, days)
+	changed := 0
+	for len(parentIDs) > 0 {
+		children, err := s.store.ListNodes(ctx, NodeQuery{ParentIDs: parentIDs}, 0, 0)
+		if err != nil {
+			return changed, fmt.Errorf("load children for project term: %w", err)
+		}
+		parentIDs = nil
+		for _, child := range children {
+			if IsTerminalStatus(child.Status) || child.Status == StatusImported {
+				continue
+			}
+			mutate := func(n *Node) error { return shortenEnd(n, end, actor, reason) }
+			if child.Kind == KindBudget {
+				parentIDs = append(parentIDs, child.ID)
+				mutate = func(n *Node) error { return shortenTerm(n, days, actor, reason) }
+			}
+			wrote, err := s.store.UpdateNode(ctx, child.ID, mutate)
+			if err != nil {
+				return changed, fmt.Errorf("shorten project term of %s: %w", nodeLabel(child), err)
+			}
+			if wrote {
+				changed++
+			}
+		}
+	}
+	return changed, nil
+}
+
+// shortenTerm lowers a budget's maximum project term to days where it allows
+// longer or sets none. ErrSkipUpdate when it is already as short.
+func shortenTerm(n *Node, days int, actor Actor, reason string) error {
+	if n.MaxProjectTermDays != nil && *n.MaxProjectTermDays <= days {
+		return ErrSkipUpdate
+	}
+	n.MaxProjectTermDays = &days
+	entry := newHistoryEntry("term_shortened", actor, n.Status)
+	entry.Reason = &reason
+	n.History = append(slices.Clone(n.History), entry)
+	return nil
 }
 
 // shortenEnd moves n's end date — and that of a proposal waiting on it — to end

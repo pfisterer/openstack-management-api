@@ -34,6 +34,14 @@ func (n *Node) RequestsBeyondAutoApproveAllowed() bool {
 		n.AllowRequestsBeyondAutoApprove == nil || *n.AllowRequestsBeyondAutoApprove
 }
 
+// ExtensionsAutoApproved reports whether this budget's auto-approve policy also
+// covers a later end date for a project below it. Unset means it does, as
+// before the field existed; without a policy nothing is auto-approved anyway.
+func (n *Node) ExtensionsAutoApproved() bool {
+	return n != nil && n.AutoApprove != nil &&
+		(n.AutoApproveExtensions == nil || *n.AutoApproveExtensions)
+}
+
 // Node kinds.
 const (
 	KindBudget  = "budget"  // inner node: a delegated budget
@@ -283,6 +291,19 @@ type Node struct {
 	// than queued for a manager. Managers are not restricted, and without an
 	// AutoApprove policy the field has no effect. nil means allowed.
 	AllowRequestsBeyondAutoApprove *bool `json:"allow_requests_beyond_auto_approve,omitempty"`
+	// AutoApproveExtensions controls whether the auto-approve policy also lets
+	// a project's owner move its end later without a manager. False sends every
+	// extension to a manager — a budget that hands out projects freely but
+	// wants to hear when one is meant to keep running. nil means covered.
+	AutoApproveExtensions *bool `json:"auto_approve_extensions,omitempty"`
+	// MaxProjectTermDays caps how far ahead a project below this budget may
+	// end: at most this many days from the day it is created or extended, and
+	// never past a budget's end. Unlike TerminationDate it is a rule for the
+	// projects, not an end of the budget itself — a budget for students may run
+	// for years while each project in it runs for six months at a time. A
+	// sub-budget may tighten it, never loosen it; lowering it shortens the
+	// projects below. nil means no cap of its own.
+	MaxProjectTermDays *int `json:"max_project_term_days,omitempty"`
 
 	// Owner is the single responsible person of a leaf ("user:<email>").
 	// Additional participants are granted via AuthorizedUsers. Managers of the
@@ -292,7 +313,8 @@ type Node struct {
 
 	// TerminationDate is the intended end of life (leaves) or validity end
 	// (budgets, formerly EndDate). Informative for now; enforcement is a
-	// follow-up task (expiry sweep in the reconciler).
+	// follow-up task (expiry sweep in the reconciler). nil means no end, which a
+	// project may only have where no budget above ends or caps its term.
 	TerminationDate *string `json:"termination_date,omitempty"`
 
 	Pending *PendingChanges `json:"pending,omitempty"`

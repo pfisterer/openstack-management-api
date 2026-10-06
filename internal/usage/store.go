@@ -2,6 +2,7 @@ package usage
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -82,14 +83,16 @@ func (s *PostgresStore) ReplaceDay(ctx context.Context, day time.Time, rows []Da
 }
 
 func (s *PostgresStore) LastDay(ctx context.Context) (time.Time, bool, error) {
-	var last *time.Time
-	if err := s.db.WithContext(ctx).Model(&dbDay{}).Select("MAX(day)").Scan(&last).Error; err != nil {
+	// NullTime, not *time.Time: MAX over an empty table is NULL, and the
+	// driver will not scan that into a pointer.
+	var last sql.NullTime
+	if err := s.db.WithContext(ctx).Model(&dbDay{}).Select("MAX(day)").Row().Scan(&last); err != nil {
 		return time.Time{}, false, err
 	}
-	if last == nil {
+	if !last.Valid {
 		return time.Time{}, false, nil
 	}
-	return dayOf(*last), true, nil
+	return dayOf(last.Time), true, nil
 }
 
 func (s *PostgresStore) Days(ctx context.Context, nodeIDs []string, from, to time.Time) ([]Day, error) {

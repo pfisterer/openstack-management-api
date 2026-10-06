@@ -951,11 +951,16 @@ func (r *Reconciler) handleReleasedProject(osProject osclient.ProjectInfo, leaf 
 // Publishing only. Nothing enforces the date (see Node.TerminationDate) — a project
 // past it keeps running, it is now merely visible.
 //
+// The owner rides along as <ContactTagPrefix><email>: whoever finds a project
+// about to run out in OpenStack needs someone to write to, and that question
+// used to be answered only once a project was released. Only the owner — the
+// one person responsible — and kept current, so a transfer moves the tag too.
+//
 // Writes only on an actual change, because this runs for every managed leaf on every
 // tick: an unconditional update would be one Keystone write per project per interval
 // for a value that changes maybe twice in a project's life. Clearing the date in the
 // tree removes the tag on the next tick, and every other tag (managed, resource-id,
-// contact, pending-deletion) is carried over untouched.
+// pending-deletion) is carried over untouched.
 func (r *Reconciler) syncManagedTags(leaf tree.Node, osProject osclient.ProjectInfo) {
 	termination := ""
 	if leaf.TerminationDate != nil {
@@ -969,6 +974,7 @@ func (r *Reconciler) syncManagedTags(leaf tree.Node, osProject osclient.ProjectI
 	newTags, changed := applyPrefixedTags(osProject.Tags,
 		prefixedTag{r.cfg.TerminationTagPrefix, termination},
 		prefixedTag{r.cfg.StatusTagPrefix, leaf.Status},
+		prefixedTag{r.cfg.ContactTagPrefix, leaf.OwnerEmail()},
 	)
 	if !changed {
 		return
@@ -976,7 +982,7 @@ func (r *Reconciler) syncManagedTags(leaf tree.Node, osProject osclient.ProjectI
 
 	r.log.Infow("Updating tags on OS project",
 		"node_id", leaf.ID, "os_project_id", osProject.ID,
-		"status", leaf.Status, "termination", termination,
+		"status", leaf.Status, "termination", termination, "contact", leaf.OwnerEmail(),
 		"tags", newTags, "dry_run", r.cfg.DryRun)
 
 	if r.cfg.DryRun {
@@ -1004,8 +1010,8 @@ type prefixedTag struct {
 // The caller writes only when changed is true, because this runs for every managed
 // leaf on every tick: an unconditional update would be one Keystone write per
 // project per interval for values that change a handful of times in a project's
-// life. Tags outside the owned prefixes (managed, resource-id, contact,
-// pending-deletion) are carried over untouched.
+// life. Tags outside the owned prefixes (managed, resource-id, pending-deletion)
+// are carried over untouched.
 //
 // "Changed" is decided per prefix, NOT by comparing the two lists: the owned tags
 // are re-appended at the end, so a positional comparison would report a change on

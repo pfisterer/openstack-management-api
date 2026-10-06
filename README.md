@@ -73,7 +73,7 @@ It marks what it owns with Keystone tags, and those tags are the contract with a
 | `termination:<RFC3339>` | when the node's termination date changes | read "what runs out when" straight from OpenStack, no access to this API needed |
 | `status:<status>` | when the leaf's status changes, including on release | select projects by lifecycle state (above all the released ones) without querying this API |
 | `pending-deletion:<date>` | when a leaf is released | scheduled deletion day (grace period) |
-| `contact:<email>` | when a leaf is released | who to ask before it goes |
+| `contact:<email>` | when the owner changes, and on release | who to ask — the owner, on every managed project, so an expiring one has someone to write to |
 
 Tag writes happen only when a value actually changed — this loop runs every
 interval for every leaf, and an unconditional update would be one Keystone write

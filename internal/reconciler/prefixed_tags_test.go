@@ -116,3 +116,25 @@ func TestApplyPrefixedTags_BothTagsChangeInOnePass(t *testing.T) {
 		t.Errorf("got %v, want exactly three tags — no leftovers", got)
 	}
 }
+
+// The owner's address travels with every managed project, not only released
+// ones, and follows a transfer instead of piling up.
+func TestApplyPrefixedTags_ContactFollowsTheOwner(t *testing.T) {
+	const contactPrefix = "contact:"
+	tags := []string{"managed", "status:approved", "contact:old@x"}
+
+	got, changed := applyPrefixedTags(tags,
+		prefixedTag{statusPrefix, "approved"},
+		prefixedTag{contactPrefix, "new@x"})
+	if !changed {
+		t.Error("a new owner must count as a change")
+	}
+	if slices.Contains(got, "contact:old@x") || !slices.Contains(got, "contact:new@x") {
+		t.Errorf("got %v, want only the new owner's contact", got)
+	}
+	if _, changed := applyPrefixedTags(got,
+		prefixedTag{statusPrefix, "approved"},
+		prefixedTag{contactPrefix, "new@x"}); changed {
+		t.Error("an unchanged owner must not write again")
+	}
+}

@@ -32,6 +32,15 @@ type ChildFilter struct {
 	// Sort is one of the ChildSort* keys; empty keeps the store's order.
 	Sort string
 	Desc bool
+	// Allocated lists, instead of the direct children, the projects anywhere
+	// below that draw an allocation from this budget — the ones its managers
+	// handed out past the budgets in between, which are otherwise scattered
+	// over the subtree.
+	Allocated bool
+	// Deep lists the projects of the whole subtree — the budget's own and
+	// those of every sub-budget below it — instead of its direct children.
+	// Projects only: the sub-budgets themselves are what the tree shows.
+	Deep bool
 }
 
 // Group filter modes.
@@ -50,7 +59,7 @@ const (
 )
 
 func (f ChildFilter) needsMemory() bool {
-	return f.Query != "" || f.Group != "" || f.Sort != ""
+	return f.Query != "" || f.Group != "" || f.Sort != "" || f.Allocated || f.Deep
 }
 
 // Validate refuses values that would otherwise be silently ignored.
@@ -114,9 +123,25 @@ func (s *Service) ListChildren(parentID string, f ChildFilter, userTokens common
 		return s.listPage(ctx, q, limit, offset)
 	}
 
+	if f.Allocated || f.Deep {
+		parentMap, err := s.buildSubtreeParentMap(ctx, []Node{*parent})
+		if err != nil {
+			return NodePage{}, fmt.Errorf("walk subtree: %w", err)
+		}
+		q.ParentIDs = q.ParentIDs[:0]
+		for id := range parentMap {
+			q.ParentIDs = append(q.ParentIDs, id)
+		}
+		q.Kinds = []string{KindProject}
+	}
 	children, err := s.store.ListNodes(ctx, q, 0, 0)
 	if err != nil {
 		return NodePage{}, fmt.Errorf("load children: %w", err)
+	}
+	if f.Allocated {
+		children = slices.DeleteFunc(children, func(n Node) bool {
+			return !slices.ContainsFunc(n.Allocations, func(a Allocation) bool { return a.BudgetID == parentID })
+		})
 	}
 	if needle := strings.ToLower(strings.TrimSpace(f.Query)); needle != "" {
 		children = slices.DeleteFunc(children, func(n Node) bool { return !nodeMatches(n, needle) })

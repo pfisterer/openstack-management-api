@@ -141,6 +141,44 @@ func (a *AutoApprove) IsPool() bool {
 	return a != nil && len(a.PerRequesterLimit) == 0
 }
 
+// Allocation is a share of a project's resources drawn from a budget above its
+// own (see Node.Allocations).
+type Allocation struct {
+	BudgetID  string              `json:"budget_id"`
+	Limit     common.ProjectQuota `json:"limit"`
+	Reason    string              `json:"reason"`
+	GrantedBy string              `json:"granted_by"`
+	GrantedAt string              `json:"granted_at"`
+	// BudgetName is attached to API responses (never persisted).
+	BudgetName string `json:"budget_name,omitempty"`
+}
+
+// AllocatedOut sums a budget's allocations to projects further down.
+type AllocatedOut struct {
+	Projects int                 `json:"projects"`
+	Limit    common.ProjectQuota `json:"limit"`
+}
+
+// EffectiveLimit is what the project holds in total: its own Limit plus every
+// allocation — what OpenStack is given. Quantities add up; an availability
+// comes from one place only, so adding its 0s and 1s is the same as asking
+// whether any of them grants it.
+func (n Node) EffectiveLimit() common.ProjectQuota {
+	if len(n.Allocations) == 0 {
+		return n.Limit
+	}
+	out := make(common.ProjectQuota, len(n.Limit))
+	for id, v := range n.Limit {
+		out[id] = v
+	}
+	for _, a := range n.Allocations {
+		for id, v := range a.Limit {
+			out[id] += v
+		}
+	}
+	return out
+}
+
 // PendingChanges holds proposed modifications awaiting approval (status change_pending).
 type PendingChanges struct {
 	Limit           *common.ProjectQuota     `json:"limit,omitempty"`
@@ -216,7 +254,10 @@ type HistoryEntry struct {
 	ParentTo            *string              `json:"parent_to,omitempty"`
 	OwnerFrom           *string              `json:"owner_from,omitempty"`
 	OwnerTo             *string              `json:"owner_to,omitempty"`
-	Reason              *string              `json:"reason,omitempty"`
+	// AllocationFrom names the budget an allocation entry is about; LimitFrom
+	// and LimitTo then hold that allocation, not the project's own limit.
+	AllocationFrom *string `json:"allocation_from,omitempty"`
+	Reason         *string `json:"reason,omitempty"`
 }
 
 // StatusUsage groups the aggregated limits and contributing leaf IDs for one status.
@@ -305,6 +346,18 @@ type Node struct {
 	// projects below. nil means no cap of its own.
 	MaxProjectTermDays *int `json:"max_project_term_days,omitempty"`
 
+	// Allocations are what a project draws from budgets ABOVE its own, on top
+	// of Limit — a GPU for one student project, more cores for a thesis,
+	// without handing the same to every project in the student budget. Limit
+	// stays what the project draws from its parent and is what every existing
+	// rule (requests, auto-approve, a person's share, the lifetime) applies to;
+	// each allocation is charged to its budget and the budgets above that one,
+	// not to those in between, so every budget still carries only what it
+	// holds. An availability comes from exactly one place: Limit or one
+	// allocation. Only managers of the allocating budget (or above) grant or
+	// raise one; the project's owner may give it back.
+	Allocations []Allocation `json:"allocations,omitempty"`
+
 	// Owner is the single responsible person of a leaf ("user:<email>").
 	// Additional participants are granted via AuthorizedUsers. Managers of the
 	// parent chain may transfer ownership.
@@ -349,6 +402,10 @@ type Node struct {
 	// expand into, and how many projects to list beside it.
 	ChildBudgetCount  int `json:"child_budget_count"`
 	ChildProjectCount int `json:"child_project_count"`
+	// AllocatedOut is attached to API responses for budgets (never persisted):
+	// what this budget has allocated to projects below other budgets — it is
+	// part of Usage, and this says how much of it and to how many projects.
+	AllocatedOut *AllocatedOut `json:"allocated_out,omitempty"`
 	// AncestorIDs is attached to /v1/nodes/my-budgets (never persisted): every
 	// node above this one, root-most first, excluding the node itself.
 	//

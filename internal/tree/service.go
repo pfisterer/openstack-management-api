@@ -546,36 +546,92 @@ func (s *Service) loadSubtreeUsage(ctx context.Context, roots []Node) (UsagePerN
 	return buildRolledUpUsage(leaves, parentMap, s.countIDs, s.accounting.ChargeOSInUse), nil
 }
 
+// loadSubtreeUsageAndAllocations is loadSubtreeUsage plus, per budget, what it
+// has allocated to projects further down (see Node.AllocatedOut) — from the
+// same leaves, so the two cannot disagree.
+func (s *Service) loadSubtreeUsageAndAllocations(ctx context.Context, roots []Node) (UsagePerNode, map[string]AllocatedOut, error) {
+	if len(roots) == 0 {
+		return make(UsagePerNode), nil, nil
+	}
+	parentMap, err := s.buildSubtreeParentMap(ctx, roots)
+	if err != nil {
+		return nil, nil, err
+	}
+	budgetIDs := make([]string, 0, len(parentMap))
+	for id := range parentMap {
+		budgetIDs = append(budgetIDs, id)
+	}
+	leaves, err := s.store.ListNodes(ctx, NodeQuery{
+		ParentIDs: budgetIDs,
+		Kinds:     []string{KindProject},
+		Statuses:  s.chargedStatuses(),
+	}, 0, 0)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load active leaves for usage rollup: %w", err)
+	}
+	wanted := make(map[string]bool, len(roots))
+	for _, r := range roots {
+		wanted[r.ID] = true
+	}
+	allocated := map[string]AllocatedOut{}
+	for _, leaf := range leaves {
+		for _, a := range leaf.Allocations {
+			if !wanted[a.BudgetID] {
+				continue
+			}
+			out := allocated[a.BudgetID]
+			out.Projects++
+			out.Limit = quotaAdd(out.Limit, a.Limit, s.countIDs)
+			// Availabilities never add up as capacity, but how many projects
+			// have one from here is exactly what this summary is for.
+			for rid, v := range a.Limit {
+				if s.isBool(rid) {
+					out.Limit[rid] += v
+				}
+			}
+			allocated[a.BudgetID] = out
+		}
+	}
+	return buildRolledUpUsage(leaves, parentMap, s.countIDs, s.accounting.ChargeOSInUse), allocated, nil
+}
+
 // buildRolledUpUsage attributes each leaf's limit and ID to its parent budget and
 // every tracked ancestor, so a budget's usage reflects total consumption across
-// its entire subtree — not just its direct children.
+// its entire subtree — not just its direct children. A leaf's allocations from
+// budgets further up are attributed from THEIR budget upwards: the budgets in
+// between never held them, so they never carry them either.
 func buildRolledUpUsage(leaves []Node, parentMap map[string]*string, resourceIDs []string, chargeOSInUse bool) UsagePerNode {
 	result := make(UsagePerNode)
+	charge := func(leaf Node, from string, amount common.ProjectQuota) {
+		current := from
+		for {
+			if _, tracked := parentMap[current]; !tracked {
+				return // outside the tracked subtree — stop climbing
+			}
+			if result[current] == nil {
+				result[current] = make(UsageByStatus)
+			}
+			entry := result[current][leaf.Status]
+			entry.Limit = quotaAdd(entry.Limit, amount, resourceIDs)
+			entry.NodeIDs = append(entry.NodeIDs, leaf.ID)
+			result[current][leaf.Status] = entry
+
+			parent := parentMap[current]
+			if parent == nil {
+				return
+			}
+			current = *parent
+		}
+	}
 
 	for _, leaf := range leaves {
 		if leaf.ParentID == nil {
 			continue
 		}
 		// Per leaf, before any summation — see chargedQuota.
-		charged := chargedQuota(leaf, resourceIDs, chargeOSInUse)
-		current := *leaf.ParentID
-		for {
-			if _, tracked := parentMap[current]; !tracked {
-				break // outside the tracked subtree — stop climbing
-			}
-			if result[current] == nil {
-				result[current] = make(UsageByStatus)
-			}
-			entry := result[current][leaf.Status]
-			entry.Limit = quotaAdd(entry.Limit, charged, resourceIDs)
-			entry.NodeIDs = append(entry.NodeIDs, leaf.ID)
-			result[current][leaf.Status] = entry
-
-			parent := parentMap[current]
-			if parent == nil {
-				break
-			}
-			current = *parent
+		charge(leaf, *leaf.ParentID, chargedQuota(leaf, resourceIDs, chargeOSInUse))
+		for _, a := range leaf.Allocations {
+			charge(leaf, a.BudgetID, a.Limit)
 		}
 	}
 	return result
@@ -611,30 +667,47 @@ func (s *Service) attachChildCounts(ctx context.Context, nodes []Node) ([]Node, 
 }
 
 // attachParentNames fills Node.ParentName for every node that has a parent,
-// loading all distinct parents in one query. Without it a client that shows
-// "paid from <budget>" has to fetch every parent separately — one request per
-// node. Only the display name is exposed; no other parent field is copied.
+// and the budget name of every allocation, loading all distinct budgets in one
+// query. Without it a client that shows "paid from <budget>" has to fetch
+// every parent separately — one request per node. Only the display name is
+// exposed; no other field of those budgets is copied.
 func (s *Service) attachParentNames(ctx context.Context, nodes []Node) ([]Node, error) {
-	parentIDs := make([]string, 0, len(nodes))
-	for _, n := range nodes {
-		if n.ParentID != nil && !slices.Contains(parentIDs, *n.ParentID) {
-			parentIDs = append(parentIDs, *n.ParentID)
+	ids := make([]string, 0, len(nodes))
+	add := func(id string) {
+		if !slices.Contains(ids, id) {
+			ids = append(ids, id)
 		}
 	}
-	if len(parentIDs) == 0 {
+	for _, n := range nodes {
+		if n.ParentID != nil {
+			add(*n.ParentID)
+		}
+		for _, a := range n.Allocations {
+			add(a.BudgetID)
+		}
+	}
+	if len(ids) == 0 {
 		return nodes, nil
 	}
-	parents, err := s.store.ListNodes(ctx, NodeQuery{IDs: parentIDs}, 0, 0)
+	budgets, err := s.store.ListNodes(ctx, NodeQuery{IDs: ids}, 0, 0)
 	if err != nil {
 		return nil, fmt.Errorf("load parents: %w", err)
 	}
-	names := make(map[string]string, len(parents))
-	for _, p := range parents {
-		names[p.ID] = p.Name
+	names := make(map[string]string, len(budgets))
+	for _, b := range budgets {
+		names[b.ID] = b.Name
 	}
 	for i := range nodes {
 		if nodes[i].ParentID != nil {
 			nodes[i].ParentName = names[*nodes[i].ParentID]
+		}
+		if len(nodes[i].Allocations) > 0 {
+			// A copy: the slice may be the store's own.
+			named := slices.Clone(nodes[i].Allocations)
+			for j := range named {
+				named[j].BudgetName = names[named[j].BudgetID]
+			}
+			nodes[i].Allocations = named
 		}
 	}
 	return nodes, nil
@@ -717,7 +790,7 @@ func (s *Service) attachUsage(ctx context.Context, nodes []Node) ([]Node, error)
 			budgets = append(budgets, n)
 		}
 	}
-	usage, err := s.loadSubtreeUsage(ctx, budgets)
+	usage, allocated, err := s.loadSubtreeUsageAndAllocations(ctx, budgets)
 	if err != nil {
 		return nil, fmt.Errorf("compute subtree usage: %w", err)
 	}
@@ -725,6 +798,9 @@ func (s *Service) attachUsage(ctx context.Context, nodes []Node) ([]Node, error)
 	for _, n := range nodes {
 		if n.Kind == KindBudget {
 			n.Usage = usage[n.ID]
+			if a, ok := allocated[n.ID]; ok {
+				n.AllocatedOut = &a
+			}
 		}
 		out = append(out, n)
 	}
@@ -842,13 +918,27 @@ func (s *Service) descendantsHolding(ctx context.Context, root Node, resourceIDs
 		return nil, fmt.Errorf("load subtree budgets: %w", err)
 	}
 
+	// A project holds it from this subtree through its own limit — it lives
+	// here — or through an allocation from a budget of the subtree. One that
+	// has it from a budget further up does not depend on this one at all.
+	holds := func(n Node, id string) bool {
+		if n.Limit[id] == 1 {
+			return true
+		}
+		for _, a := range n.Allocations {
+			if _, inSubtree := parentMap[a.BudgetID]; inSubtree && a.Limit[id] == 1 {
+				return true
+			}
+		}
+		return false
+	}
 	out := make(map[string][]string, len(resourceIDs))
 	for _, n := range append(budgets, leaves...) {
 		if n.ID == root.ID {
 			continue
 		}
 		for _, id := range resourceIDs {
-			if n.Limit[id] == 1 {
+			if holds(n, id) {
 				out[id] = append(out[id], nodeLabel(n))
 			}
 		}
@@ -1431,16 +1521,20 @@ func chargedQuota(leaf Node, resourceIDs []string, chargeOSInUse bool) common.Pr
 	if !chargeOSInUse {
 		return leaf.Limit
 	}
+	// Measured use is compared with everything the project holds, allocations
+	// included; whatever runs over that is charged to its own budget, which is
+	// where the project lives.
+	total := leaf.EffectiveLimit()
 	out := make(common.ProjectQuota, len(resourceIDs))
 	for _, id := range resourceIDs {
 		limit := leaf.Limit[id]
 		out[id] = limit
-		if limit == common.UnlimitedQuota {
+		if total[id] == common.UnlimitedQuota {
 			continue
 		}
 		inUse, measured := leaf.OSInUse[id]
-		if measured && inUse > limit {
-			out[id] = inUse
+		if measured && inUse > total[id] {
+			out[id] = limit + inUse - total[id]
 		}
 	}
 	return out

@@ -92,6 +92,8 @@ type APIService interface {
 	ReleaseNode(id string, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
 	ReparentNode(id string, req tree.ReparentNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
 	TransferOwner(id string, req tree.TransferOwnerRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
+	SetAllocation(id string, req tree.AllocationRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
+	AllocationSources(id string, userTokens common.TokenList) ([]tree.Node, error)
 	PromoteNode(id string, req tree.PromoteNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
 	DeleteNode(id string, actor tree.Actor, userTokens common.TokenList) error
 
@@ -237,6 +239,8 @@ func RegisterApiRoutes(v1 *gin.RouterGroup, cfg APIConfig, log *zap.SugaredLogge
 		nodes.POST("/:id/release", releaseNode(cfg))
 		nodes.POST("/:id/reparent", reparentNode(cfg))
 		nodes.POST("/:id/transfer-owner", transferNodeOwner(cfg))
+		nodes.PUT("/:id/allocations", setNodeAllocation(cfg))
+		nodes.GET("/:id/allocation-sources", listAllocationSources(cfg))
 		nodes.POST("/:id/promote", promoteNode(cfg))
 	}
 

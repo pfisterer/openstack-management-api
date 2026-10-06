@@ -103,6 +103,9 @@ var toolInputContracts = []toolInputContract{
 		},
 	},
 	{
+		tool: "set_project_allocation", domain: tree.AllocationRequest{}, input: mcpAllocationInput{},
+	},
+	{
 		tool: "set_project_admins", domain: tree.UpdateNodeRequest{}, input: mcpSetAdminsInput{},
 		renamed: map[string]string{"admin_scope": "admins"},
 		omitted: map[string]string{

@@ -62,6 +62,8 @@ func getNode(cfg APIConfig) gin.HandlerFunc {
 //	@Param			group_mode	query		string	false	"access: the token is owner, admin or member of the project; owner: the owner holds the token"	Enums(access, owner)
 //	@Param			sort		query		string	false	"Sort key"	Enums(name, owner, status, termination_date, created_at)
 //	@Param			order		query		string	false	"Sort order"	Enums(asc, desc)
+//	@Param			allocated	query		bool	false	"Instead of the direct children: the projects anywhere below that draw an allocation from this budget"
+//	@Param			deep		query		bool	false	"Instead of the direct children: the projects of the whole subtree, sub-budgets included"
 //	@Success		200	{object}	tree.NodePage	"List of child nodes, with the total number of matches."
 //	@Failure		400	{object}	map[string]any	"Invalid filter."
 //	@Failure		401	{object}	map[string]any	"Unauthorized."
@@ -89,6 +91,8 @@ func listNodeChildren(cfg APIConfig) gin.HandlerFunc {
 			GroupMode: c.Query("group_mode"),
 			Sort:      c.Query("sort"),
 			Desc:      c.Query("order") == "desc",
+			Allocated: c.Query("allocated") == "true",
+			Deep:      c.Query("deep") == "true",
 		}
 		for _, st := range strings.Split(c.Query("status"), ",") {
 			if st = strings.TrimSpace(st); st != "" {
@@ -640,6 +644,79 @@ func transferNodeOwner(cfg APIConfig) gin.HandlerFunc {
 			return
 		}
 		c.JSON(http.StatusOK, node)
+	}
+}
+
+// setNodeAllocation grants, changes or removes what a project draws from a
+// budget above its own.
+//
+//	@Summary		Set a project's allocation from a budget above its own
+//	@Description	Grants, changes or removes the resources a project draws from a budget above its own budget, on top of its own limit. The allocation is charged to that budget and the budgets above it, not to the ones in between. Granting or raising needs a manager of that budget or above and a reason; the project's owner and admins may lower or remove it. An empty limit removes the allocation. An availability comes from one place only: the project's own limit or one allocation.
+//	@Tags			nodes
+//	@Accept			json
+//	@Produce		json
+//	@Security		Bearer
+//	@Param			id		path		string					true	"Project node ID"
+//	@Param			request	body		tree.AllocationRequest	true	"The whole allocation from that budget"
+//	@Success		200		{object}	tree.Node	"Updated project."
+//	@Failure		400		{object}	map[string]any	"Bad request."
+//	@Failure		401		{object}	map[string]any	"Unauthorized."
+//	@Failure		403		{object}	map[string]any	"Forbidden."
+//	@Failure		404		{object}	map[string]any	"Not found."
+//	@Failure		409		{object}	map[string]any	"Conflict: the node changed status; reload."
+//	@ID				setNodeAllocation
+//	@Router			/v1/nodes/{id}/allocations [put]
+func setNodeAllocation(cfg APIConfig) gin.HandlerFunc {
+	svc := cfg.Service
+	return func(c *gin.Context) {
+		var req tree.AllocationRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		auth, err := mustGetAuthContext(c)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
+			return
+		}
+		node, err := svc.SetAllocation(c.Param("id"), req, tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
+		if err != nil {
+			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, node)
+	}
+}
+
+// listAllocationSources lists the budgets the caller may allocate to a project from.
+//
+//	@Summary		List budgets a project may draw an allocation from
+//	@Description	The approved budgets above the project's own budget that the caller manages, nearest first, with their usage — the budgets PUT /v1/nodes/{id}/allocations accepts from this caller. Empty for anyone who manages none of them.
+//	@Tags			nodes
+//	@Produce		json
+//	@Security		Bearer
+//	@Param			id	path		string	true	"Project node ID"
+//	@Success		200	{array}		tree.Node	"Budgets, nearest first."
+//	@Failure		400	{object}	map[string]any	"Not a project."
+//	@Failure		401	{object}	map[string]any	"Unauthorized."
+//	@Failure		403	{object}	map[string]any	"Forbidden."
+//	@Failure		404	{object}	map[string]any	"Not found."
+//	@ID				listAllocationSources
+//	@Router			/v1/nodes/{id}/allocation-sources [get]
+func listAllocationSources(cfg APIConfig) gin.HandlerFunc {
+	svc := cfg.Service
+	return func(c *gin.Context) {
+		auth, err := mustGetAuthContext(c)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
+			return
+		}
+		nodes, err := svc.AllocationSources(c.Param("id"), auth.EffectiveTokens)
+		if err != nil {
+			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, nodes)
 	}
 }
 

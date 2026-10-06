@@ -134,7 +134,10 @@ type mcpProject struct {
 	// the name is not unique and cannot be fed back into another tool.
 	PaidFrom     string         `json:"paid_from,omitempty" jsonschema:"id of the budget this is charged to"`
 	PaidFromName string         `json:"paid_from_name,omitempty" jsonschema:"name of that budget, where known"`
-	Limit        map[string]int `json:"limit,omitempty" jsonschema:"granted resources, e.g. cores, ram, storage"`
+	Limit        map[string]int `json:"limit,omitempty" jsonschema:"granted resources in total, e.g. cores, ram, storage — the project's own share plus its allocations"`
+	// The breakdown of Limit where part of it comes from budgets further up;
+	// without it a model cannot tell what a change request may touch.
+	Allocations []mcpAllocation `json:"allocations,omitempty" jsonschema:"resources this project draws from budgets above its own, on top of its own share; a change request changes only the own share"`
 	// What a pending request or change asks for. Without it a manager asked to
 	// approve "with less" cannot know what "more" was.
 	RequestedLimit     map[string]int `json:"requested_limit,omitempty" jsonschema:"resources a pending request or change asks for; limit keeps what is granted until it is decided"`
@@ -144,6 +147,13 @@ type mcpProject struct {
 	OSProjectName      string         `json:"os_project_name,omitempty" jsonschema:"its name in OpenStack, which is what the dashboard and the CLI show"`
 	TerminationDate    string         `json:"termination_date,omitempty" jsonschema:"intended end of life"`
 	MaxProjectTermDays int            `json:"max_project_term_days,omitempty" jsonschema:"on a budget: a project below it may end at most this many days after the day it is requested or extended"`
+}
+
+type mcpAllocation struct {
+	BudgetID   string         `json:"budget_id" jsonschema:"the budget it comes from"`
+	BudgetName string         `json:"budget_name,omitempty" jsonschema:"that budget's name"`
+	Limit      map[string]int `json:"limit" jsonschema:"what comes from there"`
+	Reason     string         `json:"reason,omitempty" jsonschema:"why it was granted"`
 }
 
 func toMCPProject(n tree.Node) mcpProject {
@@ -157,7 +167,7 @@ func toMCPProject(n tree.Node) mcpProject {
 		Admins:             n.AdminScope,
 		Shared:             n.Kind == tree.KindProject && len(n.AdminScope) > 0,
 		PaidFromName:       n.ParentName,
-		Limit:              n.Limit,
+		Limit:              n.EffectiveLimit(),
 		InUse:              n.OSInUse,
 		AvailableResources: n.AvailableResources,
 		OSProjectID:        n.OSProjectID,
@@ -174,6 +184,9 @@ func toMCPProject(n tree.Node) mcpProject {
 	}
 	if n.MaxProjectTermDays != nil {
 		p.MaxProjectTermDays = *n.MaxProjectTermDays
+	}
+	for _, a := range n.Allocations {
+		p.Allocations = append(p.Allocations, mcpAllocation{BudgetID: a.BudgetID, BudgetName: a.BudgetName, Limit: a.Limit, Reason: a.Reason})
 	}
 	return p
 }
@@ -275,6 +288,13 @@ type mcpSetAdminsInput struct {
 	// No omitempty: the list replaces the current one, and an empty list is a
 	// real answer (no co-admins any more), not a missing one.
 	Admins []string `json:"admins" jsonschema:"the complete new list, e.g. [\"user:a@b.c\", \"group:x\"]; an empty list removes all co-admins"`
+}
+
+type mcpAllocationInput struct {
+	ID       string         `json:"id" jsonschema:"id of the project"`
+	BudgetID string         `json:"budget_id" jsonschema:"id of a budget above the project's own budget that you manage; the allocation is charged there"`
+	Limit    map[string]int `json:"limit" jsonschema:"the whole allocation from that budget, not a delta, e.g. {\"gpu\": 1}; {} removes it"`
+	Reason   string         `json:"reason,omitempty" jsonschema:"why; required when granting or raising, the managers of the budgets in between read it"`
 }
 
 type mcpCreateBudgetInput struct {
@@ -420,6 +440,7 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 
 	registerProjectWriteTools(s, cfg, caller, log)
 	registerTreeAdminTools(s, cfg, caller, log)
+	registerAllocationTools(s, cfg, caller, log)
 	registerDestructiveTools(s, cfg, caller, log)
 }
 
@@ -571,6 +592,27 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 			caller.serviceActor(), caller.tokens)
 		if err != nil {
 			return nil, mcpProject{}, fmt.Errorf("set admins of %q: %w", in.ID, err)
+		}
+		return nil, toMCPProject(node), nil
+	})
+}
+
+// registerAllocationTools offers the exception path: a project gets something
+// from a budget further up without the budgets in between holding it.
+func registerAllocationTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *zap.SugaredLogger) {
+	mcpserve.AddTool(s, caller, true, &mcp.Tool{
+		Name: "set_project_allocation",
+		Description: "Give a project resources from a budget above its own budget — a GPU or a network for one " +
+			"project, more cores than its own budget grants — without giving them to that budget. It is charged " +
+			"to the budget named, not to the ones in between. Needs a manager of that budget or above; the " +
+			"project's owner may lower or remove it. The limit replaces the allocation from that budget; {} removes it.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpAllocationInput) (*mcp.CallToolResult, mcpProject, error) {
+		log.Infow("MCP set_project_allocation", "actor", caller.actorEmail, "node_id", in.ID, "budget_id", in.BudgetID)
+		node, err := cfg.Service.SetAllocation(in.ID, tree.AllocationRequest{
+			BudgetID: in.BudgetID, Limit: common.ProjectQuota(in.Limit), Reason: in.Reason,
+		}, caller.serviceActor(), caller.tokens)
+		if err != nil {
+			return nil, mcpProject{}, fmt.Errorf("set allocation of %q: %w", in.ID, err)
 		}
 		return nil, toMCPProject(node), nil
 	})

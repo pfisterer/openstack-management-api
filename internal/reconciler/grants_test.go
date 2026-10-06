@@ -174,3 +174,17 @@ func TestSyncGrants_ReportsOnlyRealChanges(t *testing.T) {
 		t.Error("removing an absent grant reported a change")
 	}
 }
+
+// An availability a project has by allocation from a budget further up is
+// granted like one from its own limit: OpenStack sees what the project holds.
+func TestSyncGrants_GrantsWhatAnAllocationHolds(t *testing.T) {
+	f := newFakeGrants()
+	leaf := leafWithLimit(common.ProjectQuota{"cores": 4})
+	leaf.Allocations = []tree.Allocation{{BudgetID: "b_uni", Limit: common.ProjectQuota{"gpu-rtx6000": 1}}}
+
+	syncGrants(f, grantCatalogue, leaf, "os-project", false, zap.NewNop().Sugar())
+
+	if len(f.added) != 1 || f.added[0] != flavorGrant {
+		t.Errorf("added = %v, want the flavour from the allocation", f.added)
+	}
+}

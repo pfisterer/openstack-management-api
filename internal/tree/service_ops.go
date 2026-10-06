@@ -827,6 +827,9 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor Actor, u
 			if validationErr == nil && parent != nil {
 				validationErr = s.validateLeafAvailabilities(parent, *req.Limit)
 			}
+			if validationErr == nil {
+				validationErr = s.checkOwnLimitAgainstAllocations(*current, *req.Limit)
+			}
 		} else {
 			validationErr = s.validateBudgetLimit(*req.Limit)
 		}
@@ -1081,6 +1084,9 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor Actor, us
 			if err := s.validateLeafAvailabilities(&ancestors[0], finalLimit); err != nil {
 				return Node{}, err
 			}
+		}
+		if err := s.checkOwnLimitAgainstAllocations(*current, finalLimit); err != nil {
+			return Node{}, err
 		}
 	} else {
 		if len(ancestors) > 0 {
@@ -1344,6 +1350,11 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor Actor, 
 				return Node{}, err
 			}
 		}
+	}
+
+	// An allocation has to keep coming from above.
+	if err := s.checkAllocationsAfterMove(ctx, *current, newParentChain); err != nil {
+		return Node{}, err
 	}
 
 	historyEntry := newHistoryEntry("reparented", actor, current.Status)

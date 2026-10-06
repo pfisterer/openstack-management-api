@@ -1353,7 +1353,7 @@ func (r *Reconciler) createOpenstackProjectForLeaf(_ context.Context, leaf tree.
 	// Compose a full quota set: managed resources from the leaf + static defaults.
 	// Static defaults (network quotas, volumes, snapshots) are driven entirely by the
 	// ManagedProject definitions — no separate DefaultNetworkQuotas struct needed.
-	fullQuota := ProjectQuotaToQuotaSet(r.managedProjects, leaf.Limit)
+	fullQuota := ProjectQuotaToQuotaSet(r.managedProjects, leaf.EffectiveLimit())
 	staticQuota := StaticProjectQuotaDefaults(r.managedProjects)
 	mergeStaticIntoQuotaSet(&fullQuota, staticQuota)
 	fullQuota.ProjectID = project.ID
@@ -1478,7 +1478,7 @@ func isStillImported(n tree.Node) bool {
 
 // syncQuota pushes the current approved limit to an existing OS project and returns
 // whether the project is currently overcommitted (in-use > new limit).
-// For change_pending leaves the current approved limit (leaf.Limit) is used —
+// For change_pending leaves the current approved limit (leaf.EffectiveLimit()) is used —
 // the proposed pending change only takes effect after manager approval.
 // It also keeps name and description in sync, so renaming a node in the tree renames
 // its OpenStack project on the next tick.
@@ -1517,11 +1517,12 @@ func (r *Reconciler) syncGrants(leaf tree.Node, osProjectID string) {
 // service must not stop the other twenty projects from being reconciled, and the
 // next run tries again — the desired state is in the tree, not in this call.
 func syncGrants(c grantClient, defs []common.ManagedProject, leaf tree.Node, osProjectID string, dryRun bool, log *zap.SugaredLogger) {
+	holds := leaf.EffectiveLimit()
 	for _, def := range defs {
 		if !def.IsBool() || def.Grant == nil {
 			continue
 		}
-		wanted := leaf.Limit[def.ID] == 1
+		wanted := holds[def.ID] == 1
 
 		if dryRun {
 			// Read-only in dry run, and it reports only DIFFERENCES: listing
@@ -1575,7 +1576,7 @@ func syncGrants(c grantClient, defs []common.ManagedProject, leaf tree.Node, osP
 
 func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo, description string) (overcommitted bool, inUse common.ProjectQuota, measured bool, err error) {
 	osProjectID := osProject.ID
-	quotaSet := ProjectQuotaToQuotaSet(r.managedProjects, leaf.Limit)
+	quotaSet := ProjectQuotaToQuotaSet(r.managedProjects, leaf.EffectiveLimit())
 
 	r.log.Debugw("Syncing managed quota",
 		"node_id", leaf.ID, "os_project_id", osProjectID,
@@ -1623,7 +1624,7 @@ func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo, d
 		return false, nil, false, nil
 	}
 
-	return IsProjectOvercommitted(r.managedProjects, leaf.Limit, detail), ProjectInUse(r.managedProjects, detail), true, nil
+	return IsProjectOvercommitted(r.managedProjects, leaf.EffectiveLimit(), detail), ProjectInUse(r.managedProjects, detail), true, nil
 }
 
 // buildDesiredMembers extracts the intended OpenStack role assignments from a leaf.

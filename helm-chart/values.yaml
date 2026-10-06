@@ -227,6 +227,9 @@ openstackManagementApi:
     # When false, released projects are tagged for pending deletion instead of deleted
     deleteReleasedProjects: false
     pendingDeletionGraceDays: 30
+    # Record each finished day's consumption per project from Nova.
+    usageEnabled: true
+    usageBackfillDays: 365
     pendingDeletionTagPrefix: "pending-deletion:"
     contactTagPrefix: "contact:"
     # Static quota defaults applied at project creation

@@ -20,6 +20,7 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/reconciler"
 	"github.com/pfisterer/openstack-management-api/internal/roleprovider"
 	"github.com/pfisterer/openstack-management-api/internal/tree"
+	"github.com/pfisterer/openstack-management-api/internal/usage"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 	"go.uber.org/zap"
 )
@@ -29,7 +30,7 @@ import (
 // middleware routes on.
 const apiTokenPrefix = "os_mgt_"
 
-func configureStores(cfg *common.StorageConfiguration, log *zap.SugaredLogger) (tree.Store, *token.Service, error) {
+func configureStores(cfg *common.StorageConfiguration, log *zap.SugaredLogger) (tree.Store, *token.Service, usage.Store, error) {
 	storageType := strings.ToLower(strings.TrimSpace(cfg.Type))
 
 	switch storageType {
@@ -38,23 +39,27 @@ func configureStores(cfg *common.StorageConfiguration, log *zap.SugaredLogger) (
 		// Memory mode is intended for local development and tests. Tokens do
 		// not survive a restart here, which is fine for the one and unusable
 		// for the other.
-		return tree.NewInMemoryStore(log), token.NewService(apiTokenPrefix, token.NewMemoryStore()), nil
+		return tree.NewInMemoryStore(log), token.NewService(apiTokenPrefix, token.NewMemoryStore()), usage.NewMemoryStore(), nil
 
 	case "postgres":
 		store, err := tree.NewPostgresStore(cfg.ConnectionString, log)
 		if err != nil {
-			return nil, nil, fmt.Errorf("postgres storage: %w", err)
+			return nil, nil, nil, fmt.Errorf("postgres storage: %w", err)
 		}
 		// Same connection pool: this Postgres is shared with PowerDNS and its
 		// connection budget is the reason NewPostgresStore caps it at all.
 		tokens, err := tokengorm.NewService(apiTokenPrefix, store.DB())
 		if err != nil {
-			return nil, nil, fmt.Errorf("token storage: %w", err)
+			return nil, nil, nil, fmt.Errorf("token storage: %w", err)
 		}
-		return store, tokens, nil
+		used, err := usage.NewPostgresStore(store.DB())
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("usage storage: %w", err)
+		}
+		return store, tokens, used, nil
 
 	default:
-		return nil, nil, fmt.Errorf("unsupported storage type %q", cfg.Type)
+		return nil, nil, nil, fmt.Errorf("unsupported storage type %q", cfg.Type)
 	}
 }
 
@@ -172,7 +177,7 @@ func RunApplication() {
 	}
 
 	// Configure resource storage and token lookup
-	nodeStore, apiTokens, err := configureStores(&config.Storage, logger)
+	nodeStore, apiTokens, usageStore, err := configureStores(&config.Storage, logger)
 	if err != nil {
 		logger.Fatal("Failed to initialize storage", zap.Error(err))
 	}
@@ -283,7 +288,13 @@ func RunApplication() {
 				TerminationTagPrefix:     config.Reconciler.TerminationTagPrefix,
 				StatusTagPrefix:          config.Reconciler.StatusTagPrefix,
 			}
-			return reconciler.New(nodeStore, osClient, reconcilerCfg, config.ProjectDefinitions, roleProvider, logger), nil
+			rec := reconciler.New(nodeStore, osClient, reconcilerCfg, config.ProjectDefinitions, roleProvider, logger)
+			if config.Reconciler.UsageEnabled {
+				collector := usage.NewCollector(usageStore, nodeStore, osClient, config.ProjectDefinitions, logger)
+				collector.BackfillDays = config.Reconciler.UsageBackfillDays
+				rec.SetUsageCollector(collector)
+			}
+			return rec, nil
 		}, logger)
 		reconcilerAPI = supervisor
 	} else {

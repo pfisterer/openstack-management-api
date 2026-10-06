@@ -141,6 +141,14 @@ type ReconcilerConfiguration struct {
 	// One tag per requester email is written alongside the pending-deletion tag.
 	// Default: "contact:".
 	ContactTagPrefix string `json:"contact_tag_prefix"`
+
+	// UsageEnabled records, once per finished day, what every project used
+	// according to Nova's accounting (see package usage). Read-only towards
+	// OpenStack. Default: true.
+	UsageEnabled bool `json:"usage_enabled"`
+	// UsageBackfillDays is how far back the first collection reaches into
+	// Nova's records. Default: 365.
+	UsageBackfillDays int `json:"usage_backfill_days"`
 }
 
 type WebServerConfig struct {
@@ -317,6 +325,8 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			ContactTagPrefix:         envconf.String("RECONCILER_CONTACT_TAG_PREFIX", "contact:"),
 			TerminationTagPrefix:     envconf.String("RECONCILER_TERMINATION_TAG_PREFIX", "termination:"),
 			StatusTagPrefix:          envconf.String("RECONCILER_STATUS_TAG_PREFIX", "status:"),
+			UsageEnabled:             envconf.Bool("RECONCILER_USAGE_ENABLED", true),
+			UsageBackfillDays:        envconf.Int("RECONCILER_USAGE_BACKFILL_DAYS", 365),
 		},
 		RoleProvider: RoleProviderConfig{
 			Type:     envconf.String("ROLE_PROVIDER", "mock"),

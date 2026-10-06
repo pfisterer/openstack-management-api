@@ -213,6 +213,10 @@ spec:
               value: {{ .Values.openstackManagementApi.reconciler.deleteReleasedProjects | toString | quote }}
             - name: RECONCILER_PENDING_DELETION_GRACE_DAYS
               value: {{ .Values.openstackManagementApi.reconciler.pendingDeletionGraceDays | toString | quote }}
+            - name: RECONCILER_USAGE_ENABLED
+              value: {{ .Values.openstackManagementApi.reconciler.usageEnabled | toString | quote }}
+            - name: RECONCILER_USAGE_BACKFILL_DAYS
+              value: {{ .Values.openstackManagementApi.reconciler.usageBackfillDays | default 365 | toString | quote }}
             - name: RECONCILER_PENDING_DELETION_TAG_PREFIX
               value: {{ .Values.openstackManagementApi.reconciler.pendingDeletionTagPrefix | quote }}
             - name: RECONCILER_CONTACT_TAG_PREFIX

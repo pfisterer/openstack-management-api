@@ -175,7 +175,20 @@ type Reconciler struct {
 	// Set at the start of every Reconcile run; only accessed from the
 	// single-threaded reconcile loop.
 	scopeParentID string
+
+	// usage, when set, records each finished day's consumption after a pass.
+	usage UsageCollector
 }
+
+// UsageCollector records what projects used per day (package usage). An
+// interface so this package does not depend on where the rows are kept.
+type UsageCollector interface {
+	CatchUp(ctx context.Context) (int, error)
+}
+
+// SetUsageCollector makes every pass also record the days not recorded yet.
+// It reads from OpenStack only, so it runs in dry-run mode as well.
+func (r *Reconciler) SetUsageCollector(c UsageCollector) { r.usage = c }
 
 // New creates a Reconciler. managedProjects must match AppConfiguration.ProjectDefinitions
 // and are used to drive quota translation and overcommit detection.
@@ -271,6 +284,15 @@ func (r *Reconciler) runOnce(ctx context.Context) {
 	r.mu.Unlock()
 
 	result, err := r.Reconcile(ctx)
+
+	// After the pass, not inside it: a day's usage is collected once and
+	// does nothing on the passes after, and a failure here must not mark
+	// the reconciliation itself as failed.
+	if r.usage != nil {
+		if n, uerr := r.usage.CatchUp(ctx); uerr != nil {
+			r.log.Warnw("Usage collection failed", "error", uerr, "days_collected", n)
+		}
+	}
 
 	r.mu.Lock()
 	r.status.Running = false

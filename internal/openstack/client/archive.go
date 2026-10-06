@@ -99,13 +99,16 @@ func (c *OpenStackClient) ReleaseFloatingIP(id string) error {
 }
 
 // FreezeProjectQuotas sets the quotas that let something new run to zero:
-// instances, cores, RAM and floating IPs. Only these — Neutron and Cinder may
-// refuse a quota below what is in use, and networks, ports and volumes stay
-// in place until the project is deleted.
+// instances, cores, RAM and floating IPs. Only these — networks, ports and
+// volumes stay in place until the project is deleted.
+//
+// Nova refuses a limit below what is in use, and a shelved server, or one in
+// ERROR that cannot be shelved, still counts. Force skips that check: the
+// point is that nothing NEW can start, not that what is there fits.
 func (c *OpenStackClient) FreezeProjectQuotas(projectID string) error {
 	zero := 0
 	if _, err := quotasets.Update(c.computeSvc(), projectID, quotasets.UpdateOpts{
-		Instances: &zero, Cores: &zero, RAM: &zero,
+		Instances: &zero, Cores: &zero, RAM: &zero, Force: true,
 	}).Extract(); err != nil {
 		return fmt.Errorf("compute quotas: %w", err)
 	}

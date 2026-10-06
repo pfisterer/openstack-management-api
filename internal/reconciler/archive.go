@@ -77,11 +77,6 @@ func archiveProject(c archiveClient, p osclient.ProjectInfo, tagPrefix string, d
 	}
 	complete := true
 
-	if err := c.FreezeProjectQuotas(p.ID); err != nil {
-		log.Warnw("Archive: could not set quotas to zero", "error", err)
-		complete = false
-	}
-
 	ips, err := c.ListProjectFloatingIPs(p.ID)
 	if err != nil {
 		log.Warnw("Archive: could not list floating IPs", "error", err)
@@ -125,6 +120,13 @@ func archiveProject(c archiveClient, p osclient.ProjectInfo, tagPrefix string, d
 		}
 		log.Infow("Archive: shelved server", "server", s.Name)
 		out.shelved++
+	}
+
+	// Last of the three: Neutron may refuse a floating-IP quota below what
+	// is still allocated, so the addresses go first.
+	if err := c.FreezeProjectQuotas(p.ID); err != nil {
+		log.Warnw("Archive: could not set quotas to zero", "error", err)
+		complete = false
 	}
 
 	if !complete {

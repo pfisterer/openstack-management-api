@@ -286,6 +286,7 @@ func RunApplication() {
 				PendingDeletionTagPrefix: config.Reconciler.PendingDeletionTagPrefix,
 				ContactTagPrefix:         config.Reconciler.ContactTagPrefix,
 				TerminationTagPrefix:     config.Reconciler.TerminationTagPrefix,
+				ManagedProjectTag:        config.Reconciler.ManagedProjectTag,
 				StatusTagPrefix:          config.Reconciler.StatusTagPrefix,
 			}
 			rec := reconciler.New(nodeStore, osClient, reconcilerCfg, config.ProjectDefinitions, roleProvider, logger)

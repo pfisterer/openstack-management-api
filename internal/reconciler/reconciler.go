@@ -112,6 +112,9 @@ type Config struct {
 	// TerminationTagPrefix is the tag prefix carrying the leaf's termination date
 	// (the stored RFC3339 timestamp, verbatim). Default: "termination:".
 	TerminationTagPrefix string
+	// ManagedProjectTag marks the projects this service manages. The client
+	// writes and filters by it; here it is only reported in the status.
+	ManagedProjectTag string
 	// StatusTagPrefix is the tag prefix carrying the leaf's lifecycle status, so
 	// an outside workflow can select projects by state without asking this API.
 	// Full tag format: "<prefix><status>", e.g. "status:released". Default:
@@ -150,11 +153,11 @@ type Status struct {
 	// wrong guess creates an account nobody logs into while the role points
 	// nowhere, which is invisible until someone reports missing access.
 	PreseedConflicts []osclient.PreseedConflict `json:"preseed_conflicts,omitempty"`
-	// TerminationTagPrefix is configuration rather than run state: the admin UI
-	// shows the CLI query for overdue projects, and that query has to name the
-	// prefix THIS deployment writes (see syncTerminationTag). Hardcoding it in
-	// the frontend would go quietly wrong the day someone overrides the env.
-	TerminationTagPrefix string `json:"termination_tag_prefix,omitempty"`
+	// ManagedTag is configuration rather than run state: the admin UI shows the
+	// CLI query listing the managed projects, and that query has to name the tag
+	// THIS deployment writes. Hardcoding it in the frontend would go quietly
+	// wrong the day someone overrides the env.
+	ManagedTag string `json:"managed_tag,omitempty"`
 }
 
 // Reconciler orchestrates the two-way sync.
@@ -261,7 +264,7 @@ func (r *Reconciler) GetStatus() Status {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	status := r.status
-	status.TerminationTagPrefix = r.cfg.TerminationTagPrefix
+	status.ManagedTag = r.cfg.ManagedProjectTag
 	return status
 }
 

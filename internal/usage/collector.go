@@ -116,7 +116,7 @@ func (c *Collector) CollectDay(ctx context.Context, day time.Time) error {
 			People: people, Groups: groups,
 			ServerHours: u.ServerHours, VCPUHours: u.VCPUHours,
 			RAMGBHours: u.MemoryMBHours / 1024, DiskGBHours: u.LocalGBHours,
-			Reserved:   c.quantities(n.EffectiveLimit()),
+			Reserved:   c.reserved(n),
 			Backfilled: backfilled, CollectedAt: now,
 		}
 		if n.ParentID != nil {
@@ -135,10 +135,15 @@ func (c *Collector) CollectDay(ctx context.Context, day time.Time) error {
 	return nil
 }
 
-// holdsResources reports whether a project in this status reserves resources
-// even when nothing runs in it.
+// holdsResources reports whether a project in this status holds resources even
+// when nothing runs in it — released and archived ones their volumes, until
+// they are deleted. Recorded whatever the budget is charged for them.
 func holdsResources(status string) bool {
-	return status == tree.StatusApproved || status == tree.StatusChangePending || status == tree.StatusImported
+	switch status {
+	case tree.StatusApproved, tree.StatusChangePending, tree.StatusImported, tree.StatusReleased, tree.StatusArchived:
+		return true
+	}
+	return false
 }
 
 // resourceFor names the catalogue resource mapped to an OpenStack quota field.
@@ -149,6 +154,22 @@ func (c *Collector) resourceFor(field string) string {
 		}
 	}
 	return ""
+}
+
+// reserved is what the project holds back for itself: its limit, allocations
+// included — and once archived only the storage, the rest is frozen at zero.
+func (c *Collector) reserved(n tree.Node) common.ProjectQuota {
+	q := c.quantities(n.EffectiveLimit())
+	if n.Status != tree.StatusArchived {
+		return q
+	}
+	out := common.ProjectQuota{}
+	for _, r := range c.catalog {
+		if r.OSQuotaField == "gigabytes" && q[r.ID] != 0 {
+			out[r.ID] = q[r.ID]
+		}
+	}
+	return out
 }
 
 // quantities keeps the counted resources of a limit — availabilities say

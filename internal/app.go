@@ -226,7 +226,10 @@ func RunApplication() {
 	treeSvc := tree.NewService(tree.NotifyOnWrite(nodeStore, triggerReconcile), roleProvider, config.ProjectDefinitions, config.RootAdminTokens, requestTimeout, config.MaxAuthorizedUsers, tree.Accounting{
 		ChargeOSInUse:  config.ChargeOSInUse,
 		ChargeReleased: config.ChargeReleased,
+		ChargeArchived: config.ChargeArchived,
 	}, logger)
+	// A deletion request is only accepted where a reconciler will act on it.
+	treeSvc.SetDeletionAllowed(config.Reconciler.Enabled && reconciler.DeletesOnRequest(config.Reconciler.ReleasedDelete))
 
 	// Bootstrap: optional mock seed into an empty store, then ensure the
 	// structural root/unassigned nodes (root admin scope is synced from config).
@@ -260,6 +263,9 @@ func RunApplication() {
 	// Setup Gin web server with configured dependencies.
 
 	if config.Reconciler.Enabled {
+		if err := reconciler.ValidateReleasedDelete(config.Reconciler.ReleasedDelete); err != nil {
+			logger.Fatalw("Invalid reconciler configuration", "error", err)
+		}
 		logger.Infow("Starting reconciler", "interval_seconds", config.Reconciler.IntervalSeconds, "dry_run", config.Reconciler.DryRun)
 
 		// Connecting to OpenStack is retried in the background rather than done
@@ -280,9 +286,10 @@ func RunApplication() {
 				ScopeParentID:            config.Reconciler.ScopeParentID,
 				ScopeParentName:          config.Reconciler.ScopeParentName,
 				DryRun:                   config.Reconciler.DryRun,
-				NoDelete:                 config.Reconciler.NoDelete,
-				DeleteReleasedProjects:   config.Reconciler.DeleteReleasedProjects,
-				PendingDeletionGraceDays: config.Reconciler.PendingDeletionGraceDays,
+				ReleasedArchive:          config.Reconciler.ReleasedArchive,
+				ReleasedDelete:           config.Reconciler.ReleasedDelete,
+				ReleasedDeleteGraceDays:  config.Reconciler.ReleasedDeleteGraceDays,
+				ArchivedTagPrefix:        config.Reconciler.ArchivedTagPrefix,
 				PendingDeletionTagPrefix: config.Reconciler.PendingDeletionTagPrefix,
 				ContactTagPrefix:         config.Reconciler.ContactTagPrefix,
 				TerminationTagPrefix:     config.Reconciler.TerminationTagPrefix,
@@ -320,6 +327,7 @@ func RunApplication() {
 			// Asked per request: the reconciler may still be connecting.
 			ProvisioningEnabled:   func() bool { return reconcilerAPI != nil && reconcilerAPI.Ready() },
 			OpenstackDashboardURL: config.WebServer.OpenstackDashboardURL,
+			Retirement:            retirementConfig(config),
 		},
 		Tokens: webserver.TokenConfig{
 			Service: apiTokens,
@@ -341,4 +349,21 @@ func RunApplication() {
 	}
 
 	logger.Info("Application completed successfully")
+}
+
+// retirementConfig tells the UI what releasing a project leads to here.
+func retirementConfig(config AppConfiguration) webserver.RetirementConfig {
+	out := webserver.RetirementConfig{
+		ChargeReleased: config.ChargeReleased,
+		ChargeArchived: config.ChargeArchived,
+		Delete:         reconciler.ReleasedDeleteNever,
+	}
+	if config.Reconciler.Enabled {
+		out.Archive = config.Reconciler.ReleasedArchive
+		if config.Reconciler.ReleasedDelete != "" {
+			out.Delete = config.Reconciler.ReleasedDelete
+		}
+		out.DeleteGraceDays = config.Reconciler.ReleasedDeleteGraceDays
+	}
+	return out
 }

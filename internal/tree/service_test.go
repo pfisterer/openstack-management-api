@@ -125,14 +125,14 @@ func TestAutoApprove_CountsPerOwnerNotPerGroup(t *testing.T) {
 	}
 
 	// And Ben cannot touch Anna's leaf: he is neither owner nor manager.
-	if _, err := svc.ReleaseNode(n1.ID, tree.UIActor("ben@x"), benTokens); err == nil {
+	if _, err := svc.ReleaseNode(n1.ID, tree.ReleaseNodeRequest{}, tree.UIActor("ben@x"), benTokens); err == nil {
 		t.Fatalf("ben releasing anna's leaf must fail")
 	}
 	if _, err := svc.RequestChange(n1.ID, tree.ChangeNodeRequest{Limit: ptrQuota(cores(1))}, tree.UIActor("ben@x"), benTokens); err == nil {
 		t.Fatalf("ben changing anna's leaf must fail")
 	}
 	// Anna herself can.
-	if _, err := svc.ReleaseNode(n1.ID, tree.UIActor("anna@x"), annaTokens); err != nil {
+	if _, err := svc.ReleaseNode(n1.ID, tree.ReleaseNodeRequest{}, tree.UIActor("anna@x"), annaTokens); err != nil {
 		t.Fatalf("anna releasing her own leaf: %v", err)
 	}
 }

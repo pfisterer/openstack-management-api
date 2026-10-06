@@ -164,12 +164,6 @@ func (c *OpenStackClient) ensureDefaultProject(userID, projectID, email string) 
 		"email", email, "user_id", userID, "project_id", projectID)
 }
 
-// EnsureProjectMembers adds or updates project role assignments to match desired, but
-// never removes existing members. Use this when operating in no-delete mode.
-func (c *OpenStackClient) EnsureProjectMembers(projectID string, desired []DesiredMember) ([]PreseedConflict, error) {
-	return c.syncProjectMembers(projectID, desired, false)
-}
-
 // SyncProjectMembers reconciles a project's direct user role assignments to match
 // the desired list. The algorithm:
 //
@@ -549,17 +543,6 @@ func (c *OpenStackClient) ListUsers() ([]users.User, error) {
 	return CollectIterator(iter)
 }
 
-// UpdateUserDescription updates the description field of a Keystone user.
-func (c *OpenStackClient) UpdateUserDescription(userID, description string) error {
-	_, err := users.Update(c.Identity, userID, users.UpdateOpts{
-		Description: &description,
-	}).Extract()
-	if err != nil {
-		return fmt.Errorf("update user %s: %w", userID, err)
-	}
-	return nil
-}
-
 // DeleteUser permanently removes a Keystone user by their ID.
 func (c *OpenStackClient) DeleteUser(userID string) error {
 	if err := users.Delete(c.Identity, userID).ExtractErr(); err != nil {
@@ -573,9 +556,9 @@ func (c *OpenStackClient) DeleteUser(userID string) error {
 // It is the only reliable marker available — Keystone users do not support tags.
 const ManagedUserDescription = "Auto-created by openstack-management-api (do not edit or delete this comment)"
 
-// OrphanedUserFlagDescription is set on managed users that have no project memberships
-// when the reconciler runs in NoDelete mode. It signals external operators that the
-// account is safe to remove once NoDelete mode is lifted.
+// OrphanedUserFlagDescription was set on managed users without project memberships
+// while the reconciler had a no-delete mode. Users still carrying it are recognised
+// as managed, so the orphan sweep removes them like any other.
 const OrphanedUserFlagDescription = "PENDING DELETION (no project memberships) - Auto-created by openstack-management-api (do not edit or delete this comment)"
 
 // ListUserProjectAssignments returns all project-scoped role assignments for a user,

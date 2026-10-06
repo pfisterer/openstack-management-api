@@ -77,35 +77,25 @@ type Config struct {
 	// DryRun prevents any writes to OpenStack or the store; useful for testing.
 	DryRun bool
 
-	// NoDelete prevents destructive operations IN OPENSTACK. When true:
-	//   - Released OS projects are always tagged for pending deletion (never deleted), regardless of DeleteReleasedProjects.
-	//   - Orphaned managed Keystone users have their description updated to OrphanedUserFlagDescription instead of being deleted.
-	//   - Group membership removals and project member removals are skipped.
-	//   - Group role un-assignments from projects are skipped.
-	// This is intended as a "phase 1" safe mode while the reconciler is being introduced.
-	//
-	// It does NOT keep our own records of things that OpenStack no longer has.
-	// A leaf whose project has been deleted describes something that is not
-	// there, and holding on to it is not caution — it is a tree that disagrees
-	// with the cloud, which is the one state this reconciler exists to prevent.
-	// Both cleanups that drop such records (stale imported leaves, released
-	// leaves) therefore run regardless.
-	//
-	// One record IS still kept: the shadow import that recoverUntaggedProject
-	// removes when a leaf reclaims its project. That project still exists, so a
-	// wrong decision there discards a record of something real — a different
-	// risk from dropping a record whose project is provably gone.
-	NoDelete bool
-
-	// DeleteReleasedProjects controls what happens to OS projects whose leaf is released.
-	// When true the project is deleted from OpenStack immediately.
-	// When false (default) the project is kept and tagged with a pending-deletion date and
-	// contact info so external workflow tools can drive the actual cleanup.
-	// Ignored when NoDelete is true.
-	DeleteReleasedProjects bool
-	// PendingDeletionGraceDays is added to today's date to compute the deletion date tag
-	// written to released projects when DeleteReleasedProjects is false. Default: 30.
-	PendingDeletionGraceDays int
+	// ReleasedArchive archives the OpenStack project of a released leaf right
+	// away: the project is disabled, its servers are shelved, its floating IPs
+	// are released and the quotas that let anything new run are set to zero
+	// (see archiveReleasedProject). Everything but the floating IPs can be
+	// undone by an admin. Volumes stay until the project is deleted.
+	ReleasedArchive bool
+	// ReleasedDelete says when the OpenStack project of a released or archived
+	// leaf is emptied and deleted: ReleasedDeleteNever (default),
+	// ReleasedDeleteOnRequest — when someone asks for it (FlagDeleteRequested),
+	// ReleasedDeleteAfterGrace — on request, or once the date in its
+	// pending-deletion tag has passed — or ReleasedDeleteImmediately.
+	ReleasedDelete string
+	// ReleasedDeleteGraceDays is added to the day a project is released to
+	// compute the date in its pending-deletion tag — when it is deleted under
+	// ReleasedDeleteAfterGrace, and announced otherwise. Default: 30.
+	ReleasedDeleteGraceDays int
+	// ArchivedTagPrefix marks a project archiveReleasedProject has finished
+	// with: "<prefix><YYYY-MM-DD>". Default: "archived:".
+	ArchivedTagPrefix string
 	// PendingDeletionTagPrefix is the tag prefix for the scheduled deletion date.
 	// Full tag format: "<prefix><YYYY-MM-DD>". Default: "pending-deletion:".
 	PendingDeletionTagPrefix string
@@ -141,8 +131,14 @@ type Status struct {
 	GroupsCreated             int `json:"groups_created"`
 	GroupsSynced              int `json:"groups_synced"`
 	ProjectsTaggedForDeletion int `json:"projects_tagged_for_deletion"`
+	ProjectsArchived          int `json:"projects_archived"`
+	ServersShelved            int `json:"servers_shelved"`
+	FloatingIPsReleased       int `json:"floating_ips_released"`
 	ProjectsDeleted           int `json:"projects_deleted"`
-	ProjectsPromoted          int `json:"projects_promoted"`
+	// ResourcesPurged counts what was deleted inside projects on their way to
+	// deletion — servers, volumes, networks and the like.
+	ResourcesPurged  int `json:"resources_purged"`
+	ProjectsPromoted int `json:"projects_promoted"`
 	// ProjectsRetagged counts managed projects whose resource-id tag was missing
 	// and had to be restored — see recoverUntaggedProject. Anything above zero
 	// means somebody edited tags in OpenStack.
@@ -192,6 +188,32 @@ type UsageCollector interface {
 // SetUsageCollector makes every pass also record the days not recorded yet.
 // It reads from OpenStack only, so it runs in dry-run mode as well.
 func (r *Reconciler) SetUsageCollector(c UsageCollector) { r.usage = c }
+
+// When the OpenStack project of a released leaf is deleted, see Config.ReleasedDelete.
+// Ordered from never to at once; each deletes in every case the one before does.
+const (
+	ReleasedDeleteNever       = "never"
+	ReleasedDeleteOnRequest   = "on-request"
+	ReleasedDeleteAfterGrace  = "after-grace"
+	ReleasedDeleteImmediately = "immediately"
+)
+
+// ValidateReleasedDelete refuses a ReleasedDelete value it does not know —
+// loudly at startup, rather than by quietly never deleting anything.
+func ValidateReleasedDelete(v string) error {
+	switch v {
+	case "", ReleasedDeleteNever, ReleasedDeleteOnRequest, ReleasedDeleteAfterGrace, ReleasedDeleteImmediately:
+		return nil
+	}
+	return fmt.Errorf("RECONCILER_RELEASED_DELETE must be %q, %q, %q or %q, got %q",
+		ReleasedDeleteNever, ReleasedDeleteOnRequest, ReleasedDeleteAfterGrace, ReleasedDeleteImmediately, v)
+}
+
+// DeletesOnRequest reports whether a reconciler in this mode acts on a request
+// to delete a project — every mode except never.
+func DeletesOnRequest(mode string) bool {
+	return mode != "" && mode != ReleasedDeleteNever
+}
 
 // New creates a Reconciler. managedProjects must match AppConfiguration.ProjectDefinitions
 // and are used to drive quota translation and overcommit detection.
@@ -314,7 +336,11 @@ func (r *Reconciler) runOnce(ctx context.Context) {
 		r.status.GroupsCreated = result.groupsCreated
 		r.status.GroupsSynced = result.groupsSynced
 		r.status.ProjectsTaggedForDeletion = result.projectsTaggedForDeletion
+		r.status.ProjectsArchived = result.projectsArchived
+		r.status.ServersShelved = result.serversShelved
+		r.status.FloatingIPsReleased = result.floatingIPsReleased
 		r.status.ProjectsDeleted = result.projectsDeleted
+		r.status.ResourcesPurged = result.resourcesPurged
 		r.status.ProjectsPromoted = result.projectsPromoted
 		r.status.ProjectsRetagged = result.projectsRetagged
 		r.log.Infow("Reconciliation complete",
@@ -327,7 +353,9 @@ func (r *Reconciler) runOnce(ctx context.Context) {
 			"groups_created", result.groupsCreated,
 			"groups_synced", result.groupsSynced,
 			"tagged_for_deletion", result.projectsTaggedForDeletion,
+			"archived", result.projectsArchived,
 			"deleted", result.projectsDeleted,
+			"purged", result.resourcesPurged,
 			"promoted", result.projectsPromoted,
 			"retagged", result.projectsRetagged)
 	}
@@ -344,7 +372,11 @@ type reconcileResult struct {
 	groupsCreated             int
 	groupsSynced              int
 	projectsTaggedForDeletion int
+	projectsArchived          int
+	serversShelved            int
+	floatingIPsReleased       int
 	projectsDeleted           int
+	resourcesPurged           int
 	projectsPromoted          int
 	projectsRetagged          int
 }
@@ -378,11 +410,12 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 		return res, fmt.Errorf("load all known leaves: %w", err)
 	}
 
-	// releasedLeafByID is a subset of allKnownLeaves used in Phase 5 to tag or
-	// delete OS projects whose leaf has been released.
+	// releasedLeafByID is a subset of allKnownLeaves used in Phase 5 to tag,
+	// archive or delete OS projects whose leaf has been released (or archived
+	// since).
 	releasedLeafByID := make(map[string]tree.Node, len(allKnownLeaves))
 	for _, leaf := range allKnownLeaves {
-		if leaf.Status == tree.StatusReleased {
+		if tree.IsRetiredStatus(leaf.Status) {
 			releasedLeafByID[leaf.ID] = leaf
 		}
 	}
@@ -535,8 +568,8 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 				continue // managed + active → handled in phase 4
 			}
 			if releasedLeaf, wasReleased := releasedLeafByID[resourceID]; wasReleased {
-				// Leaf was released: tag the project for pending deletion or delete it.
-				r.handleReleasedProject(osProject, releasedLeaf, &res)
+				// Leaf was released: tag, archive or delete the project.
+				r.handleReleasedProject(ctx, osProject, releasedLeaf, scopeParentID, &res)
 				// Seen in OpenStack, so it is not a candidate for removal below.
 				delete(releasedLeafByID, resourceID)
 				delete(importedByOSProjectID, osID)
@@ -622,13 +655,14 @@ func (r *Reconciler) removeReleasedLeavesWithoutProject(
 			continue
 		}
 
-		// Not gated on NoDelete: nothing is destroyed in OpenStack here — the
-		// project is already gone from it. See the field's documentation.
+		// Nothing is destroyed in OpenStack here — the project is already gone
+		// from it, and keeping the record would leave the tree disagreeing with
+		// the cloud.
 		r.log.Infow("Removing released leaf — its OpenStack project is gone",
 			"node_id", leaf.ID, "name", leaf.Name, "os_project_id", leaf.OSProjectID,
 			"dry_run", r.cfg.DryRun)
 		if !r.cfg.DryRun {
-			deleted, err := r.store.DeleteNodeIf(ctx, leaf.ID, func(n tree.Node) bool { return n.Status == tree.StatusReleased })
+			deleted, err := r.store.DeleteNodeIf(ctx, leaf.ID, func(n tree.Node) bool { return tree.IsRetiredStatus(n.Status) })
 			if err != nil {
 				r.log.Warnw("Failed to remove released leaf",
 					"node_id", leaf.ID, "error", err)
@@ -727,24 +761,19 @@ func (r *Reconciler) recoverUntaggedProject(
 	// adopting a project that is already managed.
 	if shadow, imported := importedByOSProjectID[osProject.ID]; imported {
 		delete(importedByOSProjectID, osProject.ID)
-		if r.cfg.NoDelete {
-			r.log.Infow("NoDelete: keeping the imported leaf that shadows a managed project",
-				"node_id", leaf.ID, "shadow_node_id", shadow.ID, "os_project_id", osProject.ID)
-		} else {
-			r.log.Infow("Removing the imported leaf that shadowed a managed project",
-				"node_id", leaf.ID, "shadow_node_id", shadow.ID, "os_project_id", osProject.ID)
-			if !r.cfg.DryRun {
-				deleted, err := r.store.DeleteNodeIf(ctx, shadow.ID, isStillImported)
-				if err != nil {
-					r.log.Warnw("Failed to delete the shadowing imported leaf",
-						"shadow_node_id", shadow.ID, "error", err)
-				}
-				if err != nil || !deleted {
-					return osProject, true
-				}
+		r.log.Infow("Removing the imported leaf that shadowed a managed project",
+			"node_id", leaf.ID, "shadow_node_id", shadow.ID, "os_project_id", osProject.ID)
+		if !r.cfg.DryRun {
+			deleted, err := r.store.DeleteNodeIf(ctx, shadow.ID, isStillImported)
+			if err != nil {
+				r.log.Warnw("Failed to delete the shadowing imported leaf",
+					"shadow_node_id", shadow.ID, "error", err)
 			}
-			res.importedRemoved++
+			if err != nil || !deleted {
+				return osProject, true
+			}
 		}
+		res.importedRemoved++
 	}
 
 	return osProject, true
@@ -846,21 +875,6 @@ func (r *Reconciler) pruneOrphanedUsers(res *reconcileResult) {
 	}
 
 	for _, u := range orphans {
-		if r.cfg.NoDelete {
-			if u.Description == osclient.OrphanedUserFlagDescription {
-				continue // already flagged
-			}
-			r.log.Infow("NoDelete: flagging orphaned managed user via description",
-				"user_id", u.ID, "name", u.Name, "dry_run", r.cfg.DryRun)
-			if !r.cfg.DryRun {
-				if err := r.osClient.UpdateUserDescription(u.ID, osclient.OrphanedUserFlagDescription); err != nil {
-					r.log.Warnw("Failed to flag orphaned managed user",
-						"user_id", u.ID, "name", u.Name, "error", err)
-				}
-			}
-			res.orphanedUsersRemoved++
-			continue
-		}
 		r.log.Infow("Deleting orphaned managed user (no project memberships)",
 			"user_id", u.ID, "name", u.Name, "dry_run", r.cfg.DryRun)
 		if r.cfg.DryRun {
@@ -876,77 +890,101 @@ func (r *Reconciler) pruneOrphanedUsers(res *reconcileResult) {
 	}
 }
 
-// handleReleasedProject either deletes or tags an OS project whose leaf has been
-// released, depending on Config.DeleteReleasedProjects.
+// handleReleasedProject takes care of the OpenStack project of a released or
+// archived leaf, on every pass, as configured:
 //
-// When deletion is disabled (default) the project receives:
-//   - a pending-deletion date tag (<PendingDeletionTagPrefix><YYYY-MM-DD>)
-//   - a contact tag with the owner's email (<ContactTagPrefix><email>)
+//   - always: it is tagged with the day it is due for deletion
+//     (<PendingDeletionTagPrefix><YYYY-MM-DD>, release day plus the grace
+//     period), its owner (<ContactTagPrefix><email>) and its status;
+//   - when ReleasedDelete says it is due (see deletionDue): it is emptied and
+//     deleted over the next passes, and then the leaf — see purgeRetiredProject;
+//   - otherwise, with ReleasedArchive: it is archived (see
+//     archiveReleasedProject), and the leaf moves to archived once that is
+//     complete.
 //
-// The tagging is idempotent: if the pending-deletion tag is already present the
-// project is left unchanged on subsequent reconcile runs.
-func (r *Reconciler) handleReleasedProject(osProject osclient.ProjectInfo, leaf tree.Node, res *reconcileResult) {
-	if r.cfg.DeleteReleasedProjects && !r.cfg.NoDelete {
-		r.log.Infow("Deleting OS project for released leaf",
-			"os_project_id", osProject.ID, "node_id", leaf.ID, "dry_run", r.cfg.DryRun)
-		if !r.cfg.DryRun {
-			if err := r.osClient.DeleteProject(osProject.ID); err != nil {
-				r.log.Warnw("Failed to delete OS project for released leaf",
-					"os_project_id", osProject.ID, "node_id", leaf.ID, "error", err)
-				return
-			}
-		}
-		res.projectsDeleted++
+// Each step looks at the project first and does only what is still missing,
+// so a pass that failed halfway is finished by the next one.
+func (r *Reconciler) handleReleasedProject(ctx context.Context, osProject osclient.ProjectInfo, leaf tree.Node, scopeParentID string, res *reconcileResult) {
+	// Archiving rewrites the tags too, so it starts from what tagging left.
+	osProject.Tags = r.tagReleasedProject(osProject, leaf, res)
+	if deletionDue(r.cfg.ReleasedDelete, leaf, osProject.Tags, r.cfg.PendingDeletionTagPrefix, time.Now()) {
+		r.purgeRetiredProject(ctx, osProject, leaf, scopeParentID, res)
 		return
 	}
+	archived := r.isArchived(osProject.Tags)
+	if r.cfg.ReleasedArchive && !archived {
+		archived = r.archiveReleasedProject(osProject, leaf, res)
+	}
+	if archived && leaf.Status == tree.StatusReleased {
+		r.markLeafArchived(ctx, leaf)
+	}
+}
 
-	// Check idempotency: skip if the pending-deletion tag is already set AND the
-	// status tag already says released. The second half matters for projects
-	// released before the status tag existed — they carry the date but still the
-	// old status, and skipping on the date alone would leave them that way for
-	// good, because this is the only path that ever writes tags for them.
-	tagged, statusCorrect := false, r.cfg.StatusTagPrefix == ""
+// isArchived reports whether the project carries the archive mark.
+func (r *Reconciler) isArchived(tags []string) bool {
+	return slices.ContainsFunc(tags, func(t string) bool { return strings.HasPrefix(t, r.archivedTagPrefix()) })
+}
+
+func (r *Reconciler) archivedTagPrefix() string {
+	if r.cfg.ArchivedTagPrefix == "" {
+		return "archived:"
+	}
+	return r.cfg.ArchivedTagPrefix
+}
+
+// markLeafArchived records in the tree what the project already shows: it is
+// archived. From then on the leaf costs what Accounting.ChargeArchived says.
+func (r *Reconciler) markLeafArchived(ctx context.Context, leaf tree.Node) {
+	if r.cfg.DryRun {
+		r.log.Infow("Dry run: would mark leaf archived", "node_id", leaf.ID)
+		return
+	}
+	if _, err := r.store.UpdateNode(ctx, leaf.ID, func(n *tree.Node) error {
+		if !tree.MarkArchived(n) {
+			return tree.ErrSkipUpdate
+		}
+		return nil
+	}); err != nil {
+		r.log.Warnw("Failed to mark leaf archived", "node_id", leaf.ID, "error", err)
+	}
+}
+
+// tagReleasedProject writes the pending-deletion, contact and status tags.
+// Idempotent: the deletion day is set once and never moved — re-dating it on
+// every pass would push it out for ever.
+func (r *Reconciler) tagReleasedProject(osProject osclient.ProjectInfo, leaf tree.Node, res *reconcileResult) []string {
+	tagged := false
 	for _, tag := range osProject.Tags {
 		if strings.HasPrefix(tag, r.cfg.PendingDeletionTagPrefix) {
 			tagged = true
 		}
-		if r.cfg.StatusTagPrefix != "" && tag == r.cfg.StatusTagPrefix+leaf.Status {
-			statusCorrect = true
-		}
-	}
-	if tagged && statusCorrect {
-		return
 	}
 
-	graceDays := r.cfg.PendingDeletionGraceDays
+	graceDays := r.cfg.ReleasedDeleteGraceDays
 	if graceDays <= 0 {
 		graceDays = 30
 	}
 	deletionDate := time.Now().AddDate(0, 0, graceDays).Format("2006-01-02")
-
-	// Rebuild the tag list: keep existing tags (minus stale contact tags), then append
-	// the new pending-deletion date tag and the owner contact tag.
-	newTags := make([]string, 0, len(osProject.Tags)+3)
-	for _, tag := range osProject.Tags {
-		if !strings.HasPrefix(tag, r.cfg.ContactTagPrefix) {
-			newTags = append(newTags, tag)
-		}
-	}
-	// Only when there is none yet. Getting here with one already set means the
-	// status tag is what is missing, and re-dating the deadline then would push
-	// it another 30 days out every time this ran — the grace period would never
-	// expire. The existing tag was kept by the loop above.
+	pending := ""
 	if !tagged {
-		newTags = append(newTags, r.cfg.PendingDeletionTagPrefix+deletionDate)
+		pending = deletionDate
 	}
-	if email := leaf.OwnerEmail(); email != "" {
-		newTags = append(newTags, r.cfg.ContactTagPrefix+email)
+	newTags, changed := applyPrefixedTags(osProject.Tags,
+		prefixedTag{r.cfg.ContactTagPrefix, leaf.OwnerEmail()},
+		// The status tag rides along in this same write. A released leaf never
+		// reaches the normal sync path — that one only runs for the reconcilable
+		// statuses — so without this the project would keep the "approved" it
+		// was last tagged with, which is the one moment a workflow must not be
+		// misled.
+		prefixedTag{r.cfg.StatusTagPrefix, leaf.Status},
+	)
+	if pending != "" {
+		newTags = append(newTags, r.cfg.PendingDeletionTagPrefix+pending)
+		changed = true
 	}
-	// The status tag rides along in this same write. A released leaf never
-	// reaches the normal sync path — that one only runs for the reconcilable
-	// statuses — so without this the project would keep the "approved" it was
-	// last tagged with, which is the one moment a workflow must not be misled.
-	newTags, _ = applyPrefixedTags(newTags, prefixedTag{r.cfg.StatusTagPrefix, leaf.Status})
+	if !changed {
+		return osProject.Tags
+	}
 
 	r.log.Infow("Tagging OS project for pending deletion",
 		"os_project_id", osProject.ID, "node_id", leaf.ID,
@@ -959,10 +997,11 @@ func (r *Reconciler) handleReleasedProject(osProject osclient.ProjectInfo, leaf 
 		}); err != nil {
 			r.log.Warnw("Failed to tag OS project for pending deletion",
 				"os_project_id", osProject.ID, "node_id", leaf.ID, "error", err)
-			return
+			return osProject.Tags
 		}
 	}
 	res.projectsTaggedForDeletion++
+	return newTags
 }
 
 // syncTerminationTag publishes a leaf's termination date on its OpenStack project
@@ -1708,11 +1747,7 @@ func (r *Reconciler) syncMembers(leaf tree.Node, osProjectID string) {
 	desired := buildDesiredMembers(leaf)
 	var conflicts []osclient.PreseedConflict
 	var memberSyncErr error
-	if r.cfg.NoDelete {
-		conflicts, memberSyncErr = r.osClient.EnsureProjectMembers(osProjectID, desired)
-	} else {
-		conflicts, memberSyncErr = r.osClient.SyncProjectMembers(osProjectID, desired)
-	}
+	conflicts, memberSyncErr = r.osClient.SyncProjectMembers(osProjectID, desired)
 	if memberSyncErr != nil {
 		r.log.Warnw("Member sync failed",
 			"node_id", leaf.ID, "os_project_id", osProjectID, "error", memberSyncErr)
@@ -2033,17 +2068,15 @@ func (r *Reconciler) syncGroupMembers(ctx context.Context, groupToken, groupName
 	}
 
 	// Remove users no longer in the desired set.
-	if !r.cfg.NoDelete {
-		for id := range currentSet {
-			if _, ok := desiredUserIDs[id]; ok {
-				continue
-			}
-			if err := r.osClient.RemoveUserFromGroup(groupID, id); err != nil {
-				r.log.Warnw("Failed to remove user from group",
-					"group", groupName, "user_id", id, "error", err)
-			} else {
-				r.log.Infow("Removed user from group", "group", groupName, "user_id", id)
-			}
+	for id := range currentSet {
+		if _, ok := desiredUserIDs[id]; ok {
+			continue
+		}
+		if err := r.osClient.RemoveUserFromGroup(groupID, id); err != nil {
+			r.log.Warnw("Failed to remove user from group",
+				"group", groupName, "user_id", id, "error", err)
+		} else {
+			r.log.Infow("Removed user from group", "group", groupName, "user_id", id)
 		}
 	}
 
@@ -2124,18 +2157,16 @@ func (r *Reconciler) syncGroupAssignments(leaf tree.Node, osProjectID string, gr
 	}
 
 	// Remove group assignments no longer desired.
-	if !r.cfg.NoDelete {
-		for groupID, roleID := range currentRoleIDs {
-			if _, keep := desiredSet[groupID]; keep {
-				continue
-			}
-			if err := r.osClient.UnassignGroupFromProject(osProjectID, groupID, roleID); err != nil {
-				r.log.Warnw("Failed to remove group from project",
-					"group_id", groupID, "os_project_id", osProjectID, "error", err)
-			} else {
-				r.log.Infow("Removed group from project",
-					"group_id", groupID, "os_project_id", osProjectID)
-			}
+	for groupID, roleID := range currentRoleIDs {
+		if _, keep := desiredSet[groupID]; keep {
+			continue
+		}
+		if err := r.osClient.UnassignGroupFromProject(osProjectID, groupID, roleID); err != nil {
+			r.log.Warnw("Failed to remove group from project",
+				"group_id", groupID, "os_project_id", osProjectID, "error", err)
+		} else {
+			r.log.Infow("Removed group from project",
+				"group_id", groupID, "os_project_id", osProjectID)
 		}
 	}
 }

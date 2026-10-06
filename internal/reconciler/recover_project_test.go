@@ -175,24 +175,3 @@ func TestRecoverUntaggedProjectRemovesTheShadowingImport(t *testing.T) {
 		t.Errorf("importedRemoved = %d, want 1", res.importedRemoved)
 	}
 }
-
-// NoDelete is the safe mode: nothing is removed, not even a duplicate.
-func TestRecoverUntaggedProjectKeepsTheShadowWhenNoDelete(t *testing.T) {
-	store := &deletedStore{}
-	r := newRecoveryReconciler(store, Config{NoDelete: true})
-	leaf := tree.Node{ID: "p_001", OSProjectID: "os-1"}
-	imported := map[string]tree.Node{"os-1": {ID: "p_shadow", OSProjectID: "os-1"}}
-	res := reconcileResult{}
-
-	if _, ok := r.recoverUntaggedProject(context.Background(), leaf,
-		map[string]osclient.ProjectInfo{"os-1": project("os-1")},
-		imported, map[string]string{}, &res); !ok {
-		t.Fatal("expected the project to be recovered")
-	}
-	if res.importedRemoved != 0 {
-		t.Errorf("NoDelete removed %d imported leaves", res.importedRemoved)
-	}
-	if len(store.deleted) != 0 {
-		t.Errorf("NoDelete deleted nodes: %v", store.deleted)
-	}
-}

@@ -183,6 +183,10 @@ openstackManagementApi:
     # drops the record. Turn it off to free budgets the moment they are
     # released, accepting the over-booking while the deletion is pending.
     chargeReleased: true
+    # Keep the volume storage an archived project still holds booked against
+    # its budget. Off: archiving frees the budget entirely. The usage history
+    # records the storage either way.
+    chargeArchived: false
     # Browser origins allowed to call /v1 cross-origin, as full origins
     # ("https://selfservice.example.cloud"). Empty = no cross-origin access,
     # which is right whenever the SPA reaches this API same-origin through a
@@ -219,14 +223,22 @@ openstackManagementApi:
     # by name and creates it if missing. Ignored when scopeParentId is set.
     scopeParentName: ""
     dryRun: false
-    # Safety mode: never perform destructive OpenStack operations (project/user
-    # removal, released-project deletion) while still syncing/creating.
-    noDelete: false
     managedProjectTag: "managed"
     resourceIdTagPrefix: "managed-resource-id:"
-    # When false, released projects are tagged for pending deletion instead of deleted
-    deleteReleasedProjects: false
-    pendingDeletionGraceDays: 30
+    # What happens to the OpenStack project of a released project. It is always
+    # tagged with its deletion day (release day + grace days), owner and status.
+    # releasedArchive: disable it, shelve its servers, release its floating IPs,
+    # set the quotas for new servers to zero (reversible except the IPs).
+    releasedArchive: false
+    # releasedDelete: when the project is emptied (servers, volumes, snapshots,
+    # images, networks) and deleted, and then its record:
+    #   never        — not at all
+    #   on-request   — when its owner, an admin or a manager asks for it
+    #   after-grace  — on request, or once the grace days have passed
+    #   immediately  — on the next pass after release
+    releasedDelete: "never"
+    releasedDeleteGraceDays: 30
+    archivedTagPrefix: "archived:"
     # Record each finished day's consumption per project from Nova.
     usageEnabled: true
     usageBackfillDays: 365

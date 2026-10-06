@@ -147,9 +147,10 @@ func (c *OpenStackClient) DeleteProject(projectID string) error {
 // ProjectInfo carries only the fields the reconciler needs from an OpenStack project.
 // It keeps gophercloud types contained inside the osclient package.
 type ProjectInfo struct {
-	ID   string
-	Name string
-	Tags []string
+	ID      string
+	Name    string
+	Tags    []string
+	Enabled bool
 }
 
 // ListManagedProjects returns an iterator of all projects tagged with the configured managed-project tag.
@@ -191,7 +192,7 @@ func drainToProjectInfo(iter Iterator[projects.Project]) ([]ProjectInfo, error) 
 	}
 	out := make([]ProjectInfo, len(raw))
 	for i, p := range raw {
-		out[i] = ProjectInfo{ID: p.ID, Name: p.Name, Tags: p.Tags}
+		out[i] = ProjectInfo{ID: p.ID, Name: p.Name, Tags: p.Tags, Enabled: p.Enabled}
 	}
 	return out, nil
 }

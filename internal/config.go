@@ -101,10 +101,6 @@ type ReconcilerConfiguration struct {
 	ScopeParentName string `json:"scope_parent_name"`
 	// DryRun runs reconciliation logic without making any writes. Useful for testing.
 	DryRun bool `json:"dry_run"`
-	// NoDelete disables all destructive reconciler operations (project/user removal,
-	// released-project deletion) while still syncing/creating. A safety mode for
-	// initial rollout; wired from RECONCILER_NO_DELETE (default false).
-	NoDelete bool `json:"no_delete"`
 	// ManagedProjectTag is the OpenStack project tag used to identify projects created by
 	// this system. Default: "dhbw-managed".
 	ManagedProjectTag string `json:"managed_project_tag"`
@@ -112,15 +108,17 @@ type ReconcilerConfiguration struct {
 	// Full tag format: "<prefix><requestID>". Default: "dhbw-resource-id:".
 	ResourceIDTagPrefix string `json:"resource_id_tag_prefix"`
 
-	// DeleteReleasedProjects controls what happens when a managed OS project's request
-	// is released. When true the OS project is deleted immediately. When false (default)
-	// the project is kept but tagged with a pending-deletion date and contact info so
-	// external workflow tools can drive the actual cleanup.
-	DeleteReleasedProjects bool `json:"delete_released_projects"`
-	// PendingDeletionGraceDays is the number of days from the current reconcile run
-	// used as the scheduled deletion date written into PendingDeletionTagPrefix tags.
-	// Only relevant when DeleteReleasedProjects is false. Default: 30.
-	PendingDeletionGraceDays int `json:"pending_deletion_grace_days"`
+	// ReleasedArchive archives the OpenStack project of a released leaf: disabled,
+	// servers shelved, floating IPs released, quotas for new servers zero.
+	ReleasedArchive bool `json:"released_archive"`
+	// ReleasedDelete is when that project is deleted: "never", "after-grace" or
+	// "immediately" (only "never" is supported yet).
+	ReleasedDelete string `json:"released_delete"`
+	// ReleasedDeleteGraceDays is added to the release day to compute the
+	// deletion day in the pending-deletion tag. Default: 30.
+	ReleasedDeleteGraceDays int `json:"released_delete_grace_days"`
+	// ArchivedTagPrefix marks an archived project. Default: "archived:".
+	ArchivedTagPrefix string `json:"archived_tag_prefix"`
 	// PendingDeletionTagPrefix is the tag prefix written to released projects when
 	// DeleteReleasedProjects is false. The full tag is "<prefix><YYYY-MM-DD>".
 	// Default: "pending-deletion:".
@@ -247,6 +245,9 @@ type AppConfiguration struct {
 	// trade: budgets free up immediately, at the price of over-booking for as
 	// long as the deletion takes.
 	ChargeReleased bool `json:"charge_released"`
+	// ChargeArchived keeps the storage an archived project still holds booked
+	// against its budget. See tree.Accounting.ChargeArchived.
+	ChargeArchived bool `json:"charge_archived"`
 }
 
 // loadAppConfiguration loads configuration from an optional .env file and environment variables.
@@ -316,11 +317,12 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			ScopeParentID:            envconf.String("RECONCILER_SCOPE_PARENT_ID", ""),
 			ScopeParentName:          envconf.String("RECONCILER_SCOPE_PARENT_NAME", ""),
 			DryRun:                   envconf.Bool("RECONCILER_DRY_RUN", false),
-			NoDelete:                 envconf.Bool("RECONCILER_NO_DELETE", false),
 			ManagedProjectTag:        envconf.String("RECONCILER_MANAGED_PROJECT_TAG", "managed"),
 			ResourceIDTagPrefix:      envconf.String("RECONCILER_RESOURCE_ID_TAG_PREFIX", "managed-resource-id:"),
-			DeleteReleasedProjects:   envconf.Bool("RECONCILER_DELETE_RELEASED_PROJECTS", false),
-			PendingDeletionGraceDays: envconf.Int("RECONCILER_PENDING_DELETION_GRACE_DAYS", 30),
+			ReleasedArchive:          envconf.Bool("RECONCILER_RELEASED_ARCHIVE", false),
+			ReleasedDelete:           envconf.String("RECONCILER_RELEASED_DELETE", "never"),
+			ReleasedDeleteGraceDays:  envconf.Int("RECONCILER_RELEASED_DELETE_GRACE_DAYS", 30),
+			ArchivedTagPrefix:        envconf.String("RECONCILER_ARCHIVED_TAG_PREFIX", "archived:"),
 			PendingDeletionTagPrefix: envconf.String("RECONCILER_PENDING_DELETION_TAG_PREFIX", "pending-deletion:"),
 			ContactTagPrefix:         envconf.String("RECONCILER_CONTACT_TAG_PREFIX", "contact:"),
 			TerminationTagPrefix:     envconf.String("RECONCILER_TERMINATION_TAG_PREFIX", "termination:"),
@@ -340,6 +342,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 		MaxAuthorizedUsers:    envconf.Int("API_MAX_AUTHORIZED_USERS", common.DefaultMaxAuthorizedUsers),
 		ChargeOSInUse:         envconf.Bool("API_CHARGE_OS_IN_USE", true),
 		ChargeReleased:        envconf.Bool("API_CHARGE_RELEASED", true),
+		ChargeArchived:        envconf.Bool("API_CHARGE_ARCHIVED", false),
 	}
 
 	if err := validateConfig(cfg); err != nil {

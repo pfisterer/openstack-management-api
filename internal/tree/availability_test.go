@@ -44,7 +44,7 @@ func TestAvailability_DoesNotSumAcrossSiblings(t *testing.T) {
 	// parent of its own, so the climb stops there.
 	parents := map[string]*string{parent: nil}
 
-	usage := buildRolledUpUsage(leaves, parents, svc.countIDs, false)
+	usage := buildRolledUpUsage(leaves, parents, svc.countIDs, svc.leafCost)
 	total := usage[parent].Total(svc.countIDs)
 
 	if total["cores"] != 6 {

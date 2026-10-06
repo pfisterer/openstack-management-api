@@ -39,6 +39,9 @@ type Service struct {
 	// a plain `resourceIDs` was what let an availability slip into a sum, since
 	// nothing at the call site said which set it was.
 	countIDs []string
+	// storageIDs are the count resources mapped to volume gigabytes — what an
+	// archived leaf still holds (see Accounting.ChargeArchived).
+	storageIDs []string
 
 	rootAdminTokens common.TokenList
 	requestTimeout  time.Duration
@@ -49,6 +52,11 @@ type Service struct {
 	// make the books stricter when on; off is the older, more permissive
 	// behaviour, kept so a bad number can be turned off without a release.
 	accounting Accounting
+
+	// deletionAllowed says whether a released or archived leaf may be marked
+	// for deletion — only where a reconciler is configured to act on it (see
+	// SetDeletionAllowed).
+	deletionAllowed bool
 
 	// approvalMu serializes the capacity check-then-write critical sections
 	// (create with direct/auto approval, approve, reparent, promote) so concurrent
@@ -85,6 +93,15 @@ type Accounting struct {
 	//
 	// Off is the pre-2026-08 behaviour: released frees the budget immediately.
 	ChargeReleased bool
+	// ChargeArchived keeps the storage an archived leaf still holds booked
+	// against its own budget: the measured volume gigabytes, nothing else —
+	// its servers are shelved, its floating IPs released, and what it was
+	// allocated from budgets further up is given back. Off, archiving frees
+	// the budget entirely while the volumes stay until the project is deleted.
+	//
+	// The usage history records the storage either way; this decides only
+	// what a budget is billed for.
+	ChargeArchived bool
 }
 
 // NewService constructs the tree service.
@@ -98,9 +115,13 @@ func NewService(store Store, roles common.RoleProvider, resources []common.Manag
 		panic("tree.NewService requires at least one configured resource type")
 	}
 	countIDs := make([]string, 0, len(resources))
+	var storageIDs []string
 	for _, r := range resources {
 		if r.IsCount() {
 			countIDs = append(countIDs, r.ID)
+			if r.OSQuotaField == "gigabytes" {
+				storageIDs = append(storageIDs, r.ID)
+			}
 		}
 	}
 	if requestTimeout <= 0 {
@@ -116,6 +137,7 @@ func NewService(store Store, roles common.RoleProvider, resources []common.Manag
 		ownerTokens:        newTokenCache(2 * time.Minute),
 		resources:          resources,
 		countIDs:           countIDs,
+		storageIDs:         storageIDs,
 		rootAdminTokens:    common.CanonicalTokens(rootAdminTokens),
 		requestTimeout:     requestTimeout,
 		maxAuthorizedUsers: maxAuthorizedUsers,
@@ -543,7 +565,7 @@ func (s *Service) loadSubtreeUsage(ctx context.Context, roots []Node) (UsagePerN
 		return nil, fmt.Errorf("load active leaves for usage rollup: %w", err)
 	}
 
-	return buildRolledUpUsage(leaves, parentMap, s.countIDs, s.accounting.ChargeOSInUse), nil
+	return buildRolledUpUsage(leaves, parentMap, s.countIDs, s.leafCost), nil
 }
 
 // loadSubtreeUsageAndAllocations is loadSubtreeUsage plus, per budget, what it
@@ -575,6 +597,9 @@ func (s *Service) loadSubtreeUsageAndAllocations(ctx context.Context, roots []No
 	}
 	allocated := map[string]AllocatedOut{}
 	for _, leaf := range leaves {
+		if _, held := s.leafCost(leaf); !held {
+			continue
+		}
 		for _, a := range leaf.Allocations {
 			if !wanted[a.BudgetID] {
 				continue
@@ -592,7 +617,7 @@ func (s *Service) loadSubtreeUsageAndAllocations(ctx context.Context, roots []No
 			allocated[a.BudgetID] = out
 		}
 	}
-	return buildRolledUpUsage(leaves, parentMap, s.countIDs, s.accounting.ChargeOSInUse), allocated, nil
+	return buildRolledUpUsage(leaves, parentMap, s.countIDs, s.leafCost), allocated, nil
 }
 
 // buildRolledUpUsage attributes each leaf's limit and ID to its parent budget and
@@ -600,7 +625,7 @@ func (s *Service) loadSubtreeUsageAndAllocations(ctx context.Context, roots []No
 // its entire subtree — not just its direct children. A leaf's allocations from
 // budgets further up are attributed from THEIR budget upwards: the budgets in
 // between never held them, so they never carry them either.
-func buildRolledUpUsage(leaves []Node, parentMap map[string]*string, resourceIDs []string, chargeOSInUse bool) UsagePerNode {
+func buildRolledUpUsage(leaves []Node, parentMap map[string]*string, resourceIDs []string, cost leafCostFunc) UsagePerNode {
 	result := make(UsagePerNode)
 	charge := func(leaf Node, from string, amount common.ProjectQuota) {
 		current := from
@@ -629,7 +654,11 @@ func buildRolledUpUsage(leaves []Node, parentMap map[string]*string, resourceIDs
 			continue
 		}
 		// Per leaf, before any summation — see chargedQuota.
-		charge(leaf, *leaf.ParentID, chargedQuota(leaf, resourceIDs, chargeOSInUse))
+		own, withAllocations := cost(leaf)
+		charge(leaf, *leaf.ParentID, own)
+		if !withAllocations {
+			continue
+		}
 		for _, a := range leaf.Allocations {
 			charge(leaf, a.BudgetID, a.Limit)
 		}
@@ -1455,7 +1484,7 @@ func (s *Service) ownerActiveUsage(ctx context.Context, budgetID string, ownerTo
 	}
 	usage := make(common.ProjectQuota, len(s.countIDs))
 	for _, leaf := range leaves {
-		charged := chargedQuota(leaf, s.countIDs, s.accounting.ChargeOSInUse)
+		charged, _ := s.leafCost(leaf)
 		for _, id := range s.countIDs {
 			usage[id] += charged[id]
 		}
@@ -1481,7 +1510,50 @@ func newHistoryEntry(event string, actor Actor, statusTo string) HistoryEntry {
 	}
 }
 
-// quotaAdd sums configured resource types from two quota objects.
+// chargedStatuses are the leaf states whose limits count against a budget. The
+// single answer for every place that asks — the rollup, the per-requester
+// auto-approve cap and the reparent capacity check must agree, or a leaf gets
+// billed in one view and moves for free in another. What a leaf in one of them
+// costs is leafCost's answer.
+func (s *Service) chargedStatuses() []string {
+	statuses := slices.Clone(ActiveStatuses)
+	if s.accounting.ChargeReleased {
+		statuses = append(statuses, StatusReleased)
+	}
+	if s.accounting.ChargeArchived {
+		statuses = append(statuses, StatusArchived)
+	}
+	return statuses
+}
+
+// leafCostFunc says what one leaf costs its own budget, and whether its
+// allocations are charged to theirs as well.
+type leafCostFunc func(leaf Node) (own common.ProjectQuota, withAllocations bool)
+
+// leafCost is the deployment's leafCostFunc: an archived leaf costs the storage
+// it still holds, everything else costs its chargedQuota plus its allocations.
+func (s *Service) leafCost(leaf Node) (common.ProjectQuota, bool) {
+	if leaf.Status == StatusArchived {
+		return archivedQuota(leaf, s.storageIDs), false
+	}
+	return chargedQuota(leaf, s.countIDs, s.accounting.ChargeOSInUse), true
+}
+
+// archivedQuota is the storage an archived leaf still holds: what OpenStack
+// measured, or its own limit where nothing was measured. The rest — servers
+// shelved, floating IPs released, quotas frozen — holds nothing any more.
+func archivedQuota(leaf Node, storageIDs []string) common.ProjectQuota {
+	out := common.ProjectQuota{}
+	for _, id := range storageIDs {
+		if inUse, measured := leaf.OSInUse[id]; measured {
+			out[id] = inUse
+		} else if v := leaf.Limit[id]; v > 0 {
+			out[id] = v
+		}
+	}
+	return out
+}
+
 // chargedQuota is what a leaf COSTS its budget: the declared limit, or the
 // measured OpenStack usage where that is higher. With chargeOSInUse off it is
 // the declared limit alone, which is the pre-2026-08 behaviour.
@@ -1506,17 +1578,6 @@ func newHistoryEntry(event string, actor Actor, statusTo string) HistoryEntry {
 // The result must be computed PER LEAF and only then summed: max() does not
 // distribute over addition, so applying it to an already-aggregated total
 // gives a different (and wrong) answer.
-// chargedStatuses are the leaf states whose limits count against a budget. The
-// single answer for every place that asks — the rollup, the per-requester
-// auto-approve cap and the reparent capacity check must agree, or a leaf gets
-// billed in one view and moves for free in another.
-func (s *Service) chargedStatuses() []string {
-	if s.accounting.ChargeReleased {
-		return ActiveStatusesWithReleased
-	}
-	return ActiveStatuses
-}
-
 func chargedQuota(leaf Node, resourceIDs []string, chargeOSInUse bool) common.ProjectQuota {
 	if !chargeOSInUse {
 		return leaf.Limit
@@ -1540,6 +1601,7 @@ func chargedQuota(leaf Node, resourceIDs []string, chargeOSInUse bool) common.Pr
 	return out
 }
 
+// quotaAdd sums configured resource types from two quota objects.
 func quotaAdd(a, b common.ProjectQuota, resourceIDs []string) common.ProjectQuota {
 	out := make(common.ProjectQuota, len(a)+len(resourceIDs))
 	maps.Copy(out, a)

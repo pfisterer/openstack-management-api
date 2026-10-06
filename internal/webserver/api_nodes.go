@@ -539,11 +539,14 @@ func rejectNode(cfg APIConfig) gin.HandlerFunc {
 // releaseNode releases an approved project leaf.
 //
 //	@Summary		Release node
-//	@Description	Releases an approved project leaf, returning its capacity to the budget chain and driving OpenStack deprovisioning. Allowed for the owner, the project's admins and managers of the parent chain.
+//	@Description	Releases an approved project leaf, returning its capacity to the budget chain and driving OpenStack deprovisioning. Allowed for the owner, the project's admins and managers of the parent chain. With delete it is also marked for deletion (see requestNodeDeletion); 409 where projects cannot be deleted.
 //	@Tags			nodes
+//	@Accept			json
 //	@Security		Bearer
-//	@Param			id	path	string	true	"Node ID"
+//	@Param			id		path	string					true	"Node ID"
+//	@Param			request	body	tree.ReleaseNodeRequest	false	"Release options"
 //	@Success		200	{object}	tree.Node	"Released node."
+//	@Failure		400	{object}	map[string]any	"Invalid request body."
 //	@Failure		401	{object}	map[string]any	"Unauthorized."
 //	@Failure		403	{object}	map[string]any	"Forbidden."
 //	@Failure		404	{object}	map[string]any	"Not found."
@@ -558,7 +561,46 @@ func releaseNode(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		node, err := svc.ReleaseNode(c.Param("id"), tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
+		// The body is optional: a plain release sends none.
+		var req tree.ReleaseNodeRequest
+		if c.Request.ContentLength != 0 {
+			if err := c.ShouldBindJSON(&req); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+		}
+		node, err := svc.ReleaseNode(c.Param("id"), req, tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
+		if err != nil {
+			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, node)
+	}
+}
+
+// requestNodeDeletion marks a released or archived project for deletion.
+//
+//	@Summary		Delete a released project for good
+//	@Description	Marks a released or archived project leaf for deletion: the reconciler empties its OpenStack project (servers, volumes, snapshots, images, networks), deletes it and then removes the leaf. Cannot be undone once started. Allowed for the owner, the project's admins and managers of the parent chain; 409 where projects cannot be deleted or the project is not released.
+//	@Tags			nodes
+//	@Security		Bearer
+//	@Param			id	path	string	true	"Node ID"
+//	@Success		200	{object}	tree.Node	"Node marked for deletion."
+//	@Failure		401	{object}	map[string]any	"Unauthorized."
+//	@Failure		403	{object}	map[string]any	"Forbidden."
+//	@Failure		404	{object}	map[string]any	"Not found."
+//	@Failure		409	{object}	map[string]any	"Conflict: not released, or deletion is switched off."
+//	@ID				requestNodeDeletion
+//	@Router			/v1/nodes/{id}/deletion [post]
+func requestNodeDeletion(cfg APIConfig) gin.HandlerFunc {
+	svc := cfg.Service
+	return func(c *gin.Context) {
+		auth, err := mustGetAuthContext(c)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
+			return
+		}
+		node, err := svc.RequestDeletion(c.Param("id"), tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return

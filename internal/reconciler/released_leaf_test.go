@@ -51,10 +51,10 @@ func TestReleasedLeafCleanupDoesNothingWhenAllProjectsAreInScope(t *testing.T) {
 	}
 }
 
-// NoDelete means "destroy nothing in OpenStack". The project here is already
-// gone from it; keeping our record would leave the tree disagreeing with the
-// cloud, which is what this reconciler exists to prevent. DryRun is the switch
-// that does hold it back — it reports what a run would do and writes nothing.
+// The project here is already gone from OpenStack; keeping our record would
+// leave the tree disagreeing with the cloud, which is what this reconciler
+// exists to prevent. DryRun is the switch that holds it back — it reports what
+// a run would do and writes nothing.
 func TestReleasedLeafRemovalRespectsTheSafetySwitches(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -62,7 +62,7 @@ func TestReleasedLeafRemovalRespectsTheSafetySwitches(t *testing.T) {
 		wantDeleted int
 		wantCounted int
 	}{
-		{"NoDelete does not apply to our own records", Config{NoDelete: true}, 1, 1},
+		{"a normal run removes it", Config{}, 1, 1},
 		{"DryRun", Config{DryRun: true}, 0, 1},
 	}
 

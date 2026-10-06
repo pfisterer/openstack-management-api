@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 
 	"github.com/gin-gonic/gin"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -122,9 +123,12 @@ type mcpProject struct {
 	ID     string `json:"id" jsonschema:"the project's id, used to refer to it in other tools"`
 	Kind   string `json:"kind" jsonschema:"project or budget"`
 	Name   string `json:"name" jsonschema:"human-readable name"`
-	Status string `json:"status" jsonschema:"one of pending, approved, change_pending, rejected, released, imported"`
-	Reason string `json:"reason,omitempty" jsonschema:"why it was requested, as the requester wrote it"`
-	Owner  string `json:"owner,omitempty" jsonschema:"the person responsible, as user:<email>"`
+	Status string `json:"status" jsonschema:"one of pending, approved, change_pending, rejected, released, archived, imported"`
+	// Set from the moment someone asked for the deletion until the project is
+	// gone; then it disappears.
+	DeletionRequested bool   `json:"deletion_requested,omitempty" jsonschema:"true while a released or archived project is being deleted for good"`
+	Reason            string `json:"reason,omitempty" jsonschema:"why it was requested, as the requester wrote it"`
+	Owner             string `json:"owner,omitempty" jsonschema:"the person responsible, as user:<email>"`
 	// One list, two meanings, because the service keeps one: on a budget the
 	// people who decide there, on a project the people who run it with the
 	// owner. Named for what it is on both rather than for either.
@@ -172,6 +176,7 @@ func toMCPProject(n tree.Node) mcpProject {
 		AvailableResources: n.AvailableResources,
 		OSProjectID:        n.OSProjectID,
 		OSProjectName:      n.OSProjectName,
+		DeletionRequested:  slices.Contains(n.Flags, tree.FlagDeleteRequested),
 	}
 	if n.ParentID != nil {
 		p.PaidFrom = *n.ParentID
@@ -339,6 +344,12 @@ type mcpAdoptInput struct {
 
 type mcpReleaseInput struct {
 	ID          string `json:"id" jsonschema:"id of the project to give up"`
+	ConfirmName string `json:"confirm_name" jsonschema:"the project's exact current name, as a confirmation that this is the right one"`
+	Delete      bool   `json:"delete,omitempty" jsonschema:"also delete it for good right away, everything in it included, instead of archiving it first; only where the deployment allows deleting"`
+}
+
+type mcpDeleteProjectInput struct {
+	ID          string `json:"id" jsonschema:"id of the released or archived project to delete"`
 	ConfirmName string `json:"confirm_name" jsonschema:"the project's exact current name, as a confirmation that this is the right one"`
 }
 
@@ -745,16 +756,34 @@ func registerDestructiveTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, lo
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
 		Name: "release_project",
 		Description: "Give up a project. This cannot be undone: depending on the deployment the OpenStack " +
-			"project and everything in it — servers, volumes, data — is deleted within minutes, or marked for " +
-			"deletion and removed later. Ask the person before calling this.",
+			"project is archived (servers shelved, floating IPs given back, nobody can log in) and deleted later, " +
+			"or deleted within minutes with everything in it — servers, volumes, data. With delete it is deleted " +
+			"for good right away. Ask the person before calling this.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpReleaseInput) (*mcp.CallToolResult, mcpProject, error) {
 		if _, err := confirmName(in.ID, in.ConfirmName); err != nil {
 			return nil, mcpProject{}, err
 		}
-		log.Infow("MCP release_project", "actor", caller.actorEmail, "node_id", in.ID)
-		node, err := cfg.Service.ReleaseNode(in.ID, caller.serviceActor(), caller.tokens)
+		log.Infow("MCP release_project", "actor", caller.actorEmail, "node_id", in.ID, "delete", in.Delete)
+		node, err := cfg.Service.ReleaseNode(in.ID, tree.ReleaseNodeRequest{Delete: in.Delete}, caller.serviceActor(), caller.tokens)
 		if err != nil {
 			return nil, mcpProject{}, fmt.Errorf("release %q: %w", in.ID, err)
+		}
+		return nil, toMCPProject(node), nil
+	})
+
+	mcpserve.AddTool(s, caller, true, &mcp.Tool{
+		Name: "delete_project",
+		Description: "Delete a released or archived project for good, to free what it still holds, such as its " +
+			"volumes. Everything in its OpenStack project — servers, volumes, snapshots, images, networks, data — " +
+			"is deleted within the next minutes; this cannot be undone. Ask the person before calling this.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeleteProjectInput) (*mcp.CallToolResult, mcpProject, error) {
+		if _, err := confirmName(in.ID, in.ConfirmName); err != nil {
+			return nil, mcpProject{}, err
+		}
+		log.Infow("MCP delete_project", "actor", caller.actorEmail, "node_id", in.ID)
+		node, err := cfg.Service.RequestDeletion(in.ID, caller.serviceActor(), caller.tokens)
+		if err != nil {
+			return nil, mcpProject{}, fmt.Errorf("delete %q: %w", in.ID, err)
 		}
 		return nil, toMCPProject(node), nil
 	})

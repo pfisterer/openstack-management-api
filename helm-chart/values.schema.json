@@ -247,6 +247,9 @@
             "chargeReleased": {
               "type": "boolean"
             },
+            "chargeArchived": {
+              "type": "boolean"
+            },
             "corsAllowedOrigins": {
               "type": "array",
               "items": {
@@ -303,21 +306,25 @@
             "dryRun": {
               "type": "boolean"
             },
-            "noDelete": {
-              "type": "boolean"
-            },
             "managedProjectTag": {
               "type": "string"
             },
             "resourceIdTagPrefix": {
               "type": "string"
             },
-            "deleteReleasedProjects": {
+            "releasedArchive": {
               "type": "boolean"
             },
-            "pendingDeletionGraceDays": {
+            "releasedDelete": {
+              "type": "string",
+              "enum": ["never", "on-request", "after-grace", "immediately"]
+            },
+            "releasedDeleteGraceDays": {
               "type": "integer",
               "minimum": 0
+            },
+            "archivedTagPrefix": {
+              "type": "string"
             },
             "usageEnabled": {
               "type": "boolean"

@@ -86,10 +86,10 @@ func TestProjectAdmins(t *testing.T) {
 		t.Errorf("an admin must not transfer the project, got %v", err)
 	}
 
-	if _, err := svc.ReleaseNode(project.ID, tree.UIActor("stranger@x"), strangerTokens); !errors.Is(err, common.ErrForbidden) {
+	if _, err := svc.ReleaseNode(project.ID, tree.ReleaseNodeRequest{}, tree.UIActor("stranger@x"), strangerTokens); !errors.Is(err, common.ErrForbidden) {
 		t.Errorf("a stranger must not release, got %v", err)
 	}
-	released, err := svc.ReleaseNode(project.ID, tree.UIActor("co@x"), coTokens)
+	released, err := svc.ReleaseNode(project.ID, tree.ReleaseNodeRequest{}, tree.UIActor("co@x"), coTokens)
 	if err != nil {
 		t.Fatalf("admin releases: %v", err)
 	}

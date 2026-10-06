@@ -123,6 +123,13 @@ type TransferOwnerRequest struct {
 	NewOwner string `json:"new_owner" binding:"required"`
 }
 
+// ReleaseNodeRequest releases an approved project. Delete marks it for deletion
+// in the same step (see Service.RequestDeletion), instead of archiving it and
+// keeping it for the grace period.
+type ReleaseNodeRequest struct {
+	Delete bool `json:"delete,omitempty"`
+}
+
 // PromoteNodeRequest converts an imported leaf into a managed request: the leaf is
 // reparented under NewParentID, gets an owner, and is flagged so the reconciler
 // tags the existing OpenStack project and transitions the leaf to pending.

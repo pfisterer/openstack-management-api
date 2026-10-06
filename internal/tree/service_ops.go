@@ -1204,8 +1204,9 @@ func (s *Service) RejectNode(id string, req RejectNodeRequest, actor Actor, user
 
 // ReleaseNode marks an approved leaf as released, returning its capacity and
 // driving OpenStack deprovisioning on the next reconcile. The owner or a manager
-// of the parent chain may release.
-func (s *Service) ReleaseNode(id string, actor Actor, userTokens common.TokenList) (Node, error) {
+// of the parent chain may release. With req.Delete the leaf is marked for
+// deletion in the same write — see RequestDeletion.
+func (s *Service) ReleaseNode(id string, req ReleaseNodeRequest, actor Actor, userTokens common.TokenList) (Node, error) {
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
@@ -1222,20 +1223,11 @@ func (s *Service) ReleaseNode(id string, actor Actor, userTokens common.TokenLis
 	if current.Status != StatusApproved {
 		return Node{}, fmt.Errorf("%w: cannot release node in status %q", common.ErrConflict, current.Status)
 	}
-
-	// The owner, the project's own admins and the managers above it. Inclusive
-	// (managesNode) on purpose: releasing needs no approval, so the admins the
-	// owner chose may end the project as the owner may.
-	allowed := isOwner(userTokens, current)
-	if !allowed {
-		if manages, err := s.managesNode(ctx, userTokens, current); err != nil {
-			return Node{}, err
-		} else {
-			allowed = manages
-		}
+	if req.Delete && !s.deletionAllowed {
+		return Node{}, fmt.Errorf("%w: projects cannot be deleted here", common.ErrConflict)
 	}
-	if !allowed {
-		return Node{}, common.ErrForbidden
+	if err := s.authorizeRetirement(ctx, current, userTokens); err != nil {
+		return Node{}, err
 	}
 
 	historyEntry := newHistoryEntry("released", actor, StatusReleased)
@@ -1246,12 +1238,85 @@ func (s *Service) ReleaseNode(id string, actor Actor, userTokens common.TokenLis
 	updated.Status = StatusReleased
 	updated.Pending = nil
 	updated.History = append(slices.Clone(current.History), historyEntry)
+	if req.Delete {
+		updated.Flags = append(slices.Clone(current.Flags), FlagDeleteRequested)
+		updated.History = append(updated.History, newHistoryEntry("deletion_requested", actor, StatusReleased))
+	}
 
 	if err := s.store.UpsertNode(ctx, updated); err != nil {
 		return Node{}, fmt.Errorf("persist node: %w", err)
 	}
 	return updated, nil
 }
+
+// RequestDeletion marks a released or archived leaf for deletion: the
+// reconciler empties its OpenStack project on the next passes — servers,
+// volumes, snapshots, images, networks, everything — deletes it and then the
+// leaf. Not reversible once the reconciler has started. Allowed only where a
+// reconciler is configured to act on it (SetDeletionAllowed), and to whoever may
+// release: the owner, the project's admins and the managers above it.
+func (s *Service) RequestDeletion(id string, actor Actor, userTokens common.TokenList) (Node, error) {
+	if !s.deletionAllowed {
+		return Node{}, fmt.Errorf("%w: projects cannot be deleted here", common.ErrConflict)
+	}
+	ctx, cancel := s.newCtx()
+	defer cancel()
+
+	current, err := s.store.GetNode(ctx, id)
+	if err != nil {
+		return Node{}, fmt.Errorf("load node: %w", err)
+	}
+	if current == nil {
+		return Node{}, fmt.Errorf("node %w", common.ErrNotFound)
+	}
+	if !current.IsLeaf() || !slices.Contains(RetiredStatuses, current.Status) {
+		return Node{}, fmt.Errorf("%w: only released or archived projects can be deleted", common.ErrConflict)
+	}
+	if err := s.authorizeRetirement(ctx, current, userTokens); err != nil {
+		return Node{}, err
+	}
+	if slices.Contains(current.Flags, FlagDeleteRequested) {
+		return *current, nil
+	}
+
+	var updated Node
+	if _, err := s.store.UpdateNode(ctx, id, func(n *Node) error {
+		if !slices.Contains(RetiredStatuses, n.Status) {
+			return fmt.Errorf("%w: only released or archived projects can be deleted", common.ErrConflict)
+		}
+		if !slices.Contains(n.Flags, FlagDeleteRequested) {
+			n.Flags = append(slices.Clone(n.Flags), FlagDeleteRequested)
+			n.History = append(slices.Clone(n.History), newHistoryEntry("deletion_requested", actor, n.Status))
+		}
+		updated = *n
+		return nil
+	}); err != nil {
+		return Node{}, err
+	}
+	return updated, nil
+}
+
+// authorizeRetirement: the owner, the project's own admins and the managers
+// above it. Inclusive (managesNode) on purpose: releasing and deleting need no
+// approval, so the admins the owner chose may end the project as the owner may.
+func (s *Service) authorizeRetirement(ctx context.Context, current *Node, userTokens common.TokenList) error {
+	if isOwner(userTokens, current) {
+		return nil
+	}
+	manages, err := s.managesNode(ctx, userTokens, current)
+	if err != nil {
+		return err
+	}
+	if !manages {
+		return common.ErrForbidden
+	}
+	return nil
+}
+
+// SetDeletionAllowed says whether released and archived projects may be marked
+// for deletion. Set at startup from the reconciler's configuration: a mark
+// nobody acts on would leave a project "being deleted" for ever.
+func (s *Service) SetDeletionAllowed(allowed bool) { s.deletionAllowed = allowed }
 
 // ── Structure operations ──────────────────────────────────────────────────────
 
@@ -1329,7 +1394,11 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor Actor, 
 	// charged usage into a budget that has no room for it.
 	if slices.Contains(s.chargedStatuses(), current.Status) {
 		if current.IsLeaf() {
-			if err := s.checkCapacity(ctx, newParentChain, current.Limit, nil); err != nil {
+			need := current.Limit
+			if current.Status == StatusArchived {
+				need, _ = s.leafCost(*current)
+			}
+			if err := s.checkCapacity(ctx, newParentChain, need, nil); err != nil {
 				return Node{}, err
 			}
 			if current.Status == StatusApproved || current.Status == StatusChangePending {

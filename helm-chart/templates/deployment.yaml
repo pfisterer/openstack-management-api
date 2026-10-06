@@ -165,6 +165,8 @@ spec:
               value: {{ dig "chargeOsInUse" true .Values.openstackManagementApi.api | toString | quote }}
             - name: API_CHARGE_RELEASED
               value: {{ dig "chargeReleased" true .Values.openstackManagementApi.api | toString | quote }}
+            - name: API_CHARGE_ARCHIVED
+              value: {{ dig "chargeArchived" false .Values.openstackManagementApi.api | toString | quote }}
             {{- /* The resource catalogue, as a JSON array. Empty means "use the
                    built-in set", which is what every deployment ran on before
                    the catalogue became configurable. toJson, not quote: the
@@ -200,19 +202,18 @@ spec:
               value: {{ .Values.openstackManagementApi.reconciler.scopeParentName | default "" | quote }}
             - name: RECONCILER_DRY_RUN
               value: {{ .Values.openstackManagementApi.reconciler.dryRun | toString | quote }}
-            # Safety mode: when true the reconciler never performs destructive
-            # OpenStack operations (no project/user removal, no released-project
-            # deletion) while still syncing/creating. Recommended during rollout.
-            - name: RECONCILER_NO_DELETE
-              value: {{ .Values.openstackManagementApi.reconciler.noDelete | default false | toString | quote }}
             - name: RECONCILER_MANAGED_PROJECT_TAG
               value: {{ .Values.openstackManagementApi.reconciler.managedProjectTag | quote }}
             - name: RECONCILER_RESOURCE_ID_TAG_PREFIX
               value: {{ .Values.openstackManagementApi.reconciler.resourceIdTagPrefix | quote }}
-            - name: RECONCILER_DELETE_RELEASED_PROJECTS
-              value: {{ .Values.openstackManagementApi.reconciler.deleteReleasedProjects | toString | quote }}
-            - name: RECONCILER_PENDING_DELETION_GRACE_DAYS
-              value: {{ .Values.openstackManagementApi.reconciler.pendingDeletionGraceDays | toString | quote }}
+            - name: RECONCILER_RELEASED_ARCHIVE
+              value: {{ .Values.openstackManagementApi.reconciler.releasedArchive | default false | toString | quote }}
+            - name: RECONCILER_RELEASED_DELETE
+              value: {{ .Values.openstackManagementApi.reconciler.releasedDelete | default "never" | quote }}
+            - name: RECONCILER_RELEASED_DELETE_GRACE_DAYS
+              value: {{ .Values.openstackManagementApi.reconciler.releasedDeleteGraceDays | default 30 | toString | quote }}
+            - name: RECONCILER_ARCHIVED_TAG_PREFIX
+              value: {{ .Values.openstackManagementApi.reconciler.archivedTagPrefix | default "archived:" | quote }}
             - name: RECONCILER_USAGE_ENABLED
               value: {{ .Values.openstackManagementApi.reconciler.usageEnabled | toString | quote }}
             - name: RECONCILER_USAGE_BACKFILL_DAYS

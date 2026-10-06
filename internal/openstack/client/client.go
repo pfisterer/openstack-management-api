@@ -69,11 +69,12 @@ type OpenStackClient struct {
 }
 
 // projectScopedServices are the service clients backed by the project-scoped
-// token. Compute/network/block only: Keystone stays on the primary scope.
+// token. Keystone stays on the primary scope.
 type projectScopedServices struct {
 	compute *gophercloud.ServiceClient
 	network *gophercloud.ServiceClient
 	block   *gophercloud.ServiceClient
+	image   *gophercloud.ServiceClient
 }
 
 // computeSvc/networkSvc/blockSvc return the project-scoped client once
@@ -98,6 +99,16 @@ func (c *OpenStackClient) blockSvc() *gophercloud.ServiceClient {
 		return s.block
 	}
 	return c.Block
+}
+
+// imageSvc is the project-scoped image client where there is one — deleting
+// another project's image is an admin call like the quota ones. Image grants
+// keep using Image directly, as they always have.
+func (c *OpenStackClient) imageSvc() *gophercloud.ServiceClient {
+	if s := c.projectScoped.Load(); s != nil && s.image != nil {
+		return s.image
+	}
+	return c.Image
 }
 
 // EnsureProjectScope authenticates the second, PROJECT-scoped provider (see the
@@ -144,7 +155,11 @@ func (c *OpenStackClient) EnsureProjectScope(projectID string) error {
 	if err != nil {
 		return fmt.Errorf("project-scoped block storage client: %w", err)
 	}
-	c.projectScoped.Store(&projectScopedServices{compute: compute, network: network, block: block})
+	image, err := openstack.NewImageServiceV2(provider, eo)
+	if err != nil {
+		return fmt.Errorf("project-scoped image client: %w", err)
+	}
+	c.projectScoped.Store(&projectScopedServices{compute: compute, network: network, block: block, image: image})
 	c.log.Infow("Project-scoped service clients ready", "scope_project_id", projectID)
 	return nil
 }

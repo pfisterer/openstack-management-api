@@ -15,6 +15,8 @@
 package tree
 
 import (
+	"slices"
+
 	"github.com/pfisterer/openstack-management-api/internal/common"
 )
 
@@ -53,6 +55,10 @@ const (
 // pending → approved | rejected
 // approved → change_pending → approved (change applied or discarded)
 // approved → released (leaves only; drives OpenStack deprovisioning)
+// released → archived (set by the reconciler once the OpenStack project is
+// archived — disabled, servers shelved, floating IPs released)
+// released | archived → gone: once the OpenStack project is deleted the leaf is
+// removed; what it used stays in the usage history
 // imported: synthetic read-only leaf created by the reconciler for an OpenStack
 // project that is not tracked here; lives under the "unassigned" node until promoted.
 //
@@ -66,6 +72,7 @@ const (
 	StatusChangePending = "change_pending"
 	StatusRejected      = "rejected"
 	StatusReleased      = "released"
+	StatusArchived      = "archived"
 	StatusImported      = "imported"
 )
 
@@ -76,6 +83,11 @@ const (
 	// the node to "pending" and removes the flag; the node then flows through the
 	// normal approval cycle under its new parent.
 	FlagPromoteOnReconcile = "promote_on_reconcile"
+	// FlagDeleteRequested is set on a released or archived leaf when someone
+	// asks for it to be deleted for good. The reconciler empties and deletes the
+	// OpenStack project on its next passes, whatever the grace period says, and
+	// then removes the leaf.
+	FlagDeleteRequested = "delete_requested"
 )
 
 // Well-known bootstrapped node IDs.
@@ -93,11 +105,9 @@ const (
 // is live in OpenStack and its limit is in force.
 var ActiveStatuses = []string{StatusApproved, StatusChangePending}
 
-// ActiveStatusesWithReleased adds released leaves to them, which is what the
-// accounting charges by default — see Accounting.ChargeReleased. Releasing does
-// not delete the OpenStack project; it hands the deletion to OpenStack via the
-// pending-deletion tag, and until that happens the servers are still running.
-var ActiveStatusesWithReleased = []string{StatusApproved, StatusChangePending, StatusReleased}
+// RetiredStatuses are the states of a leaf that was given up but whose
+// OpenStack project may still exist: released, and archived after it.
+var RetiredStatuses = []string{StatusReleased, StatusArchived}
 
 // ReconcilableStatuses are the leaf states the reconciler projects into OpenStack.
 // change_pending leaves keep their currently approved limit active while the
@@ -116,6 +126,7 @@ var KnownStatuses = []string{
 	StatusChangePending,
 	StatusRejected,
 	StatusReleased,
+	StatusArchived,
 }
 
 // AutoApprove is the auto-approve policy of a budget node. When set, an eligible
@@ -211,6 +222,9 @@ type Actor struct {
 // ChannelUI is what an unset channel means: a person acting in the web UI or
 // through the REST API directly.
 const ChannelUI = "ui"
+
+// ChannelReconciler is the reconciler acting on what it found in OpenStack.
+const ChannelReconciler = "reconciler"
 
 // ChannelMCP is an agent acting with a person's API token.
 const ChannelMCP = "mcp"
@@ -453,7 +467,25 @@ func (n *Node) OwnerEmail() string {
 	return ""
 }
 
+// MarkArchived moves a released leaf to archived, recording it in the history.
+// The reconciler calls it once the OpenStack project is archived; it reports
+// false and changes nothing for a leaf in any other status.
+func MarkArchived(n *Node) bool {
+	if n.Status != StatusReleased {
+		return false
+	}
+	entry := newHistoryEntry("archived", Actor{Via: ChannelReconciler}, StatusArchived)
+	entry.StatusFrom = common.Ptr(StatusReleased)
+	n.Status = StatusArchived
+	n.History = append(slices.Clone(n.History), entry)
+	return true
+}
+
+// IsRetiredStatus reports whether a leaf in this status was given up but may
+// still have an OpenStack project.
+func IsRetiredStatus(status string) bool { return slices.Contains(RetiredStatuses, status) }
+
 // IsTerminalStatus reports whether a node in this status must not transition further.
 func IsTerminalStatus(status string) bool {
-	return status == StatusRejected || status == StatusReleased
+	return status == StatusRejected || IsRetiredStatus(status)
 }

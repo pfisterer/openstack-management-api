@@ -64,6 +64,24 @@ type ConfigResponse struct {
 	// OpenstackDashboardURL is where a project can be opened in OpenStack;
 	// empty when none is configured.
 	OpenstackDashboardURL string `json:"openstackDashboardUrl,omitempty"`
+	// Retirement says what releasing a project leads to in this deployment.
+	Retirement RetirementConfig `json:"retirement"`
+}
+
+// RetirementConfig is what happens to a released project here: whether it is
+// archived, when it is deleted, and what it still costs its budget meanwhile.
+type RetirementConfig struct {
+	// Archive: the project is archived once released.
+	Archive bool `json:"archive"`
+	// Delete: never, on-request, after-grace or immediately. Everything but
+	// never lets a released or archived project be deleted on request.
+	Delete string `json:"delete" enums:"never,on-request,after-grace,immediately"`
+	// DeleteGraceDays: days from release to deletion under after-grace.
+	DeleteGraceDays int `json:"deleteGraceDays"`
+	// ChargeReleased: a released project still costs its budget in full.
+	ChargeReleased bool `json:"chargeReleased"`
+	// ChargeArchived: an archived project still costs the storage it holds.
+	ChargeArchived bool `json:"chargeArchived"`
 }
 
 // APIService provides the business operations consumed by the HTTP handlers.
@@ -89,7 +107,8 @@ type APIService interface {
 	RequestChange(id string, req tree.ChangeNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
 	ApproveNode(id string, req tree.ApproveNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
 	RejectNode(id string, req tree.RejectNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
-	ReleaseNode(id string, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
+	ReleaseNode(id string, req tree.ReleaseNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
+	RequestDeletion(id string, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
 	ReparentNode(id string, req tree.ReparentNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
 	TransferOwner(id string, req tree.TransferOwnerRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
 	SetAllocation(id string, req tree.AllocationRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
@@ -119,6 +138,8 @@ type APIConfig struct {
 	ProvisioningEnabled func() bool
 	// OpenstackDashboardURL is passed through to the UI (see ConfigResponse).
 	OpenstackDashboardURL string
+	// Retirement is passed through to the UI (see ConfigResponse).
+	Retirement RetirementConfig
 }
 
 // SetupGinWebserver configures and returns the application router.
@@ -237,6 +258,7 @@ func RegisterApiRoutes(v1 *gin.RouterGroup, cfg APIConfig, log *zap.SugaredLogge
 		nodes.POST("/:id/approve", approveNode(cfg))
 		nodes.POST("/:id/reject", rejectNode(cfg))
 		nodes.POST("/:id/release", releaseNode(cfg))
+		nodes.POST("/:id/deletion", requestNodeDeletion(cfg))
 		nodes.POST("/:id/reparent", reparentNode(cfg))
 		nodes.POST("/:id/transfer-owner", transferNodeOwner(cfg))
 		nodes.PUT("/:id/allocations", setNodeAllocation(cfg))
@@ -312,6 +334,7 @@ func getConfig(cfg APIConfig) gin.HandlerFunc {
 			OpenstackRoles:        openstackRoles,
 			ProvisioningEnabled:   cfg.ProvisioningEnabled != nil && cfg.ProvisioningEnabled(),
 			OpenstackDashboardURL: cfg.OpenstackDashboardURL,
+			Retirement:            cfg.Retirement,
 		}
 
 		// Include dummy dev users in config if set, to inform frontend of available users for testing.

@@ -103,6 +103,9 @@ var toolInputContracts = []toolInputContract{
 		},
 	},
 	{
+		tool: "release_project", domain: tree.ReleaseNodeRequest{}, input: mcpReleaseInput{},
+	},
+	{
 		tool: "set_project_allocation", domain: tree.AllocationRequest{}, input: mcpAllocationInput{},
 	},
 	{

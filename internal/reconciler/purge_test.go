@@ -215,3 +215,19 @@ func TestDeletionDue(t *testing.T) {
 		}
 	}
 }
+
+// While a project is being emptied the next pass comes early, but not for
+// ever: after maxFollowUps in a row the normal interval takes over.
+func TestScheduleFollowUp(t *testing.T) {
+	r := &Reconciler{trigger: make(chan struct{}, 1)}
+	for range maxFollowUps + 5 {
+		r.scheduleFollowUp(1)
+	}
+	if r.followUps != maxFollowUps {
+		t.Errorf("follow-ups = %d, want the cap %d", r.followUps, maxFollowUps)
+	}
+	r.scheduleFollowUp(0)
+	if r.followUps != 0 {
+		t.Error("nothing pending must reset the count")
+	}
+}

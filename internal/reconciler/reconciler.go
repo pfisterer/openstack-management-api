@@ -168,6 +168,9 @@ type Reconciler struct {
 	mu      sync.RWMutex
 	status  Status
 	trigger chan struct{}
+	// followUps counts the extra passes in a row scheduled while a project is
+	// being emptied (see scheduleFollowUp).
+	followUps int
 
 	// scopeParentID is the effective scope parent resolved from Config
 	// (ScopeParentID, or ScopeParentName looked up / created in OpenStack).
@@ -309,6 +312,7 @@ func (r *Reconciler) runOnce(ctx context.Context) {
 	r.mu.Unlock()
 
 	result, err := r.Reconcile(ctx)
+	r.scheduleFollowUp(result.purgesPending)
 
 	// After the pass, not inside it: a day's usage is collected once and
 	// does nothing on the passes after, and a failure here must not mark
@@ -377,8 +381,10 @@ type reconcileResult struct {
 	floatingIPsReleased       int
 	projectsDeleted           int
 	resourcesPurged           int
-	projectsPromoted          int
-	projectsRetagged          int
+	// purgesPending counts projects still being emptied after this pass.
+	purgesPending    int
+	projectsPromoted int
+	projectsRetagged int
 }
 
 // listLeaves loads project leaves in the given statuses.

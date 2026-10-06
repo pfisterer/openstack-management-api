@@ -83,6 +83,9 @@ func (r *Reconciler) purgeRetiredProject(ctx context.Context, osProject osclient
 	out := purgeProject(r.osClient, osProject.ID, scopeParentID, r.cfg.DryRun, log)
 	res.resourcesPurged += out.removed
 	if !out.deleted {
+		if out.stage != "refused" && !r.cfg.DryRun {
+			res.purgesPending++
+		}
 		return
 	}
 	res.projectsDeleted++
@@ -305,4 +308,27 @@ func inDeletion(status string) bool {
 		return true
 	}
 	return false
+}
+
+// Emptying a project takes a stage per pass, and most stages only finish once
+// OpenStack has deleted in the background. At the normal interval that is half
+// an hour for an ordinary project, so while one is being emptied the next pass
+// comes after followUpDelay instead. At most maxFollowUps in a row: something
+// that cannot be deleted must not turn into a pass every half minute for good —
+// after that the normal interval takes over again.
+const (
+	followUpDelay = 30 * time.Second
+	maxFollowUps  = 20
+)
+
+func (r *Reconciler) scheduleFollowUp(purgesPending int) {
+	if purgesPending == 0 {
+		r.followUps = 0
+		return
+	}
+	if r.followUps >= maxFollowUps {
+		return
+	}
+	r.followUps++
+	time.AfterFunc(followUpDelay, r.Trigger)
 }

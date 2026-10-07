@@ -26,7 +26,10 @@ type keystoneStub struct {
 	// those on a single-user GET only, never in a list.
 	federated map[string]bool
 	deleted   []string
-	server    *httptest.Server
+	// listedDomain and createdDomain record the domain asked for in a user
+	// listing and given in a create.
+	listedDomain, createdDomain string
+	server                      *httptest.Server
 }
 
 func newKeystoneStub(t *testing.T, createdID string) *keystoneStub {
@@ -38,9 +41,17 @@ func newKeystoneStub(t *testing.T, createdID string) *keystoneStub {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method {
 		case http.MethodGet:
+			stub.listedDomain = r.URL.Query().Get("domain_id")
 			// No account carries this name — drives the "neither exists" branch.
 			_ = json.NewEncoder(w).Encode(map[string]any{"users": []any{}})
 		case http.MethodPost:
+			var body struct {
+				User struct {
+					DomainID string `json:"domain_id"`
+				} `json:"user"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			stub.createdDomain = body.User.DomainID
 			w.WriteHeader(http.StatusCreated) // Keystone answers 201; gophercloud insists on it
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"user": map[string]any{"id": stub.createdID, "name": "s1@example.edu", "enabled": true},
@@ -200,4 +211,19 @@ func asPreseedConflict(err error, target **PreseedConflict) bool {
 		*target = c
 	}
 	return ok
+}
+
+// A service user is scoped to the domain it manages, and federated accounts
+// live in the IdP's domain. Looked up and created without naming that domain,
+// Keystone uses the token's: the lookup misses the account a login made, and
+// the stand-in lands in the wrong domain without its federation link — the 409
+// and "no federation link" conflicts seen on staging.
+func TestFindOrCreateUser_FederatedLivesInTheIdPsDomain(t *testing.T) {
+	stub := newKeystoneStub(t, "aaaabbbbccccddddeeeeffff00001111")
+	if _, err := stub.client().FindOrCreateUser("s1@example.edu"); err != nil {
+		t.Fatalf("FindOrCreateUser: %v", err)
+	}
+	if stub.listedDomain != "default" || stub.createdDomain != "default" {
+		t.Errorf("looked up in %q, created in %q, want both in the IdP's domain", stub.listedDomain, stub.createdDomain)
+	}
 }

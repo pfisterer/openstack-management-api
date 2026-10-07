@@ -75,10 +75,13 @@ type OpenStackClient struct {
 // projectScopedServices are the service clients backed by the project-scoped
 // token. Keystone stays on the primary scope.
 type projectScopedServices struct {
-	compute *gophercloud.ServiceClient
-	network *gophercloud.ServiceClient
-	block   *gophercloud.ServiceClient
-	image   *gophercloud.ServiceClient
+	// identity is for reading users across domains: a domain-scoped token
+	// lists the users of its own domain only, whatever domain is asked for.
+	identity *gophercloud.ServiceClient
+	compute  *gophercloud.ServiceClient
+	network  *gophercloud.ServiceClient
+	block    *gophercloud.ServiceClient
+	image    *gophercloud.ServiceClient
 }
 
 // computeSvc/networkSvc/blockSvc return the project-scoped client once
@@ -103,6 +106,16 @@ func (c *OpenStackClient) blockSvc() *gophercloud.ServiceClient {
 		return s.block
 	}
 	return c.Block
+}
+
+// userLookupSvc is the client for finding users by name in another domain —
+// the project-scoped one where there is one, since Keystone narrows a
+// domain-scoped token's user listing to that domain.
+func (c *OpenStackClient) userLookupSvc() *gophercloud.ServiceClient {
+	if s := c.projectScoped.Load(); s != nil && s.identity != nil {
+		return s.identity
+	}
+	return c.Identity
 }
 
 // imageSvc is the project-scoped image client where there is one — deleting
@@ -166,7 +179,11 @@ func (c *OpenStackClient) EnsureProjectScope(projectID string) error {
 	if err != nil {
 		return fmt.Errorf("project-scoped image client: %w", err)
 	}
-	c.projectScoped.Store(&projectScopedServices{compute: compute, network: network, block: block, image: image})
+	identity, err := openstack.NewIdentityV3(provider, gophercloud.EndpointOpts{})
+	if err != nil {
+		return fmt.Errorf("project-scoped identity client: %w", err)
+	}
+	c.projectScoped.Store(&projectScopedServices{identity: identity, compute: compute, network: network, block: block, image: image})
 	c.log.Infow("Project-scoped service clients ready", "scope_project_id", projectID)
 	return nil
 }

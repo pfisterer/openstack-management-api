@@ -64,13 +64,19 @@ func looksLikeEmail(s string) bool {
 // the email, this account simply won't be matched and the login falls back to auto-creating
 // its own shadow user (no worse than not pre-creating at all).
 func (c *OpenStackClient) FindOrCreateUser(email string) (*users.User, error) {
+	if c.federatedProvisioning {
+		// A federated account lives in the IdP's domain, which is not the
+		// one the service user manages: look there, not in the token's.
+		existing, err := c.findUserInDomain(email, c.federatedDomainID)
+		if err != nil {
+			return nil, fmt.Errorf("look up user %q: %w", email, err)
+		}
+		return c.findOrCreateFederatedUser(email, existing)
+	}
+
 	existing, err := c.FindUserByName(email)
 	if err != nil {
 		return nil, fmt.Errorf("look up user %q: %w", email, err)
-	}
-
-	if c.federatedProvisioning {
-		return c.findOrCreateFederatedUser(email, existing)
 	}
 
 	if existing != nil {
@@ -114,8 +120,13 @@ func (c *OpenStackClient) CreateFederatedUser(name, email string, link Federated
 	if email != "" {
 		extra["email"] = email
 	}
+	// In the IdP's domain, where the login looks for it. Left out, Keystone
+	// puts the account in the token's domain — for a service user scoped to
+	// its own domain that is the wrong one, and the account arrives there
+	// without the federation link, so no login ever uses it.
 	created, err := users.Create(c.Identity, users.CreateOpts{
 		Name:        name,
+		DomainID:    c.federatedDomainID,
 		Enabled:     gophercloud.Enabled,
 		Description: ManagedUserDescription,
 		Extra:       extra,
@@ -488,6 +499,18 @@ func (c *OpenStackClient) FindRoleByName(roleName string) (*roles.Role, error) {
 	}
 
 	return role, nil
+}
+
+// findUserInDomain finds a user by name in the given domain; nil when there is
+// none.
+func (c *OpenStackClient) findUserInDomain(userName, domainID string) (*users.User, error) {
+	iter := NewPagerIterator(
+		func() pagination.Pager {
+			return users.List(c.userLookupSvc(), users.ListOpts{Name: userName, DomainID: domainID})
+		},
+		users.ExtractUsers,
+	)
+	return iter.Next()
 }
 
 // FindUserByName finds a user by their name

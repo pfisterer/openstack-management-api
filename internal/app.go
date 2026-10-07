@@ -266,6 +266,9 @@ func RunApplication() {
 		if err := reconciler.ValidateReleasedDelete(config.Reconciler.ReleasedDelete); err != nil {
 			logger.Fatalw("Invalid reconciler configuration", "error", err)
 		}
+		if err := reconciler.ValidatePurgeSkipStages(config.Reconciler.PurgeSkipStages); err != nil {
+			logger.Fatalw("Invalid reconciler configuration", "error", err)
+		}
 		logger.Infow("Starting reconciler", "interval_seconds", config.Reconciler.IntervalSeconds, "dry_run", config.Reconciler.DryRun)
 
 		// Connecting to OpenStack is retried in the background rather than done
@@ -291,6 +294,7 @@ func RunApplication() {
 				ReleasedDeleteGraceDays:  config.Reconciler.ReleasedDeleteGraceDays,
 				ArchivedTagPrefix:        config.Reconciler.ArchivedTagPrefix,
 				PurgeDNSAndObjectStorage: config.Reconciler.PurgeDNSAndObjectStorage,
+				PurgeSkipStages:          config.Reconciler.PurgeSkipStages,
 				DeleteOrphanedUsers:      config.Reconciler.DeleteOrphanedUsers,
 				PendingDeletionTagPrefix: config.Reconciler.PendingDeletionTagPrefix,
 				ContactTagPrefix:         config.Reconciler.ContactTagPrefix,

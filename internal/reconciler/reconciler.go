@@ -97,6 +97,11 @@ type Config struct {
 	// and object storage. Off, they are only reported and keep the project
 	// from being deleted. Default: false.
 	PurgeDNSAndObjectStorage bool
+	// PurgeSkipStages names stages of emptying a project (PurgeStages) that
+	// are passed over, for a service that is broken for good: the project is
+	// deleted all the same and what the stage would have removed stays
+	// behind. Default: none.
+	PurgeSkipStages []string
 	// DeleteOrphanedUsers deletes Keystone accounts this service created once
 	// they hold no project role any more (pruneOrphanedUsers). Default: false —
 	// see there for why that is unsafe with a service user whose view is

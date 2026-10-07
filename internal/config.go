@@ -122,6 +122,9 @@ type ReconcilerConfiguration struct {
 	// PurgeDNSAndObjectStorage lets deleting a project delete its DNS zones
 	// and object storage; off, they keep the project from being deleted.
 	PurgeDNSAndObjectStorage bool `json:"purge_dns_and_object_storage"`
+	// PurgeSkipStages names stages of emptying a project that are passed
+	// over; what is in them stays behind (reconciler.PurgeStages).
+	PurgeSkipStages []string `json:"purge_skip_stages"`
 	// DeleteOrphanedUsers deletes accounts this service created once they
 	// hold no project role; off by default, see reconciler.pruneOrphanedUsers.
 	DeleteOrphanedUsers bool `json:"delete_orphaned_users"`
@@ -330,6 +333,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			ReleasedDeleteGraceDays:  envconf.Int("RECONCILER_RELEASED_DELETE_GRACE_DAYS", 30),
 			ArchivedTagPrefix:        envconf.String("RECONCILER_ARCHIVED_TAG_PREFIX", "archived:"),
 			PurgeDNSAndObjectStorage: envconf.Bool("RECONCILER_PURGE_DNS_AND_OBJECT_STORAGE", false),
+			PurgeSkipStages:          envconf.StringSlice("RECONCILER_PURGE_SKIP_STAGES", nil, strings.ToLower),
 			DeleteOrphanedUsers:      envconf.Bool("RECONCILER_DELETE_ORPHANED_USERS", false),
 			PendingDeletionTagPrefix: envconf.String("RECONCILER_PENDING_DELETION_TAG_PREFIX", "pending-deletion:"),
 			ContactTagPrefix:         envconf.String("RECONCILER_CONTACT_TAG_PREFIX", "contact:"),

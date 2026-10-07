@@ -241,6 +241,14 @@ openstackManagementApi:
     # Deleting a project also deletes its DNS zones and object storage. Off,
     # they are only reported and keep the project from being deleted.
     purgeDnsAndObjectStorage: false
+    # Stages of emptying a project that are passed over, for a service that is
+    # broken for good and would otherwise hold every deletion back. The project
+    # is deleted all the same; what the stage would have removed stays behind
+    # without an owner. Names: clusters, stacks, leases, load-balancers,
+    # floating-ips, servers, backups, snapshots, volumes, images, dns-zones,
+    # object-storage, secret-containers, secrets, routers, ports, networks,
+    # security-groups.
+    purgeSkipStages: []
     # Delete Keystone accounts this service created once they hold no project
     # role. Off: a service user that is admin only on its own domain cannot see
     # roles on projects elsewhere, so an account still in use there would look

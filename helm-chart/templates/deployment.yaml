@@ -216,6 +216,8 @@ spec:
               value: {{ dig "deleteOrphanedUsers" false .Values.openstackManagementApi.reconciler | toString | quote }}
             - name: RECONCILER_PURGE_DNS_AND_OBJECT_STORAGE
               value: {{ dig "purgeDnsAndObjectStorage" false .Values.openstackManagementApi.reconciler | toString | quote }}
+            - name: RECONCILER_PURGE_SKIP_STAGES
+              value: {{ dig "purgeSkipStages" (list) .Values.openstackManagementApi.reconciler | join "," | quote }}
             - name: RECONCILER_ARCHIVED_TAG_PREFIX
               value: {{ .Values.openstackManagementApi.reconciler.archivedTagPrefix | default "archived:" | quote }}
             - name: RECONCILER_USAGE_ENABLED

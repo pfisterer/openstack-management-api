@@ -325,6 +325,13 @@
             "purgeDnsAndObjectStorage": {
               "type": "boolean"
             },
+            "purgeSkipStages": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": ["clusters", "stacks", "leases", "load-balancers", "floating-ips", "servers", "backups", "snapshots", "volumes", "images", "dns-zones", "object-storage", "secret-containers", "secrets", "routers", "ports", "networks", "security-groups"]
+              }
+            },
             "releasedDeleteGraceDays": {
               "type": "integer",
               "minimum": 0

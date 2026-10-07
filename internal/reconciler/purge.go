@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -86,6 +87,29 @@ type purgeOptions struct {
 	// reported and hold the project back: both exist only on production, so
 	// they are switched on after a test there.
 	dnsAndObjects bool
+	// skip names stages that are passed over: what is in them stays behind.
+	skip []string
+}
+
+// PurgeStages are the stages of emptying a project, in the order they run —
+// what builds on other things goes first: a cluster owns a stack, a stack
+// owns servers and load balancers, a load balancer holds a port. The names
+// are what RECONCILER_PURGE_SKIP_STAGES takes.
+var PurgeStages = []string{
+	"clusters", "stacks", "leases", "load-balancers", "floating-ips", "servers",
+	"backups", "snapshots", "volumes", "images", "dns-zones", "object-storage",
+	"secret-containers", "secrets", "routers", "ports", "networks", "security-groups",
+}
+
+// ValidatePurgeSkipStages refuses a stage name it does not know — loudly at
+// startup, rather than by quietly skipping nothing.
+func ValidatePurgeSkipStages(names []string) error {
+	for _, n := range names {
+		if !slices.Contains(PurgeStages, n) {
+			return fmt.Errorf("RECONCILER_PURGE_SKIP_STAGES: unknown stage %q, known are %s", n, strings.Join(PurgeStages, ", "))
+		}
+	}
+	return nil
 }
 
 // purgeResult counts what one pass of emptying a project did.
@@ -132,7 +156,7 @@ func (r *Reconciler) purgeRetiredProject(ctx context.Context, osProject osclient
 	log := r.log.With("node_id", leaf.ID, "os_project_id", osProject.ID)
 	open := func(id string) (projectSession, error) { return r.osClient.OpenProjectSession(id) }
 	out := purgeProject(r.osClient, open, osProject, scopeParentID,
-		purgeOptions{dryRun: r.cfg.DryRun, dnsAndObjects: r.cfg.PurgeDNSAndObjectStorage}, log)
+		purgeOptions{dryRun: r.cfg.DryRun, dnsAndObjects: r.cfg.PurgeDNSAndObjectStorage, skip: r.cfg.PurgeSkipStages}, log)
 	res.resourcesPurged += out.removed
 	if !out.deleted {
 		if out.stage != "refused" && !r.cfg.DryRun {
@@ -204,44 +228,46 @@ func purgeProject(c purgeClient, open func(string) (projectSession, error), proj
 	}
 
 	// One stage per pass at most; each returns false while it still has work.
-	// What builds on other things goes first: a cluster owns a stack, a stack
-	// owns servers and load balancers, a load balancer holds a port.
-	stages := []struct {
-		name string
-		run  func() bool
-	}{
-		{"clusters", scoped("cluster", func() ([]osclient.Resource, error) { return s.ListClusters() },
-			func(r osclient.Resource) error { return s.DeleteCluster(r.ID) })},
-		{"stacks", scoped("stack", func() ([]osclient.Resource, error) { return s.ListStacks() },
-			func(r osclient.Resource) error { return s.DeleteStack(r.Name, r.ID) })},
-		{"leases", scoped("lease", func() ([]osclient.Resource, error) { return s.ListLeases() },
-			func(r osclient.Resource) error { return s.DeleteLease(r.ID) })},
-		{"load balancers", scoped("load balancer", func() ([]osclient.Resource, error) { return s.ListLoadBalancers() },
-			func(r osclient.Resource) error { return s.DeleteLoadBalancer(r.ID) })},
-		{"floating IPs", p.floatingIPs},
-		{"servers", p.servers},
-		{"backups", p.simple("backup", c.ListProjectBackups, c.DeleteBackup)},
-		{"snapshots", p.simple("snapshot", c.ListProjectSnapshots, c.DeleteSnapshot)},
-		{"volumes", p.simple("volume", c.ListProjectVolumes, c.DeleteVolume)},
-		{"images", p.simple("image", c.ListProjectImages, c.DeleteImage)},
-		{"DNS zones", reportOnly("DNS zone", func() bool { return s.HasDNS() }, func() ([]osclient.Resource, error) { return s.ListZones() },
+	stages := map[string]func() bool{
+		"clusters": scoped("cluster", func() ([]osclient.Resource, error) { return s.ListClusters() },
+			func(r osclient.Resource) error { return s.DeleteCluster(r.ID) }),
+		"stacks": scoped("stack", func() ([]osclient.Resource, error) { return s.ListStacks() },
+			func(r osclient.Resource) error { return s.DeleteStack(r.Name, r.ID) }),
+		"leases": scoped("lease", func() ([]osclient.Resource, error) { return s.ListLeases() },
+			func(r osclient.Resource) error { return s.DeleteLease(r.ID) }),
+		"load-balancers": scoped("load balancer", func() ([]osclient.Resource, error) { return s.ListLoadBalancers() },
+			func(r osclient.Resource) error { return s.DeleteLoadBalancer(r.ID) }),
+		"floating-ips": p.floatingIPs,
+		"servers":      p.servers,
+		"backups":      p.simple("backup", c.ListProjectBackups, c.DeleteBackup),
+		"snapshots":    p.simple("snapshot", c.ListProjectSnapshots, c.DeleteSnapshot),
+		"volumes":      p.simple("volume", c.ListProjectVolumes, c.DeleteVolume),
+		"images":       p.simple("image", c.ListProjectImages, c.DeleteImage),
+		"dns-zones": reportOnly("DNS zone", func() bool { return s.HasDNS() }, func() ([]osclient.Resource, error) { return s.ListZones() },
 			scoped("DNS zone", func() ([]osclient.Resource, error) { return s.ListZones() },
-				func(r osclient.Resource) error { return s.DeleteZone(r.ID) }))},
-		{"object storage", reportOnly("object storage container", func() bool { return s.HasObjectStorage() },
-			func() ([]osclient.Resource, error) { return s.ListBuckets() }, func() bool { return p.buckets(s) })},
-		{"secret containers", scoped("secret container", func() ([]osclient.Resource, error) { return s.ListSecretContainers() },
-			func(r osclient.Resource) error { return s.DeleteSecretContainer(r.ID) })},
-		{"secrets", scoped("secret", func() ([]osclient.Resource, error) { return s.ListSecrets() },
-			func(r osclient.Resource) error { return s.DeleteSecret(r.ID) })},
-		{"routers", p.routers},
-		{"ports", p.ports},
-		{"networks", p.simple("network", c.ListProjectNetworks, c.DeleteNetwork)},
-		{"security groups", p.securityGroups},
+				func(r osclient.Resource) error { return s.DeleteZone(r.ID) })),
+		"object-storage": reportOnly("object storage container", func() bool { return s.HasObjectStorage() },
+			func() ([]osclient.Resource, error) { return s.ListBuckets() }, func() bool { return p.buckets(s) }),
+		"secret-containers": scoped("secret container", func() ([]osclient.Resource, error) { return s.ListSecretContainers() },
+			func(r osclient.Resource) error { return s.DeleteSecretContainer(r.ID) }),
+		"secrets": scoped("secret", func() ([]osclient.Resource, error) { return s.ListSecrets() },
+			func(r osclient.Resource) error { return s.DeleteSecret(r.ID) }),
+		"routers":         p.routers,
+		"ports":           p.ports,
+		"networks":        p.simple("network", c.ListProjectNetworks, c.DeleteNetwork),
+		"security-groups": p.securityGroups,
 	}
-	for _, st := range stages {
-		if !st.run() {
-			log.Infow("Purge: waiting for a stage to empty", "stage", st.name, "removed", p.removed, "dry_run", o.dryRun)
-			return purgeResult{stage: st.name, removed: p.removed}
+	for _, name := range PurgeStages {
+		// A stage whose service is broken for good would hold every project
+		// back; skipped, the project is deleted and whatever the stage would
+		// have removed stays behind without an owner.
+		if slices.Contains(o.skip, name) {
+			log.Warnw("Purge: stage skipped (RECONCILER_PURGE_SKIP_STAGES), anything in it stays behind", "stage", name)
+			continue
+		}
+		if !stages[name]() {
+			log.Infow("Purge: waiting for a stage to empty", "stage", name, "removed", p.removed, "dry_run", o.dryRun)
+			return purgeResult{stage: name, removed: p.removed}
 		}
 	}
 	if o.dryRun {

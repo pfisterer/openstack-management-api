@@ -85,12 +85,17 @@ type fakeSession struct {
 	hasObjects bool
 	deleted    *[]string
 	unemptied  []string
+	// down names kinds whose service answers every listing with an error.
+	down map[string]bool
 }
 
 func newFakeSession(deleted *[]string) *fakeSession {
 	return &fakeSession{res: map[string][]osclient.Resource{}, objects: map[string]int{}, deleted: deleted}
 }
 func (s *fakeSession) list(kind string) ([]osclient.Resource, error) {
+	if s.down[kind] {
+		return nil, errors.New("Bad Gateway")
+	}
 	return slices.Clone(s.res[kind]), nil
 }
 func (s *fakeSession) remove(kind, id string) error {
@@ -293,6 +298,47 @@ func TestPurge_DryRunTouchesNothing(t *testing.T) {
 	}
 	if len(f.deleted) != 0 || f.project {
 		t.Errorf("dry run deleted %v", f.deleted)
+	}
+}
+
+// A stage whose service is down holds the project back; skipped, the project
+// is deleted and the stage's resources are left alone.
+func TestPurge_SkippedStage(t *testing.T) {
+	f := fullProject()
+	f.session.res["stack"] = []osclient.Resource{{ID: "st", ProjectID: pid}}
+	f.session.down = map[string]bool{"stack": true}
+	if purgePasses(t, f, 20) != 0 {
+		t.Fatal("project deleted although its stacks could not be listed")
+	}
+	if len(f.deleted) != 0 {
+		t.Errorf("later stages ran behind the broken one: %v", f.deleted)
+	}
+	for pass := 1; ; pass++ {
+		if purge(f, purgeOptions{skip: []string{"stacks"}}).deleted {
+			break
+		}
+		if pass == 20 {
+			t.Fatalf("project never deleted with stacks skipped; deleted so far: %v", f.deleted)
+		}
+	}
+	if len(f.session.res["stack"]) != 1 {
+		t.Error("a skipped stage deleted something")
+	}
+}
+
+func TestValidatePurgeSkipStages(t *testing.T) {
+	if err := ValidatePurgeSkipStages([]string{"stacks", "dns-zones"}); err != nil {
+		t.Errorf("known stages refused: %v", err)
+	}
+	if err := ValidatePurgeSkipStages([]string{"stack"}); err == nil {
+		t.Error("unknown stage accepted")
+	}
+}
+
+// Every stage name has a stage behind it; a missing one would panic mid-purge.
+func TestPurge_EveryStageRuns(t *testing.T) {
+	if out := purge(newFakeCloud(), purgeOptions{dryRun: true}); out.stage != "project" {
+		t.Errorf("an empty project stopped at %q", out.stage)
 	}
 }
 

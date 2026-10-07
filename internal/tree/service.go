@@ -1109,9 +1109,9 @@ func (s *Service) validateKnownResources(q common.ProjectQuota) error {
 
 // bindingBudget returns the budget whose limit applies at n: n itself, or,
 // where n inherits its limit (Node.InheritsLimit), the nearest budget above it
-// with one of its own. Checks that compare against "the parent's limit" use
-// it; a budget that inherits stores no limit, so reading its own would read
-// zero everywhere and refuse everything.
+// with one of its own. A budget that inherits stores no limit, so reading its
+// own would read zero everywhere. The checks have the chain in hand and use
+// bindingInChain; this is for showing a single node.
 func (s *Service) bindingBudget(ctx context.Context, n *Node) (*Node, error) {
 	if !n.InheritsLimit {
 		return n, nil
@@ -1206,6 +1206,104 @@ func (s *Service) validateLeafAvailabilities(parent *Node, limit common.ProjectQ
 		return fmt.Errorf("%q is not available in budget %q — it has to be delegated to that budget first", r.ID, nodeLabel(*parent))
 	}
 	return nil
+}
+
+// checkBudgetLimit checks limit as the new limit of budget n against the
+// chain above it, nearest first: a valid limit, and no more than the budget
+// whose limit applies there. inForce says the limit replaces one that budgets
+// and projects below already rely on — then it may neither withdraw an
+// availability somebody below still holds nor fall below what is in use.
+// Every path that sets a budget's limit comes through here.
+func (s *Service) checkBudgetLimit(ctx context.Context, n Node, chain []Node, limit common.ProjectQuota, inForce bool) error {
+	if err := s.validateBudgetLimit(limit); err != nil {
+		return err
+	}
+	if b := bindingInChain(chain); b != nil {
+		if err := s.validateChildBudgetLimit(b, limit); err != nil {
+			return err
+		}
+	}
+	if !inForce {
+		return nil
+	}
+	if err := s.checkAvailabilityWithdrawal(ctx, n, limit); err != nil {
+		return err
+	}
+	probe := n
+	probe.Limit = limit
+	subtreeUsage, err := s.loadSubtreeUsage(ctx, []Node{probe})
+	if err != nil {
+		return fmt.Errorf("compute subtree usage for limit check: %w", err)
+	}
+	inUse := subtreeUsage[n.ID].Total(s.countIDs)
+	for _, id := range s.countIDs {
+		if limit[id] != common.UnlimitedQuota && inUse[id] > limit[id] {
+			return fmt.Errorf("new limit for %q (%d) is below current active usage (%d)", id, limit[id], inUse[id])
+		}
+	}
+	return nil
+}
+
+// checkLeafLimit checks limit as the limit of a project placed under chain,
+// nearest first: a valid limit, every availability in it held by the budget
+// whose limit applies there, and nothing in it that the project also draws
+// from a budget further up. commit says the limit is being granted: then
+// every budget in the chain must have room for it, subtract being what the
+// project holds there already. A request that only waits for a decision
+// commits nothing, so capacity is checked when it is decided. Every path that
+// sets a project's limit comes through here.
+func (s *Service) checkLeafLimit(ctx context.Context, project Node, chain []Node, limit, subtract common.ProjectQuota, commit bool) error {
+	if err := s.validateLeafLimit(limit); err != nil {
+		return err
+	}
+	if b := bindingInChain(chain); b != nil {
+		if err := s.validateLeafAvailabilities(b, limit); err != nil {
+			return err
+		}
+	}
+	if err := s.checkOwnLimitAgainstAllocations(project, limit); err != nil {
+		return err
+	}
+	if commit {
+		return s.checkCapacity(ctx, chain, limit, subtract)
+	}
+	return nil
+}
+
+// loadTarget loads the budget a node is to be moved under — by a move or the
+// promotion of an import — and checks that the caller may take the node away
+// from where it is and put it there. Returns the target and its chain,
+// nearest first.
+func (s *Service) loadTarget(ctx context.Context, userTokens common.TokenList, current *Node, targetID string) (*Node, []Node, error) {
+	target, err := s.store.GetNode(ctx, targetID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load new parent: %w", err)
+	}
+	if target == nil {
+		return nil, nil, fmt.Errorf("new parent %w", common.ErrNotFound)
+	}
+	if target.Kind != KindBudget || target.Status != StatusApproved {
+		return nil, nil, fmt.Errorf("the new parent must be an approved budget")
+	}
+	// A wrong target is a wrong request, not a missing right.
+	if target.ID == UnassignedNodeID {
+		return nil, nil, fmt.Errorf("nodes cannot be moved into the unassigned collection")
+	}
+	chain, err := s.nodeChain(ctx, target.ID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if manages, err := s.managesParentChain(ctx, userTokens, current); err != nil {
+		return nil, nil, err
+	} else if !manages {
+		return nil, nil, common.ErrForbidden
+	}
+	if manages, err := s.managesNode(ctx, userTokens, target); err != nil {
+		return nil, nil, err
+	} else if !manages {
+		return nil, nil, common.ErrForbidden
+	}
+	return target, chain, nil
 }
 
 // validateAutoApprove checks the per-requester limit of an auto-approve policy.

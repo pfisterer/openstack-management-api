@@ -408,14 +408,12 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 	if !isManager && !isEligibleRequester(userTokens, parent) {
 		return Node{}, common.ErrForbidden
 	}
-	// A budget that inherits has no limit of its own; the one whose limit
-	// applies is further up.
-	binding, err := s.bindingBudget(ctx, parent)
+	parentChain, err := s.nodeChain(ctx, parent.ID)
 	if err != nil {
 		return Node{}, err
 	}
 	if req.Kind == KindProject {
-		if err := s.validateLeafAvailabilities(binding, req.Limit); err != nil {
+		if err := s.checkLeafLimit(ctx, Node{}, parentChain, req.Limit, nil, false); err != nil {
 			return Node{}, err
 		}
 	}
@@ -437,10 +435,6 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 	// Nothing outlives the budget it draws from, and a project runs no longer
 	// than the budgets above allow: no end asked means the latest allowed, a
 	// later one is refused. A sub-budget inherits the term cap the same way.
-	parentChain, err := s.nodeChain(ctx, parent.ID)
-	if err != nil {
-		return Node{}, err
-	}
 	var terminationDate *string
 	var maxTerm *int
 	if req.Kind == KindProject {
@@ -506,7 +500,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 				return Node{}, err
 			}
 		} else if !node.InheritsLimit {
-			if err := s.validateChildBudgetLimit(binding, node.Limit); err != nil {
+			if err := s.checkBudgetLimit(ctx, node, parentChain, node.Limit, false); err != nil {
 				return Node{}, err
 			}
 		}
@@ -661,7 +655,7 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, user
 		updated.AutoApprove = req.AutoApprove
 	}
 	var chain []Node
-	if req.ClearTerminationDate || req.TerminationDate != nil || req.ClearMaxProjectTermDays || req.MaxProjectTermDays != nil {
+	if wantsCapacityEdit || req.ClearMaxProjectTermDays || req.MaxProjectTermDays != nil {
 		if chain, err = s.parentChainNodes(ctx, current); err != nil {
 			return Node{}, err
 		}
@@ -703,18 +697,7 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, user
 	// hand. Switched on, the budget's own limit is dropped: the one above
 	// already bounds everything below it. Switched off, it keeps the limit it
 	// had inherited unless given another, which goes through the usual checks.
-	var binding *Node
-	if current.ParentID != nil {
-		parent, err := s.store.GetNode(ctx, *current.ParentID)
-		if err != nil {
-			return Node{}, fmt.Errorf("load parent for limit check: %w", err)
-		}
-		if parent != nil {
-			if binding, err = s.bindingBudget(ctx, parent); err != nil {
-				return Node{}, err
-			}
-		}
-	}
+	binding := bindingInChain(chain)
 	inherits := current.InheritsLimit
 	if req.InheritsLimit != nil {
 		inherits = *req.InheritsLimit
@@ -736,36 +719,12 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, user
 	updated.InheritsLimit = inherits
 
 	if req.Limit != nil {
-		if err := s.validateBudgetLimit(*req.Limit); err != nil {
+		if err := s.checkBudgetLimit(ctx, *current, chain, *req.Limit, true); err != nil {
 			return Node{}, err
-		}
-		if binding != nil {
-			if err := s.validateChildBudgetLimit(binding, *req.Limit); err != nil {
-				return Node{}, err
-			}
 		}
 		historyEntry.LimitFrom = &current.Limit
 		historyEntry.LimitTo = req.Limit
 		updated.Limit = *req.Limit
-
-		// The same question for availabilities: they cannot fall below a usage,
-		// but they can be taken away from descendants that still hold them.
-		if err := s.checkAvailabilityWithdrawal(ctx, *current, updated.Limit); err != nil {
-			return Node{}, err
-		}
-
-		// A reduction must not fall below the subtree's current active usage.
-		subtreeUsage, err := s.loadSubtreeUsage(ctx, []Node{updated})
-		if err != nil {
-			return Node{}, fmt.Errorf("compute current usage for limit check: %w", err)
-		}
-		activeUsage := subtreeUsage[updated.ID].Total(s.countIDs)
-		for _, resourceID := range s.countIDs {
-			newCap := updated.Limit[resourceID]
-			if newCap != common.UnlimitedQuota && activeUsage[resourceID] > newCap {
-				return Node{}, fmt.Errorf("new limit for %q (%d) is below current active usage (%d)", resourceID, newCap, activeUsage[resourceID])
-			}
-		}
 	}
 
 	updated.History = append(slices.Clone(current.History), historyEntry)
@@ -846,20 +805,19 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor Actor, u
 		return Node{}, common.ErrForbidden
 	}
 
-	// The budget a leaf draws from: it bounds a new limit, and its policy
-	// decides whether the change needs anybody's approval.
+	// The budgets above: they bound a new limit and end, and the policy of
+	// the one a leaf draws from decides whether the change needs anybody's
+	// approval.
+	chain, err := s.parentChainNodes(ctx, current)
+	if err != nil {
+		return Node{}, err
+	}
 	var parent *Node
-	if current.IsLeaf() && current.ParentID != nil {
-		if parent, err = s.store.GetNode(ctx, *current.ParentID); err != nil {
-			return Node{}, fmt.Errorf("load parent node: %w", err)
-		}
+	if current.IsLeaf() && len(chain) > 0 {
+		parent = &chain[0]
 	}
 
 	if req.TerminationDate != nil {
-		chain, err := s.parentChainNodes(ctx, current)
-		if err != nil {
-			return Node{}, err
-		}
 		if current.IsLeaf() {
 			_, err = fitProjectEnd(req.TerminationDate, chain, time.Now())
 		} else {
@@ -873,24 +831,17 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor Actor, u
 	if req.Limit != nil && current.InheritsLimit {
 		return Node{}, fmt.Errorf("the limit of this budget is inherited from the budget above")
 	}
+	// What is asked for is checked as far as asking goes; room for it is
+	// the decision's business (leafChangeDecision, or a manager).
 	if req.Limit != nil {
-		var validationErr error
+		var err error
 		if current.IsLeaf() {
-			validationErr = s.validateLeafLimit(*req.Limit)
-			if validationErr == nil && parent != nil {
-				var binding *Node
-				if binding, validationErr = s.bindingBudget(ctx, parent); validationErr == nil {
-					validationErr = s.validateLeafAvailabilities(binding, *req.Limit)
-				}
-			}
-			if validationErr == nil {
-				validationErr = s.checkOwnLimitAgainstAllocations(*current, *req.Limit)
-			}
+			err = s.checkLeafLimit(ctx, *current, chain, *req.Limit, nil, false)
 		} else {
-			validationErr = s.validateBudgetLimit(*req.Limit)
+			err = s.validateBudgetLimit(*req.Limit)
 		}
-		if validationErr != nil {
-			return Node{}, validationErr
+		if err != nil {
+			return Node{}, err
 		}
 	}
 
@@ -1089,15 +1040,6 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor Actor, us
 		finalLimit = *current.Pending.Limit
 	}
 	if req.ModifiedLimit != nil {
-		var validationErr error
-		if current.IsLeaf() {
-			validationErr = s.validateLeafLimit(*req.ModifiedLimit)
-		} else {
-			validationErr = s.validateBudgetLimit(*req.ModifiedLimit)
-		}
-		if validationErr != nil {
-			return Node{}, validationErr
-		}
 		finalLimit = *req.ModifiedLimit
 	}
 
@@ -1126,50 +1068,20 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor Actor, us
 		finalTerminationDate = bound
 	}
 
+	// A change_pending node's current limit is in force: a leaf's is already
+	// charged and is replaced, a budget's is what everything below relies on.
+	inForce := current.Status == StatusChangePending
 	if current.IsLeaf() {
-		// Capacity: a change_pending leaf's CURRENT limit is already committed and
-		// must be subtracted before adding the final limit.
 		var subtract common.ProjectQuota
-		if current.Status == StatusChangePending {
+		if inForce {
 			subtract = current.Limit
 		}
-		if err := s.checkCapacity(ctx, ancestors, finalLimit, subtract); err != nil {
+		if err := s.checkLeafLimit(ctx, *current, ancestors, finalLimit, subtract, true); err != nil {
 			return Node{}, err
 		}
-		if b := bindingInChain(ancestors); b != nil {
-			if err := s.validateLeafAvailabilities(b, finalLimit); err != nil {
-				return Node{}, err
-			}
-		}
-		if err := s.checkOwnLimitAgainstAllocations(*current, finalLimit); err != nil {
+	} else if !current.InheritsLimit {
+		if err := s.checkBudgetLimit(ctx, *current, ancestors, finalLimit, inForce); err != nil {
 			return Node{}, err
-		}
-	} else {
-		if b := bindingInChain(ancestors); b != nil && !current.InheritsLimit {
-			if err := s.validateChildBudgetLimit(b, finalLimit); err != nil {
-				return Node{}, err
-			}
-		}
-		// A budget shrinking below its subtree's active usage would strand
-		// already-approved leaves.
-		if current.Status == StatusChangePending {
-			if err := s.checkAvailabilityWithdrawal(ctx, *current, finalLimit); err != nil {
-				return Node{}, err
-			}
-
-			probe := *current
-			probe.Limit = finalLimit
-			subtreeUsage, err := s.loadSubtreeUsage(ctx, []Node{probe})
-			if err != nil {
-				return Node{}, fmt.Errorf("compute subtree usage for limit check: %w", err)
-			}
-			activeUsage := subtreeUsage[probe.ID].Total(s.countIDs)
-			for _, resourceID := range s.countIDs {
-				newCap := finalLimit[resourceID]
-				if newCap != common.UnlimitedQuota && activeUsage[resourceID] > newCap {
-					return Node{}, fmt.Errorf("new limit for %q (%d) is below current active usage (%d)", resourceID, newCap, activeUsage[resourceID])
-				}
-			}
 		}
 	}
 
@@ -1406,41 +1318,15 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor Actor, 
 		return Node{}, fmt.Errorf("%w: node is already under this parent", common.ErrConflict)
 	}
 
-	newParent, err := s.store.GetNode(ctx, req.NewParentID)
-	if err != nil {
-		return Node{}, fmt.Errorf("load new parent: %w", err)
-	}
-	if newParent == nil {
-		return Node{}, fmt.Errorf("new parent %w", common.ErrNotFound)
-	}
-	if newParent.Kind != KindBudget || newParent.Status != StatusApproved {
-		return Node{}, fmt.Errorf("new parent must be an approved budget")
-	}
-	if newParent.ID == UnassignedNodeID {
-		return Node{}, fmt.Errorf("nodes cannot be moved into the unassigned collection: %w", common.ErrForbidden)
-	}
-
-	// Cycle guard: the new parent must not lie inside the node's own subtree.
-	newParentChain, err := s.nodeChain(ctx, newParent.ID)
+	newParent, newParentChain, err := s.loadTarget(ctx, userTokens, current, req.NewParentID)
 	if err != nil {
 		return Node{}, err
 	}
+	// Cycle guard: the new parent must not lie inside the node's own subtree.
 	for _, ancestor := range newParentChain {
 		if ancestor.ID == current.ID {
 			return Node{}, fmt.Errorf("cannot move a node into its own subtree")
 		}
-	}
-
-	// Authorization on both sides.
-	if manages, err := s.managesParentChain(ctx, userTokens, current); err != nil {
-		return Node{}, err
-	} else if !manages {
-		return Node{}, common.ErrForbidden
-	}
-	if manages, err := s.managesNode(ctx, userTokens, newParent); err != nil {
-		return Node{}, err
-	} else if !manages {
-		return Node{}, common.ErrForbidden
 	}
 
 	// Capacity / limit invariants against the new chain for nodes that carry
@@ -1454,11 +1340,13 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor Actor, 
 			if current.Status == StatusArchived {
 				need, _ = s.leafCost(*current)
 			}
+			// What it costs is charged; a retired project's limit is no
+			// longer granted, so only an active one is checked against it.
 			if err := s.checkCapacity(ctx, newParentChain, need, nil); err != nil {
 				return Node{}, err
 			}
 			if current.Status == StatusApproved || current.Status == StatusChangePending {
-				if err := s.validateLeafAvailabilities(bindingInChain(newParentChain), current.Limit); err != nil {
+				if err := s.checkLeafLimit(ctx, *current, newParentChain, current.Limit, nil, false); err != nil {
 					return Node{}, err
 				}
 			}
@@ -1466,7 +1354,7 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor Actor, 
 			// One that inherits has no limit to fit; what is used below it
 			// is checked next.
 			if !current.InheritsLimit {
-				if err := s.validateChildBudgetLimit(bindingInChain(newParentChain), current.Limit); err != nil {
+				if err := s.checkBudgetLimit(ctx, *current, newParentChain, current.Limit, false); err != nil {
 					return Node{}, err
 				}
 			}
@@ -1606,27 +1494,9 @@ func (s *Service) PromoteNode(id string, req PromoteNodeRequest, actor Actor, us
 		return Node{}, fmt.Errorf("only imported nodes can be promoted: %w", common.ErrForbidden)
 	}
 
-	newParent, err := s.store.GetNode(ctx, req.NewParentID)
+	newParent, newParentChain, err := s.loadTarget(ctx, userTokens, current, req.NewParentID)
 	if err != nil {
-		return Node{}, fmt.Errorf("load new parent: %w", err)
-	}
-	if newParent == nil {
-		return Node{}, fmt.Errorf("new parent %w", common.ErrNotFound)
-	}
-	if newParent.Kind != KindBudget || newParent.Status != StatusApproved || newParent.ID == UnassignedNodeID {
-		return Node{}, fmt.Errorf("promotion target must be an approved budget")
-	}
-
-	// Both sides: the imported node's chain (unassigned → root) and the target.
-	if manages, err := s.managesParentChain(ctx, userTokens, current); err != nil {
 		return Node{}, err
-	} else if !manages {
-		return Node{}, common.ErrForbidden
-	}
-	if manages, err := s.managesNode(ctx, userTokens, newParent); err != nil {
-		return Node{}, err
-	} else if !manages {
-		return Node{}, common.ErrForbidden
 	}
 
 	owner, err := normalizeOwnerToken(req.Owner)
@@ -1636,19 +1506,12 @@ func (s *Service) PromoteNode(id string, req PromoteNodeRequest, actor Actor, us
 
 	effectiveLimit := current.Limit
 	if len(req.Limit) > 0 {
-		if err := s.validateLeafLimit(req.Limit); err != nil {
-			return Node{}, err
-		}
 		effectiveLimit = req.Limit
 	}
 
-	// Early capacity check against the target chain for a better UX; the final,
-	// authoritative check runs again at approval time.
-	newParentChain, err := s.nodeChain(ctx, newParent.ID)
-	if err != nil {
-		return Node{}, err
-	}
-	if err := s.checkCapacity(ctx, newParentChain, effectiveLimit, nil); err != nil {
+	// Checked early, as if granted, so a promotion that cannot be approved
+	// fails here; the authoritative check runs again at approval time.
+	if err := s.checkLeafLimit(ctx, *current, newParentChain, effectiveLimit, nil, true); err != nil {
 		return Node{}, err
 	}
 	terminationDate, err := fitProjectEnd(req.TerminationDate, newParentChain, time.Now())

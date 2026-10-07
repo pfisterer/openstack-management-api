@@ -157,6 +157,10 @@ type ReconcilerConfiguration struct {
 	// UsageBackfillDays is how far back the first collection reaches into
 	// Nova's records. Default: 365.
 	UsageBackfillDays int `json:"usage_backfill_days"`
+	// UsagePublicNetworks are the networks whose addresses count as public
+	// IPv4 in the usage history besides floating IPs — networks VMs attach to
+	// directly.
+	UsagePublicNetworks []string `json:"usage_public_networks"`
 }
 
 type WebServerConfig struct {
@@ -345,6 +349,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			StatusTagPrefix:          envconf.String("RECONCILER_STATUS_TAG_PREFIX", "status:"),
 			UsageEnabled:             envconf.Bool("RECONCILER_USAGE_ENABLED", true),
 			UsageBackfillDays:        envconf.Int("RECONCILER_USAGE_BACKFILL_DAYS", 365),
+			UsagePublicNetworks:      envconf.StringSlice("RECONCILER_USAGE_PUBLIC_NETWORKS", nil),
 		},
 		RoleProvider: RoleProviderConfig{
 			Type:     envconf.String("ROLE_PROVIDER", "mock"),

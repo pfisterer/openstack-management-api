@@ -2,9 +2,12 @@ package osclient
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gophercloud/gophercloud/openstack/compute/v2/extensions/usage"
+	"github.com/gophercloud/gophercloud/openstack/networking/v2/extensions/layer3/floatingips"
+	"github.com/gophercloud/gophercloud/openstack/networking/v2/ports"
 	"github.com/gophercloud/gophercloud/pagination"
 )
 
@@ -46,4 +49,49 @@ func (c *OpenStackClient) TenantUsages(start, end time.Time) ([]TenantUsage, err
 		return nil, fmt.Errorf("compute usage %s – %s: %w", start.Format(time.DateOnly), end.Format(time.DateOnly), err)
 	}
 	return out, nil
+}
+
+// PublicIPv4ByProject counts, per project, the public IPv4 addresses held right
+// now: its floating IPs, and its fixed IPv4 addresses on the given public
+// networks — a VM attached to one directly, a router's gateway. A floating IP's
+// own port on the external network is not counted again, and DHCP ports belong
+// to the network, not to a project's use of it.
+func (c *OpenStackClient) PublicIPv4ByProject(publicNetworks []string) (map[string]int, error) {
+	counts := map[string]int{}
+	err := floatingips.List(c.networkSvc(), floatingips.ListOpts{}).EachPage(func(page pagination.Page) (bool, error) {
+		list, err := floatingips.ExtractFloatingIPs(page)
+		if err != nil {
+			return false, err
+		}
+		for _, f := range list {
+			counts[firstNonEmpty(f.ProjectID, f.TenantID)]++
+		}
+		return true, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list floating IPs: %w", err)
+	}
+	for _, network := range publicNetworks {
+		err := ports.List(c.networkSvc(), ports.ListOpts{NetworkID: network}).EachPage(func(page pagination.Page) (bool, error) {
+			list, err := ports.ExtractPorts(page)
+			if err != nil {
+				return false, err
+			}
+			for _, p := range list {
+				if p.DeviceOwner == "network:floatingip" || p.DeviceOwner == "network:dhcp" {
+					continue
+				}
+				for _, ip := range p.FixedIPs {
+					if strings.Contains(ip.IPAddress, ".") {
+						counts[firstNonEmpty(p.ProjectID, p.TenantID)]++
+					}
+				}
+			}
+			return true, nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("list ports on %s: %w", network, err)
+		}
+	}
+	return counts, nil
 }

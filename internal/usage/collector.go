@@ -15,6 +15,8 @@ import (
 // Source is where the used amounts come from: Nova's accounting per project.
 type Source interface {
 	TenantUsages(start, end time.Time) ([]osclient.TenantUsage, error)
+	// PublicIPv4ByProject counts each project's public IPv4 addresses now.
+	PublicIPv4ByProject(publicNetworks []string) (map[string]int, error)
 }
 
 // Nodes is the tree, read-only.
@@ -39,7 +41,10 @@ type Collector struct {
 	// MaxDaysPerRun bounds one call, so a long backfill is spread over passes
 	// instead of holding one up.
 	MaxDaysPerRun int
-	now           func() time.Time
+	// PublicNetworks are the networks whose addresses count as public IPv4
+	// besides floating IPs — a network VMs attach to directly.
+	PublicNetworks []string
+	now            func() time.Time
 }
 
 func NewCollector(store Store, nodes Nodes, source Source, catalog []common.ManagedProject, log *zap.SugaredLogger) *Collector {
@@ -97,6 +102,16 @@ func (c *Collector) CollectDay(ctx context.Context, day time.Time) error {
 	// it was on the day.
 	backfilled := day.Before(dayOf(now).AddDate(0, 0, -1))
 	storageID := c.resourceFor("gigabytes")
+	// Addresses are a sample of now, like storage: only for yesterday is that
+	// the day being collected. A failed count leaves the day unmeasured rather
+	// than failing it.
+	var ipv4 map[string]int
+	if !backfilled {
+		if ipv4, err = c.source.PublicIPv4ByProject(c.PublicNetworks); err != nil {
+			c.log.Warnw("Usage: could not count public IPv4 addresses, the day goes without", "error", err)
+			ipv4 = nil
+		}
+	}
 
 	var rows []Day
 	for _, n := range all {
@@ -125,6 +140,10 @@ func (c *Collector) CollectDay(ctx context.Context, day time.Time) error {
 		}
 		if !backfilled && storageID != "" {
 			row.StorageGB = float64(n.OSInUse[storageID])
+		}
+		if ipv4 != nil {
+			v := ipv4[n.OSProjectID]
+			row.PublicIPv4 = &v
 		}
 		rows = append(rows, row)
 	}

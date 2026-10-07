@@ -355,6 +355,10 @@
               "type": "integer",
               "minimum": 0
             },
+            "usagePublicNetworks": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
             "pendingDeletionTagPrefix": {
               "type": "string"
             },

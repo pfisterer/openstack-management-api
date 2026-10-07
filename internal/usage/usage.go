@@ -51,6 +51,12 @@ type Day struct {
 	// StorageGB is the volume storage in use when the day was collected — a
 	// daily sample, since Cinder keeps no such books. Zero on backfilled days.
 	StorageGB float64
+	// PublicIPv4 is the number of public IPv4 addresses the project held when
+	// the day was collected — floating IPs and addresses on public networks,
+	// a daily sample like StorageGB. nil where nothing was measured: backfilled
+	// days, a failed count, a deployment that names no public networks and
+	// has no floating IPs to count.
+	PublicIPv4 *int
 
 	// Reserved is what the project held that day: its own limit plus its
 	// allocations, quantities only.

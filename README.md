@@ -170,6 +170,7 @@ matters when a sourced `openrc` is in the same shell.
 | `RECONCILER_MANAGED_PROJECT_TAG`, `RECONCILER_RESOURCE_ID_TAG_PREFIX` | `managed`, `managed-resource-id:` | Ownership tags |
 | `RECONCILER_TERMINATION_TAG_PREFIX`, `RECONCILER_STATUS_TAG_PREFIX` | `termination:`, `status:` | Empty disables the tag |
 | `RECONCILER_USAGE_ENABLED`, `RECONCILER_USAGE_BACKFILL_DAYS` | `true`, `365` | Record each finished day's consumption per project from Nova's accounting (table `project_usage_daily`); the first run reaches this many days back |
+| `RECONCILER_USAGE_PUBLIC_NETWORKS` | _(empty)_ | Comma-separated network IDs whose IPv4 addresses count as public in the usage history, besides floating IPs — networks VMs attach to directly |
 | `RECONCILER_RELEASED_ARCHIVE` | `false` | Archive a released leaf's project: disable it, shelve its servers, release its floating IPs, set the quotas for new servers to zero; marked `archived:<date>` and left alone afterwards |
 | `RECONCILER_RELEASED_DELETE` | `never` | When a released or archived leaf's project is emptied and deleted, and then the leaf: `never`, `on-request` (when someone asks for it), `after-grace` (on request or after the grace days), `immediately` |
 | `RECONCILER_RELEASED_DELETE_GRACE_DAYS` | `30` | Release day plus this is the deletion day in the `pending-deletion:` tag |

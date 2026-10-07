@@ -34,6 +34,10 @@ type Totals struct {
 	// that have one (backfilled days do not).
 	StorageGBDays float64 `json:"storage_gb_days"`
 	SampledDays   int     `json:"sampled_days"`
+	// PublicIPv4Days sums the daily counts of public IPv4 addresses;
+	// IPv4SampledDays counts the days that have one.
+	PublicIPv4Days  float64 `json:"public_ipv4_days"`
+	IPv4SampledDays int     `json:"ipv4_sampled_days"`
 
 	ReservedCoreHours  float64 `json:"reserved_core_hours"`
 	ReservedRAMGBHours float64 `json:"reserved_ram_gb_hours"`
@@ -130,6 +134,10 @@ func (t *Totals) add(d Day, m Mapping) {
 		t.SampledDays++
 		t.ReservedStorageGBDays += float64(d.Reserved[m.Storage])
 	}
+	if d.PublicIPv4 != nil {
+		t.PublicIPv4Days += float64(*d.PublicIPv4)
+		t.IPv4SampledDays++
+	}
 }
 
 func (t *Totals) merge(o Totals) {
@@ -138,6 +146,8 @@ func (t *Totals) merge(o Totals) {
 	t.RAMGBHours += o.RAMGBHours
 	t.StorageGBDays += o.StorageGBDays
 	t.SampledDays += o.SampledDays
+	t.PublicIPv4Days += o.PublicIPv4Days
+	t.IPv4SampledDays += o.IPv4SampledDays
 	t.ReservedCoreHours += o.ReservedCoreHours
 	t.ReservedRAMGBHours += o.ReservedRAMGBHours
 	t.ReservedStorageGBDays += o.ReservedStorageGBDays

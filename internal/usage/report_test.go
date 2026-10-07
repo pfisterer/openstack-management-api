@@ -55,6 +55,19 @@ func TestBuildReport_SumsAndUtilisation(t *testing.T) {
 	}
 }
 
+func TestBuildReport_PublicIPv4(t *testing.T) {
+	two, zero := 2, 0
+	rows := []Day{
+		{Day: day("2026-10-01"), NodeID: "p1", PublicIPv4: &two},
+		{Day: day("2026-10-02"), NodeID: "p1", PublicIPv4: &zero},
+		{Day: day("2026-10-03"), NodeID: "p1"},
+	}
+	r := BuildReport(rows, day("2026-10-01"), day("2026-10-03"), testMapping, nil)
+	if r.PublicIPv4Days != 2 || r.IPv4SampledDays != 2 || r.Projects[0].IPv4SampledDays != 2 {
+		t.Errorf("%v IPv4 days over %d sampled days", r.PublicIPv4Days, r.IPv4SampledDays)
+	}
+}
+
 func TestBuildReport_Value(t *testing.T) {
 	rows := []Day{{Day: day("2026-10-02"), NodeID: "p1", VCPUHours: 10, RAMGBHours: 20, StorageGB: 30}}
 	r := BuildReport(rows, day("2026-10-02"), day("2026-10-02"), testMapping, &Prices{VCPUHour: 1, RAMGBHour: 0.5, StorageGBDay: 0.1})

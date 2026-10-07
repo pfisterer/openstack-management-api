@@ -262,6 +262,9 @@ openstackManagementApi:
     # Record each finished day's consumption per project from Nova.
     usageEnabled: true
     usageBackfillDays: 365
+    # Network IDs whose addresses count as public IPv4 in the usage history,
+    # besides floating IPs: networks VMs attach to directly.
+    usagePublicNetworks: []
     pendingDeletionTagPrefix: "pending-deletion:"
     contactTagPrefix: "contact:"
     # Static quota defaults applied at project creation

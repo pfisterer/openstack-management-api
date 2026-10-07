@@ -2,6 +2,7 @@ package usage
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -21,6 +22,19 @@ var catalog = []common.ManagedProject{
 type fakeSource struct {
 	calls []time.Time
 	usage map[string]osclient.TenantUsage
+	// ipv4 answers PublicIPv4ByProject; ipv4Err makes it fail.
+	ipv4    map[string]int
+	ipv4Err error
+	// ipv4Networks records the networks asked about.
+	ipv4Networks []string
+}
+
+func (f *fakeSource) PublicIPv4ByProject(networks []string) (map[string]int, error) {
+	f.ipv4Networks = networks
+	if f.ipv4Err != nil {
+		return nil, f.ipv4Err
+	}
+	return f.ipv4, nil
 }
 
 func (f *fakeSource) TenantUsages(start, end time.Time) ([]osclient.TenantUsage, error) {
@@ -101,6 +115,40 @@ func TestCollectDay(t *testing.T) {
 	}
 	if idle := rows[0]; idle.VCPUHours != 0 || idle.Reserved["cores"] != 2 {
 		t.Errorf("an idle reservation must still be recorded: %+v", idle)
+	}
+}
+
+// Public IPv4 is a sample of now, like storage: counted for yesterday, a
+// project holding none counts zero, and a failed count leaves the day
+// unmeasured instead of claiming zero.
+func TestCollectDay_PublicIPv4(t *testing.T) {
+	c, store, src := fixture(t)
+	c.PublicNetworks = []string{"net-v4"}
+	src.ipv4 = map[string]int{"os-run": 3}
+	ctx := context.Background()
+	yesterday := time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)
+	_ = c.CollectDay(ctx, yesterday)
+	rows, _ := store.Days(ctx, nil, yesterday, yesterday.AddDate(0, 0, 1))
+	if rows[1].PublicIPv4 == nil || *rows[1].PublicIPv4 != 3 || rows[0].PublicIPv4 == nil || *rows[0].PublicIPv4 != 0 {
+		t.Errorf("counts: run %v, idle %v", rows[1].PublicIPv4, rows[0].PublicIPv4)
+	}
+	if len(src.ipv4Networks) != 1 || src.ipv4Networks[0] != "net-v4" {
+		t.Errorf("asked about %v", src.ipv4Networks)
+	}
+
+	src.ipv4Err = errors.New("neutron down")
+	_ = c.CollectDay(ctx, yesterday)
+	rows, _ = store.Days(ctx, nil, yesterday, yesterday.AddDate(0, 0, 1))
+	if rows[1].PublicIPv4 != nil {
+		t.Errorf("a failed count was stored as %d", *rows[1].PublicIPv4)
+	}
+
+	src.ipv4Err = nil
+	earlier := yesterday.AddDate(0, 0, -5)
+	_ = c.CollectDay(ctx, earlier)
+	rows, _ = store.Days(ctx, nil, earlier, earlier.AddDate(0, 0, 1))
+	if rows[0].PublicIPv4 != nil {
+		t.Error("a backfilled day carries today's addresses")
 	}
 }
 

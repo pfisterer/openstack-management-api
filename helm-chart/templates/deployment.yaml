@@ -228,6 +228,8 @@ spec:
               value: {{ .Values.openstackManagementApi.reconciler.usageEnabled | toString | quote }}
             - name: RECONCILER_USAGE_BACKFILL_DAYS
               value: {{ .Values.openstackManagementApi.reconciler.usageBackfillDays | default 365 | toString | quote }}
+            - name: RECONCILER_USAGE_PUBLIC_NETWORKS
+              value: {{ dig "usagePublicNetworks" (list) .Values.openstackManagementApi.reconciler | join "," | quote }}
             - name: RECONCILER_PENDING_DELETION_TAG_PREFIX
               value: {{ .Values.openstackManagementApi.reconciler.pendingDeletionTagPrefix | quote }}
             - name: RECONCILER_CONTACT_TAG_PREFIX

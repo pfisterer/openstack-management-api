@@ -31,6 +31,7 @@ type dbDay struct {
 	RAMGBHours  float64   `gorm:"column:ram_gb_hours"`
 	DiskGBHours float64   `gorm:"column:disk_gb_hours"`
 	StorageGB   float64   `gorm:"column:storage_gb"`
+	PublicIPv4  *int      `gorm:"column:public_ipv4"`
 	Reserved    []byte    `gorm:"column:reserved;type:jsonb;not null"`
 	Backfilled  bool      `gorm:"column:backfilled"`
 	CollectedAt time.Time `gorm:"column:collected_at"`
@@ -67,7 +68,7 @@ func (s *PostgresStore) ReplaceDay(ctx context.Context, day time.Time, rows []Da
 			Owner: r.Owner, Status: r.Status, BudgetID: r.BudgetID, BudgetPath: path,
 			People: r.People, Groups: r.Groups,
 			ServerHours: r.ServerHours, VCPUHours: r.VCPUHours, RAMGBHours: r.RAMGBHours,
-			DiskGBHours: r.DiskGBHours, StorageGB: r.StorageGB, Reserved: reserved,
+			DiskGBHours: r.DiskGBHours, StorageGB: r.StorageGB, PublicIPv4: r.PublicIPv4, Reserved: reserved,
 			Backfilled: r.Backfilled, CollectedAt: r.CollectedAt,
 		})
 	}
@@ -125,7 +126,7 @@ func (s *PostgresStore) find(q *gorm.DB) ([]Day, error) {
 			Day: dayOf(r.Day), NodeID: r.NodeID, OSProjectID: r.OSProjectID, ProjectName: r.ProjectName,
 			Owner: r.Owner, Status: r.Status, BudgetID: r.BudgetID, People: r.People, Groups: r.Groups,
 			ServerHours: r.ServerHours, VCPUHours: r.VCPUHours, RAMGBHours: r.RAMGBHours,
-			DiskGBHours: r.DiskGBHours, StorageGB: r.StorageGB,
+			DiskGBHours: r.DiskGBHours, StorageGB: r.StorageGB, PublicIPv4: r.PublicIPv4,
 			Backfilled: r.Backfilled, CollectedAt: r.CollectedAt,
 		}
 		_ = json.Unmarshal(r.BudgetPath, &d.BudgetPath)

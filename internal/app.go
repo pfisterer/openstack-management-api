@@ -306,6 +306,7 @@ func RunApplication() {
 			if config.Reconciler.UsageEnabled {
 				collector := usage.NewCollector(usageStore, nodeStore, osClient, config.ProjectDefinitions, logger)
 				collector.BackfillDays = config.Reconciler.UsageBackfillDays
+				collector.PublicNetworks = config.Reconciler.UsagePublicNetworks
 				rec.SetUsageCollector(collector)
 			}
 			return rec, nil

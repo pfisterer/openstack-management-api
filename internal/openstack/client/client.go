@@ -63,9 +63,13 @@ type OpenStackClient struct {
 	// parent) exists. Nil for every other auth method: then the primary clients
 	// serve everything, as before.
 	projectScopeAuth *PasswordAuthOpts
-	authURL          string
-	insecure         bool
-	projectScoped    atomic.Pointer[projectScopedServices]
+	// passwordAuth is the service user's password login, kept so it can sign
+	// in to one particular project (OpenProjectSession). Nil for application
+	// credentials, which are bound to their own project.
+	passwordAuth  *PasswordAuthOpts
+	authURL       string
+	insecure      bool
+	projectScoped atomic.Pointer[projectScopedServices]
 }
 
 // projectScopedServices are the service clients backed by the project-scoped
@@ -363,6 +367,7 @@ func NewOSAdminWithPassword(
 	if !opts.SystemScope && opts.DomainName != "" {
 		client.projectScopeAuth = &opts
 	}
+	client.passwordAuth = &opts
 	return client, nil
 }
 

@@ -93,6 +93,10 @@ type Config struct {
 	// compute the date in its pending-deletion tag — when it is deleted under
 	// ReleasedDeleteAfterGrace, and announced otherwise. Default: 30.
 	ReleasedDeleteGraceDays int
+	// PurgeDNSAndObjectStorage lets emptying a project delete its DNS zones
+	// and object storage. Off, they are only reported and keep the project
+	// from being deleted. Default: false.
+	PurgeDNSAndObjectStorage bool
 	// ArchivedTagPrefix marks a project archiveReleasedProject has finished
 	// with: "<prefix><YYYY-MM-DD>". Default: "archived:".
 	ArchivedTagPrefix string

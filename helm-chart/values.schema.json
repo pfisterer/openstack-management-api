@@ -319,6 +319,9 @@
               "type": "string",
               "enum": ["never", "on-request", "after-grace", "immediately"]
             },
+            "purgeDnsAndObjectStorage": {
+              "type": "boolean"
+            },
             "releasedDeleteGraceDays": {
               "type": "integer",
               "minimum": 0

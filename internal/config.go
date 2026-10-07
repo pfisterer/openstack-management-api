@@ -119,6 +119,9 @@ type ReconcilerConfiguration struct {
 	ReleasedDeleteGraceDays int `json:"released_delete_grace_days"`
 	// ArchivedTagPrefix marks an archived project. Default: "archived:".
 	ArchivedTagPrefix string `json:"archived_tag_prefix"`
+	// PurgeDNSAndObjectStorage lets deleting a project delete its DNS zones
+	// and object storage; off, they keep the project from being deleted.
+	PurgeDNSAndObjectStorage bool `json:"purge_dns_and_object_storage"`
 	// PendingDeletionTagPrefix is the tag prefix written to released projects when
 	// DeleteReleasedProjects is false. The full tag is "<prefix><YYYY-MM-DD>".
 	// Default: "pending-deletion:".
@@ -323,6 +326,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			ReleasedDelete:           envconf.String("RECONCILER_RELEASED_DELETE", "never"),
 			ReleasedDeleteGraceDays:  envconf.Int("RECONCILER_RELEASED_DELETE_GRACE_DAYS", 30),
 			ArchivedTagPrefix:        envconf.String("RECONCILER_ARCHIVED_TAG_PREFIX", "archived:"),
+			PurgeDNSAndObjectStorage: envconf.Bool("RECONCILER_PURGE_DNS_AND_OBJECT_STORAGE", false),
 			PendingDeletionTagPrefix: envconf.String("RECONCILER_PENDING_DELETION_TAG_PREFIX", "pending-deletion:"),
 			ContactTagPrefix:         envconf.String("RECONCILER_CONTACT_TAG_PREFIX", "contact:"),
 			TerminationTagPrefix:     envconf.String("RECONCILER_TERMINATION_TAG_PREFIX", "termination:"),

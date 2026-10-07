@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gophercloud/gophercloud/openstack/identity/v3/projects"
 	osclient "github.com/pfisterer/openstack-management-api/internal/openstack/client"
 	"github.com/pfisterer/openstack-management-api/internal/tree"
 	"go.uber.org/zap"
@@ -36,6 +37,55 @@ type purgeClient interface {
 	ListProjectSecurityGroups(projectID string) ([]osclient.Resource, error)
 	DeleteSecurityGroup(id string) error
 	DeleteProject(projectID string) error
+
+	// Access, for the services that only work inside the project.
+	ServiceUserID() (string, error)
+	ListProjectMembers(projectID string) ([]osclient.ProjectRole, error)
+	ListProjectGroupRoles(projectID string) ([]osclient.GroupProjectRole, error)
+	RemoveProjectMember(projectID, userID, roleID string) error
+	UnassignGroupFromProject(projectID, groupID, roleID string) error
+	AddProjectMember(projectID, userID, roleID string) error
+	RoleIDByName(name string) (string, error)
+	UpdateProject(projectID string, opts osclient.ProjectUpdateOpts) (*projects.Project, error)
+}
+
+// projectSession is what the services that only work inside the project
+// offer (osclient.ProjectSession); tests substitute a fake.
+type projectSession interface {
+	ListClusters() ([]osclient.Resource, error)
+	DeleteCluster(id string) error
+	ListStacks() ([]osclient.Resource, error)
+	DeleteStack(name, id string) error
+	ListLeases() ([]osclient.Resource, error)
+	DeleteLease(id string) error
+	ListLoadBalancers() ([]osclient.Resource, error)
+	DeleteLoadBalancer(id string) error
+	HasDNS() bool
+	ListZones() ([]osclient.Resource, error)
+	DeleteZone(id string) error
+	HasObjectStorage() bool
+	ListBuckets() ([]osclient.Resource, error)
+	EmptyBucket(name string, limit int) (int, bool, error)
+	DeleteBucket(name string) error
+	ListSecrets() ([]osclient.Resource, error)
+	DeleteSecret(id string) error
+	ListSecretContainers() ([]osclient.Resource, error)
+	DeleteSecretContainer(id string) error
+	UnemptiedServiceTypes() []string
+}
+
+// purgeRole is what the service user is given in a project it empties: Heat,
+// Swift and Barbican need a token for the project itself, and deleting what
+// others in it created (a colleague's secret, a stack) needs admin there.
+const purgeRole = "admin"
+
+// purgeOptions are the switches of one purge.
+type purgeOptions struct {
+	dryRun bool
+	// dnsAndObjects deletes DNS zones and object storage. Off, they are only
+	// reported and hold the project back: both exist only on production, so
+	// they are switched on after a test there.
+	dnsAndObjects bool
 }
 
 // purgeResult counts what one pass of emptying a project did.
@@ -80,7 +130,9 @@ func deletionDue(mode string, leaf tree.Node, tags []string, pendingPrefix strin
 // in the log on every pass, instead of being deleted with things left in it.
 func (r *Reconciler) purgeRetiredProject(ctx context.Context, osProject osclient.ProjectInfo, leaf tree.Node, scopeParentID string, res *reconcileResult) {
 	log := r.log.With("node_id", leaf.ID, "os_project_id", osProject.ID)
-	out := purgeProject(r.osClient, osProject.ID, scopeParentID, r.cfg.DryRun, log)
+	open := func(id string) (projectSession, error) { return r.osClient.OpenProjectSession(id) }
+	out := purgeProject(r.osClient, open, osProject, scopeParentID,
+		purgeOptions{dryRun: r.cfg.DryRun, dnsAndObjects: r.cfg.PurgeDNSAndObjectStorage}, log)
 	res.resourcesPurged += out.removed
 	if !out.deleted {
 		if out.stage != "refused" && !r.cfg.DryRun {
@@ -98,36 +150,101 @@ func (r *Reconciler) purgeRetiredProject(ctx context.Context, osProject osclient
 	res.releasedLeavesRemoved++
 }
 
-func purgeProject(c purgeClient, projectID, scopeParentID string, dryRun bool, log *zap.SugaredLogger) purgeResult {
+func purgeProject(c purgeClient, open func(string) (projectSession, error), project osclient.ProjectInfo, scopeParentID string, o purgeOptions, log *zap.SugaredLogger) purgeResult {
+	projectID := project.ID
 	if projectID == "" || projectID == scopeParentID {
 		log.Errorw("Purge refused: not a project that may be deleted", "scope_parent_id", scopeParentID)
 		return purgeResult{stage: "refused"}
 	}
-	p := purger{c: c, projectID: projectID, dryRun: dryRun, log: log}
+	p := purger{c: c, projectID: projectID, dryRun: o.dryRun, log: log}
+
+	// First the way in: nobody else in the project, the service user in it,
+	// the project enabled — a token for a disabled project is refused.
+	if !p.access(project) {
+		log.Infow("Purge: waiting for a stage to empty", "stage", "access", "dry_run", o.dryRun)
+		return purgeResult{stage: "access"}
+	}
+	var s projectSession
+	if !o.dryRun {
+		var err error
+		if s, err = open(projectID); err != nil {
+			log.Warnw("Purge: could not sign in to the project, nothing deleted", "error", err)
+			return purgeResult{stage: "session"}
+		}
+		if left := s.UnemptiedServiceTypes(); len(left) > 0 {
+			log.Warnw("Purge: the cloud offers services whose resources are not emptied and may be left behind", "service_types", left)
+		}
+	}
+	scoped := func(kind string, list func() ([]osclient.Resource, error), del func(osclient.Resource) error) func() bool {
+		return func() bool {
+			if s == nil {
+				return true // dry run: no session to look with
+			}
+			return p.scoped(kind, list, del)
+		}
+	}
+	reportOnly := func(kind string, has func() bool, list func() ([]osclient.Resource, error), stage func() bool) func() bool {
+		return func() bool {
+			if s == nil || !has() {
+				return true
+			}
+			if o.dnsAndObjects {
+				return stage()
+			}
+			items, err := list()
+			if err != nil {
+				log.Warnw("Purge: could not list", "kind", kind, "error", err)
+				return false
+			}
+			for _, it := range items {
+				log.Warnw("Purge: would delete, but deleting this kind is not switched on (RECONCILER_PURGE_DNS_AND_OBJECT_STORAGE) — the project is kept", "kind", kind, "id", it.ID, "name", it.Name)
+			}
+			return len(items) == 0
+		}
+	}
 
 	// One stage per pass at most; each returns false while it still has work.
+	// What builds on other things goes first: a cluster owns a stack, a stack
+	// owns servers and load balancers, a load balancer holds a port.
 	stages := []struct {
 		name string
 		run  func() bool
 	}{
+		{"clusters", scoped("cluster", func() ([]osclient.Resource, error) { return s.ListClusters() },
+			func(r osclient.Resource) error { return s.DeleteCluster(r.ID) })},
+		{"stacks", scoped("stack", func() ([]osclient.Resource, error) { return s.ListStacks() },
+			func(r osclient.Resource) error { return s.DeleteStack(r.Name, r.ID) })},
+		{"leases", scoped("lease", func() ([]osclient.Resource, error) { return s.ListLeases() },
+			func(r osclient.Resource) error { return s.DeleteLease(r.ID) })},
+		{"load balancers", scoped("load balancer", func() ([]osclient.Resource, error) { return s.ListLoadBalancers() },
+			func(r osclient.Resource) error { return s.DeleteLoadBalancer(r.ID) })},
 		{"floating IPs", p.floatingIPs},
 		{"servers", p.servers},
 		{"backups", p.simple("backup", c.ListProjectBackups, c.DeleteBackup)},
 		{"snapshots", p.simple("snapshot", c.ListProjectSnapshots, c.DeleteSnapshot)},
 		{"volumes", p.simple("volume", c.ListProjectVolumes, c.DeleteVolume)},
 		{"images", p.simple("image", c.ListProjectImages, c.DeleteImage)},
+		{"DNS zones", reportOnly("DNS zone", func() bool { return s.HasDNS() }, func() ([]osclient.Resource, error) { return s.ListZones() },
+			scoped("DNS zone", func() ([]osclient.Resource, error) { return s.ListZones() },
+				func(r osclient.Resource) error { return s.DeleteZone(r.ID) }))},
+		{"object storage", reportOnly("object storage container", func() bool { return s.HasObjectStorage() },
+			func() ([]osclient.Resource, error) { return s.ListBuckets() }, func() bool { return p.buckets(s) })},
+		{"secret containers", scoped("secret container", func() ([]osclient.Resource, error) { return s.ListSecretContainers() },
+			func(r osclient.Resource) error { return s.DeleteSecretContainer(r.ID) })},
+		{"secrets", scoped("secret", func() ([]osclient.Resource, error) { return s.ListSecrets() },
+			func(r osclient.Resource) error { return s.DeleteSecret(r.ID) })},
 		{"routers", p.routers},
 		{"ports", p.ports},
 		{"networks", p.simple("network", c.ListProjectNetworks, c.DeleteNetwork)},
 		{"security groups", p.securityGroups},
 	}
-	for _, s := range stages {
-		if !s.run() {
-			log.Infow("Purge: waiting for a stage to empty", "stage", s.name, "removed", p.removed, "dry_run", dryRun)
-			return purgeResult{stage: s.name, removed: p.removed}
+	for _, st := range stages {
+		if !st.run() {
+			log.Infow("Purge: waiting for a stage to empty", "stage", st.name, "removed", p.removed, "dry_run", o.dryRun)
+			return purgeResult{stage: st.name, removed: p.removed}
 		}
 	}
-	if dryRun {
+	if o.dryRun {
 		log.Infow("Dry run: would delete the emptied project")
 		return purgeResult{stage: "project"}
 	}
@@ -137,6 +254,129 @@ func purgeProject(c purgeClient, projectID, scopeParentID string, dryRun bool, l
 	}
 	log.Infow("Purge: project deleted")
 	return purgeResult{deleted: true, removed: p.removed}
+}
+
+// access prepares the project for the services that only work inside it:
+// every user and group role in it is removed — from here on nobody but the
+// service user gets in —, the service user is given purgeRole, and the project
+// is enabled again, since a token for a disabled one is refused. Reports
+// whether all of that is in place.
+func (p *purger) access(project osclient.ProjectInfo) bool {
+	self, err := p.c.ServiceUserID()
+	if err != nil {
+		p.log.Warnw("Purge: could not tell the service user's ID", "error", err)
+		return false
+	}
+	roleID, err := p.c.RoleIDByName(purgeRole)
+	if err != nil {
+		p.log.Warnw("Purge: could not find the role", "role", purgeRole, "error", err)
+		return false
+	}
+	ready := true
+
+	members, err := p.c.ListProjectMembers(p.projectID)
+	if err != nil {
+		p.log.Warnw("Purge: could not list the members", "error", err)
+		return false
+	}
+	hasSelf := false
+	for _, m := range members {
+		if m.UserID == "" {
+			continue // a group's, listed below
+		}
+		if m.UserID == self {
+			hasSelf = hasSelf || m.RoleID == roleID
+			continue
+		}
+		ready = false
+		p.do("member", m.UserID, m.RoleName, func() error { return p.c.RemoveProjectMember(p.projectID, m.UserID, m.RoleID) })
+	}
+	groups, err := p.c.ListProjectGroupRoles(p.projectID)
+	if err != nil {
+		p.log.Warnw("Purge: could not list the group roles", "error", err)
+		return false
+	}
+	for _, g := range groups {
+		ready = false
+		p.do("group role", g.GroupID, g.RoleName, func() error { return p.c.UnassignGroupFromProject(p.projectID, g.GroupID, g.RoleID) })
+	}
+	if !hasSelf {
+		if p.dryRun {
+			p.log.Infow("Dry run: would give the service user a role in the project", "role", purgeRole)
+		} else if err := p.c.AddProjectMember(p.projectID, self, roleID); err != nil {
+			p.log.Warnw("Purge: could not give the service user a role in the project", "role", purgeRole, "error", err)
+			return false
+		}
+	}
+	if !project.Enabled {
+		if p.dryRun {
+			p.log.Infow("Dry run: would enable the project to sign in to it")
+		} else {
+			enabled := true
+			opts := osclient.ProjectUpdateOpts{}
+			opts.Enabled = &enabled
+			if _, err := p.c.UpdateProject(p.projectID, opts); err != nil {
+				p.log.Warnw("Purge: could not enable the project", "error", err)
+				return false
+			}
+		}
+	}
+	// Members just removed are checked again next pass before anything is
+	// deleted with the project open; the service user's role and the enable
+	// count as done once the calls went through.
+	return ready || p.dryRun
+}
+
+// scoped is a stage over a service of the project session. The session is
+// the project's, but a listing is checked against the project all the same.
+func (p *purger) scoped(kind string, list func() ([]osclient.Resource, error), del func(osclient.Resource) error) bool {
+	items, err := list()
+	if err != nil {
+		p.log.Warnw("Purge: could not list", "kind", kind, "error", err)
+		return false
+	}
+	items = p.owned(kind, items)
+	for _, it := range items {
+		if inDeletion(it.Status) {
+			continue
+		}
+		p.do(kind, it.ID, it.Name, func() error { return del(it) })
+	}
+	return len(items) == 0
+}
+
+// objectsPerPass bounds how many objects one pass deletes, so a big bucket is
+// spread over passes instead of holding one up.
+const objectsPerPass = 500
+
+// buckets empties and deletes the project's object storage containers.
+func (p *purger) buckets(s projectSession) bool {
+	items, err := s.ListBuckets()
+	if err != nil {
+		p.log.Warnw("Purge: could not list", "kind", "object storage container", "error", err)
+		return false
+	}
+	budget := objectsPerPass
+	for _, b := range items {
+		if p.dryRun {
+			p.log.Infow("Dry run: would empty and delete", "kind", "object storage container", "name", b.Name)
+			continue
+		}
+		if budget <= 0 {
+			break
+		}
+		n, empty, err := s.EmptyBucket(b.Name, budget)
+		p.removed += n
+		budget -= n
+		if err != nil {
+			p.log.Warnw("Purge: could not empty", "kind", "object storage container", "name", b.Name, "error", err)
+			continue
+		}
+		if empty {
+			p.do("object storage container", b.Name, b.Name, func() error { return s.DeleteBucket(b.Name) })
+		}
+	}
+	return len(items) == 0
 }
 
 type purger struct {

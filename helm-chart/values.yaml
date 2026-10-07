@@ -238,6 +238,9 @@ openstackManagementApi:
     #   immediately  — on the next pass after release
     releasedDelete: "never"
     releasedDeleteGraceDays: 30
+    # Deleting a project also deletes its DNS zones and object storage. Off,
+    # they are only reported and keep the project from being deleted.
+    purgeDnsAndObjectStorage: false
     archivedTagPrefix: "archived:"
     # Record each finished day's consumption per project from Nova.
     usageEnabled: true

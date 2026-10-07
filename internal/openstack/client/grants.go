@@ -67,7 +67,7 @@ func (c *OpenStackClient) AddGrant(grant common.Grant, projectID string) (bool, 
 		return err == nil, wrapGrant("share network", grant, projectID, err)
 
 	case common.GrantImage:
-		err := members.Create(c.Image, grant.Target, projectID).Err
+		err := members.Create(c.imageSvc(), grant.Target, projectID).Err
 		fresh := err == nil
 		if err != nil && !isConflict(err) {
 			return false, wrapGrant("add image member", grant, projectID, err)
@@ -76,7 +76,7 @@ func (c *OpenStackClient) AddGrant(grant common.Grant, projectID string) (bool, 
 		// project itself would normally accept; as the admin creating it we say
 		// so directly, or the image stays invisible to the very project we just
 		// granted it to.
-		err = members.Update(c.Image, grant.Target, projectID,
+		err = members.Update(c.imageSvc(), grant.Target, projectID,
 			members.UpdateOpts{Status: "accepted"}).Err
 		return fresh && err == nil, wrapGrant("accept image member", grant, projectID, err)
 
@@ -110,7 +110,7 @@ func (c *OpenStackClient) RemoveGrant(grant common.Grant, projectID string) (boo
 		return err == nil, wrapGrant("unshare network", grant, projectID, ignoreNotFound(err))
 
 	case common.GrantImage:
-		err := members.Delete(c.Image, grant.Target, projectID).Err
+		err := members.Delete(c.imageSvc(), grant.Target, projectID).Err
 		return err == nil, wrapGrant("remove image member", grant, projectID, ignoreNotFound(err))
 
 	case common.GrantFlavor:
@@ -158,7 +158,7 @@ func (c *OpenStackClient) findNetworkRBAC(networkID, projectID string) (string, 
 }
 
 func (c *OpenStackClient) hasImageMember(imageID, projectID string) (bool, error) {
-	_, err := members.Get(c.Image, imageID, projectID).Extract()
+	_, err := members.Get(c.imageSvc(), imageID, projectID).Extract()
 	if err != nil {
 		if _, notFound := err.(gophercloud.ErrDefault404); notFound {
 			return false, nil

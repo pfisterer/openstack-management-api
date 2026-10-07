@@ -106,8 +106,11 @@ func (c *OpenStackClient) blockSvc() *gophercloud.ServiceClient {
 }
 
 // imageSvc is the project-scoped image client where there is one — deleting
-// another project's image is an admin call like the quota ones. Image grants
-// keep using Image directly, as they always have.
+// another project's image is an admin call like the quota ones, and adding a
+// member is the image owner's: Glance hides a shared image from a token that is
+// not scoped to its owner (404), and a domain-scoped token is scoped to no
+// project at all. An image an availability grants therefore belongs to the
+// project the client is scoped to, the scope parent.
 func (c *OpenStackClient) imageSvc() *gophercloud.ServiceClient {
 	if s := c.projectScoped.Load(); s != nil && s.image != nil {
 		return s.image

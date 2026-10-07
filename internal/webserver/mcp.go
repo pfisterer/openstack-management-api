@@ -151,6 +151,7 @@ type mcpProject struct {
 	OSProjectName      string         `json:"os_project_name,omitempty" jsonschema:"its name in OpenStack, which is what the dashboard and the CLI show"`
 	TerminationDate    string         `json:"termination_date,omitempty" jsonschema:"intended end of life"`
 	MaxProjectTermDays int            `json:"max_project_term_days,omitempty" jsonschema:"on a budget: a project below it may end at most this many days after the day it is requested or extended"`
+	InheritsLimit      bool           `json:"inherits_limit,omitempty" jsonschema:"on a budget: it only structures the tree and passes on the limit of the budget above, which limit shows"`
 }
 
 type mcpAllocation struct {
@@ -177,6 +178,7 @@ func toMCPProject(n tree.Node) mcpProject {
 		OSProjectID:        n.OSProjectID,
 		OSProjectName:      n.OSProjectName,
 		DeletionRequested:  slices.Contains(n.Flags, tree.FlagDeleteRequested),
+		InheritsLimit:      n.InheritsLimit,
 	}
 	if n.ParentID != nil {
 		p.PaidFrom = *n.ParentID
@@ -322,6 +324,7 @@ type mcpCreateBudgetInput struct {
 	// a real answer.
 	AutoApproveExtensions *bool `json:"auto_approve_extensions,omitempty" jsonschema:"optional, with auto_approve_limit: false sends every later end date of a project to a manager; default true"`
 	MaxProjectTermDays    int   `json:"max_project_term_days,omitempty" jsonschema:"optional: a project below may end at most this many days after the day it is requested or extended; at most the cap of the budget above, which is also the default"`
+	InheritsLimit         bool  `json:"inherits_limit,omitempty" jsonschema:"optional: a budget for structure only, which passes on the limit of the budget above and follows it when it changes; limit is then ignored"`
 }
 
 type mcpMoveInput struct {
@@ -656,6 +659,7 @@ func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log 
 			AdminScope:            common.TokenList(in.AdminScope),
 			EligibleRequesters:    common.TokenList(in.EligibleRequesters),
 			AutoApproveExtensions: in.AutoApproveExtensions,
+			InheritsLimit:         in.InheritsLimit,
 		}
 		if in.MaxProjectTermDays != 0 {
 			req.MaxProjectTermDays = &in.MaxProjectTermDays

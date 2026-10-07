@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -347,6 +348,9 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 		if req.MaxProjectTermDays != nil {
 			return Node{}, fmt.Errorf("max_project_term_days is a budget setting")
 		}
+		if req.InheritsLimit {
+			return Node{}, fmt.Errorf("inherits_limit is a budget setting")
+		}
 	case KindBudget:
 		// A budget without an admin scope is invisible in the UI: "My Budgets"
 		// matches AdminScope directly (the ancestor rule does not apply there),
@@ -404,8 +408,14 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 	if !isManager && !isEligibleRequester(userTokens, parent) {
 		return Node{}, common.ErrForbidden
 	}
+	// A budget that inherits has no limit of its own; the one whose limit
+	// applies is further up.
+	binding, err := s.bindingBudget(ctx, parent)
+	if err != nil {
+		return Node{}, err
+	}
 	if req.Kind == KindProject {
-		if err := s.validateLeafAvailabilities(parent, req.Limit); err != nil {
+		if err := s.validateLeafAvailabilities(binding, req.Limit); err != nil {
 			return Node{}, err
 		}
 	}
@@ -414,6 +424,14 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 	// exempt — they own the structure and create sub-budgets directly.
 	if req.Kind == KindBudget && !isManager && !parent.SubBudgetRequestsAllowed() {
 		return Node{}, fmt.Errorf("%w: this budget does not accept sub-budget requests — request a project instead", common.ErrForbidden)
+	}
+	// Passing on the parent's limit hands out all of it, so only those who
+	// could give that limit directly may.
+	if req.InheritsLimit {
+		if !isManager {
+			return Node{}, fmt.Errorf("%w: only a manager creates a budget that inherits its limit", common.ErrForbidden)
+		}
+		req.Limit = common.ProjectQuota{}
 	}
 
 	// Nothing outlives the budget it draws from, and a project runs no longer
@@ -474,6 +492,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 		node.AllowRequestsBeyondAutoApprove = req.AllowRequestsBeyondAutoApprove
 		node.AutoApproveExtensions = req.AutoApproveExtensions
 		node.MaxProjectTermDays = maxTerm
+		node.InheritsLimit = req.InheritsLimit
 	}
 	node.History = []HistoryEntry{createdEntry}
 
@@ -486,8 +505,8 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 			if err := s.checkCapacity(ctx, parentChain, node.Limit, nil); err != nil {
 				return Node{}, err
 			}
-		} else {
-			if err := s.validateChildBudgetLimit(parent, node.Limit); err != nil {
+		} else if !node.InheritsLimit {
+			if err := s.validateChildBudgetLimit(binding, node.Limit); err != nil {
 				return Node{}, err
 			}
 		}
@@ -527,7 +546,8 @@ func isLeafDirectEdit(req UpdateNodeRequest) bool {
 		req.AutoApprove == nil && !req.ClearAutoApprove &&
 		req.AllowSubBudgetRequests == nil && req.AllowRequestsBeyondAutoApprove == nil &&
 		req.AutoApproveExtensions == nil && req.MaxProjectTermDays == nil && !req.ClearMaxProjectTermDays &&
-		req.Limit == nil && req.TerminationDate == nil && !req.ClearTerminationDate
+		req.Limit == nil && req.TerminationDate == nil && !req.ClearTerminationDate &&
+		req.InheritsLimit == nil
 }
 
 // UpdateNode applies immediate edits to a budget. Policy fields (name, admin
@@ -578,7 +598,7 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, user
 		req.AutoApprove != nil || req.ClearAutoApprove || req.AllowSubBudgetRequests != nil ||
 		req.AllowRequestsBeyondAutoApprove != nil || req.AutoApproveExtensions != nil ||
 		req.MaxProjectTermDays != nil || req.ClearMaxProjectTermDays
-	wantsCapacityEdit := req.Limit != nil || req.TerminationDate != nil || req.ClearTerminationDate
+	wantsCapacityEdit := req.Limit != nil || req.TerminationDate != nil || req.ClearTerminationDate || req.InheritsLimit != nil
 
 	if wantsPolicyEdit {
 		// Renaming their own project and choosing who administers it with them
@@ -679,19 +699,49 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, user
 		historyEntry.TerminationDateTo = updated.TerminationDate
 	}
 
+	// An inherited limit is the one of the budget above and cannot be set by
+	// hand. Switched on, the budget's own limit is dropped: the one above
+	// already bounds everything below it. Switched off, it keeps the limit it
+	// had inherited unless given another, which goes through the usual checks.
+	var binding *Node
+	if current.ParentID != nil {
+		parent, err := s.store.GetNode(ctx, *current.ParentID)
+		if err != nil {
+			return Node{}, fmt.Errorf("load parent for limit check: %w", err)
+		}
+		if parent != nil {
+			if binding, err = s.bindingBudget(ctx, parent); err != nil {
+				return Node{}, err
+			}
+		}
+	}
+	inherits := current.InheritsLimit
+	if req.InheritsLimit != nil {
+		inherits = *req.InheritsLimit
+	}
+	if inherits && req.Limit != nil {
+		return Node{}, fmt.Errorf("the limit of this budget is inherited from the budget above; switch inheriting off to set one")
+	}
+	if inherits && binding == nil {
+		return Node{}, fmt.Errorf("the root budget has nothing to inherit from")
+	}
+	if inherits && !current.InheritsLimit {
+		historyEntry.LimitFrom = &current.Limit
+		historyEntry.Reason = common.Ptr("Inherits the limit of the budget above")
+		updated.Limit = common.ProjectQuota{}
+	}
+	if !inherits && current.InheritsLimit && req.Limit == nil && binding != nil {
+		req.Limit = common.Ptr(maps.Clone(binding.Limit))
+	}
+	updated.InheritsLimit = inherits
+
 	if req.Limit != nil {
 		if err := s.validateBudgetLimit(*req.Limit); err != nil {
 			return Node{}, err
 		}
-		if current.ParentID != nil {
-			parent, err := s.store.GetNode(ctx, *current.ParentID)
-			if err != nil {
-				return Node{}, fmt.Errorf("load parent for limit check: %w", err)
-			}
-			if parent != nil {
-				if err := s.validateChildBudgetLimit(parent, *req.Limit); err != nil {
-					return Node{}, err
-				}
+		if binding != nil {
+			if err := s.validateChildBudgetLimit(binding, *req.Limit); err != nil {
+				return Node{}, err
 			}
 		}
 		historyEntry.LimitFrom = &current.Limit
@@ -820,12 +870,18 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor Actor, u
 		}
 	}
 
+	if req.Limit != nil && current.InheritsLimit {
+		return Node{}, fmt.Errorf("the limit of this budget is inherited from the budget above")
+	}
 	if req.Limit != nil {
 		var validationErr error
 		if current.IsLeaf() {
 			validationErr = s.validateLeafLimit(*req.Limit)
 			if validationErr == nil && parent != nil {
-				validationErr = s.validateLeafAvailabilities(parent, *req.Limit)
+				var binding *Node
+				if binding, validationErr = s.bindingBudget(ctx, parent); validationErr == nil {
+					validationErr = s.validateLeafAvailabilities(binding, *req.Limit)
+				}
 			}
 			if validationErr == nil {
 				validationErr = s.checkOwnLimitAgainstAllocations(*current, *req.Limit)
@@ -1080,8 +1136,8 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor Actor, us
 		if err := s.checkCapacity(ctx, ancestors, finalLimit, subtract); err != nil {
 			return Node{}, err
 		}
-		if len(ancestors) > 0 {
-			if err := s.validateLeafAvailabilities(&ancestors[0], finalLimit); err != nil {
+		if b := bindingInChain(ancestors); b != nil {
+			if err := s.validateLeafAvailabilities(b, finalLimit); err != nil {
 				return Node{}, err
 			}
 		}
@@ -1089,8 +1145,8 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor Actor, us
 			return Node{}, err
 		}
 	} else {
-		if len(ancestors) > 0 {
-			if err := s.validateChildBudgetLimit(&ancestors[0], finalLimit); err != nil {
+		if b := bindingInChain(ancestors); b != nil && !current.InheritsLimit {
+			if err := s.validateChildBudgetLimit(b, finalLimit); err != nil {
 				return Node{}, err
 			}
 		}
@@ -1402,13 +1458,17 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor Actor, 
 				return Node{}, err
 			}
 			if current.Status == StatusApproved || current.Status == StatusChangePending {
-				if err := s.validateLeafAvailabilities(newParent, current.Limit); err != nil {
+				if err := s.validateLeafAvailabilities(bindingInChain(newParentChain), current.Limit); err != nil {
 					return Node{}, err
 				}
 			}
 		} else {
-			if err := s.validateChildBudgetLimit(newParent, current.Limit); err != nil {
-				return Node{}, err
+			// One that inherits has no limit to fit; what is used below it
+			// is checked next.
+			if !current.InheritsLimit {
+				if err := s.validateChildBudgetLimit(bindingInChain(newParentChain), current.Limit); err != nil {
+					return Node{}, err
+				}
 			}
 			subtreeUsage, err := s.loadSubtreeUsage(ctx, []Node{*current})
 			if err != nil {

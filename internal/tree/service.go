@@ -833,6 +833,10 @@ func (s *Service) attachUsage(ctx context.Context, nodes []Node) ([]Node, error)
 		}
 		out = append(out, n)
 	}
+	out, err = s.attachInheritedLimits(ctx, out)
+	if err != nil {
+		return nil, err
+	}
 	out, err = s.attachChildCounts(ctx, out)
 	if err != nil {
 		return nil, err
@@ -999,6 +1003,11 @@ func (s *Service) checkCapacity(ctx context.Context, ancestors []Node, addLimit,
 		return fmt.Errorf("compute subtree usage for capacity check: %w", err)
 	}
 	for _, ancestor := range ancestors {
+		// One that inherits has no limit of its own; the budget above it
+		// whose limit applies is in the chain too.
+		if ancestor.InheritsLimit {
+			continue
+		}
 		committed := subtreeUsage[ancestor.ID].Total(s.countIDs)
 		for _, resourceID := range s.countIDs {
 			committed[resourceID] -= subtractLimit[resourceID]
@@ -1096,6 +1105,54 @@ func (s *Service) validateKnownResources(q common.ProjectQuota) error {
 		}
 	}
 	return nil
+}
+
+// bindingBudget returns the budget whose limit applies at n: n itself, or,
+// where n inherits its limit (Node.InheritsLimit), the nearest budget above it
+// with one of its own. Checks that compare against "the parent's limit" use
+// it; a budget that inherits stores no limit, so reading its own would read
+// zero everywhere and refuse everything.
+func (s *Service) bindingBudget(ctx context.Context, n *Node) (*Node, error) {
+	if !n.InheritsLimit {
+		return n, nil
+	}
+	chain, err := s.nodeChain(ctx, n.ID)
+	if err != nil {
+		return nil, err
+	}
+	if b := bindingInChain(chain); b != nil {
+		return b, nil
+	}
+	return nil, fmt.Errorf("budget %q inherits its limit, but no budget above it has one", nodeLabel(*n))
+}
+
+// bindingInChain is bindingBudget on a chain already loaded, nearest first:
+// its first node with a limit of its own, nil for an empty chain.
+func bindingInChain(chain []Node) *Node {
+	for i := range chain {
+		if !chain[i].InheritsLimit {
+			return &chain[i]
+		}
+	}
+	return nil
+}
+
+// attachInheritedLimits shows a budget that inherits with the limit that
+// applies to it, for reading only: the API, the UI's bars and the resources a
+// request may name all want that one. Nothing written goes through here, and
+// nodes is a slice of copies (attachUsage), so the store's are untouched.
+func (s *Service) attachInheritedLimits(ctx context.Context, nodes []Node) ([]Node, error) {
+	for i := range nodes {
+		if nodes[i].Kind != KindBudget || !nodes[i].InheritsLimit {
+			continue
+		}
+		b, err := s.bindingBudget(ctx, &nodes[i])
+		if err != nil {
+			return nil, err
+		}
+		nodes[i].Limit = maps.Clone(b.Limit)
+	}
+	return nodes, nil
 }
 
 // validateChildBudgetLimit enforces the static invariant that a child budget's

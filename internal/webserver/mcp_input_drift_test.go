@@ -44,6 +44,7 @@ var toolInputContracts = []toolInputContract{
 			"allow_requests_beyond_auto_approve": "budget-only",
 			"auto_approve_extensions":            "budget-only",
 			"max_project_term_days":              "budget-only",
+			"inherits_limit":                     "budget-only",
 		},
 	},
 	{
@@ -100,6 +101,7 @@ var toolInputContracts = []toolInputContract{
 			"limit":                              "resources change through request_project_change, which records a reason",
 			"termination_date":                   "not offered yet",
 			"clear_termination_date":             "see termination_date",
+			"inherits_limit":                     "hands a budget the whole limit above it; a manager decides that in the UI",
 		},
 	},
 	{
@@ -121,6 +123,7 @@ var toolInputContracts = []toolInputContract{
 			"auto_approve_extensions":            "budget-only",
 			"max_project_term_days":              "budget-only",
 			"clear_max_project_term_days":        "budget-only",
+			"inherits_limit":                     "budget-only",
 			"limit":                              "request_project_change",
 			"termination_date":                   "not offered yet",
 			"clear_termination_date":             "see termination_date",

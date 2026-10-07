@@ -360,6 +360,16 @@ type Node struct {
 	// projects below. nil means no cap of its own.
 	MaxProjectTermDays *int `json:"max_project_term_days,omitempty"`
 
+	// InheritsLimit makes a budget a node for structure only: it has no limit
+	// of its own but passes on the one of the budget above — a campus that
+	// groups its faculties, a faculty that groups its courses. Its Limit stays
+	// empty; checks that compare against a budget's limit ask bindingBudget
+	// for the nearest one above with a limit of its own, and reads show that
+	// limit (attachInheritedLimits). Rights, requests, auto-approve and terms
+	// stay the node's own. Only managers above it switch it on, like any
+	// change of a limit.
+	InheritsLimit bool `json:"inherits_limit,omitempty"`
+
 	// Allocations are what a project draws from budgets ABOVE its own, on top
 	// of Limit — a GPU for one student project, more cores for a thesis,
 	// without handing the same to every project in the student budget. Limit

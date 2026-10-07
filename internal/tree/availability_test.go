@@ -307,3 +307,34 @@ func TestBootstrap_RootAdoptionLeavesExistingLimitsAlone(t *testing.T) {
 		t.Errorf("existing values were overwritten: %v", root.Limit)
 	}
 }
+
+// A budget that inherits its limit holds no availability of its own:
+// withdrawing one above is held up only by what the projects below it use.
+func TestAvailability_WithdrawalPassesABudgetThatInherits(t *testing.T) {
+	svc := availabilityService(t)
+	ctx := context.Background()
+
+	budget := Node{ID: "b", Kind: KindBudget, Status: StatusApproved,
+		Limit: common.ProjectQuota{"cores": 10, "dhbw-ipv4": 1}}
+	parent := budget.ID
+	group := Node{ID: "g", Kind: KindBudget, Status: StatusApproved, ParentID: &parent, InheritsLimit: true,
+		Limit: common.ProjectQuota{}}
+	for _, n := range []Node{budget, group} {
+		if err := svc.store.UpsertNode(ctx, n); err != nil {
+			t.Fatalf("seed %s: %v", n.ID, err)
+		}
+	}
+	if err := svc.checkAvailabilityWithdrawal(ctx, budget, common.ProjectQuota{"cores": 10, "dhbw-ipv4": 0}); err != nil {
+		t.Fatalf("withdrawal refused because of the budget that inherits: %v", err)
+	}
+
+	inGroup := group.ID
+	leaf := Node{ID: "p1", Kind: KindProject, Status: StatusApproved, Name: "Below the group", ParentID: &inGroup,
+		Limit: common.ProjectQuota{"cores": 2, "dhbw-ipv4": 1}}
+	if err := svc.store.UpsertNode(ctx, leaf); err != nil {
+		t.Fatalf("seed leaf: %v", err)
+	}
+	if err := svc.checkAvailabilityWithdrawal(ctx, budget, common.ProjectQuota{"cores": 10, "dhbw-ipv4": 0}); err == nil {
+		t.Fatal("withdrawn while a project below the group holds it")
+	}
+}

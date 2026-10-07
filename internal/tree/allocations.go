@@ -116,7 +116,7 @@ func (s *Service) SetAllocation(id string, req AllocationRequest, actor Actor, u
 		if source.Status != StatusApproved {
 			return Node{}, fmt.Errorf("%w: budget %q is in status %q", common.ErrConflict, nodeLabel(source), source.Status)
 		}
-		if err := s.validateAllocationAvailabilities(*current, source, limit); err != nil {
+		if err := s.validateAllocationAvailabilities(*current, *bindingInChain(chain[at:]), limit); err != nil {
 			return Node{}, err
 		}
 		if err := s.checkCapacity(ctx, chain[at:], limit, held); err != nil {

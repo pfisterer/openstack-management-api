@@ -54,6 +54,9 @@ type CreateNodeRequest struct {
 	// MaxProjectTermDays may not exceed the cap of a budget above; omitted
 	// under a budget with a cap, it is that cap.
 	MaxProjectTermDays *int `json:"max_project_term_days"`
+	// InheritsLimit creates a budget that passes on the limit of its parent
+	// (Node.InheritsLimit); Limit is then ignored. Managers only.
+	InheritsLimit bool `json:"inherits_limit"`
 }
 
 // UpdateNodeRequest is a direct edit that takes effect immediately (no approval
@@ -85,6 +88,10 @@ type UpdateNodeRequest struct {
 	// nil TerminationDate cannot express this — it means "leave as is" — so
 	// removal needs its own flag, like ClearAutoApprove.
 	ClearTerminationDate bool `json:"clear_termination_date"`
+	// InheritsLimit switches passing on the parent's limit on or off
+	// (Node.InheritsLimit). Switched on, Limit must be absent; switched off,
+	// the budget keeps the inherited values unless Limit sets others.
+	InheritsLimit *bool `json:"inherits_limit"`
 }
 
 // ChangeNodeRequest proposes changes to a node. On an active leaf a change that

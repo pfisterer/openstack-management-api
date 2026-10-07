@@ -105,9 +105,20 @@ func (c *OpenStackClient) DeleteVolume(id string) error {
 	return nil
 }
 
-// ListProjectSnapshots lists the volume snapshots of a project.
+// ListProjectSnapshots lists the volume snapshots of a project. From the
+// detailed listing: the plain one, which is all gophercloud offers, leaves out
+// the owning project, so every snapshot looked like somebody else's and was
+// skipped — one stood up only because deleting its volume took it along.
 func (c *OpenStackClient) ListProjectSnapshots(projectID string) ([]Resource, error) {
-	return listResources(snapshots.List(c.blockSvc(), snapshots.ListOpts{AllTenants: true, TenantID: projectID}), "snapshots", projectID,
+	query, err := snapshots.ListOpts{AllTenants: true, TenantID: projectID}.ToSnapshotListQuery()
+	if err != nil {
+		return nil, err
+	}
+	url := c.blockSvc().ServiceURL("snapshots", "detail") + query
+	pager := pagination.NewPager(c.blockSvc(), url, func(r pagination.PageResult) pagination.Page {
+		return snapshots.SnapshotPage{LinkedPageBase: pagination.LinkedPageBase{PageResult: r}}
+	})
+	return listResources(pager, "snapshots", projectID,
 		func(page pagination.Page) ([]Resource, error) {
 			var list []struct {
 				ID        string `json:"id"`

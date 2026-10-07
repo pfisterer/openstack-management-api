@@ -145,7 +145,7 @@ A node's limit is a `map[resource id]int`. What the ids mean is the **resource c
 - `count` (the default when `kind` is empty) — a quantity: cores, RAM, storage. Summed across siblings, capped by the parent, charged against budgets. Mapped to OpenStack through `os_quota_field`, optional `os_multiplier` (RAM is stored in GB, Nova wants MB), `os_linked_field` (`instances` mirrors `cores`) and `os_overcommit_check` (measure in-use for this resource). `static: true` marks infrastructure quotas (networks, ports, volumes, …) applied once at project creation from `default`.
 - `bool` — an *availability*: a network, an image, a GPU flavour. Held as 0 or 1 and **never summed**: three projects with a network are not three networks. A parent grants it to children rather than dividing it. An availability requires a `grant {type, target}` naming what it means in OpenStack by ID — `network` (Neutron RBAC `access_as_shared`), `image` (Glance image member, accepted on the project's behalf) or `flavor` (Nova flavour access). IDs, not names, because names are neither unique nor stable there.
 
-`hours` is reserved and rejected. The service keeps the ids of the `count` resources in a separate `countIDs` slice, and every sum, capacity check and rollup iterates that slice — the name at the call site is what keeps an availability out of arithmetic.
+The service keeps the ids of the `count` resources in a separate `countIDs` slice, and every sum, capacity check and rollup iterates that slice — the name at the call site is what keeps an availability out of arithmetic.
 
 **Invariants for availabilities** ([service.go](internal/tree/service.go)):
 

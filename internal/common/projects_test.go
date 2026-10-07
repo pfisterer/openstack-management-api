@@ -56,12 +56,6 @@ func TestValidateManagedProjects_Rejects(t *testing.T) {
 			[]ManagedProject{{ID: "cores", Name: "Cores", Kind: "conut"}},
 		},
 		{
-			// Reserved, not built. Accepting it would hand out a resource that
-			// takes part in no arithmetic at all.
-			"the reserved hours kind",
-			[]ManagedProject{{ID: "gpu-hours", Name: "GPU hours", Kind: KindHours}},
-		},
-		{
 			// Would be grantable in the portal and mean nothing in OpenStack.
 			"an availability without a grant",
 			[]ManagedProject{{ID: "dhbw-ipv4", Name: "IPv4", Kind: KindBool}},

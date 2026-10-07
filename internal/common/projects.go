@@ -20,12 +20,6 @@ const (
 	// up to three networks. What a parent grants is not divided among children,
 	// it is passed to them.
 	KindBool = "bool"
-
-	// KindHours is reserved, not implemented. Consumption over time needs a
-	// measurement window and a reset per period, which is a second set of books
-	// beside the existing one. It is named here so the aggregation gains one
-	// more branch when it arrives rather than being rebuilt.
-	KindHours = "hours"
 )
 
 // Grant types: what an availability means in OpenStack.
@@ -157,8 +151,6 @@ func ValidateManagedProjects(defs []ManagedProject) error {
 
 		switch d.Kind {
 		case "", KindCount, KindBool:
-		case KindHours:
-			return fmt.Errorf("resource %q: kind %q is reserved and not implemented yet", d.ID, KindHours)
 		default:
 			return fmt.Errorf("resource %q: unknown kind %q", d.ID, d.Kind)
 		}

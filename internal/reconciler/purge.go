@@ -116,9 +116,39 @@ func ValidatePurgeSkipStages(names []string) error {
 type purgeResult struct {
 	// deleted is true once the Keystone project itself is gone.
 	deleted bool
-	// stage names what the project is still waiting for, for the log.
+	// stage names what the project is still waiting for: "access", a stage of
+	// PurgeStages, "project" — or "refused".
 	stage   string
 	removed int
+	// blocked says why the stage cannot finish, beyond waiting for OpenStack
+	// to complete deletions it has started (Blocked*); detail names what.
+	blocked, detail string
+}
+
+// Why emptying a project is held up, as shown to its owner. Empty means it
+// is just waiting for OpenStack to finish what it was asked to delete.
+const (
+	// BlockedUnreachable: a service did not answer a listing (detail: kind).
+	BlockedUnreachable = "unreachable"
+	// BlockedFailed: something could not be deleted (detail: kind and name).
+	BlockedFailed = "failed"
+	// BlockedNotSwitchedOn: DNS zones or object storage are there and their
+	// deleting is not switched on (detail: kind).
+	BlockedNotSwitchedOn = "not_switched_on"
+	// BlockedNoSession: signing in to the project failed.
+	BlockedNoSession = "no_session"
+)
+
+// PurgeSteps are the steps of emptying a project in order, as counted for
+// its owner: the way in, the stages not skipped, the project itself.
+func PurgeSteps(skip []string) []string {
+	steps := []string{"access"}
+	for _, s := range PurgeStages {
+		if !slices.Contains(skip, s) {
+			steps = append(steps, s)
+		}
+	}
+	return append(steps, "project")
 }
 
 // deletionDue decides whether a retired leaf's project is deleted now.
@@ -161,6 +191,7 @@ func (r *Reconciler) purgeRetiredProject(ctx context.Context, osProject osclient
 	if !out.deleted {
 		if out.stage != "refused" && !r.cfg.DryRun {
 			res.purgesPending++
+			r.recordPurgeProgress(ctx, leaf.ID, out, log)
 		}
 		return
 	}
@@ -172,6 +203,32 @@ func (r *Reconciler) purgeRetiredProject(ctx context.Context, osProject osclient
 		return
 	}
 	res.releasedLeavesRemoved++
+}
+
+// recordPurgeProgress writes where emptying the project stands onto its leaf.
+// Only on a change — a pass every 30 s that rewrites the same state would be
+// a write every 30 s for nothing.
+func (r *Reconciler) recordPurgeProgress(ctx context.Context, leafID string, out purgeResult, log *zap.SugaredLogger) {
+	steps := PurgeSteps(r.cfg.PurgeSkipStages)
+	index := slices.Index(steps, out.stage) + 1
+	if _, err := r.store.UpdateNode(ctx, leafID, func(n *tree.Node) error {
+		prev := n.Purge
+		removed := out.removed
+		if prev != nil {
+			removed += prev.Removed
+		}
+		if prev != nil && prev.Step == out.stage && prev.Blocked == out.blocked && prev.Detail == out.detail && out.removed == 0 {
+			return tree.ErrSkipUpdate
+		}
+		n.Purge = &tree.PurgeProgress{
+			Step: out.stage, Index: index, Steps: len(steps),
+			Blocked: out.blocked, Detail: out.detail,
+			Removed: removed, UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+		}
+		return nil
+	}); err != nil {
+		log.Warnw("Purge: could not record the progress", "error", err)
+	}
 }
 
 func purgeProject(c purgeClient, open func(string) (projectSession, error), project osclient.ProjectInfo, scopeParentID string, o purgeOptions, log *zap.SugaredLogger) purgeResult {
@@ -186,14 +243,15 @@ func purgeProject(c purgeClient, open func(string) (projectSession, error), proj
 	// the project enabled — a token for a disabled project is refused.
 	if !p.access(project) {
 		log.Infow("Purge: waiting for a stage to empty", "stage", "access", "dry_run", o.dryRun)
-		return purgeResult{stage: "access"}
+		return p.result("access")
 	}
 	var s projectSession
 	if !o.dryRun {
 		var err error
 		if s, err = open(projectID); err != nil {
 			log.Warnw("Purge: could not sign in to the project, nothing deleted", "error", err)
-			return purgeResult{stage: "session"}
+			p.block(BlockedNoSession, "")
+			return p.result("access")
 		}
 		if left := s.UnemptiedServiceTypes(); len(left) > 0 {
 			log.Warnw("Purge: the cloud offers services whose resources are not emptied and may be left behind", "service_types", left)
@@ -217,11 +275,14 @@ func purgeProject(c purgeClient, open func(string) (projectSession, error), proj
 			}
 			items, err := list()
 			if err != nil {
-				log.Warnw("Purge: could not list", "kind", kind, "error", err)
+				p.listFailed(kind, err)
 				return false
 			}
 			for _, it := range items {
 				log.Warnw("Purge: would delete, but deleting this kind is not switched on (RECONCILER_PURGE_DNS_AND_OBJECT_STORAGE) — the project is kept", "kind", kind, "id", it.ID, "name", it.Name)
+			}
+			if len(items) > 0 {
+				p.block(BlockedNotSwitchedOn, kind)
 			}
 			return len(items) == 0
 		}
@@ -267,7 +328,7 @@ func purgeProject(c purgeClient, open func(string) (projectSession, error), proj
 		}
 		if !stages[name]() {
 			log.Infow("Purge: waiting for a stage to empty", "stage", name, "removed", p.removed, "dry_run", o.dryRun)
-			return purgeResult{stage: name, removed: p.removed}
+			return p.result(name)
 		}
 	}
 	if o.dryRun {
@@ -276,9 +337,11 @@ func purgeProject(c purgeClient, open func(string) (projectSession, error), proj
 	}
 	if err := c.DeleteProject(projectID); err != nil {
 		log.Warnw("Purge: could not delete the emptied project", "error", err)
-		return purgeResult{stage: "project", removed: p.removed}
+		p.block(BlockedFailed, "project")
+		return p.result("project")
 	}
 	log.Infow("Purge: project deleted")
+	p.removeDefaultSecurityGroups()
 	return purgeResult{deleted: true, removed: p.removed}
 }
 
@@ -291,11 +354,13 @@ func (p *purger) access(project osclient.ProjectInfo) bool {
 	self, err := p.c.ServiceUserID()
 	if err != nil {
 		p.log.Warnw("Purge: could not tell the service user's ID", "error", err)
+		p.block(BlockedUnreachable, "identity")
 		return false
 	}
 	roleID, err := p.c.RoleIDByName(purgeRole)
 	if err != nil {
 		p.log.Warnw("Purge: could not find the role", "role", purgeRole, "error", err)
+		p.block(BlockedUnreachable, "identity")
 		return false
 	}
 	ready := true
@@ -303,6 +368,7 @@ func (p *purger) access(project osclient.ProjectInfo) bool {
 	members, err := p.c.ListProjectMembers(p.projectID)
 	if err != nil {
 		p.log.Warnw("Purge: could not list the members", "error", err)
+		p.block(BlockedUnreachable, "identity")
 		return false
 	}
 	hasSelf := false
@@ -320,6 +386,7 @@ func (p *purger) access(project osclient.ProjectInfo) bool {
 	groups, err := p.c.ListProjectGroupRoles(p.projectID)
 	if err != nil {
 		p.log.Warnw("Purge: could not list the group roles", "error", err)
+		p.block(BlockedUnreachable, "identity")
 		return false
 	}
 	for _, g := range groups {
@@ -331,6 +398,7 @@ func (p *purger) access(project osclient.ProjectInfo) bool {
 			p.log.Infow("Dry run: would give the service user a role in the project", "role", purgeRole)
 		} else if err := p.c.AddProjectMember(p.projectID, self, roleID); err != nil {
 			p.log.Warnw("Purge: could not give the service user a role in the project", "role", purgeRole, "error", err)
+			p.block(BlockedFailed, "role "+purgeRole)
 			return false
 		}
 	}
@@ -343,6 +411,7 @@ func (p *purger) access(project osclient.ProjectInfo) bool {
 			opts.Enabled = &enabled
 			if _, err := p.c.UpdateProject(p.projectID, opts); err != nil {
 				p.log.Warnw("Purge: could not enable the project", "error", err)
+				p.block(BlockedFailed, "project")
 				return false
 			}
 		}
@@ -358,7 +427,7 @@ func (p *purger) access(project osclient.ProjectInfo) bool {
 func (p *purger) scoped(kind string, list func() ([]osclient.Resource, error), del func(osclient.Resource) error) bool {
 	items, err := list()
 	if err != nil {
-		p.log.Warnw("Purge: could not list", "kind", kind, "error", err)
+		p.listFailed(kind, err)
 		return false
 	}
 	items = p.owned(kind, items)
@@ -379,7 +448,7 @@ const objectsPerPass = 500
 func (p *purger) buckets(s projectSession) bool {
 	items, err := s.ListBuckets()
 	if err != nil {
-		p.log.Warnw("Purge: could not list", "kind", "object storage container", "error", err)
+		p.listFailed("object storage container", err)
 		return false
 	}
 	budget := objectsPerPass
@@ -396,6 +465,7 @@ func (p *purger) buckets(s projectSession) bool {
 		budget -= n
 		if err != nil {
 			p.log.Warnw("Purge: could not empty", "kind", "object storage container", "name", b.Name, "error", err)
+			p.block(BlockedFailed, "object storage container "+b.Name)
 			continue
 		}
 		if empty {
@@ -411,6 +481,44 @@ type purger struct {
 	dryRun    bool
 	log       *zap.SugaredLogger
 	removed   int
+	// blocked and detail keep the first reason this pass could not finish
+	// its stage (Blocked*).
+	blocked, detail string
+}
+
+// block records why the stage is held up; the first reason of a pass counts.
+func (p *purger) block(reason, detail string) {
+	if p.blocked == "" {
+		p.blocked, p.detail = reason, detail
+	}
+}
+
+// listFailed logs and records a service that did not answer a listing.
+func (p *purger) listFailed(kind string, err error) {
+	p.log.Warnw("Purge: could not list", "kind", kind, "error", err)
+	p.block(BlockedUnreachable, kind)
+}
+
+func (p *purger) result(stage string) purgeResult {
+	return purgeResult{stage: stage, removed: p.removed, blocked: p.blocked, detail: p.detail}
+}
+
+// removeDefaultSecurityGroups deletes what Neutron keeps of a deleted
+// project: its "default" security group. The last stage has to leave it —
+// Neutron recreates it whenever the project's resources are listed — and once
+// the project is gone nothing does. A failure leaves an empty group behind
+// and is only logged.
+func (p *purger) removeDefaultSecurityGroups() {
+	groups, err := p.c.ListProjectSecurityGroups(p.projectID)
+	if err != nil {
+		p.log.Warnw("Purge: could not list the default security group of the deleted project", "error", err)
+		return
+	}
+	for _, g := range p.owned("security group", groups) {
+		if g.Name == "default" {
+			p.do("security group", g.ID, g.Name, func() error { return p.c.DeleteSecurityGroup(g.ID) })
+		}
+	}
 }
 
 // owned keeps what belongs to the project, and says so loudly about anything
@@ -436,6 +544,7 @@ func (p *purger) do(kind, id, name string, fn func() error) {
 	}
 	if err := fn(); err != nil {
 		p.log.Warnw("Purge: could not delete", "kind", kind, "id", id, "name", name, "error", err)
+		p.block(BlockedFailed, strings.TrimSpace(kind+" "+name))
 		return
 	}
 	p.log.Infow("Purge: deleted", "kind", kind, "id", id, "name", name)
@@ -447,7 +556,7 @@ func (p *purger) simple(kind string, list func(string) ([]osclient.Resource, err
 	return func() bool {
 		items, err := list(p.projectID)
 		if err != nil {
-			p.log.Warnw("Purge: could not list", "kind", kind, "error", err)
+			p.listFailed(kind, err)
 			return false
 		}
 		items = p.owned(kind, items)
@@ -464,7 +573,7 @@ func (p *purger) simple(kind string, list func(string) ([]osclient.Resource, err
 func (p *purger) floatingIPs() bool {
 	ips, err := p.c.ListProjectFloatingIPs(p.projectID)
 	if err != nil {
-		p.log.Warnw("Purge: could not list", "kind", "floating IP", "error", err)
+		p.listFailed("floating IP", err)
 		return false
 	}
 	items := make([]osclient.Resource, 0, len(ips))
@@ -481,7 +590,7 @@ func (p *purger) floatingIPs() bool {
 func (p *purger) servers() bool {
 	list, err := p.c.ListProjectServers(p.projectID)
 	if err != nil {
-		p.log.Warnw("Purge: could not list", "kind", "server", "error", err)
+		p.listFailed("server", err)
 		return false
 	}
 	items := make([]osclient.Resource, 0, len(list))
@@ -503,7 +612,7 @@ func (p *purger) servers() bool {
 func (p *purger) routers() bool {
 	routers, err := p.c.ListProjectRouters(p.projectID)
 	if err != nil {
-		p.log.Warnw("Purge: could not list", "kind", "router", "error", err)
+		p.listFailed("router", err)
 		return false
 	}
 	routers = p.owned("router", routers)
@@ -512,7 +621,7 @@ func (p *purger) routers() bool {
 	}
 	ports, err := p.c.ListProjectPorts(p.projectID)
 	if err != nil {
-		p.log.Warnw("Purge: could not list", "kind", "port", "error", err)
+		p.listFailed("port", err)
 		return false
 	}
 	for _, rt := range routers {
@@ -531,7 +640,7 @@ func (p *purger) routers() bool {
 func (p *purger) ports() bool {
 	ports, err := p.c.ListProjectPorts(p.projectID)
 	if err != nil {
-		p.log.Warnw("Purge: could not list", "kind", "port", "error", err)
+		p.listFailed("port", err)
 		return false
 	}
 	ports = p.owned("port", ports)
@@ -552,7 +661,7 @@ func (p *purger) ports() bool {
 func (p *purger) securityGroups() bool {
 	groups, err := p.c.ListProjectSecurityGroups(p.projectID)
 	if err != nil {
-		p.log.Warnw("Purge: could not list", "kind", "security group", "error", err)
+		p.listFailed("security group", err)
 		return false
 	}
 	groups = p.owned("security group", groups)

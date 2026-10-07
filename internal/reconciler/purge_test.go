@@ -1,6 +1,7 @@
 package reconciler
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"testing"
@@ -247,7 +248,9 @@ func TestPurge_EmptiesThenDeletes(t *testing.T) {
 		t.Fatalf("project never deleted; deleted so far: %v", f.deleted)
 	}
 	want := []string{"ip:fip", "server:vm", "backup:bak", "snapshot:snap", "volume:vol", "image:shelve-img",
-		"port:rt-if", "router:rt", "port:loose", "network:net", "sg:sg-web"}
+		"port:rt-if", "router:rt", "port:loose", "network:net", "sg:sg-web",
+		// After the project: Neutron keeps its default group, nothing recreates it any more.
+		"sg:sg-default"}
 	if !slices.Equal(f.deleted, want) {
 		t.Errorf("deleted in order\n%v\nwant\n%v", f.deleted, want)
 	}
@@ -421,7 +424,7 @@ func TestPurge_ScopedServicesFirst(t *testing.T) {
 		t.Fatalf("project never deleted: %v", f.deleted)
 	}
 	want := []string{"cluster:k8s", "stack:stk", "lease:lease", "lb:lb", "ip:fip", "server:vm", "backup:bak", "snapshot:snap",
-		"volume:vol", "image:shelve-img", "secretct:cert", "secret:sec", "port:rt-if", "router:rt", "port:loose", "network:net", "sg:sg-web"}
+		"volume:vol", "image:shelve-img", "secretct:cert", "secret:sec", "port:rt-if", "router:rt", "port:loose", "network:net", "sg:sg-web", "sg:sg-default"}
 	if !slices.Equal(f.deleted, want) {
 		t.Errorf("deleted in order\n%v\nwant\n%v", f.deleted, want)
 	}
@@ -466,7 +469,85 @@ func TestPurge_NoSessionNoDeleting(t *testing.T) {
 	f := fullProject()
 	out := purgeProject(f, func(string) (projectSession, error) { return nil, errors.New("app credential") },
 		osclient.ProjectInfo{ID: pid}, "scope", purgeOptions{}, zap.NewNop().Sugar())
-	if out.stage != "session" || len(f.deleted) != 0 {
-		t.Errorf("stage %q, deleted %v", out.stage, f.deleted)
+	if out.stage != "access" || out.blocked != BlockedNoSession || len(f.deleted) != 0 {
+		t.Errorf("stage %q blocked %q, deleted %v", out.stage, out.blocked, f.deleted)
+	}
+}
+
+// The owner is told why a deletion takes long: a service that does not
+// answer, something that cannot be deleted, a kind whose deleting is off.
+// Waiting for OpenStack to finish is no reason.
+func TestPurge_SaysWhyItWaits(t *testing.T) {
+	f := fullProject()
+	f.session.res["stack"] = []osclient.Resource{{ID: "st", ProjectID: pid}}
+	f.session.down = map[string]bool{"stack": true}
+	purge(f, purgeOptions{}) // the way in
+	if out := purge(f, purgeOptions{}); out.stage != "stacks" || out.blocked != BlockedUnreachable || out.detail != "stack" {
+		t.Errorf("unreachable: %+v", out)
+	}
+
+	f = fullProject()
+	f.fail = map[string]bool{"vol": true}
+	var out purgeResult
+	for range 20 {
+		if out = purge(f, purgeOptions{}); out.stage == "volumes" {
+			break
+		}
+	}
+	if out.blocked != BlockedFailed || out.detail != "volume" {
+		t.Errorf("failed: %+v", out)
+	}
+
+	f = fullProject()
+	f.session.hasDNS = true
+	f.session.res["zone"] = []osclient.Resource{{ID: "z", Name: "x.example.", ProjectID: pid}}
+	for range 20 {
+		if out = purge(f, purgeOptions{}); out.stage == "dns-zones" {
+			break
+		}
+	}
+	if out.blocked != BlockedNotSwitchedOn || out.detail != "DNS zone" {
+		t.Errorf("not switched on: %+v", out)
+	}
+
+	if out := purge(fullProject(), purgeOptions{}); out.blocked != "" {
+		t.Errorf("taking over the project is no reason to wait: %+v", out)
+	}
+}
+
+func TestPurgeSteps(t *testing.T) {
+	steps := PurgeSteps([]string{"stacks"})
+	if steps[0] != "access" || steps[len(steps)-1] != "project" || slices.Contains(steps, "stacks") || len(steps) != len(PurgeStages)+1 {
+		t.Errorf("%v", steps)
+	}
+}
+
+// The progress lands on the leaf, adds up what was removed over passes, and a
+// pass that changes nothing writes nothing.
+func TestRecordPurgeProgress(t *testing.T) {
+	ctx := context.Background()
+	store := tree.NewInMemoryStore(zap.NewNop().Sugar())
+	if err := store.UpsertNode(ctx, tree.Node{ID: "p", Kind: tree.KindProject, Status: tree.StatusArchived}); err != nil {
+		t.Fatal(err)
+	}
+	r := &Reconciler{store: store, cfg: Config{PurgeSkipStages: []string{"stacks"}}}
+	get := func() *tree.PurgeProgress {
+		n, _ := store.GetNode(ctx, "p")
+		return n.Purge
+	}
+
+	r.recordPurgeProgress(ctx, "p", purgeResult{stage: "servers", removed: 2}, zap.NewNop().Sugar())
+	p := get()
+	if p == nil || p.Step != "servers" || p.Steps != len(PurgeStages)+1 || p.Index != 6 || p.Removed != 2 || p.Blocked != "" {
+		t.Fatalf("first pass: %+v", p)
+	}
+	stamp := p.UpdatedAt
+	r.recordPurgeProgress(ctx, "p", purgeResult{stage: "servers"}, zap.NewNop().Sugar())
+	if get().UpdatedAt != stamp {
+		t.Error("an unchanged pass rewrote the progress")
+	}
+	r.recordPurgeProgress(ctx, "p", purgeResult{stage: "volumes", removed: 3, blocked: BlockedFailed, detail: "volume data"}, zap.NewNop().Sugar())
+	if p := get(); p.Removed != 5 || p.Blocked != BlockedFailed || p.Detail != "volume data" {
+		t.Errorf("third pass: %+v", p)
 	}
 }

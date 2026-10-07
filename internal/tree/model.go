@@ -247,6 +247,26 @@ func (a Actor) Channel() string {
 // the ones that are NOT the UI stand out.
 func UIActor(email string) Actor { return Actor{Email: email} }
 
+// PurgeProgress is one pass of emptying a project: the step it is in, of how
+// many, and — when it is not just waiting for OpenStack to finish deleting —
+// why it is held up.
+type PurgeProgress struct {
+	// Step is "access" (taking over the project), a stage of emptying it
+	// ("servers", "volumes", …) or "project" (deleting the project itself).
+	Step  string `json:"step"`
+	Index int    `json:"index"` // 1-based
+	Steps int    `json:"steps"`
+	// Blocked is empty while things go their way, else "unreachable" (a
+	// service did not answer), "failed" (something could not be deleted),
+	// "not_switched_on" (DNS zones or object storage, whose deleting is off)
+	// or "no_session" (signing in to the project failed). Detail names what.
+	Blocked string `json:"blocked,omitempty"`
+	Detail  string `json:"detail,omitempty"`
+	// Removed counts what has been deleted so far, over all passes.
+	Removed   int    `json:"removed"`
+	UpdatedAt string `json:"updated_at"`
+}
+
 // HistoryEntry records a lifecycle event on a node.
 type HistoryEntry struct {
 	Timestamp string `json:"timestamp"`
@@ -413,7 +433,11 @@ type Node struct {
 	// OpenStack accepts silently — the servers keep running and only new ones
 	// are refused. Without this the platform sees only the smaller claim and a
 	// shrink looks like capacity handed back when nothing was.
-	OSInUse                  common.ProjectQuota              `json:"os_in_use,omitempty"`
+	OSInUse common.ProjectQuota `json:"os_in_use,omitempty"`
+	// Purge is how far emptying the project before its deletion has got,
+	// written by the reconciler on every pass while it runs, so its owner
+	// sees why a deletion takes long.
+	Purge                    *PurgeProgress                   `json:"purge,omitempty"`
 	ExternalGroupAssignments []common.ExternalGroupAssignment `json:"external_group_assignments,omitempty"`
 
 	// ChildCount is attached to API responses (never persisted): the number of

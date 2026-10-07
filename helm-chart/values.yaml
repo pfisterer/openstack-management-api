@@ -187,6 +187,10 @@ openstackManagementApi:
     # its budget. Off: archiving frees the budget entirely. The usage history
     # records the storage either way.
     chargeArchived: false
+    # Public-cloud list prices in euro that the root admins' usage evaluation
+    # puts on what was used, e.g. {vcpu_hour: 0.02, ram_gb_hour: 0.003,
+    # storage_gb_day: 0.003}. Empty: no euro values anywhere.
+    usagePrices: {}
     # Browser origins allowed to call /v1 cross-origin, as full origins
     # ("https://selfservice.example.cloud"). Empty = no cross-origin access,
     # which is right whenever the SPA reaches this API same-origin through a

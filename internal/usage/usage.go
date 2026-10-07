@@ -70,6 +70,10 @@ type Store interface {
 	// Days returns the rows of the given nodes in [from, to), oldest first.
 	// No nodes means all of them.
 	Days(ctx context.Context, nodeIDs []string, from, to time.Time) ([]Day, error)
+	// DaysUnder returns the rows in [from, to) of the projects that were below
+	// the budget on the day — by the budget path the row recorded, so a project
+	// moved away still counts where it was, and one released long ago too.
+	DaysUnder(ctx context.Context, budgetID string, from, to time.Time) ([]Day, error)
 }
 
 // dayOf truncates a time to its UTC day.

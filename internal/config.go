@@ -12,6 +12,7 @@ import (
 	"github.com/pfisterer/cloud-self-service-golib/envconf"
 	"github.com/pfisterer/cloud-self-service-golib/redact"
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/usage"
 	"go.uber.org/zap"
 )
 
@@ -257,6 +258,9 @@ type AppConfiguration struct {
 	// ChargeArchived keeps the storage an archived project still holds booked
 	// against its budget. See tree.Accounting.ChargeArchived.
 	ChargeArchived bool `json:"charge_archived"`
+	// UsagePrices are public-cloud list prices in euro that the root admins'
+	// usage evaluation puts on what was used. Unset, it shows no value.
+	UsagePrices *usage.Prices `json:"usage_prices,omitempty"`
 }
 
 // loadAppConfiguration loads configuration from an optional .env file and environment variables.
@@ -355,6 +359,15 @@ func loadAppConfiguration() (AppConfiguration, error) {
 		ChargeOSInUse:         envconf.Bool("API_CHARGE_OS_IN_USE", true),
 		ChargeReleased:        envconf.Bool("API_CHARGE_RELEASED", true),
 		ChargeArchived:        envconf.Bool("API_CHARGE_ARCHIVED", false),
+	}
+	// A JSON object rather than three numbers: envconf reads no floats, and the
+	// prices belong together.
+	if raw := strings.TrimSpace(envconf.String("API_USAGE_PRICES", "")); raw != "" {
+		var prices usage.Prices
+		if err := json.Unmarshal([]byte(raw), &prices); err != nil {
+			return AppConfiguration{}, fmt.Errorf("API_USAGE_PRICES: %w", err)
+		}
+		cfg.UsagePrices = &prices
 	}
 
 	if err := validateConfig(cfg); err != nil {

@@ -14,6 +14,7 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/reconciler"
 	"github.com/pfisterer/openstack-management-api/internal/tree"
+	"github.com/pfisterer/openstack-management-api/internal/usage"
 	"go.uber.org/zap"
 )
 
@@ -113,6 +114,7 @@ type APIService interface {
 	TransferOwner(id string, req tree.TransferOwnerRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
 	SetAllocation(id string, req tree.AllocationRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
 	AllocationSources(id string, userTokens common.TokenList) ([]tree.Node, error)
+	UsageScope(id string, userTokens common.TokenList) (*tree.Node, error)
 	PromoteNode(id string, req tree.PromoteNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
 	DeleteNode(id string, actor tree.Actor, userTokens common.TokenList) error
 
@@ -140,6 +142,11 @@ type APIConfig struct {
 	OpenstackDashboardURL string
 	// Retirement is passed through to the UI (see ConfigResponse).
 	Retirement RetirementConfig
+	// Usage holds the daily consumption rows; nil omits the usage endpoints'
+	// data (they answer with empty reports).
+	Usage UsageReader
+	// UsagePrices put a euro value on the root admins' evaluation; nil for none.
+	UsagePrices *usage.Prices
 }
 
 // SetupGinWebserver configures and returns the application router.
@@ -212,6 +219,7 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 	// Always register reconciler admin endpoints so CORS headers are present even
 	// when the reconciler is disabled. Handlers return 503 when Reconciler is nil.
 	RegisterReconcilerRoutes(apiV1Group, cfg.Reconciler, cfg.RootAdminTokens, cfg.Log)
+	RegisterUsageAdminRoutes(apiV1Group, cfg.API, cfg.RootAdminTokens, cfg.Log)
 
 	// The MCP endpoint: same authentication as /v1, deliberately WITHOUT
 	// RejectWritesForReadOnlyTokens. Every MCP call is a POST, so the method
@@ -263,6 +271,7 @@ func RegisterApiRoutes(v1 *gin.RouterGroup, cfg APIConfig, log *zap.SugaredLogge
 		nodes.POST("/:id/transfer-owner", transferNodeOwner(cfg))
 		nodes.PUT("/:id/allocations", setNodeAllocation(cfg))
 		nodes.GET("/:id/allocation-sources", listAllocationSources(cfg))
+		nodes.GET("/:id/usage", getNodeUsage(cfg))
 		nodes.POST("/:id/promote", promoteNode(cfg))
 	}
 

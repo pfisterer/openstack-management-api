@@ -250,6 +250,15 @@
             "chargeArchived": {
               "type": "boolean"
             },
+            "usagePrices": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "vcpu_hour": { "type": "number", "minimum": 0 },
+                "ram_gb_hour": { "type": "number", "minimum": 0 },
+                "storage_gb_day": { "type": "number", "minimum": 0 }
+              }
+            },
             "corsAllowedOrigins": {
               "type": "array",
               "items": {

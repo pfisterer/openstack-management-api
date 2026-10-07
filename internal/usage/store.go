@@ -100,6 +100,21 @@ func (s *PostgresStore) Days(ctx context.Context, nodeIDs []string, from, to tim
 	if len(nodeIDs) > 0 {
 		q = q.Where("node_id IN ?", nodeIDs)
 	}
+	return s.find(q)
+}
+
+func (s *PostgresStore) DaysUnder(ctx context.Context, budgetID string, from, to time.Time) ([]Day, error) {
+	// jsonb containment: the path holds an entry with this id.
+	needle, err := json.Marshal([]PathEntry{{ID: budgetID}})
+	if err != nil {
+		return nil, err
+	}
+	q := s.db.WithContext(ctx).Where("day >= ? AND day < ?", dayOf(from), dayOf(to)).
+		Where("budget_path @> ?::jsonb", string(needle))
+	return s.find(q)
+}
+
+func (s *PostgresStore) find(q *gorm.DB) ([]Day, error) {
 	var recs []dbDay
 	if err := q.Order("day, node_id").Find(&recs).Error; err != nil {
 		return nil, err
@@ -159,6 +174,16 @@ func (s *MemoryStore) LastDay(_ context.Context) (time.Time, bool, error) {
 }
 
 func (s *MemoryStore) Days(_ context.Context, nodeIDs []string, from, to time.Time) ([]Day, error) {
+	return s.filter(from, to, func(r Day) bool { return len(nodeIDs) == 0 || slices.Contains(nodeIDs, r.NodeID) }), nil
+}
+
+func (s *MemoryStore) DaysUnder(_ context.Context, budgetID string, from, to time.Time) ([]Day, error) {
+	return s.filter(from, to, func(r Day) bool {
+		return slices.ContainsFunc(r.BudgetPath, func(p PathEntry) bool { return p.ID == budgetID })
+	}), nil
+}
+
+func (s *MemoryStore) filter(from, to time.Time, keep func(Day) bool) []Day {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	from, to = dayOf(from), dayOf(to)
@@ -168,7 +193,7 @@ func (s *MemoryStore) Days(_ context.Context, nodeIDs []string, from, to time.Ti
 			continue
 		}
 		for _, r := range rows {
-			if len(nodeIDs) == 0 || slices.Contains(nodeIDs, r.NodeID) {
+			if keep(r) {
 				out = append(out, r)
 			}
 		}
@@ -185,5 +210,5 @@ func (s *MemoryStore) Days(_ context.Context, nodeIDs []string, from, to time.Ti
 		}
 		return 0
 	})
-	return out, nil
+	return out
 }

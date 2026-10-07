@@ -334,6 +334,8 @@ func RunApplication() {
 			ProvisioningEnabled:   func() bool { return reconcilerAPI != nil && reconcilerAPI.Ready() },
 			OpenstackDashboardURL: config.WebServer.OpenstackDashboardURL,
 			Retirement:            retirementConfig(config),
+			Usage:                 usageStore,
+			UsagePrices:           config.UsagePrices,
 		},
 		Tokens: webserver.TokenConfig{
 			Service: apiTokens,

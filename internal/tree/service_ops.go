@@ -1553,6 +1553,32 @@ func (s *Service) DeleteNode(id string, actor Actor, userTokens common.TokenList
 	return nil
 }
 
+// UsageScope returns the node whose consumption the caller asks for, if they
+// may see it: a project to everyone who may see the project, a budget's
+// subtree to its managers and those above — a requester sees a budget, not what
+// the others in it use.
+func (s *Service) UsageScope(id string, userTokens common.TokenList) (*Node, error) {
+	node, err := s.GetNode(id, userTokens)
+	if err != nil {
+		return nil, err
+	}
+	if node == nil {
+		return nil, fmt.Errorf("node %w", common.ErrNotFound)
+	}
+	if node.Kind == KindBudget {
+		ctx, cancel := s.newCtx()
+		defer cancel()
+		manages, err := s.managesNode(ctx, userTokens, node)
+		if err != nil {
+			return nil, err
+		}
+		if !manages {
+			return nil, common.ErrForbidden
+		}
+	}
+	return node, nil
+}
+
 // loadNode loads the node an operation acts on; a missing one is ErrNotFound.
 func (s *Service) loadNode(ctx context.Context, id string) (*Node, error) {
 	n, err := s.store.GetNode(ctx, id)

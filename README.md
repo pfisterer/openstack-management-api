@@ -159,6 +159,7 @@ matters when a sourced `openrc` is in the same shell.
 | `API_CHARGE_OS_IN_USE` | `true` | Charge a leaf the larger of its limit and its measured OpenStack usage |
 | `API_CHARGE_RELEASED` | `true` | Keep a released leaf charged until its OpenStack project is archived or gone |
 | `API_CHARGE_ARCHIVED` | `false` | Charge an archived leaf the volume storage it still holds; the usage history records it either way |
+| `API_USAGE_PRICES` | _(empty)_ | Public-cloud list prices in euro for the root admins' usage evaluation, as JSON: `{"vcpu_hour": 0.02, "ram_gb_hour": 0.003, "storage_gb_day": 0.003}`; empty shows no value |
 | `RESOURCE_DEFINITIONS` | built-in set | The resource catalogue as a JSON array; replaces the built-in set, an invalid entry stops startup |
 | `SERVICE_TIMEOUT_SECONDS` | `30` | Timeout for calls to the role provider and for service requests |
 | `RECONCILER_ENABLED` | `false` | Turn the OpenStack loop on |

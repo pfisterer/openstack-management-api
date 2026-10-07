@@ -167,6 +167,10 @@ spec:
               value: {{ dig "chargeReleased" true .Values.openstackManagementApi.api | toString | quote }}
             - name: API_CHARGE_ARCHIVED
               value: {{ dig "chargeArchived" false .Values.openstackManagementApi.api | toString | quote }}
+            {{- with (dig "usagePrices" dict .Values.openstackManagementApi.api) }}
+            - name: API_USAGE_PRICES
+              value: {{ toJson . | quote }}
+            {{- end }}
             {{- /* The resource catalogue, as a JSON array. Empty means "use the
                    built-in set", which is what every deployment ran on before
                    the catalogue became configurable. toJson, not quote: the

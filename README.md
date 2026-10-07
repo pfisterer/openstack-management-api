@@ -173,6 +173,7 @@ matters when a sourced `openrc` is in the same shell.
 | `RECONCILER_RELEASED_DELETE` | `never` | When a released or archived leaf's project is emptied and deleted, and then the leaf: `never`, `on-request` (when someone asks for it), `after-grace` (on request or after the grace days), `immediately` |
 | `RECONCILER_RELEASED_DELETE_GRACE_DAYS` | `30` | Release day plus this is the deletion day in the `pending-deletion:` tag |
 | `RECONCILER_PURGE_DNS_AND_OBJECT_STORAGE` | `false` | Deleting a project also deletes its Designate zones and Swift containers; off, they are reported and keep the project |
+| `RECONCILER_DELETE_ORPHANED_USERS` | `false` | Delete Keystone accounts this service created once they hold no project role. Only safe for a service user that sees every role assignment: with admin limited to one domain, roles on projects elsewhere are invisible and an account still in use there would be deleted |
 | `RECONCILER_PENDING_DELETION_TAG_PREFIX`, `RECONCILER_ARCHIVED_TAG_PREFIX`, `RECONCILER_CONTACT_TAG_PREFIX` | `pending-deletion:`, `archived:`, `contact:` | Release handling |
 | `OPENSTACK_AUTH_URL`, `OPENSTACK_REGION`, `OPENSTACK_INSECURE` | —, `microstack`, `false` | Endpoint (the URL is required at startup); each falls back to its `OS_*` equivalent (`OS_REGION_NAME` for the region) |
 | `OPENSTACK_APPLICATION_CREDENTIAL_ID`, `OPENSTACK_APPLICATION_CREDENTIAL_SECRET` | — | Application-credential auth; falls back to `OS_*` |

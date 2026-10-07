@@ -212,6 +212,8 @@ spec:
               value: {{ .Values.openstackManagementApi.reconciler.releasedDelete | default "never" | quote }}
             - name: RECONCILER_RELEASED_DELETE_GRACE_DAYS
               value: {{ .Values.openstackManagementApi.reconciler.releasedDeleteGraceDays | default 30 | toString | quote }}
+            - name: RECONCILER_DELETE_ORPHANED_USERS
+              value: {{ dig "deleteOrphanedUsers" false .Values.openstackManagementApi.reconciler | toString | quote }}
             - name: RECONCILER_PURGE_DNS_AND_OBJECT_STORAGE
               value: {{ dig "purgeDnsAndObjectStorage" false .Values.openstackManagementApi.reconciler | toString | quote }}
             - name: RECONCILER_ARCHIVED_TAG_PREFIX

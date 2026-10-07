@@ -97,6 +97,11 @@ type Config struct {
 	// and object storage. Off, they are only reported and keep the project
 	// from being deleted. Default: false.
 	PurgeDNSAndObjectStorage bool
+	// DeleteOrphanedUsers deletes Keystone accounts this service created once
+	// they hold no project role any more (pruneOrphanedUsers). Default: false —
+	// see there for why that is unsafe with a service user whose view is
+	// limited to its own domain.
+	DeleteOrphanedUsers bool
 	// ArchivedTagPrefix marks a project archiveReleasedProject has finished
 	// with: "<prefix><YYYY-MM-DD>". Default: "archived:".
 	ArchivedTagPrefix string
@@ -618,7 +623,11 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 	//   1. Only users whose description matches ManagedUserDescription are candidates.
 	//   2. A user with ANY project role assignment (even one added manually outside
 	//      this system) is never deleted.
-	r.pruneOrphanedUsers(&res)
+	// Off unless Config.DeleteOrphanedUsers — invariant 2 only holds when the
+	// service user sees every assignment, see pruneOrphanedUsers.
+	if r.cfg.DeleteOrphanedUsers {
+		r.pruneOrphanedUsers(&res)
+	}
 
 	return res, nil
 }
@@ -873,6 +882,22 @@ func (r *Reconciler) promoteImportedLeaves(
 // pruneOrphanedUsers finds auto-created Keystone users that have no project role
 // assignments and deletes them. Non-fatal: errors for individual users are logged
 // but do not abort the reconciliation run.
+// pruneOrphanedUsers deletes the accounts this service created that hold no
+// project role any more.
+//
+// Switched off by default (Config.DeleteOrphanedUsers), because "no role" is
+// only what the service user can SEE. With admin limited to its own domain —
+// the setup on both clouds, where svc-os-mgt is admin on dhbw-managed only —
+// Keystone hides the role assignments on projects in other domains. An
+// account that still has a role elsewhere, granted by someone else, then
+// looks orphaned and is deleted, and the person loses that access too. It
+// happened on staging (2026-10-07): an account whose only role was on a
+// project in the default domain was deleted as soon as the service user
+// switched to domain-limited admin.
+//
+// Keeping such an account costs nothing: without a role it reaches nothing,
+// and the next SSO login would bring it back anyway. Turn it on only where
+// the service user sees every assignment (system or cloud-wide admin).
 func (r *Reconciler) pruneOrphanedUsers(res *reconcileResult) {
 	if r.osClient == nil {
 		return

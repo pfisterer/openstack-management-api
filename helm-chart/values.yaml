@@ -241,6 +241,11 @@ openstackManagementApi:
     # Deleting a project also deletes its DNS zones and object storage. Off,
     # they are only reported and keep the project from being deleted.
     purgeDnsAndObjectStorage: false
+    # Delete Keystone accounts this service created once they hold no project
+    # role. Off: a service user that is admin only on its own domain cannot see
+    # roles on projects elsewhere, so an account still in use there would look
+    # orphaned and be deleted. Only for a service user that sees everything.
+    deleteOrphanedUsers: false
     archivedTagPrefix: "archived:"
     # Record each finished day's consumption per project from Nova.
     usageEnabled: true

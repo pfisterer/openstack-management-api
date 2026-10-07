@@ -327,7 +327,7 @@ A pass aborts only when it cannot load its inputs (leaves, the scope parent, the
 4. **Groups.** For every `group:` token in the reconcilable leaves' `authorized_users`, ensure a Keystone group named `RECONCILER_GROUP_PREFIX` + group name (groups have no parent and no tags, so the prefix marks them), and sync its members from `RoleProvider.GetGroupUsers`, creating accounts as needed.
 5. **Tree → OpenStack** for each reconcilable leaf (§8.3).
 6. **OpenStack → tree**: import unknown projects, handle released ones, drop records whose project is gone (§8.4, §8.5).
-7. **Prune** Keystone users this service created (recognised by a fixed description) that no longer hold any project role assignment. A user with any assignment, including one made by hand, is never deleted.
+7. **Prune**, only with `RECONCILER_DELETE_ORPHANED_USERS` (off by default): Keystone users this service created (recognised by a fixed description) that no longer hold any project role assignment. A user with any assignment, including one made by hand, is never deleted — but only the assignments the service user can see count. With admin limited to one domain, as on both clouds, Keystone hides roles on projects in other domains, so an account still in use there looks orphaned; staging deleted one that way on 2026-10-07. Keeping an account without roles costs nothing (it reaches nothing, and the next SSO login would recreate it), so the switch is only for a service user that sees every assignment.
 
 ### 8.3 Tree → OpenStack
 

@@ -319,6 +319,9 @@
               "type": "string",
               "enum": ["never", "on-request", "after-grace", "immediately"]
             },
+            "deleteOrphanedUsers": {
+              "type": "boolean"
+            },
             "purgeDnsAndObjectStorage": {
               "type": "boolean"
             },

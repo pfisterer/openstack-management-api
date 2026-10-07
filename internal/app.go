@@ -291,6 +291,7 @@ func RunApplication() {
 				ReleasedDeleteGraceDays:  config.Reconciler.ReleasedDeleteGraceDays,
 				ArchivedTagPrefix:        config.Reconciler.ArchivedTagPrefix,
 				PurgeDNSAndObjectStorage: config.Reconciler.PurgeDNSAndObjectStorage,
+				DeleteOrphanedUsers:      config.Reconciler.DeleteOrphanedUsers,
 				PendingDeletionTagPrefix: config.Reconciler.PendingDeletionTagPrefix,
 				ContactTagPrefix:         config.Reconciler.ContactTagPrefix,
 				TerminationTagPrefix:     config.Reconciler.TerminationTagPrefix,

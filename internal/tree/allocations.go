@@ -46,21 +46,12 @@ func (s *Service) SetAllocation(id string, req AllocationRequest, actor Actor, u
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
-	current, err := s.store.GetNode(ctx, id)
+	current, err := s.loadLive(ctx, id)
 	if err != nil {
-		return Node{}, fmt.Errorf("load node: %w", err)
-	}
-	if current == nil {
-		return Node{}, fmt.Errorf("node %w", common.ErrNotFound)
+		return Node{}, err
 	}
 	if current.Kind != KindProject {
 		return Node{}, fmt.Errorf("only a project draws from budgets above its own; a budget gets more from its parent")
-	}
-	if current.Status == StatusImported {
-		return Node{}, fmt.Errorf("imported nodes are read-only until promoted: %w", common.ErrForbidden)
-	}
-	if IsTerminalStatus(current.Status) {
-		return Node{}, fmt.Errorf("%w: cannot change node in status %q", common.ErrConflict, current.Status)
 	}
 
 	chain, err := s.parentChainNodes(ctx, current)
@@ -169,12 +160,9 @@ func (s *Service) AllocationSources(id string, userTokens common.TokenList) ([]N
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
-	project, err := s.store.GetNode(ctx, id)
+	project, err := s.loadNode(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("load node: %w", err)
-	}
-	if project == nil {
-		return nil, fmt.Errorf("node %w", common.ErrNotFound)
+		return nil, err
 	}
 	if project.Kind != KindProject {
 		return nil, fmt.Errorf("only a project draws from budgets above its own")

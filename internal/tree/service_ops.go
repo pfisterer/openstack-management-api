@@ -569,23 +569,12 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, user
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
-	current, err := s.store.GetNode(ctx, id)
+	current, err := s.loadLive(ctx, id)
 	if err != nil {
-		return Node{}, fmt.Errorf("load node: %w", err)
-	}
-	if current == nil {
-		return Node{}, fmt.Errorf("node %w", common.ErrNotFound)
+		return Node{}, err
 	}
 	if current.Kind != KindBudget && !isLeafDirectEdit(req) {
 		return Node{}, fmt.Errorf("only the name and the admins can be edited directly on a project; use request-change for anything else")
-	}
-	// An imported leaf mirrors OpenStack until somebody promotes it; renaming it
-	// here would be overwritten by the next reconcile.
-	if current.Status == StatusImported {
-		return Node{}, fmt.Errorf("imported nodes are read-only until promoted: %w", common.ErrForbidden)
-	}
-	if IsTerminalStatus(current.Status) {
-		return Node{}, fmt.Errorf("%w: cannot edit node in status %q", common.ErrConflict, current.Status)
 	}
 
 	wantsPolicyEdit := req.Name != nil || req.AdminScope != nil || req.EligibleRequesters != nil ||
@@ -774,18 +763,9 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor Actor, u
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
-	current, err := s.store.GetNode(ctx, id)
+	current, err := s.loadLive(ctx, id)
 	if err != nil {
-		return Node{}, fmt.Errorf("load node: %w", err)
-	}
-	if current == nil {
-		return Node{}, fmt.Errorf("node %w", common.ErrNotFound)
-	}
-	if current.Status == StatusImported {
-		return Node{}, fmt.Errorf("imported nodes are read-only until promoted: %w", common.ErrForbidden)
-	}
-	if IsTerminalStatus(current.Status) {
-		return Node{}, fmt.Errorf("%w: cannot modify node in status %q", common.ErrConflict, current.Status)
+		return Node{}, err
 	}
 
 	// Authorization: the leaf owner, a budget's own managers (asking their parent
@@ -1017,12 +997,9 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor Actor, us
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
-	current, err := s.store.GetNode(ctx, id)
+	current, err := s.loadNode(ctx, id)
 	if err != nil {
-		return Node{}, fmt.Errorf("load node: %w", err)
-	}
-	if current == nil {
-		return Node{}, fmt.Errorf("node %w", common.ErrNotFound)
+		return Node{}, err
 	}
 	if current.Status != StatusPending && current.Status != StatusChangePending {
 		return Node{}, fmt.Errorf("%w: cannot approve node in status %q", common.ErrConflict, current.Status)
@@ -1130,12 +1107,9 @@ func (s *Service) RejectNode(id string, req RejectNodeRequest, actor Actor, user
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
-	current, err := s.store.GetNode(ctx, id)
+	current, err := s.loadNode(ctx, id)
 	if err != nil {
-		return Node{}, fmt.Errorf("load node: %w", err)
-	}
-	if current == nil {
-		return Node{}, fmt.Errorf("node %w", common.ErrNotFound)
+		return Node{}, err
 	}
 	if current.Status != StatusPending && current.Status != StatusChangePending {
 		return Node{}, fmt.Errorf("%w: cannot reject node in status %q", common.ErrConflict, current.Status)
@@ -1178,12 +1152,9 @@ func (s *Service) ReleaseNode(id string, req ReleaseNodeRequest, actor Actor, us
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
-	current, err := s.store.GetNode(ctx, id)
+	current, err := s.loadNode(ctx, id)
 	if err != nil {
-		return Node{}, fmt.Errorf("load node: %w", err)
-	}
-	if current == nil {
-		return Node{}, fmt.Errorf("node %w", common.ErrNotFound)
+		return Node{}, err
 	}
 	if !current.IsLeaf() {
 		return Node{}, fmt.Errorf("only project leaves can be released; delete budgets instead")
@@ -1230,12 +1201,9 @@ func (s *Service) RequestDeletion(id string, actor Actor, userTokens common.Toke
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
-	current, err := s.store.GetNode(ctx, id)
+	current, err := s.loadNode(ctx, id)
 	if err != nil {
-		return Node{}, fmt.Errorf("load node: %w", err)
-	}
-	if current == nil {
-		return Node{}, fmt.Errorf("node %w", common.ErrNotFound)
+		return Node{}, err
 	}
 	if !current.IsLeaf() || !slices.Contains(RetiredStatuses, current.Status) {
 		return Node{}, fmt.Errorf("%w: only released or archived projects can be deleted", common.ErrConflict)
@@ -1298,21 +1266,12 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor Actor, 
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
-	current, err := s.store.GetNode(ctx, id)
+	current, err := s.loadLive(ctx, id)
 	if err != nil {
-		return Node{}, fmt.Errorf("load node: %w", err)
-	}
-	if current == nil {
-		return Node{}, fmt.Errorf("node %w", common.ErrNotFound)
+		return Node{}, err
 	}
 	if current.ID == RootNodeID || current.ID == UnassignedNodeID {
 		return Node{}, fmt.Errorf("structural nodes cannot be moved: %w", common.ErrForbidden)
-	}
-	if current.Status == StatusImported {
-		return Node{}, fmt.Errorf("imported nodes are moved via promote: %w", common.ErrForbidden)
-	}
-	if IsTerminalStatus(current.Status) {
-		return Node{}, fmt.Errorf("%w: cannot move node in status %q", common.ErrConflict, current.Status)
 	}
 	if current.ParentID != nil && *current.ParentID == req.NewParentID {
 		return Node{}, fmt.Errorf("%w: node is already under this parent", common.ErrConflict)
@@ -1426,21 +1385,12 @@ func (s *Service) TransferOwner(id string, req TransferOwnerRequest, actor Actor
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
-	current, err := s.store.GetNode(ctx, id)
+	current, err := s.loadLive(ctx, id)
 	if err != nil {
-		return Node{}, fmt.Errorf("load node: %w", err)
-	}
-	if current == nil {
-		return Node{}, fmt.Errorf("node %w", common.ErrNotFound)
+		return Node{}, err
 	}
 	if !current.IsLeaf() {
 		return Node{}, fmt.Errorf("only project leaves have an owner")
-	}
-	if current.Status == StatusImported {
-		return Node{}, fmt.Errorf("imported nodes get their owner via promote: %w", common.ErrForbidden)
-	}
-	if IsTerminalStatus(current.Status) {
-		return Node{}, fmt.Errorf("%w: cannot transfer node in status %q", common.ErrConflict, current.Status)
 	}
 
 	if manages, err := s.managesParentChain(ctx, userTokens, current); err != nil {
@@ -1483,12 +1433,9 @@ func (s *Service) PromoteNode(id string, req PromoteNodeRequest, actor Actor, us
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
-	current, err := s.store.GetNode(ctx, id)
+	current, err := s.loadNode(ctx, id)
 	if err != nil {
-		return Node{}, fmt.Errorf("load node: %w", err)
-	}
-	if current == nil {
-		return Node{}, fmt.Errorf("node %w", common.ErrNotFound)
+		return Node{}, err
 	}
 	if current.Status != StatusImported {
 		return Node{}, fmt.Errorf("only imported nodes can be promoted: %w", common.ErrForbidden)
@@ -1556,12 +1503,9 @@ func (s *Service) DeleteNode(id string, actor Actor, userTokens common.TokenList
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
-	current, err := s.store.GetNode(ctx, id)
+	current, err := s.loadNode(ctx, id)
 	if err != nil {
-		return fmt.Errorf("load node: %w", err)
-	}
-	if current == nil {
-		return fmt.Errorf("node %w", common.ErrNotFound)
+		return err
 	}
 	if current.Kind != KindBudget {
 		return fmt.Errorf("project leaves are not deleted; reject or release them instead")
@@ -1607,6 +1551,37 @@ func (s *Service) DeleteNode(id string, actor Actor, userTokens common.TokenList
 		return fmt.Errorf("delete subtree: %w", err)
 	}
 	return nil
+}
+
+// loadNode loads the node an operation acts on; a missing one is ErrNotFound.
+func (s *Service) loadNode(ctx context.Context, id string) (*Node, error) {
+	n, err := s.store.GetNode(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("load node: %w", err)
+	}
+	if n == nil {
+		return nil, fmt.Errorf("node %w", common.ErrNotFound)
+	}
+	return n, nil
+}
+
+// loadLive is loadNode for an operation that changes a node of the managed
+// tree. An import mirrors OpenStack until somebody promotes it — whatever is
+// changed here would be overwritten by the next reconcile, and promoting is
+// where it gets a budget, an owner and a limit — and a node that is retired or
+// rejected is past changing.
+func (s *Service) loadLive(ctx context.Context, id string) (*Node, error) {
+	n, err := s.loadNode(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if n.Status == StatusImported {
+		return nil, fmt.Errorf("imported nodes change only by being promoted: %w", common.ErrForbidden)
+	}
+	if IsTerminalStatus(n.Status) {
+		return nil, fmt.Errorf("%w: a node in status %q cannot be changed", common.ErrConflict, n.Status)
+	}
+	return n, nil
 }
 
 // parentChainNodes returns the node's ancestor budgets (parent upward, exclusive).

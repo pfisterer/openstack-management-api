@@ -61,7 +61,7 @@ func requireRootAdmin(rootAdminTokens common.TokenList, log *zap.SugaredLogger) 
 //	@Tags			admin
 //	@Produce		json
 //	@Security		Bearer
-//	@Success		200	{object}	map[string]any	"Last reconciliation status (reconciler.Status)."
+//	@Success		200	{object}	reconciler.Status	"Last reconciliation status."
 //	@Failure		401	{object}	map[string]any			"Unauthorized."
 //	@Failure		403	{object}	map[string]any			"Forbidden."
 //	@ID				getAdminReconcileStatus

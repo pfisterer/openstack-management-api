@@ -168,6 +168,10 @@ type Status struct {
 	// THIS deployment writes. Hardcoding it in the frontend would go quietly
 	// wrong the day someone overrides the env.
 	ManagedTag string `json:"managed_tag,omitempty"`
+	// RecentRuns and Problems are what the recent runs logged as warnings and
+	// errors (problems.go), newest first.
+	RecentRuns []RunSummary `json:"recent_runs"`
+	Problems   []Problem    `json:"problems"`
 }
 
 // Reconciler orchestrates the two-way sync.
@@ -194,6 +198,9 @@ type Reconciler struct {
 
 	// usage, when set, records each finished day's consumption after a pass.
 	usage UsageCollector
+
+	// problems keeps what the recent runs logged at warning level and above.
+	problems *problemRecorder
 }
 
 // UsageCollector records what projects used per day (package usage). An
@@ -250,14 +257,16 @@ func New(
 	if cfg.GroupPrefix == "" {
 		cfg.GroupPrefix = "managed-"
 	}
+	problems := &problemRecorder{}
 	return &Reconciler{
 		store:           store,
 		osClient:        osClient,
 		cfg:             cfg,
 		managedProjects: managedProjects,
 		roleProvider:    roleProvider,
-		log:             log,
+		log:             withRecorder(log, problems),
 		trigger:         make(chan struct{}, 1),
+		problems:        problems,
 	}
 }
 
@@ -304,6 +313,7 @@ func (r *Reconciler) GetStatus() Status {
 	defer r.mu.RUnlock()
 	status := r.status
 	status.ManagedTag = r.cfg.ManagedProjectTag
+	status.RecentRuns, status.Problems = r.problems.snapshot()
 	return status
 }
 
@@ -324,6 +334,7 @@ func (r *Reconciler) runOnce(ctx context.Context) {
 	r.status.Running = true
 	r.status.PreseedConflicts = nil
 	r.mu.Unlock()
+	r.problems.begin(time.Now())
 
 	result, err := r.Reconcile(ctx)
 	r.scheduleFollowUp(result.purgesPending)
@@ -378,6 +389,7 @@ func (r *Reconciler) runOnce(ctx context.Context) {
 			"retagged", result.projectsRetagged)
 	}
 	r.mu.Unlock()
+	r.problems.end(time.Now(), err)
 }
 
 type reconcileResult struct {

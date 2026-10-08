@@ -71,7 +71,7 @@ func TestApplyOSSyncState_UnmeasuredPassKeepsTheLastKnownUsage(t *testing.T) {
 		OSInUse:         common.ProjectQuota{"cores": 8, "ram": 5},
 	}
 
-	changed := applyOSSyncState(&leaf, "os-1", false, nil, false)
+	changed := applyOSSyncState(&leaf, "os-1", nil)
 
 	if changed {
 		t.Error("nothing was measured and the project id is unchanged; there is nothing to persist")
@@ -89,7 +89,7 @@ func TestApplyOSSyncState_UnmeasuredPassKeepsTheLastKnownUsage(t *testing.T) {
 func TestApplyOSSyncState_UnmeasuredPassStillAdoptsTheProjectID(t *testing.T) {
 	leaf := tree.Node{OSInUse: common.ProjectQuota{"cores": 8}}
 
-	if !applyOSSyncState(&leaf, "os-new", false, nil, false) {
+	if !applyOSSyncState(&leaf, "os-new", nil) {
 		t.Fatal("a new OS project id has to be persisted")
 	}
 	if leaf.OSProjectID != "os-new" {
@@ -109,7 +109,7 @@ func TestApplyOSSyncState_MeasuredPassOverwrites(t *testing.T) {
 		OSInUse:         common.ProjectQuota{"cores": 8, "ram": 5},
 	}
 
-	if !applyOSSyncState(&leaf, "os-1", false, common.ProjectQuota{"cores": 0, "ram": 0}, true) {
+	if !applyOSSyncState(&leaf, "os-1", &osMeasurement{inUse: common.ProjectQuota{"cores": 0, "ram": 0}}) {
 		t.Fatal("the measurement changed, so the node needs persisting")
 	}
 	if !quotaEqual(leaf.OSInUse, common.ProjectQuota{"cores": 0, "ram": 0}) {
@@ -123,9 +123,26 @@ func TestApplyOSSyncState_MeasuredPassOverwrites(t *testing.T) {
 // An unchanged measurement must not report a change, or the reconciler rewrites
 // every leaf on every tick.
 func TestApplyOSSyncState_IdenticalMeasurementIsNotAChange(t *testing.T) {
+	servers := 1
+	leaf := tree.Node{OSProjectID: "os-1", OSInUse: common.ProjectQuota{"cores": 2}, OSServers: &servers}
+
+	if applyOSSyncState(&leaf, "os-1", &osMeasurement{inUse: common.ProjectQuota{"cores": 2}, servers: 1}) {
+		t.Error("nothing changed, but the node was marked for persisting")
+	}
+}
+
+// The server count is part of the measurement: written with it, and a change
+// in it alone is worth persisting.
+func TestApplyOSSyncState_ServerCount(t *testing.T) {
 	leaf := tree.Node{OSProjectID: "os-1", OSInUse: common.ProjectQuota{"cores": 2}}
 
-	if applyOSSyncState(&leaf, "os-1", false, common.ProjectQuota{"cores": 2}, true) {
-		t.Error("nothing changed, but the node was marked for persisting")
+	if !applyOSSyncState(&leaf, "os-1", &osMeasurement{inUse: common.ProjectQuota{"cores": 2}, servers: 3}) {
+		t.Fatal("a first server count has to be persisted")
+	}
+	if leaf.OSServers == nil || *leaf.OSServers != 3 {
+		t.Fatalf("OSServers = %v, want 3", leaf.OSServers)
+	}
+	if applyOSSyncState(&leaf, "os-1", nil) || *leaf.OSServers != 3 {
+		t.Error("an unmeasured pass must keep the last count")
 	}
 }

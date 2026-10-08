@@ -443,6 +443,9 @@ type Node struct {
 	// are refused. Without this the platform sees only the smaller claim and a
 	// shrink looks like capacity handed back when nothing was.
 	OSInUse common.ProjectQuota `json:"os_in_use,omitempty"`
+	// OSServers is how many servers the project has in OpenStack, measured with
+	// OSInUse; nil until a pass has measured it.
+	OSServers *int `json:"os_servers,omitempty"`
 	// Purge is how far emptying the project before its deletion has got,
 	// written by the reconciler on every pass while it runs, so its owner
 	// sees why a deletion takes long.

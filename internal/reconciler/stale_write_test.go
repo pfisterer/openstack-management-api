@@ -37,7 +37,7 @@ func TestOSSyncStateDoesNotRevertAChangeMadeDuringThePass(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r.persistOSSyncState(ctx, loaded.ID, "os-1", true, common.ProjectQuota{"cores": 3}, true)
+	r.persistOSSyncState(ctx, loaded.ID, "os-1", &osMeasurement{overcommitted: true, inUse: common.ProjectQuota{"cores": 3}})
 
 	got, _ := store.GetNode(ctx, "p_1")
 	if got.Status != tree.StatusChangePending || got.Pending == nil || got.Pending.Limit == nil || (*got.Pending.Limit)["cores"] != 8 {

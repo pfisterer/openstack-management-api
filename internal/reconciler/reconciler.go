@@ -581,13 +581,13 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 			r.syncMembers(leaf, created.ID)
 			r.syncGroupAssignments(leaf, created.ID, groupTokenToOSID)
 		} else {
-			overcommitted, inUse, measured, err := r.syncQuota(leaf, osProject, description)
+			m, err := r.syncQuota(leaf, osProject, description)
 			if err != nil {
 				r.log.Warnw("Failed to sync quota for leaf", "node_id", leaf.ID, "os_project_id", osProject.ID, "error", err)
 				continue
 			}
-			if applyOSSyncState(&leaf, osProject.ID, overcommitted, inUse, measured) && !r.cfg.DryRun {
-				r.persistOSSyncState(ctx, leaf.ID, osProject.ID, overcommitted, inUse, measured)
+			if applyOSSyncState(&leaf, osProject.ID, m) && !r.cfg.DryRun {
+				r.persistOSSyncState(ctx, leaf.ID, osProject.ID, m)
 			}
 			r.syncMembers(leaf, osProject.ID)
 			r.syncGroupAssignments(leaf, osProject.ID, groupTokenToOSID)
@@ -1547,20 +1547,32 @@ func (r *Reconciler) createOpenstackProjectForLeaf(_ context.Context, leaf tree.
 // "Not measured" is not "nothing in use". The rest of this package is careful
 // about that distinction (see ProjectInUse and quotaEqual); this is the place
 // where it used to be lost.
-func applyOSSyncState(leaf *tree.Node, osProjectID string, overcommitted bool, inUse common.ProjectQuota, measured bool) bool {
+func applyOSSyncState(leaf *tree.Node, osProjectID string, m *osMeasurement) bool {
 	changed := leaf.OSProjectID != osProjectID
-	if measured {
-		changed = changed || leaf.OSOvercommitted != overcommitted || !quotaEqual(leaf.OSInUse, inUse)
+	if m != nil {
+		changed = changed || leaf.OSOvercommitted != m.overcommitted || !quotaEqual(leaf.OSInUse, m.inUse) ||
+			leaf.OSServers == nil || *leaf.OSServers != m.servers
 	}
 	if !changed {
 		return false
 	}
 	leaf.OSProjectID = osProjectID
-	if measured {
-		leaf.OSOvercommitted = overcommitted
-		leaf.OSInUse = inUse
+	if m != nil {
+		leaf.OSOvercommitted = m.overcommitted
+		leaf.OSInUse = m.inUse
+		servers := m.servers
+		leaf.OSServers = &servers
 	}
 	return true
+}
+
+// osMeasurement is what one pass read from OpenStack about a project. nil
+// means it could not be read — "not measured", never "nothing in use".
+type osMeasurement struct {
+	overcommitted bool
+	inUse         common.ProjectQuota
+	// servers counts the project's servers, whatever their state.
+	servers int
 }
 
 // removeStaleImports deletes imported leaves whose OpenStack project is no longer
@@ -1602,9 +1614,9 @@ func (r *Reconciler) persistOSProjectID(ctx context.Context, leafID, osProjectID
 
 // persistOSSyncState writes what the pass measured in OpenStack onto the node as
 // it is now, touching only those fields.
-func (r *Reconciler) persistOSSyncState(ctx context.Context, leafID, osProjectID string, overcommitted bool, inUse common.ProjectQuota, measured bool) {
+func (r *Reconciler) persistOSSyncState(ctx context.Context, leafID, osProjectID string, m *osMeasurement) {
 	if _, err := r.store.UpdateNode(ctx, leafID, func(n *tree.Node) error {
-		if !applyOSSyncState(n, osProjectID, overcommitted, inUse, measured) {
+		if !applyOSSyncState(n, osProjectID, m) {
 			return tree.ErrSkipUpdate
 		}
 		return nil
@@ -1717,7 +1729,7 @@ func syncGrants(c grantClient, defs []common.ManagedProject, leaf tree.Node, osP
 	}
 }
 
-func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo, description string) (overcommitted bool, inUse common.ProjectQuota, measured bool, err error) {
+func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo, description string) (*osMeasurement, error) {
 	osProjectID := osProject.ID
 	quotaSet := ProjectQuotaToQuotaSet(r.resources(), leaf.EffectiveLimit())
 
@@ -1727,11 +1739,11 @@ func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo, d
 		"dry_run", r.cfg.DryRun)
 
 	if r.cfg.DryRun {
-		return false, nil, false, nil
+		return nil, nil
 	}
 
 	if err := r.osClient.UpdateManagedQuotas(osProjectID, quotaSet); err != nil {
-		return false, nil, false, fmt.Errorf("update managed quotas: %w", err)
+		return nil, fmt.Errorf("update managed quotas: %w", err)
 	}
 
 	// Name is only sent when it actually changed: an unchanged name would be a no-op
@@ -1764,10 +1776,14 @@ func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo, d
 		// "no usage" for a project it simply could not read.
 		r.log.Warnw("Skipping overcommit check (quota detail unavailable); keeping the last known usage",
 			"node_id", leaf.ID, "os_project_id", osProjectID, "error", err)
-		return false, nil, false, nil
+		return nil, nil
 	}
 
-	return IsProjectOvercommitted(r.resources(), leaf.EffectiveLimit(), detail), ProjectInUse(r.resources(), detail), true, nil
+	return &osMeasurement{
+		overcommitted: IsProjectOvercommitted(r.resources(), leaf.EffectiveLimit(), detail),
+		inUse:         ProjectInUse(r.resources(), detail),
+		servers:       detail.InUse.Instances,
+	}, nil
 }
 
 // buildDesiredMembers extracts the intended OpenStack role assignments from a leaf.

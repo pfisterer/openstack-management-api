@@ -162,6 +162,15 @@ type Allocation struct {
 	GrantedAt string              `json:"granted_at"`
 	// BudgetName is attached to API responses (never persisted).
 	BudgetName string `json:"budget_name,omitempty"`
+	// BudgetPath is attached to API responses (never persisted): the budgets
+	// from below the root down to BudgetID, root-most first.
+	BudgetPath []PathEntry `json:"budget_path,omitempty"`
+}
+
+// PathEntry is one budget on the way down from the root.
+type PathEntry struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // AllocatedOut sums a budget's allocations to projects further down.
@@ -472,6 +481,10 @@ type Node struct {
 	// of ParentID, so a client can name the budget a node is paid from without
 	// fetching each parent separately. Empty for roots.
 	ParentName string `json:"parent_name,omitempty"`
+	// ParentPath is attached to API responses (never persisted): the budgets
+	// from below the root down to ParentID, root-most first, so a client can
+	// tell two budgets of the same name apart. Empty when the parent is the root.
+	ParentPath []PathEntry `json:"parent_path,omitempty"`
 
 	// AvailableResources is attached to API responses (never persisted): the
 	// resources that are in scope AT THIS NODE, root-most first as the catalogue

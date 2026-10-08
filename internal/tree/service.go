@@ -706,46 +706,40 @@ func (s *Service) attachChildCounts(ctx context.Context, nodes []Node) ([]Node, 
 	return nodes, nil
 }
 
-// attachParentNames fills Node.ParentName for every node that has a parent,
-// and the budget name of every allocation, loading all distinct budgets in one
-// query. Without it a client that shows "paid from <budget>" has to fetch
-// every parent separately — one request per node. Only the display name is
-// exposed; no other field of those budgets is copied.
+// attachParentNames fills Node.ParentName and Node.ParentPath for every node
+// that has a parent, and the budget name and path of every allocation. Without
+// it a client that shows "paid from <budget>" has to fetch every parent
+// separately — one request per node — and a name alone is ambiguous: two
+// budgets called "Vorlesung" under different parents look the same. Only names
+// are exposed; no other field of those budgets is copied.
 func (s *Service) attachParentNames(ctx context.Context, nodes []Node) ([]Node, error) {
-	ids := make([]string, 0, len(nodes))
-	add := func(id string) {
-		if !slices.Contains(ids, id) {
-			ids = append(ids, id)
-		}
-	}
+	var start []string
 	for _, n := range nodes {
 		if n.ParentID != nil {
-			add(*n.ParentID)
+			start = append(start, *n.ParentID)
 		}
 		for _, a := range n.Allocations {
-			add(a.BudgetID)
+			start = append(start, a.BudgetID)
 		}
 	}
-	if len(ids) == 0 {
+	if len(start) == 0 {
 		return nodes, nil
 	}
-	budgets, err := s.store.ListNodes(ctx, NodeQuery{IDs: ids}, 0, 0)
+	tree, err := s.walkAncestors(ctx, start)
 	if err != nil {
-		return nil, fmt.Errorf("load parents: %w", err)
-	}
-	names := make(map[string]string, len(budgets))
-	for _, b := range budgets {
-		names[b.ID] = b.Name
+		return nil, err
 	}
 	for i := range nodes {
 		if nodes[i].ParentID != nil {
-			nodes[i].ParentName = names[*nodes[i].ParentID]
+			nodes[i].ParentName = tree.name[*nodes[i].ParentID]
+			nodes[i].ParentPath = tree.path(*nodes[i].ParentID)
 		}
 		if len(nodes[i].Allocations) > 0 {
 			// A copy: the slice may be the store's own.
 			named := slices.Clone(nodes[i].Allocations)
 			for j := range named {
-				named[j].BudgetName = names[named[j].BudgetID]
+				named[j].BudgetName = tree.name[named[j].BudgetID]
+				named[j].BudgetPath = tree.path(named[j].BudgetID)
 			}
 			nodes[i].Allocations = named
 		}
@@ -753,67 +747,110 @@ func (s *Service) attachParentNames(ctx context.Context, nodes []Node) ([]Node, 
 	return nodes, nil
 }
 
-// maxAncestorDepth bounds the upward walk in attachAncestorIDs. A tree this
-// deep is already a bug; the cap is here so a cycle that slipped past the
-// cycle guard cannot turn into an endless query loop.
+// maxAncestorDepth bounds the upward walk in walkAncestors. A tree this deep is
+// already a bug; the cap is here so a cycle that slipped past the cycle guard
+// cannot turn into an endless query loop.
 const maxAncestorDepth = 64
 
-// attachAncestorIDs fills Node.AncestorIDs, root-most first, for every node
-// given.
+// ancestry is what walkAncestors learnt: each loaded node's parent and name.
+type ancestry struct {
+	parent map[string]string
+	name   map[string]string
+	log    interface{ Warnw(string, ...any) }
+}
+
+// chain returns the nodes above id, parent first, stopping at a cycle.
+func (a ancestry) chain(id string) []string {
+	var out []string
+	seen := map[string]struct{}{id: {}}
+	for p, ok := a.parent[id]; ok; p, ok = a.parent[p] {
+		if _, dup := seen[p]; dup {
+			// Report what was walked so far rather than failing the whole
+			// listing: a broken tree should still be visible enough to fix.
+			a.log.Warnw("cycle in ancestor chain", "node", id, "at", p)
+			break
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	return out
+}
+
+// path names the budgets from below the root down to id itself, root-most
+// first. The root is left out — every path starts there, so it tells nobody
+// anything — and id being the root gives an empty path.
+func (a ancestry) path(id string) []PathEntry {
+	if _, ok := a.name[id]; !ok {
+		return nil
+	}
+	ids := append([]string{id}, a.chain(id)...)
+	out := make([]PathEntry, 0, len(ids))
+	for _, x := range ids {
+		if _, hasParent := a.parent[x]; !hasParent {
+			continue // the root
+		}
+		out = append(out, PathEntry{ID: x, Name: a.name[x]})
+	}
+	slices.Reverse(out)
+	return out
+}
+
+// walkAncestors loads the nodes start and everything above them.
 //
-// Batched by LEVEL rather than per node: walking each node's chain with
-// nodeChain would be one query per node per level, and the caller (my-budgets)
-// can hold hundreds. Here each level of the tree costs one query no matter how
-// many nodes are on it, and the levels above the first are shared by nearly all
-// of them anyway.
-func (s *Service) attachAncestorIDs(ctx context.Context, nodes []Node) ([]Node, error) {
-	// child ID → parent ID, grown level by level until every chain reaches a
-	// node without a parent.
-	parentOf := make(map[string]string, len(nodes))
+// Batched by LEVEL rather than per node: walking each chain with nodeChain
+// would be one query per node per level, and a listing can hold hundreds. Here
+// each level of the tree costs one query no matter how many nodes are on it,
+// and the levels above the first are shared by nearly all of them anyway.
+func (s *Service) walkAncestors(ctx context.Context, start []string) (ancestry, error) {
+	a := ancestry{parent: map[string]string{}, name: map[string]string{}, log: s.log}
 	var frontier []string
-	for _, n := range nodes {
-		if n.ParentID != nil {
-			parentOf[n.ID] = *n.ParentID
-			if _, known := parentOf[*n.ParentID]; !known && !slices.Contains(frontier, *n.ParentID) {
-				frontier = append(frontier, *n.ParentID)
-			}
+	for _, id := range start {
+		if !slices.Contains(frontier, id) {
+			frontier = append(frontier, id)
 		}
 	}
-
 	for depth := 0; len(frontier) > 0 && depth < maxAncestorDepth; depth++ {
 		level, err := s.store.ListNodes(ctx, NodeQuery{IDs: frontier}, 0, 0)
 		if err != nil {
-			return nil, fmt.Errorf("load ancestors: %w", err)
+			return ancestry{}, fmt.Errorf("load ancestors: %w", err)
 		}
 		var next []string
-		for _, p := range level {
-			if p.ParentID == nil {
+		for _, n := range level {
+			a.name[n.ID] = n.Name
+			if n.ParentID == nil {
 				continue
 			}
-			parentOf[p.ID] = *p.ParentID
-			if _, known := parentOf[*p.ParentID]; !known && !slices.Contains(next, *p.ParentID) {
-				next = append(next, *p.ParentID)
+			a.parent[n.ID] = *n.ParentID
+			if _, known := a.name[*n.ParentID]; !known && !slices.Contains(next, *n.ParentID) {
+				next = append(next, *n.ParentID)
 			}
 		}
 		frontier = next
 	}
+	return a, nil
+}
 
-	for i := range nodes {
-		var chain []string
-		seen := map[string]struct{}{nodes[i].ID: {}}
-		for id, ok := parentOf[nodes[i].ID]; ok; id, ok = parentOf[id] {
-			if _, dup := seen[id]; dup {
-				// A cycle. Report what was walked so far rather than failing the
-				// whole listing: the caller uses this to decide where to DRAW a
-				// node, and a broken tree should still be visible enough to fix.
-				s.log.Warnw("cycle in ancestor chain", "node", nodes[i].ID, "at", id)
-				break
-			}
-			seen[id] = struct{}{}
-			chain = append(chain, id)
+// attachAncestorIDs fills Node.AncestorIDs, root-most first, for every node
+// given.
+func (s *Service) attachAncestorIDs(ctx context.Context, nodes []Node) ([]Node, error) {
+	var start []string
+	for _, n := range nodes {
+		if n.ParentID != nil {
+			start = append(start, *n.ParentID)
 		}
-		// Collected parent-first; the field is documented root-most first, which
-		// is the order a client compares against and the order it reads in.
+	}
+	tree, err := s.walkAncestors(ctx, start)
+	if err != nil {
+		return nil, err
+	}
+	for i := range nodes {
+		if nodes[i].ParentID == nil {
+			nodes[i].AncestorIDs = nil
+			continue
+		}
+		// The parent, then what is above it; the field is documented root-most
+		// first, which is the order a client compares against and reads in.
+		chain := append([]string{*nodes[i].ParentID}, tree.chain(*nodes[i].ParentID)...)
 		slices.Reverse(chain)
 		nodes[i].AncestorIDs = chain
 	}

@@ -27,15 +27,17 @@ type Service struct {
 	// ownerTokens caches people's tokens for the "owner in group" filter.
 	ownerTokens *tokenCache
 
-	// resources is the deployment's resource catalogue. Validation and anything
-	// that has to know WHAT a resource is reads this.
-	resources []common.ManagedProject
+	// catalog is the deployment's resource catalogue. Validation and anything
+	// that has to know WHAT a resource is reads it, through resources(): root
+	// admins add and withdraw availabilities at runtime (package catalog).
+	catalog common.ResourceCatalog
 
 	// countIDs are the resources that take part in arithmetic — summing across
 	// siblings, capacity checks, usage roll-ups. Availabilities are absent.
 	//
 	// Precomputed and kept beside the catalogue rather than filtered at each
-	// call site, because it is read on every rollup. The name is the guard rail:
+	// call site, because it is read on every rollup. Fixed for the service's
+	// life: what changes at runtime are availabilities, never quantities. The name is the guard rail:
 	// a plain `resourceIDs` was what let an availability slip into a sum, since
 	// nothing at the call site said which set it was.
 	countIDs []string
@@ -135,7 +137,7 @@ func NewService(store Store, roles common.RoleProvider, resources []common.Manag
 		store:              store,
 		roles:              roles,
 		ownerTokens:        newTokenCache(2 * time.Minute),
-		resources:          resources,
+		catalog:            common.StaticCatalog(resources),
 		countIDs:           countIDs,
 		storageIDs:         storageIDs,
 		rootAdminTokens:    common.CanonicalTokens(rootAdminTokens),
@@ -270,10 +272,12 @@ func (s *Service) ensureBootstrapNodes(ctx context.Context) error {
 		// availability granted. UnlimitedQuota would be rejected on an
 		// availability (it is 0 or 1), and it would mean nothing anyway — the
 		// root is where the full catalogue is visible and delegated from.
-		limit := make(common.ProjectQuota, len(s.resources))
-		for _, r := range s.resources {
+		limit := make(common.ProjectQuota, len(s.resources()))
+		for _, r := range s.resources() {
 			if r.IsBool() {
-				limit[r.ID] = 1
+				if !r.Withdrawn {
+					limit[r.ID] = 1
+				}
 				continue
 			}
 			limit[r.ID] = common.UnlimitedQuota
@@ -323,8 +327,8 @@ func (s *Service) ensureBootstrapNodes(ctx context.Context) error {
 	if unassigned == nil {
 		// Zero for quantities and withheld for availabilities — same value, and
 		// both say the same thing here: nothing can be approved under this node.
-		zeroLimit := make(common.ProjectQuota, len(s.resources))
-		for _, r := range s.resources {
+		zeroLimit := make(common.ProjectQuota, len(s.resources()))
+		for _, r := range s.resources() {
 			zeroLimit[r.ID] = 0
 		}
 		parent := RootNodeID
@@ -352,6 +356,13 @@ func (s *Service) ensureBootstrapNodes(ctx context.Context) error {
 // ── Authorization ─────────────────────────────────────────────────────────────
 // One rule: managing authority flows down the ancestor chain via AdminScope.
 
+// UseCatalog replaces the catalogue given to NewService with one that changes
+// at runtime. Its quantities must be the same as the ones NewService was given.
+func (s *Service) UseCatalog(c common.ResourceCatalog) { s.catalog = c }
+
+// resources is the current catalogue.
+func (s *Service) resources() []common.ManagedProject { return s.catalog.Resources() }
+
 // nodeChain returns the chain of nodes starting at startID (inclusive) walking up
 // to the root. Guards against cycles.
 // adoptNewCatalogueResources gives the root whatever the catalogue has gained
@@ -371,8 +382,8 @@ func (s *Service) adoptNewCatalogueResources(root *Node) []string {
 		root.Limit = common.ProjectQuota{}
 	}
 	var added []string
-	for _, r := range s.resources {
-		if _, present := root.Limit[r.ID]; present {
+	for _, r := range s.resources() {
+		if _, present := root.Limit[r.ID]; present || r.Withdrawn {
 			continue
 		}
 		if r.IsBool() {
@@ -859,8 +870,12 @@ func (s *Service) attachUsage(ctx context.Context, nodes []Node) ([]Node, error)
 // than harsh: the only place a resource can be handed down is the parent, and
 // there it is visible by this same rule, or the parent would not have it either.
 func (s *Service) availableResourcesFor(n Node) []string {
-	out := make([]string, 0, len(s.resources))
-	for _, r := range s.resources {
+	out := make([]string, 0, len(s.resources()))
+	for _, r := range s.resources() {
+		if r.Withdrawn {
+			// Nobody may be granted it any more, so nobody is offered it.
+			continue
+		}
 		if n.ID == RootNodeID {
 			out = append(out, r.ID)
 			continue
@@ -902,8 +917,8 @@ func (s *Service) attachAvailableResources(nodes []Node) []Node {
 // never asked for the change; making the withdrawal fail puts the decision back
 // with the person who has to take it away one node at a time.
 func (s *Service) checkAvailabilityWithdrawal(ctx context.Context, node Node, newLimit common.ProjectQuota) error {
-	withdrawn := make([]string, 0, len(s.resources))
-	for _, r := range s.resources {
+	withdrawn := make([]string, 0, len(s.resources()))
+	for _, r := range s.resources() {
 		if !r.IsBool() {
 			continue
 		}
@@ -1086,7 +1101,7 @@ func (s *Service) validateAvailabilities(q common.ProjectQuota) error {
 // isBool reports whether a resource id names an availability. Unknown ids answer
 // false; validateKnownResources is what rejects those, and it runs first.
 func (s *Service) isBool(id string) bool {
-	for _, r := range s.resources {
+	for _, r := range s.resources() {
 		if r.ID == id {
 			return r.IsBool()
 		}
@@ -1094,14 +1109,21 @@ func (s *Service) isBool(id string) bool {
 	return false
 }
 
+// validateKnownResources rejects ids the catalogue does not know, and any value
+// but zero for an availability that is being withdrawn: it stays known so the
+// zeros the withdrawal wrote validate, but it cannot be granted again.
 func (s *Service) validateKnownResources(q common.ProjectQuota) error {
-	known := make(map[string]struct{}, len(s.resources))
-	for _, r := range s.resources {
-		known[r.ID] = struct{}{}
+	known := make(map[string]common.ManagedProject, len(s.resources()))
+	for _, r := range s.resources() {
+		known[r.ID] = r
 	}
-	for key := range q {
-		if _, ok := known[key]; !ok {
+	for key, v := range q {
+		r, ok := known[key]
+		if !ok {
 			return fmt.Errorf("unknown resource %q", key)
+		}
+		if r.Withdrawn && v != 0 {
+			return fmt.Errorf("%q is being withdrawn and can no longer be granted", key)
 		}
 	}
 	return nil
@@ -1160,7 +1182,7 @@ func (s *Service) attachInheritedLimits(ctx context.Context, nodes []Node) ([]No
 // unlimited under a limited parent). Enforced on every edge — create, approve,
 // direct limit edit and reparent — so it holds inductively across the tree.
 func (s *Service) validateChildBudgetLimit(parent *Node, childLimit common.ProjectQuota) error {
-	for _, r := range s.resources {
+	for _, r := range s.resources() {
 		id := r.ID
 		parentCap := parent.Limit[id]
 		childCap := childLimit[id]
@@ -1190,7 +1212,7 @@ func (s *Service) validateChildBudgetLimit(parent *Node, childLimit common.Proje
 //
 // The root holds the whole catalogue (see availableResourcesFor).
 func (s *Service) validateLeafAvailabilities(parent *Node, limit common.ProjectQuota) error {
-	for _, r := range s.resources {
+	for _, r := range s.resources() {
 		if !s.isBool(r.ID) || limit[r.ID] != 1 {
 			continue
 		}

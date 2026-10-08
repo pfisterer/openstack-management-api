@@ -101,7 +101,26 @@ type ManagedProject struct {
 	// When true, the reconciler compares OS in-use against OS limit and sets
 	// OSOvercommitted on the project if in-use exceeds the configured quota.
 	OSOvercommitCheck bool `json:"os_overcommit_check,omitempty"`
+
+	// Withdrawn marks an availability on its way out of the catalogue (see
+	// package catalog): still known, so stored zeros validate and the
+	// reconciler revokes it everywhere, but no longer offered and never
+	// grantable. Never read from configuration.
+	Withdrawn bool `json:"-"`
 }
+
+// ResourceCatalog is where the current catalogue is read. Root admins add and
+// remove availabilities while the service runs, so anything that outlives a
+// request asks it each time instead of keeping a copy.
+type ResourceCatalog interface {
+	Resources() []ManagedProject
+}
+
+// StaticCatalog is a catalogue that never changes — configuration without
+// runtime additions, and tests.
+type StaticCatalog []ManagedProject
+
+func (c StaticCatalog) Resources() []ManagedProject { return c }
 
 // Grant is the OpenStack side of an availability: which object, granted how.
 //

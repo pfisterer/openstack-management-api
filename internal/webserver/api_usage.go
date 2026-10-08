@@ -69,8 +69,8 @@ func usagePeriod(c *gin.Context, now time.Time) (from, to time.Time, err error) 
 //	@ID				getNodeUsage
 //	@Router			/v1/nodes/{id}/usage [get]
 func getNodeUsage(cfg APIConfig) gin.HandlerFunc {
-	mapping := usage.MappingFrom(cfg.ProjectDefinitions)
 	return func(c *gin.Context) {
+		mapping := usage.MappingFrom(cfg.resources())
 		auth, err := mustGetAuthContext(c)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
@@ -124,8 +124,8 @@ func RegisterUsageAdminRoutes(v1 *gin.RouterGroup, cfg APIConfig, rootAdminToken
 //	@ID				getUsageReport
 //	@Router			/v1/admin/usage [get]
 func getUsageReport(cfg APIConfig) gin.HandlerFunc {
-	mapping := usage.MappingFrom(cfg.ProjectDefinitions)
 	return func(c *gin.Context) {
+		mapping := usage.MappingFrom(cfg.resources())
 		from, to, err := usagePeriod(c, time.Now().UTC())
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})

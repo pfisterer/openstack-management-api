@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pfisterer/openstack-management-api/internal/catalog"
+	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/reconciler"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 	"go.uber.org/zap"
@@ -37,7 +39,10 @@ type reconcilerSupervisor struct {
 	minDelay, maxDelay time.Duration
 }
 
-var _ webserver.ReconcilerAPI = (*reconcilerSupervisor)(nil)
+var (
+	_ webserver.ReconcilerAPI = (*reconcilerSupervisor)(nil)
+	_ catalog.OpenStack       = (*reconcilerSupervisor)(nil)
+)
 
 func (s *reconcilerSupervisor) Ready() bool { return s.inner.Load() != nil }
 
@@ -54,6 +59,22 @@ func (s *reconcilerSupervisor) GetStatus() reconciler.Status {
 		return rec.GetStatus()
 	}
 	return reconciler.Status{LastError: "connecting to OpenStack — no run has completed yet"}
+}
+
+// CheckGrantTarget and GrantedProjects let root admins ask the cloud about an
+// availability (package catalog); until connected there is nobody to ask.
+func (s *reconcilerSupervisor) CheckGrantTarget(g common.Grant) error {
+	if rec := s.inner.Load(); rec != nil {
+		return rec.CheckGrantTarget(g)
+	}
+	return catalog.ErrUnavailable
+}
+
+func (s *reconcilerSupervisor) GrantedProjects(g common.Grant) ([]string, error) {
+	if rec := s.inner.Load(); rec != nil {
+		return rec.GrantedProjects(g)
+	}
+	return nil, catalog.ErrUnavailable
 }
 
 // backoff bounds for the connection retry. The floor is short because the usual

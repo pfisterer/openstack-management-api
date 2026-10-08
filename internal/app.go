@@ -14,6 +14,7 @@ import (
 	"github.com/pfisterer/cloud-self-service-golib/oidcauth"
 	"github.com/pfisterer/cloud-self-service-golib/token"
 	"github.com/pfisterer/cloud-self-service-golib/tokengorm"
+	"github.com/pfisterer/openstack-management-api/internal/catalog"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/mockdata"
 	osclient "github.com/pfisterer/openstack-management-api/internal/openstack/client"
@@ -30,7 +31,7 @@ import (
 // middleware routes on.
 const apiTokenPrefix = "os_mgt_"
 
-func configureStores(cfg *common.StorageConfiguration, log *zap.SugaredLogger) (tree.Store, *token.Service, usage.Store, error) {
+func configureStores(cfg *common.StorageConfiguration, log *zap.SugaredLogger) (tree.Store, *token.Service, usage.Store, catalog.Store, error) {
 	storageType := strings.ToLower(strings.TrimSpace(cfg.Type))
 
 	switch storageType {
@@ -39,27 +40,31 @@ func configureStores(cfg *common.StorageConfiguration, log *zap.SugaredLogger) (
 		// Memory mode is intended for local development and tests. Tokens do
 		// not survive a restart here, which is fine for the one and unusable
 		// for the other.
-		return tree.NewInMemoryStore(log), token.NewService(apiTokenPrefix, token.NewMemoryStore()), usage.NewMemoryStore(), nil
+		return tree.NewInMemoryStore(log), token.NewService(apiTokenPrefix, token.NewMemoryStore()), usage.NewMemoryStore(), &catalog.MemoryStore{}, nil
 
 	case "postgres":
 		store, err := tree.NewPostgresStore(cfg.ConnectionString, log)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("postgres storage: %w", err)
+			return nil, nil, nil, nil, fmt.Errorf("postgres storage: %w", err)
 		}
 		// Same connection pool: this Postgres is shared with PowerDNS and its
 		// connection budget is the reason NewPostgresStore caps it at all.
 		tokens, err := tokengorm.NewService(apiTokenPrefix, store.DB())
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("token storage: %w", err)
+			return nil, nil, nil, nil, fmt.Errorf("token storage: %w", err)
 		}
 		used, err := usage.NewPostgresStore(store.DB())
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("usage storage: %w", err)
+			return nil, nil, nil, nil, fmt.Errorf("usage storage: %w", err)
 		}
-		return store, tokens, used, nil
+		availabilities, err := catalog.NewPostgresStore(store.DB())
+		if err != nil {
+			return nil, nil, nil, nil, fmt.Errorf("catalog storage: %w", err)
+		}
+		return store, tokens, used, availabilities, nil
 
 	default:
-		return nil, nil, nil, fmt.Errorf("unsupported storage type %q", cfg.Type)
+		return nil, nil, nil, nil, fmt.Errorf("unsupported storage type %q", cfg.Type)
 	}
 }
 
@@ -177,9 +182,15 @@ func RunApplication() {
 	}
 
 	// Configure resource storage and token lookup
-	nodeStore, apiTokens, usageStore, err := configureStores(&config.Storage, logger)
+	nodeStore, apiTokens, usageStore, catalogStore, err := configureStores(&config.Storage, logger)
 	if err != nil {
 		logger.Fatal("Failed to initialize storage", zap.Error(err))
+	}
+	// The configured quantities plus the availabilities root admins manage in
+	// the portal; everything below reads it live.
+	resourceCatalog, err := catalog.Load(context.Background(), config.ProjectDefinitions, catalogStore, logger)
+	if err != nil {
+		logger.Fatal("Failed to load the resource catalogue", zap.Error(err))
 	}
 	logger.Infof("Using storage backend: %s", config.Storage.Type)
 
@@ -229,6 +240,7 @@ func RunApplication() {
 		ChargeArchived: config.ChargeArchived,
 	}, logger)
 	// A deletion request is only accepted where a reconciler will act on it.
+	treeSvc.UseCatalog(resourceCatalog)
 	treeSvc.SetDeletionAllowed(config.Reconciler.Enabled && reconciler.DeletesOnRequest(config.Reconciler.ReleasedDelete))
 
 	// Bootstrap: optional mock seed into an empty store, then ensure the
@@ -261,6 +273,10 @@ func RunApplication() {
 	defer cancel()
 
 	// Setup Gin web server with configured dependencies.
+
+	// Without a reconciler nothing is checked in OpenStack, and nothing is
+	// granted there either.
+	catalogAdmin := &catalog.Admin{Catalog: resourceCatalog, Tree: treeSvc}
 
 	if config.Reconciler.Enabled {
 		if err := reconciler.ValidateReleasedDelete(config.Reconciler.ReleasedDelete); err != nil {
@@ -303,6 +319,7 @@ func RunApplication() {
 				StatusTagPrefix:          config.Reconciler.StatusTagPrefix,
 			}
 			rec := reconciler.New(nodeStore, osClient, reconcilerCfg, config.ProjectDefinitions, roleProvider, logger)
+			rec.UseCatalog(resourceCatalog)
 			if config.Reconciler.UsageEnabled {
 				collector := usage.NewCollector(usageStore, nodeStore, osClient, config.ProjectDefinitions, logger)
 				collector.BackfillDays = config.Reconciler.UsageBackfillDays
@@ -312,6 +329,7 @@ func RunApplication() {
 			return rec, nil
 		}, logger)
 		reconcilerAPI = supervisor
+		catalogAdmin.OpenStack = supervisor
 	} else {
 		logger.Info("Reconciler disabled (set RECONCILER_ENABLED=true to enable)")
 	}
@@ -328,7 +346,8 @@ func RunApplication() {
 		},
 		API: webserver.APIConfig{
 			RoleSwitchGroups:   config.RootAdminTokens,
-			ProjectDefinitions: config.ProjectDefinitions,
+			Catalog:            resourceCatalog,
+			CatalogAdmin:       catalogAdmin,
 			Service:            treeSvc,
 			DummyDevUsers:      dummyDevUsers,
 			// Asked per request: the reconciler may still be connecting.

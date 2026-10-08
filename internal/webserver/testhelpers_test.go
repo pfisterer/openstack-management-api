@@ -152,7 +152,7 @@ func routerFromStore(t *testing.T, sugar *zap.SugaredLogger, store tree.Store, r
 		StaticConfig: webserver.StaticConfig{},
 		API: webserver.APIConfig{
 			Service:            svc,
-			ProjectDefinitions: quotaResources,
+			Catalog: common.StaticCatalog(quotaResources),
 			// Role-switch allowlist = the (mixed user+group) root admin tokens,
 			// exactly as app.go wires it. canUseRoleSwitch accepts either kind.
 			RoleSwitchGroups: rootAdminTokens,

@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/cloud-self-service-golib/ginweb"
 	"github.com/pfisterer/cloud-self-service-golib/logging"
+	"github.com/pfisterer/openstack-management-api/internal/catalog"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/reconciler"
 	"github.com/pfisterer/openstack-management-api/internal/tree"
@@ -129,9 +130,14 @@ type APIService interface {
 
 // APIConfig configures API route registration.
 type APIConfig struct {
-	RoleSwitchGroups   common.TokenList
-	ProjectDefinitions []common.ManagedProject
-	Service            APIService
+	RoleSwitchGroups common.TokenList
+	// Catalog is the resource catalogue, read per request: root admins change
+	// its availabilities at runtime.
+	Catalog common.ResourceCatalog
+	// CatalogAdmin runs the root admins' catalogue steps; nil leaves the
+	// routes answering 503.
+	CatalogAdmin *catalog.Admin
+	Service      APIService
 	DummyDevUsers      []string
 	// ProvisioningEnabled mirrors "the reconciler is configured and running".
 	// A function, not a bool: the reconciler may still be connecting when the
@@ -220,6 +226,7 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 	// when the reconciler is disabled. Handlers return 503 when Reconciler is nil.
 	RegisterReconcilerRoutes(apiV1Group, cfg.Reconciler, cfg.RootAdminTokens, cfg.Log)
 	RegisterUsageAdminRoutes(apiV1Group, cfg.API, cfg.RootAdminTokens, cfg.Log)
+	RegisterCatalogAdminRoutes(apiV1Group, cfg.API, cfg.RootAdminTokens, cfg.Log)
 
 	// The MCP endpoint: same authentication as /v1, deliberately WITHOUT
 	// RejectWritesForReadOnlyTokens. Every MCP call is a POST, so the method
@@ -232,6 +239,14 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 	RegisterMCPRoutes(mcpGroup, cfg.API, cfg.Log)
 
 	return router
+}
+
+// resources is the current catalogue; none where no catalogue is configured.
+func (cfg APIConfig) resources() []common.ManagedProject {
+	if cfg.Catalog == nil {
+		return nil
+	}
+	return cfg.Catalog.Resources()
 }
 
 // RegisterApiRoutes wires all resource-management API endpoints.
@@ -326,9 +341,11 @@ func uiResourceFrom(r common.ManagedProject) uiResource {
 //	@Router			/v1/config [get]
 func getConfig(cfg APIConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		resources := make([]uiResource, 0, len(cfg.ProjectDefinitions))
-		for _, r := range cfg.ProjectDefinitions {
-			if !r.ShowOnUI {
+		all := cfg.resources()
+		resources := make([]uiResource, 0, len(all))
+		for _, r := range all {
+			// A withdrawn availability is still known but offered to nobody.
+			if !r.ShowOnUI || r.Withdrawn {
 				continue
 			}
 			resources = append(resources, uiResourceFrom(r))

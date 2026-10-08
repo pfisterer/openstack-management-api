@@ -30,6 +30,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -179,7 +180,9 @@ type Reconciler struct {
 	store           ReconcilerStore
 	osClient        *osclient.OpenStackClient
 	cfg             Config
-	managedProjects []common.ManagedProject
+	// catalog is read through resources(): root admins add and withdraw
+	// availabilities while the reconciler runs (package catalog).
+	catalog common.ResourceCatalog
 	roleProvider    common.RoleProvider
 	log             *zap.SugaredLogger
 
@@ -195,6 +198,8 @@ type Reconciler struct {
 	// Set at the start of every Reconcile run; only accessed from the
 	// single-threaded reconcile loop.
 	scopeParentID string
+	// scopeParentSeen is the same, for the API's goroutines.
+	scopeParentSeen atomic.Pointer[string]
 
 	// usage, when set, records each finished day's consumption after a pass.
 	usage UsageCollector
@@ -262,7 +267,7 @@ func New(
 		store:           store,
 		osClient:        osClient,
 		cfg:             cfg,
-		managedProjects: managedProjects,
+		catalog:         common.StaticCatalog(managedProjects),
 		roleProvider:    roleProvider,
 		log:             withRecorder(log, problems),
 		trigger:         make(chan struct{}, 1),
@@ -1247,7 +1252,29 @@ func (r *Reconciler) ensureScopeParent() (string, error) {
 		return "", err
 	}
 	r.scopeParentID = id
+	r.scopeParentSeen.Store(&id)
 	return id, nil
+}
+
+// UseCatalog replaces the catalogue given to New with one that changes at
+// runtime. Called before Start.
+func (r *Reconciler) UseCatalog(c common.ResourceCatalog) { r.catalog = c }
+
+func (r *Reconciler) resources() []common.ManagedProject { return r.catalog.Resources() }
+
+// CheckGrantTarget asks OpenStack whether g can be granted per project (for
+// root admins adding an availability).
+func (r *Reconciler) CheckGrantTarget(g common.Grant) error {
+	parent := ""
+	if p := r.scopeParentSeen.Load(); p != nil {
+		parent = *p
+	}
+	return r.osClient.CheckGrantTarget(g, parent)
+}
+
+// GrantedProjects lists the projects OpenStack grants g to.
+func (r *Reconciler) GrantedProjects(g common.Grant) ([]string, error) {
+	return r.osClient.GrantedProjects(g)
 }
 
 // keystoneProjectNameMaxLen is Keystone's hard limit for project names: the API
@@ -1469,8 +1496,8 @@ func (r *Reconciler) createOpenstackProjectForLeaf(_ context.Context, leaf tree.
 	// Compose a full quota set: managed resources from the leaf + static defaults.
 	// Static defaults (network quotas, volumes, snapshots) are driven entirely by the
 	// ManagedProject definitions — no separate DefaultNetworkQuotas struct needed.
-	fullQuota := ProjectQuotaToQuotaSet(r.managedProjects, leaf.EffectiveLimit())
-	staticQuota := StaticProjectQuotaDefaults(r.managedProjects)
+	fullQuota := ProjectQuotaToQuotaSet(r.resources(), leaf.EffectiveLimit())
+	staticQuota := StaticProjectQuotaDefaults(r.resources())
 	mergeStaticIntoQuotaSet(&fullQuota, staticQuota)
 	fullQuota.ProjectID = project.ID
 
@@ -1616,7 +1643,7 @@ type grantClient interface {
 }
 
 func (r *Reconciler) syncGrants(leaf tree.Node, osProjectID string) {
-	syncGrants(r.osClient, r.managedProjects, leaf, osProjectID, r.cfg.DryRun, r.log)
+	syncGrants(r.osClient, r.resources(), leaf, osProjectID, r.cfg.DryRun, r.log)
 }
 
 // syncGrants brings a project's availabilities in line with what the leaf was
@@ -1692,7 +1719,7 @@ func syncGrants(c grantClient, defs []common.ManagedProject, leaf tree.Node, osP
 
 func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo, description string) (overcommitted bool, inUse common.ProjectQuota, measured bool, err error) {
 	osProjectID := osProject.ID
-	quotaSet := ProjectQuotaToQuotaSet(r.managedProjects, leaf.EffectiveLimit())
+	quotaSet := ProjectQuotaToQuotaSet(r.resources(), leaf.EffectiveLimit())
 
 	r.log.Debugw("Syncing managed quota",
 		"node_id", leaf.ID, "os_project_id", osProjectID,
@@ -1740,7 +1767,7 @@ func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo, d
 		return false, nil, false, nil
 	}
 
-	return IsProjectOvercommitted(r.managedProjects, leaf.EffectiveLimit(), detail), ProjectInUse(r.managedProjects, detail), true, nil
+	return IsProjectOvercommitted(r.resources(), leaf.EffectiveLimit(), detail), ProjectInUse(r.resources(), detail), true, nil
 }
 
 // buildDesiredMembers extracts the intended OpenStack role assignments from a leaf.
@@ -1828,7 +1855,7 @@ func (r *Reconciler) upsertImported(
 			"os_project_id", osProject.ID, "error", err)
 		osLimit = common.ProjectQuota{}
 	} else {
-		osLimit = QuotaSetToProjectQuota(r.managedProjects, detail.Limit)
+		osLimit = QuotaSetToProjectQuota(r.resources(), detail.Limit)
 	}
 
 	// Resolve project members. The tree model has no owner for imports (the owner

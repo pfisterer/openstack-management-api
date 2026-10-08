@@ -60,7 +60,7 @@ func getNode(cfg APIConfig) gin.HandlerFunc {
 //	@Param			status		query		string	false	"Comma-separated statuses to include"
 //	@Param			group		query		string	false	"A group (or any) token to filter by, see group_mode"
 //	@Param			group_mode	query		string	false	"access: the token is owner, admin or member of the project; owner: the owner holds the token"	Enums(access, owner)
-//	@Param			sort		query		string	false	"Sort key"	Enums(name, owner, status, termination_date, created_at)
+//	@Param			sort		query		string	false	"Sort key: name, owner, status, termination_date, created_at, servers, reserved:<resource id> or used:<resource id>"
 //	@Param			order		query		string	false	"Sort order"	Enums(asc, desc)
 //	@Param			allocated	query		bool	false	"Instead of the direct children: the projects anywhere below that draw an allocation from this budget"
 //	@Param			deep		query		bool	false	"Instead of the direct children: the projects of the whole subtree, sub-budgets included"

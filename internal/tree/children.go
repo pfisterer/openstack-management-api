@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"sync"
@@ -56,7 +57,48 @@ const (
 	ChildSortStatus  = "status"
 	ChildSortEnd     = "termination_date"
 	ChildSortCreated = "created_at"
+	// ChildSortServers orders by how many servers the project has.
+	ChildSortServers = "servers"
+	// ChildSortReservedPrefix and ChildSortUsedPrefix are followed by a
+	// resource id: "reserved:cores" orders by what was granted (own share plus
+	// special allocations), "used:cores" by what OpenStack measured in use.
+	ChildSortReservedPrefix = "reserved:"
+	ChildSortUsedPrefix     = "used:"
 )
+
+// numericSort tells whether key orders by a number, and reads that number off
+// a node. Unlimited sorts above every amount; not measured below every one, so
+// a project nobody has looked at yet is not mistaken for an idle one.
+func numericSort(key string) (func(Node) float64, bool) {
+	switch {
+	case key == ChildSortServers:
+		return func(n Node) float64 {
+			if n.OSServers == nil {
+				return -1
+			}
+			return float64(*n.OSServers)
+		}, true
+	case strings.HasPrefix(key, ChildSortReservedPrefix) && len(key) > len(ChildSortReservedPrefix):
+		id := strings.TrimPrefix(key, ChildSortReservedPrefix)
+		return func(n Node) float64 {
+			v := n.EffectiveLimit()[id]
+			if v == common.UnlimitedQuota {
+				return math.Inf(1)
+			}
+			return float64(v)
+		}, true
+	case strings.HasPrefix(key, ChildSortUsedPrefix) && len(key) > len(ChildSortUsedPrefix):
+		id := strings.TrimPrefix(key, ChildSortUsedPrefix)
+		return func(n Node) float64 {
+			v, ok := n.OSInUse[id]
+			if !ok {
+				return -1
+			}
+			return float64(v)
+		}, true
+	}
+	return nil, false
+}
 
 func (f ChildFilter) needsMemory() bool {
 	return f.Query != "" || f.Group != "" || f.Sort != "" || f.Allocated || f.Deep
@@ -72,7 +114,9 @@ func (f ChildFilter) Validate() error {
 	switch f.Sort {
 	case "", ChildSortName, ChildSortOwner, ChildSortStatus, ChildSortEnd, ChildSortCreated:
 	default:
-		return fmt.Errorf("unknown sort %q", f.Sort)
+		if _, ok := numericSort(f.Sort); !ok {
+			return fmt.Errorf("unknown sort %q", f.Sort)
+		}
 	}
 	if f.Group != "" {
 		switch f.GroupMode {
@@ -283,6 +327,19 @@ func (c *tokenCache) get(ctx context.Context, roles common.RoleProvider, email s
 // moves between two requests.
 func sortChildren(nodes []Node, key string, desc bool) {
 	if key == "" {
+		return
+	}
+	if num, ok := numericSort(key); ok {
+		slices.SortStableFunc(nodes, func(a, b Node) int {
+			c := cmp.Compare(num(a), num(b))
+			if desc {
+				c = -c
+			}
+			if c == 0 {
+				c = strings.Compare(a.ID, b.ID)
+			}
+			return c
+		})
 		return
 	}
 	value := func(n Node) string {

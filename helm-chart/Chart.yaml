@@ -2,8 +2,8 @@ apiVersion: v2
 name: openstack-management-api
 description: Resource Management API for OpenStack Environments
 type: application
-version: 0.8.27-test.10
-appVersion: "0.8.27-test.10"
+version: 0.8.27
+appVersion: "0.8.27"
 maintainers:
   - name: Dennis Pfisterer
     email: dennis.pfisterer@dhbw.de

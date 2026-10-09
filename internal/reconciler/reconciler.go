@@ -177,14 +177,14 @@ type Status struct {
 
 // Reconciler orchestrates the two-way sync.
 type Reconciler struct {
-	store           ReconcilerStore
-	osClient        *osclient.OpenStackClient
-	cfg             Config
+	store    ReconcilerStore
+	osClient *osclient.OpenStackClient
+	cfg      Config
 	// catalog is read through resources(): root admins add and withdraw
 	// availabilities while the reconciler runs (package catalog).
-	catalog common.ResourceCatalog
-	roleProvider    common.RoleProvider
-	log             *zap.SugaredLogger
+	catalog      common.ResourceCatalog
+	roleProvider common.RoleProvider
+	log          *zap.SugaredLogger
 
 	mu      sync.RWMutex
 	status  Status
@@ -264,14 +264,14 @@ func New(
 	}
 	problems := &problemRecorder{}
 	return &Reconciler{
-		store:           store,
-		osClient:        osClient,
-		cfg:             cfg,
-		catalog:         common.StaticCatalog(managedProjects),
-		roleProvider:    roleProvider,
-		log:             withRecorder(log, problems),
-		trigger:         make(chan struct{}, 1),
-		problems:        problems,
+		store:        store,
+		osClient:     osClient,
+		cfg:          cfg,
+		catalog:      common.StaticCatalog(managedProjects),
+		roleProvider: roleProvider,
+		log:          withRecorder(log, problems),
+		trigger:      make(chan struct{}, 1),
+		problems:     problems,
 	}
 }
 
@@ -872,12 +872,25 @@ func (r *Reconciler) promoteImportedLeaves(
 		}
 
 		if !r.cfg.DryRun {
+			// The members as OpenStack has them NOW. The leaf only knows them as
+			// of the last pass before the promotion was asked for, and once the
+			// project is approved the member sync removes everyone the leaf does
+			// not name — so a member added in between would lose access. Without
+			// this list the promotion waits for the next pass.
+			members, err := r.osClient.ListProjectMemberInfo(osProject.ID)
+			if err != nil {
+				r.log.Warnw("Cannot promote yet: the project's members could not be read",
+					"node_id", leaf.ID, "os_project_id", osProject.ID, "error", err)
+				continue
+			}
+			current := importMembers(members)
 			promoted, err := r.store.UpdateNode(ctx, leaf.ID, func(n *tree.Node) error {
 				// The promotion may have been withdrawn while this pass talked to
 				// OpenStack; then there is nothing to promote any more.
 				if n.Status != tree.StatusImported || !slices.Contains(n.Flags, tree.FlagPromoteOnReconcile) {
 					return tree.ErrSkipUpdate
 				}
+				n.AuthorizedUsers = mergeMembers(n.AuthorizedUsers, current, n.Owner)
 				n.Status = tree.StatusPending
 				n.Flags = removeFlag(n.Flags, tree.FlagPromoteOnReconcile)
 				return nil
@@ -1551,7 +1564,8 @@ func applyOSSyncState(leaf *tree.Node, osProjectID string, m *osMeasurement) boo
 	changed := leaf.OSProjectID != osProjectID
 	if m != nil {
 		changed = changed || leaf.OSOvercommitted != m.overcommitted || !quotaEqual(leaf.OSInUse, m.inUse) ||
-			leaf.OSServers == nil || *leaf.OSServers != m.servers
+			leaf.OSServers == nil || *leaf.OSServers != m.servers ||
+			leaf.OSServerLimit == nil || *leaf.OSServerLimit != m.serverLimit
 	}
 	if !changed {
 		return false
@@ -1560,8 +1574,9 @@ func applyOSSyncState(leaf *tree.Node, osProjectID string, m *osMeasurement) boo
 	if m != nil {
 		leaf.OSOvercommitted = m.overcommitted
 		leaf.OSInUse = m.inUse
-		servers := m.servers
+		servers, serverLimit := m.servers, m.serverLimit
 		leaf.OSServers = &servers
+		leaf.OSServerLimit = &serverLimit
 	}
 	return true
 }
@@ -1571,8 +1586,10 @@ func applyOSSyncState(leaf *tree.Node, osProjectID string, m *osMeasurement) boo
 type osMeasurement struct {
 	overcommitted bool
 	inUse         common.ProjectQuota
-	// servers counts the project's servers, whatever their state.
-	servers int
+	// servers counts the project's servers, whatever their state, and
+	// serverLimit is how many OpenStack allows.
+	servers     int
+	serverLimit int
 }
 
 // removeStaleImports deletes imported leaves whose OpenStack project is no longer
@@ -1783,6 +1800,7 @@ func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo, d
 		overcommitted: IsProjectOvercommitted(r.resources(), leaf.EffectiveLimit(), detail),
 		inUse:         ProjectInUse(r.resources(), detail),
 		servers:       detail.InUse.Instances,
+		serverLimit:   detail.Limit.Instances,
 	}, nil
 }
 
@@ -1888,12 +1906,7 @@ func (r *Reconciler) upsertImported(
 		r.log.Warnw("Could not fetch member info for import, members will be empty",
 			"os_project_id", osProject.ID, "error", err)
 	} else {
-		for _, m := range members {
-			authorizedUsers = append(authorizedUsers, common.AuthorizedUser{
-				Token:         "user:" + m.Email,
-				OpenstackRole: m.RoleName,
-			})
-		}
+		authorizedUsers = importMembers(members)
 	}
 
 	// Resolve group role assignments. Groups whose name resolves to a known group:
@@ -1998,7 +2011,52 @@ func measureImport(resources []common.ManagedProject, limit common.ProjectQuota,
 		overcommitted: IsProjectOvercommitted(resources, limit, detail),
 		inUse:         ProjectInUse(resources, detail),
 		servers:       detail.InUse.Instances,
+		serverLimit:   detail.Limit.Instances,
 	}
+}
+
+// importMembers turns an OpenStack project's members into authorized users.
+// The tree knows two roles, member and reader; a reader stays one, every other
+// role — admin, or one a service defines — becomes member, which is what the
+// project's own people get. Someone holding several roles appears once, with
+// the stronger.
+func importMembers(members []osclient.ProjectMemberInfo) []common.AuthorizedUser {
+	out := []common.AuthorizedUser{}
+	at := map[string]int{}
+	for _, m := range members {
+		token := common.UserPrefix + strings.ToLower(strings.TrimSpace(m.Email))
+		role := "member"
+		if strings.EqualFold(m.RoleName, "reader") {
+			role = "reader"
+		}
+		if i, seen := at[token]; seen {
+			if role == "member" {
+				out[i].OpenstackRole = role
+			}
+			continue
+		}
+		at[token] = len(out)
+		out = append(out, common.AuthorizedUser{Token: token, OpenstackRole: role})
+	}
+	return out
+}
+
+// mergeMembers adds to a promoted leaf's authorized users everyone OpenStack
+// has in the project that the leaf does not name yet, except its owner, who
+// gets access as the owner. What the leaf already names is kept as it is.
+func mergeMembers(leafUsers, current []common.AuthorizedUser, owner string) []common.AuthorizedUser {
+	out := slices.Clone(leafUsers)
+	known := map[string]bool{strings.ToLower(owner): true}
+	for _, u := range leafUsers {
+		known[strings.ToLower(u.Token)] = true
+	}
+	for _, u := range current {
+		if !known[strings.ToLower(u.Token)] {
+			known[strings.ToLower(u.Token)] = true
+			out = append(out, u)
+		}
+	}
+	return out
 }
 
 // relationSeparator stands in for "#" in Keystone group names:

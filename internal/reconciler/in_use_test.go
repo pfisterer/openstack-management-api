@@ -123,10 +123,10 @@ func TestApplyOSSyncState_MeasuredPassOverwrites(t *testing.T) {
 // An unchanged measurement must not report a change, or the reconciler rewrites
 // every leaf on every tick.
 func TestApplyOSSyncState_IdenticalMeasurementIsNotAChange(t *testing.T) {
-	servers := 1
-	leaf := tree.Node{OSProjectID: "os-1", OSInUse: common.ProjectQuota{"cores": 2}, OSServers: &servers}
+	servers, serverLimit := 1, 2
+	leaf := tree.Node{OSProjectID: "os-1", OSInUse: common.ProjectQuota{"cores": 2}, OSServers: &servers, OSServerLimit: &serverLimit}
 
-	if applyOSSyncState(&leaf, "os-1", &osMeasurement{inUse: common.ProjectQuota{"cores": 2}, servers: 1}) {
+	if applyOSSyncState(&leaf, "os-1", &osMeasurement{inUse: common.ProjectQuota{"cores": 2}, servers: 1, serverLimit: 2}) {
 		t.Error("nothing changed, but the node was marked for persisting")
 	}
 }
@@ -173,5 +173,38 @@ func TestMeasureImport(t *testing.T) {
 	}
 	if leaf.OSServers == nil || *leaf.OSServers != 10 || leaf.OSOvercommitted {
 		t.Errorf("servers %v, overcommitted %v", leaf.OSServers, leaf.OSOvercommitted)
+	}
+	if leaf.OSServerLimit == nil || *leaf.OSServerLimit != 100 {
+		t.Errorf("server limit %v, want 100", leaf.OSServerLimit)
+	}
+}
+
+// Members come over from OpenStack with the two roles the tree knows, once
+// each; a promotion adds whoever joined since the last pass.
+func TestImportAndMergeMembers(t *testing.T) {
+	imported := importMembers([]osclient.ProjectMemberInfo{
+		{Email: "A@x", RoleName: "reader"},
+		{Email: "a@x", RoleName: "admin"},
+		{Email: "b@x", RoleName: "reader"},
+		{Email: "owner@x", RoleName: "member"},
+	})
+	want := []common.AuthorizedUser{{Token: "user:a@x", OpenstackRole: "member"}, {Token: "user:b@x", OpenstackRole: "reader"}, {Token: "user:owner@x", OpenstackRole: "member"}}
+	if len(imported) != len(want) {
+		t.Fatalf("imported %v, want %v", imported, want)
+	}
+	for i := range want {
+		if imported[i] != want[i] {
+			t.Errorf("imported[%d] = %v, want %v", i, imported[i], want[i])
+		}
+	}
+
+	leaf := []common.AuthorizedUser{{Token: "user:b@x", OpenstackRole: "member"}}
+	got := mergeMembers(leaf, append(imported, common.AuthorizedUser{Token: "user:new@x", OpenstackRole: "member"}), "user:owner@x")
+	tokens := map[string]string{}
+	for _, u := range got {
+		tokens[u.Token] = u.OpenstackRole
+	}
+	if len(got) != 3 || tokens["user:b@x"] != "member" || tokens["user:a@x"] != "member" || tokens["user:new@x"] != "member" {
+		t.Errorf("merged %v: want b kept as set on the leaf, a and the newcomer added, the owner left out", got)
 	}
 }

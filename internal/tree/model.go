@@ -455,6 +455,10 @@ type Node struct {
 	// OSServers is how many servers the project has in OpenStack, measured with
 	// OSInUse; nil until a pass has measured it.
 	OSServers *int `json:"os_servers,omitempty"`
+	// OSServerLimit is how many servers OpenStack allows the project, read
+	// with OSServers. Not a catalogue resource: for a managed project it
+	// follows the cores (os_linked_field), an import has its own.
+	OSServerLimit *int `json:"os_server_limit,omitempty"`
 	// Purge is how far emptying the project before its deletion has got,
 	// written by the reconciler on every pass while it runs, so its owner
 	// sees why a deletion takes long.

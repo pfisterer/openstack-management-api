@@ -3,6 +3,8 @@ package osclient
 import (
 	"errors"
 	"fmt"
+	"net/mail"
+	"regexp"
 	"strings"
 
 	"github.com/gophercloud/gophercloud"
@@ -357,10 +359,36 @@ func (c *OpenStackClient) GetUserByID(userID string) (*users.User, error) {
 // It checks the "email" key in Extra first (set by CreateUser), then falls back
 // to the user's Name which is typically the email for OIDC-federated accounts.
 func resolveUserEmail(user *users.User) string {
-	if email, ok := user.Extra["email"].(string); ok && email != "" {
+	email, _ := user.Extra["email"].(string)
+	// A plain address wins, from the e-mail field or else the name. Some
+	// accounts carry "Bennet Frey (s123@example.edu)" as their e-mail while
+	// their name is the address; read as it is, the member sync took that
+	// string for an address the tree could never name, and removed them.
+	for _, candidate := range []string{email, user.Name} {
+		if plainAddress(candidate) {
+			return strings.TrimSpace(candidate)
+		}
+	}
+	// Otherwise the address inside such a display form.
+	for _, candidate := range []string{email, user.Name} {
+		if m := enclosedAddress.FindStringSubmatch(candidate); m != nil {
+			return m[1]
+		}
+	}
+	if email != "" {
 		return email
 	}
 	return user.Name
+}
+
+// enclosedAddress finds an address in "Name (addr)" or "Name <addr>".
+var enclosedAddress = regexp.MustCompile(`[(<]\s*([^\s()<>@]+@[^\s()<>@]+)\s*[)>]`)
+
+// plainAddress reports whether s is a bare e-mail address, nothing around it.
+func plainAddress(s string) bool {
+	s = strings.TrimSpace(s)
+	a, err := mail.ParseAddress(s)
+	return err == nil && a.Address == s
 }
 
 // ListProjectMemberInfo returns all role assignments for a project with resolved user emails.

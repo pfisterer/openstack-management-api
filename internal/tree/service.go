@@ -168,9 +168,6 @@ func (s *Service) Bootstrap(ctx context.Context, mockIdentities []common.Identit
 	if err := s.ensureBootstrapNodes(ctx); err != nil {
 		return err
 	}
-	if err := s.dropRetiredResources(ctx); err != nil {
-		return err
-	}
 	return s.canonicalizeStoredTokens(ctx)
 }
 

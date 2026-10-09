@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/tree"
 )
 
 // PathEntry is one budget on the way from a project up to the root.
@@ -61,6 +62,11 @@ type Day struct {
 	// Reserved is what the project held that day: its own limit plus its
 	// allocations, quantities only.
 	Reserved common.ProjectQuota
+
+	// Attributes are the attribute groups that applied to the project that
+	// day, its own and inherited — what billing reads. A snapshot like the
+	// budget path, so changing a cost centre changes the days from then on.
+	Attributes tree.Attributes
 
 	Backfilled  bool
 	CollectedAt time.Time

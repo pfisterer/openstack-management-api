@@ -99,6 +99,19 @@ func getNodeUsage(cfg APIConfig) gin.HandlerFunc {
 				return
 			}
 		}
+		// A project's members see what it used, not who pays for it. Taken off
+		// the rows rather than the report, so the days are not split by
+		// attributes the caller cannot see.
+		visible, err := cfg.Service.AttributesVisible(node, auth.EffectiveTokens)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if !visible {
+			for i := range rows {
+				rows[i].Attributes = nil
+			}
+		}
 		c.JSON(http.StatusOK, usage.BuildReport(rows, from, to, mapping, nil))
 	}
 }

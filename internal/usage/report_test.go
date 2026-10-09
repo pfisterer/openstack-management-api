@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/tree"
 )
 
 var testMapping = Mapping{Cores: "cores", RAM: "ram", Storage: "storage", RAMToGB: 1}
@@ -52,6 +53,31 @@ func TestBuildReport_SumsAndUtilisation(t *testing.T) {
 	}
 	if r.ValueEUR != nil || r.Prices != nil || p1.ValueEUR != nil {
 		t.Error("a value without prices")
+	}
+}
+
+// A change of attributes within the period splits the project, so each part
+// is billed where it belonged on the day.
+func TestBuildReport_SplitsByAttributes(t *testing.T) {
+	a := tree.Attributes{"billing": {"cost_center": "1"}}
+	b := tree.Attributes{"billing": {"cost_center": "2"}}
+	rows := []Day{
+		{Day: day("2026-10-01"), NodeID: "p1", VCPUHours: 10, Attributes: a},
+		{Day: day("2026-10-02"), NodeID: "p1", VCPUHours: 10, Attributes: a},
+		{Day: day("2026-10-03"), NodeID: "p1", VCPUHours: 5, Attributes: b},
+	}
+	r := BuildReport(rows, day("2026-10-01"), day("2026-10-03"), testMapping, nil)
+	if len(r.Projects) != 2 {
+		t.Fatalf("want two parts, got %+v", r.Projects)
+	}
+	if p := r.Projects[0]; p.Attributes["billing"]["cost_center"] != "1" || p.VCPUHours != 20 || p.Days != 2 {
+		t.Errorf("first part %+v", p)
+	}
+	if p := r.Projects[1]; p.Attributes["billing"]["cost_center"] != "2" || p.VCPUHours != 5 || p.Days != 1 {
+		t.Errorf("second part %+v", p)
+	}
+	if r.VCPUHours != 25 {
+		t.Errorf("total %v", r.VCPUHours)
 	}
 }
 

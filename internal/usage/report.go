@@ -1,10 +1,13 @@
 package usage
 
 import (
+	"encoding/json"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/tree"
 )
 
 // What the daily rows add up to over a period: for one project, for a budget's
@@ -69,8 +72,12 @@ type ProjectTotals struct {
 	Status      string      `json:"status"`
 	BudgetID    string      `json:"budget_id"`
 	BudgetPath  []PathEntry `json:"budget_path"`
-	People      int         `json:"people"`
-	Days        int         `json:"days"`
+	// Attributes are the attribute groups that applied over these days. A
+	// project whose attributes changed within the period is reported once per
+	// set of attributes, so each part can be billed to where it belongs.
+	Attributes tree.Attributes `json:"attributes,omitempty"`
+	People     int             `json:"people"`
+	Days       int             `json:"days"`
 	// LastActive is the last day a server ran in it, empty for none.
 	LastActive  string      `json:"last_active,omitempty"`
 	Utilization Utilization `json:"utilization"`
@@ -199,10 +206,11 @@ func BuildReport(rows []Day, from, to time.Time, m Mapping, prices *Prices) Repo
 			backfilled[key] = true
 		}
 
-		p := projects[d.NodeID]
+		pk := projectKey(d)
+		p := projects[pk]
 		if p == nil {
-			p = &ProjectTotals{NodeID: d.NodeID}
-			projects[d.NodeID] = p
+			p = &ProjectTotals{NodeID: d.NodeID, Attributes: d.Attributes}
+			projects[pk] = p
 		}
 		// Rows come oldest first, so the last one names the project.
 		p.ProjectName, p.Owner, p.Status = d.ProjectName, d.Owner, d.Status
@@ -240,12 +248,31 @@ func BuildReport(rows []Day, from, to time.Time, m Mapping, prices *Prices) Repo
 			}
 			return 1
 		}
-		if a.NodeID < b.NodeID {
-			return -1
+		if a.NodeID != b.NodeID {
+			if a.NodeID < b.NodeID {
+				return -1
+			}
+			return 1
 		}
-		return 1
+		return strings.Compare(attributesKey(a.Attributes), attributesKey(b.Attributes))
 	})
 	r.Utilization = r.utilization()
 	r.ValueEUR = r.value(prices)
 	return r
+}
+
+// projectKey separates a project's rows by the attributes that applied, so a
+// change of cost centre within a period splits it rather than billing every
+// day to the last one.
+func projectKey(d Day) string {
+	return d.NodeID + "\x00" + attributesKey(d.Attributes)
+}
+
+// attributesKey is a canonical form: encoding/json sorts map keys.
+func attributesKey(a tree.Attributes) string {
+	if len(a) == 0 {
+		return ""
+	}
+	b, _ := json.Marshal(a)
+	return string(b)
 }

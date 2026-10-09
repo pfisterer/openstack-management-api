@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pfisterer/openstack-management-api/internal/tree"
 	"gorm.io/gorm"
 )
 
@@ -33,6 +34,8 @@ type dbDay struct {
 	StorageGB   float64   `gorm:"column:storage_gb"`
 	PublicIPv4  *int      `gorm:"column:public_ipv4"`
 	Reserved    []byte    `gorm:"column:reserved;type:jsonb;not null"`
+	// Nullable: the rows from before attributes existed have none.
+	Attributes  []byte    `gorm:"column:attributes;type:jsonb"`
 	Backfilled  bool      `gorm:"column:backfilled"`
 	CollectedAt time.Time `gorm:"column:collected_at"`
 }
@@ -63,13 +66,19 @@ func (s *PostgresStore) ReplaceDay(ctx context.Context, day time.Time, rows []Da
 		if err != nil {
 			return err
 		}
+		var attrs []byte
+		if len(r.Attributes) > 0 {
+			if attrs, err = json.Marshal(r.Attributes); err != nil {
+				return err
+			}
+		}
 		recs = append(recs, dbDay{
 			Day: day, NodeID: r.NodeID, OSProjectID: r.OSProjectID, ProjectName: r.ProjectName,
 			Owner: r.Owner, Status: r.Status, BudgetID: r.BudgetID, BudgetPath: path,
 			People: r.People, Groups: r.Groups,
 			ServerHours: r.ServerHours, VCPUHours: r.VCPUHours, RAMGBHours: r.RAMGBHours,
 			DiskGBHours: r.DiskGBHours, StorageGB: r.StorageGB, PublicIPv4: r.PublicIPv4, Reserved: reserved,
-			Backfilled: r.Backfilled, CollectedAt: r.CollectedAt,
+			Attributes: attrs, Backfilled: r.Backfilled, CollectedAt: r.CollectedAt,
 		})
 	}
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -131,6 +140,9 @@ func (s *PostgresStore) find(q *gorm.DB) ([]Day, error) {
 		}
 		_ = json.Unmarshal(r.BudgetPath, &d.BudgetPath)
 		_ = json.Unmarshal(r.Reserved, &d.Reserved)
+		if len(r.Attributes) > 0 {
+			_ = json.Unmarshal(r.Attributes, &d.Attributes)
+		}
 		out = append(out, d)
 	}
 	return out, nil
@@ -155,6 +167,7 @@ func (s *MemoryStore) ReplaceDay(_ context.Context, day time.Time, rows []Day) e
 		r.Day = day
 		r.Reserved = maps.Clone(r.Reserved)
 		r.BudgetPath = slices.Clone(r.BudgetPath)
+		r.Attributes = cloneAttributes(r.Attributes)
 		out[i] = r
 	}
 	s.days[day] = out
@@ -211,5 +224,16 @@ func (s *MemoryStore) filter(from, to time.Time, keep func(Day) bool) []Day {
 		}
 		return 0
 	})
+	return out
+}
+
+func cloneAttributes(a tree.Attributes) tree.Attributes {
+	if a == nil {
+		return nil
+	}
+	out := make(tree.Attributes, len(a))
+	for g, v := range a {
+		out[g] = maps.Clone(v)
+	}
 	return out
 }

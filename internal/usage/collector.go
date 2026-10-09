@@ -138,6 +138,7 @@ func (c *Collector) CollectDay(ctx context.Context, day time.Time) error {
 			row.BudgetID = *n.ParentID
 			row.BudgetPath = pathOf(*n.ParentID, budgets)
 		}
+		row.Attributes = attributesOf(n, budgets)
 		if !backfilled && storageID != "" {
 			row.StorageGB = float64(n.OSInUse[storageID])
 		}
@@ -223,6 +224,31 @@ func pathOf(start string, budgets map[string]tree.Node) []PathEntry {
 		id = *b.ParentID
 	}
 	return path
+}
+
+// attributesOf is what applies to the project: its own attribute groups and
+// those inherited from its budgets, values only.
+func attributesOf(n tree.Node, budgets map[string]tree.Node) tree.Attributes {
+	chain := []tree.Node{n}
+	seen := map[string]bool{n.ID: true}
+	for p := n.ParentID; p != nil && !seen[*p]; {
+		seen[*p] = true
+		b, ok := budgets[*p]
+		if !ok {
+			break
+		}
+		chain = append(chain, b)
+		p = b.ParentID
+	}
+	groups := tree.ResolveAttributes(chain)
+	if len(groups) == 0 {
+		return nil
+	}
+	out := make(tree.Attributes, len(groups))
+	for name, g := range groups {
+		out[name] = g.Values
+	}
+	return out
 }
 
 // peopleOf counts the distinct persons named on a project and the groups among

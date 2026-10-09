@@ -56,7 +56,8 @@ func fixture(t *testing.T) (*Collector, *MemoryStore, *fakeSource) {
 	nodes := tree.NewInMemoryStore(zap.NewNop().Sugar())
 	for _, n := range []tree.Node{
 		{ID: "root", Kind: tree.KindBudget, Name: "Root", Status: tree.StatusApproved},
-		{ID: "uni", Kind: tree.KindBudget, Name: "Uni", ParentID: ptr("root"), Status: tree.StatusApproved},
+		{ID: "uni", Kind: tree.KindBudget, Name: "Uni", ParentID: ptr("root"), Status: tree.StatusApproved,
+			Attributes: tree.Attributes{"billing": {"cost_center": "4711"}}},
 		{ID: "stud", Kind: tree.KindBudget, Name: "Students", ParentID: ptr("uni"), Status: tree.StatusApproved},
 		{ID: "p_run", Kind: tree.KindProject, Name: "Thesis", ParentID: ptr("stud"), Status: tree.StatusApproved,
 			Owner: "user:a@x", OSProjectID: "os-run",
@@ -64,7 +65,8 @@ func fixture(t *testing.T) (*Collector, *MemoryStore, *fakeSource) {
 			Allocations:     []tree.Allocation{{BudgetID: "uni", Limit: common.ProjectQuota{"cores": 8, "ipv4": 1}}},
 			AdminScope:      common.TokenList{"user:b@x"},
 			AuthorizedUsers: []common.AuthorizedUser{{Token: "user:a@x"}, {Token: "user:c@x"}, {Token: "group:course"}},
-			OSInUse:         common.ProjectQuota{"storage": 30}},
+			OSInUse:         common.ProjectQuota{"storage": 30},
+			Attributes:      tree.Attributes{"funding": {"wbs": "D-1"}}},
 		{ID: "p_idle", Kind: tree.KindProject, Name: "Idle", ParentID: ptr("stud"), Status: tree.StatusApproved,
 			Owner: "user:d@x", OSProjectID: "os-idle", Limit: common.ProjectQuota{"cores": 2}},
 		{ID: "p_rej", Kind: tree.KindProject, Name: "No", ParentID: ptr("stud"), Status: tree.StatusRejected, Owner: "user:e@x"},
@@ -109,6 +111,9 @@ func TestCollectDay(t *testing.T) {
 	}
 	if len(run.BudgetPath) != 3 || run.BudgetPath[0].Name != "Students" || run.BudgetPath[2].ID != "root" {
 		t.Errorf("budget path = %+v", run.BudgetPath)
+	}
+	if len(run.Attributes) != 2 || run.Attributes["billing"]["cost_center"] != "4711" || run.Attributes["funding"]["wbs"] != "D-1" {
+		t.Errorf("attributes = %v, want the university's billing and the project's own funding", run.Attributes)
 	}
 	if run.People != 3 || run.Groups != 1 {
 		t.Errorf("people/groups = %d/%d, want owner a, admin b, member c and one group", run.People, run.Groups)

@@ -34,7 +34,7 @@ func TestAttachParentNames_PathsBelowTheRoot(t *testing.T) {
 			Allocations: []Allocation{{BudgetID: ma, Limit: common.ProjectQuota{"cores": 1}}}},
 		{ID: "top", Kind: KindBudget, ParentID: &root},
 	}
-	got, err := svc.attachParentNames(ctx, nodes)
+	got, err := svc.attachParentNames(ctx, nodes, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -114,8 +114,10 @@ type APIService interface {
 	ReparentNode(id string, req tree.ReparentNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
 	TransferOwner(id string, req tree.TransferOwnerRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
 	SetAllocation(id string, req tree.AllocationRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
+	SetAttributes(id string, req tree.SetAttributesRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
 	AllocationSources(id string, userTokens common.TokenList) ([]tree.Node, error)
 	UsageScope(id string, userTokens common.TokenList) (*tree.Node, error)
+	AttributesVisible(n *tree.Node, userTokens common.TokenList) (bool, error)
 	PromoteNode(id string, req tree.PromoteNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
 	DeleteNode(id string, actor tree.Actor, userTokens common.TokenList) error
 
@@ -285,6 +287,7 @@ func RegisterApiRoutes(v1 *gin.RouterGroup, cfg APIConfig, log *zap.SugaredLogge
 		nodes.POST("/:id/reparent", reparentNode(cfg))
 		nodes.POST("/:id/transfer-owner", transferNodeOwner(cfg))
 		nodes.PUT("/:id/allocations", setNodeAllocation(cfg))
+		nodes.PUT("/:id/attributes", setNodeAttributes(cfg))
 		nodes.GET("/:id/allocation-sources", listAllocationSources(cfg))
 		nodes.GET("/:id/usage", getNodeUsage(cfg))
 		nodes.POST("/:id/promote", promoteNode(cfg))

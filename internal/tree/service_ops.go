@@ -47,7 +47,7 @@ func (s *Service) GetNode(id string, userTokens common.TokenList) (*Node, error)
 		return nil, common.ErrForbidden
 	}
 
-	withUsage, err := s.attachUsage(ctx, []Node{*node})
+	withUsage, err := s.attachUsage(ctx, []Node{*node}, userTokens)
 	if err != nil {
 		return nil, err
 	}
@@ -71,14 +71,14 @@ func (s *Service) ListMine(userEmail string, userTokens common.TokenList, limit,
 	return s.listPage(ctx, NodeQuery{
 		Kinds:       []string{KindProject},
 		Responsible: &ResponsibleQuery{Owner: owner, AdminAny: userTokens},
-	}, limit, offset)
+	}, limit, offset, append(slices.Clone(userTokens), owner))
 }
 
 // listPage runs one query twice — the page itself and the number of rows it was
 // cut from — and decorates only the page. Counting is a separate query on
 // purpose: it must not be the length of the page, or a full page would always
 // claim to be complete.
-func (s *Service) listPage(ctx context.Context, q NodeQuery, limit, offset int) (NodePage, error) {
+func (s *Service) listPage(ctx context.Context, q NodeQuery, limit, offset int, viewer common.TokenList) (NodePage, error) {
 	nodes, err := s.store.ListNodes(ctx, q, limit, offset)
 	if err != nil {
 		return NodePage{}, fmt.Errorf("load nodes: %w", err)
@@ -87,7 +87,7 @@ func (s *Service) listPage(ctx context.Context, q NodeQuery, limit, offset int) 
 	if err != nil {
 		return NodePage{}, fmt.Errorf("count nodes: %w", err)
 	}
-	decorated, err := s.attachUsage(ctx, nodes)
+	decorated, err := s.attachUsage(ctx, nodes, viewer)
 	if err != nil {
 		return NodePage{}, err
 	}
@@ -108,7 +108,7 @@ func (s *Service) ListMyBudgets(userTokens common.TokenList, limit, offset int) 
 	page, err := s.listPage(ctx, NodeQuery{
 		Kinds:         []string{KindBudget},
 		AdminScopeAny: userTokens,
-	}, limit, offset)
+	}, limit, offset, userTokens)
 	if err != nil {
 		return NodePage{}, err
 	}
@@ -138,7 +138,7 @@ func (s *Service) ListEligibleForMe(userTokens common.TokenList, limit, offset i
 		Kinds:       []string{KindBudget},
 		Statuses:    []string{StatusApproved},
 		EligibleAny: userTokens,
-	}, limit, offset)
+	}, limit, offset, userTokens)
 }
 
 // ListEligibleForOwner returns the approved budgets the given owner tokens may
@@ -213,7 +213,7 @@ func (s *Service) ListToManage(userTokens common.TokenList, includeSubtree bool,
 	}
 	// The name of the funding budget travels with the request, so the inbox can
 	// say where something arrived without a lookup per entry.
-	named, err := s.attachParentNames(ctx, waiting)
+	named, err := s.attachParentNames(ctx, waiting, userTokens)
 	if err != nil {
 		return NodePage{}, err
 	}
@@ -292,7 +292,7 @@ func (s *Service) SearchNodes(userTokens common.TokenList, query string, limit, 
 	total := len(matches)
 	// Only the page itself is decorated (usage rollup, child count, parent name):
 	// a search over a large tree would otherwise roll up usage for every match.
-	decorated, err := s.attachUsage(ctx, paginateInMemory(matches, limit, offset))
+	decorated, err := s.attachUsage(ctx, paginateInMemory(matches, limit, offset), userTokens)
 	if err != nil {
 		return NodePage{}, err
 	}

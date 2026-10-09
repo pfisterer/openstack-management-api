@@ -144,7 +144,7 @@ func (s *Service) SetAllocation(id string, req AllocationRequest, actor Actor, u
 	if err := s.store.UpsertNode(ctx, updated); err != nil {
 		return Node{}, fmt.Errorf("persist node: %w", err)
 	}
-	named, err := s.attachParentNames(ctx, []Node{updated})
+	named, err := s.attachParentNames(ctx, []Node{updated}, userTokens)
 	if err != nil {
 		return updated, nil
 	}
@@ -194,7 +194,7 @@ func (s *Service) AllocationSources(id string, userTokens common.TokenList) ([]N
 	}
 	// Nearest first: the budget closest to the project is the usual source.
 	slices.Reverse(out)
-	return s.attachUsage(ctx, out)
+	return s.attachUsage(ctx, out, userTokens)
 }
 
 // validateAllocationAvailabilities checks the availabilities of an allocation:

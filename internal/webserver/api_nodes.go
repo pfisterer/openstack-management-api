@@ -689,6 +689,45 @@ func transferNodeOwner(cfg APIConfig) gin.HandlerFunc {
 	}
 }
 
+// setNodeAttributes replaces a node's own attributes.
+//
+//	@Summary		Set a node's attributes
+//	@Description	Replaces the node's own attributes: groups of key/value pairs such as {"billing": {"cost_center": "4711"}}, which the platform does not interpret. Nodes below inherit each group whole from the nearest node that sets it; a group set to {} stops that. A group or key name is lower-case letters, digits, '-' and '_'. On a budget its managers or those above may set them, on a project the managers of its budgets. They are returned only to those who look after the node: its managers and those above, and on a project its owner and admins.
+//	@Tags			nodes
+//	@Accept			json
+//	@Produce		json
+//	@Security		Bearer
+//	@Param			id		path		string						true	"Node ID"
+//	@Param			request	body		tree.SetAttributesRequest	true	"The node's own attributes"
+//	@Success		200		{object}	tree.Node	"Updated node."
+//	@Failure		400		{object}	map[string]any	"Bad request."
+//	@Failure		401		{object}	map[string]any	"Unauthorized."
+//	@Failure		403		{object}	map[string]any	"Forbidden."
+//	@Failure		404		{object}	map[string]any	"Not found."
+//	@ID				setNodeAttributes
+//	@Router			/v1/nodes/{id}/attributes [put]
+func setNodeAttributes(cfg APIConfig) gin.HandlerFunc {
+	svc := cfg.Service
+	return func(c *gin.Context) {
+		var req tree.SetAttributesRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		auth, err := mustGetAuthContext(c)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
+			return
+		}
+		node, err := svc.SetAttributes(c.Param("id"), req, tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
+		if err != nil {
+			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, node)
+	}
+}
+
 // setNodeAllocation grants, changes or removes what a project draws from a
 // budget above its own.
 //

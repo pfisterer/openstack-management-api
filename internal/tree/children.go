@@ -164,7 +164,7 @@ func (s *Service) ListChildren(parentID string, f ChildFilter, userTokens common
 		q.Kinds = []string{f.Kind}
 	}
 	if !f.needsMemory() {
-		return s.listPage(ctx, q, limit, offset)
+		return s.listPage(ctx, q, limit, offset, userTokens)
 	}
 
 	if f.Allocated || f.Deep {
@@ -198,7 +198,7 @@ func (s *Service) ListChildren(parentID string, f ChildFilter, userTokens common
 	}
 	sortChildren(children, f.Sort, f.Desc)
 
-	decorated, err := s.attachUsage(ctx, paginateInMemory(children, limit, offset))
+	decorated, err := s.attachUsage(ctx, paginateInMemory(children, limit, offset), userTokens)
 	if err != nil {
 		return NodePage{}, err
 	}

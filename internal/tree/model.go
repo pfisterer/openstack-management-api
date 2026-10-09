@@ -300,7 +300,11 @@ type HistoryEntry struct {
 	// AllocationFrom names the budget an allocation entry is about; LimitFrom
 	// and LimitTo then hold that allocation, not the project's own limit.
 	AllocationFrom *string `json:"allocation_from,omitempty"`
-	Reason         *string `json:"reason,omitempty"`
+	// AttributesFrom and AttributesTo are the node's own attributes before and
+	// after an "attributes_changed" entry.
+	AttributesFrom Attributes `json:"attributes_from,omitempty"`
+	AttributesTo   Attributes `json:"attributes_to,omitempty"`
+	Reason         *string    `json:"reason,omitempty"`
 }
 
 // StatusUsage groups the aggregated limits and contributing leaf IDs for one status.
@@ -411,6 +415,11 @@ type Node struct {
 	// raise one; the project's owner may give it back.
 	Allocations []Allocation `json:"allocations,omitempty"`
 
+	// Attributes are the node's own free-form facts, set by managers — a cost
+	// centre, a project number — and inherited group by group by the nodes
+	// below (see Attributes). EffectiveAttributes is what applies.
+	Attributes Attributes `json:"attributes,omitempty"`
+
 	// Owner is the single responsible person of a leaf ("user:<email>").
 	// Additional participants are granted via AuthorizedUsers. Managers of the
 	// parent chain may transfer ownership.
@@ -488,6 +497,11 @@ type Node struct {
 	// from below the root down to ParentID, root-most first, so a client can
 	// tell two budgets of the same name apart. Empty when the parent is the root.
 	ParentPath []PathEntry `json:"parent_path,omitempty"`
+	// EffectiveAttributes is attached to API responses (never persisted): the
+	// attribute groups that apply at this node, its own and inherited, each with
+	// the node it comes from. Like Attributes, only for those who look after the
+	// node — its managers and those above, on a project its owner and admins.
+	EffectiveAttributes map[string]AttributeGroup `json:"effective_attributes,omitempty"`
 
 	// AvailableResources is attached to API responses (never persisted): the
 	// resources that are in scope AT THIS NODE, root-most first as the catalogue

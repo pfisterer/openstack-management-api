@@ -712,7 +712,13 @@ func (s *Service) attachChildCounts(ctx context.Context, nodes []Node) ([]Node, 
 // separately — one request per node — and a name alone is ambiguous: two
 // budgets called "Vorlesung" under different parents look the same. Only names
 // are exposed; no other field of those budgets is copied.
-func (s *Service) attachParentNames(ctx context.Context, nodes []Node) ([]Node, error) {
+//
+// It also resolves the attributes that apply at each node, which need the same
+// walk.
+//
+// viewer is who asks: attributes go only to those who look after the node
+// (see attributesVisible), everyone else gets the node without them.
+func (s *Service) attachParentNames(ctx context.Context, nodes []Node, viewer common.TokenList) ([]Node, error) {
 	var start []string
 	for _, n := range nodes {
 		if n.ParentID != nil {
@@ -722,14 +728,18 @@ func (s *Service) attachParentNames(ctx context.Context, nodes []Node) ([]Node, 
 			start = append(start, a.BudgetID)
 		}
 	}
-	if len(start) == 0 {
-		return nodes, nil
-	}
 	tree, err := s.walkAncestors(ctx, start)
 	if err != nil {
 		return nil, err
 	}
+	viewerSet := common.NewTokenSet(viewer)
 	for i := range nodes {
+		if tree.attributesVisible(nodes[i], viewerSet) {
+			nodes[i].EffectiveAttributes = tree.effectiveAttributes(nodes[i])
+		} else {
+			nodes[i].Attributes = nil
+			nodes[i].EffectiveAttributes = nil
+		}
 		if nodes[i].ParentID != nil {
 			nodes[i].ParentName = tree.name[*nodes[i].ParentID]
 			nodes[i].ParentPath = tree.path(*nodes[i].ParentID)
@@ -752,10 +762,13 @@ func (s *Service) attachParentNames(ctx context.Context, nodes []Node) ([]Node, 
 // cannot turn into an endless query loop.
 const maxAncestorDepth = 64
 
-// ancestry is what walkAncestors learnt: each loaded node's parent and name.
+// ancestry is what walkAncestors learnt: each loaded node's parent, name and
+// own attributes.
 type ancestry struct {
 	parent map[string]string
 	name   map[string]string
+	attrs  map[string]Attributes
+	admins map[string]common.TokenList
 	log    interface{ Warnw(string, ...any) }
 }
 
@@ -802,7 +815,7 @@ func (a ancestry) path(id string) []PathEntry {
 // each level of the tree costs one query no matter how many nodes are on it,
 // and the levels above the first are shared by nearly all of them anyway.
 func (s *Service) walkAncestors(ctx context.Context, start []string) (ancestry, error) {
-	a := ancestry{parent: map[string]string{}, name: map[string]string{}, log: s.log}
+	a := ancestry{parent: map[string]string{}, name: map[string]string{}, attrs: map[string]Attributes{}, admins: map[string]common.TokenList{}, log: s.log}
 	var frontier []string
 	for _, id := range start {
 		if !slices.Contains(frontier, id) {
@@ -817,6 +830,8 @@ func (s *Service) walkAncestors(ctx context.Context, start []string) (ancestry, 
 		var next []string
 		for _, n := range level {
 			a.name[n.ID] = n.Name
+			a.attrs[n.ID] = n.Attributes
+			a.admins[n.ID] = n.AdminScope
 			if n.ParentID == nil {
 				continue
 			}
@@ -860,7 +875,7 @@ func (s *Service) attachAncestorIDs(ctx context.Context, nodes []Node) ([]Node, 
 // attachUsage adds the derived fields every view needs on top of the stored
 // node: the subtree usage rollup, the direct child count, the parent's name and
 // the resources in scope at that node.
-func (s *Service) attachUsage(ctx context.Context, nodes []Node) ([]Node, error) {
+func (s *Service) attachUsage(ctx context.Context, nodes []Node, viewer common.TokenList) ([]Node, error) {
 	budgets := make([]Node, 0, len(nodes))
 	for _, n := range nodes {
 		if n.Kind == KindBudget {
@@ -889,7 +904,7 @@ func (s *Service) attachUsage(ctx context.Context, nodes []Node) ([]Node, error)
 	if err != nil {
 		return nil, err
 	}
-	out, err = s.attachParentNames(ctx, out)
+	out, err = s.attachParentNames(ctx, out, viewer)
 	if err != nil {
 		return nil, err
 	}

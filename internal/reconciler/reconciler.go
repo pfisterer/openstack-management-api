@@ -1896,6 +1896,11 @@ func (r *Reconciler) upsertImported(
 		osLimit = QuotaSetToProjectQuota(r.resources(), detail.Limit)
 		measured = measureImport(r.resources(), osLimit, detail)
 	}
+	var prevLimit common.ProjectQuota
+	if prev, ok := existing[osProject.ID]; ok {
+		prevLimit = prev.Limit
+	}
+	importGrants(r.osClient, r.resources(), osProject.ID, osLimit, prevLimit, r.log)
 
 	// Resolve project members. The tree model has no owner for imports (the owner
 	// is assigned at promotion time) — every member is recorded as an authorized
@@ -1998,6 +2003,35 @@ func (r *Reconciler) upsertImported(
 		res.projectsSynced++
 	} else {
 		res.importedLeaves++
+	}
+}
+
+// importGrants records the availabilities an imported project already has in
+// OpenStack — a shared network, flavour or image of the catalogue — in its
+// limit, the same way as its quota. Adopting the project starts from that
+// limit; without them the adopt dialog offered every availability as off, and
+// accepting it asked the reconciler to take, say, the IPv4 network away from
+// servers still attached to it. A grant that cannot be read keeps the value of
+// the last pass, so a passing error does not read as "not granted".
+func importGrants(c grantClient, defs []common.ManagedProject, osProjectID string, limit, prev common.ProjectQuota, log *zap.SugaredLogger) {
+	for _, def := range defs {
+		if !def.IsBool() || def.Grant == nil {
+			continue
+		}
+		has, err := c.HasGrant(*def.Grant, osProjectID)
+		if err != nil {
+			log.Warnw("Could not read availability for import",
+				"os_project_id", osProjectID, "resource", def.ID, "error", err)
+			if v, ok := prev[def.ID]; ok {
+				limit[def.ID] = v
+			}
+			continue
+		}
+		if has {
+			limit[def.ID] = 1
+		} else {
+			limit[def.ID] = 0
+		}
 	}
 }
 

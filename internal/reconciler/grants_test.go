@@ -188,3 +188,33 @@ func TestSyncGrants_GrantsWhatAnAllocationHolds(t *testing.T) {
 		t.Errorf("added = %v, want the flavour from the allocation", f.added)
 	}
 }
+
+// An import carries the availabilities it already has, so adopting it does not
+// start by revoking them; one that cannot be read keeps the last known value.
+func TestImportGrants(t *testing.T) {
+	f := newFakeGrants()
+	f.held[key(netGrant, "os-1")] = true
+	limit := common.ProjectQuota{"cores": 8}
+
+	importGrants(f, grantCatalogue, "os-1", limit, nil, zap.NewNop().Sugar())
+
+	if limit["dhbw-ipv4"] != 1 || limit["gpu-rtx6000"] != 0 || limit["cores"] != 8 {
+		t.Errorf("limit = %v, want the network held, the flavour not, cores untouched", limit)
+	}
+
+	failing := &failingGrants{}
+	limit = common.ProjectQuota{}
+	importGrants(failing, grantCatalogue, "os-1", limit, common.ProjectQuota{"dhbw-ipv4": 1}, zap.NewNop().Sugar())
+	if v, ok := limit["dhbw-ipv4"]; !ok || v != 1 {
+		t.Errorf("unreadable grant: limit = %v, want the last known value kept", limit)
+	}
+	if _, ok := limit["gpu-rtx6000"]; ok {
+		t.Errorf("unreadable grant without a last value must stay unset, got %v", limit)
+	}
+}
+
+type failingGrants struct{ fakeGrants }
+
+func (f *failingGrants) HasGrant(common.Grant, string) (bool, error) {
+	return false, errors.New("unreachable")
+}

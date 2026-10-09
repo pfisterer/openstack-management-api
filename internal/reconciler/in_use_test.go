@@ -146,3 +146,32 @@ func TestApplyOSSyncState_ServerCount(t *testing.T) {
 		t.Error("an unmeasured pass must keep the last count")
 	}
 }
+
+// An imported project is measured like a managed one, from the same quota
+// response that gives its limit — the table showed a dash for everything in
+// use, next to a quota that was real.
+func TestMeasureImport(t *testing.T) {
+	resources := []common.ManagedProject{
+		{ID: "cores", OSQuotaField: "cores", OSOvercommitCheck: true},
+		{ID: "ram", OSQuotaField: "ram", OSOvercommitCheck: true, OSMultiplier: 1024},
+		{ID: "storage", OSQuotaField: "gigabytes", OSOvercommitCheck: true},
+	}
+	detail := &osclient.ProjectQuotaDetail{
+		Limit: osclient.QuotaSet{Cores: 200, RAM: 512000, Gigabytes: 1000, Instances: 100},
+		InUse: osclient.QuotaSet{Cores: 80, RAM: 163840, Gigabytes: 0, Instances: 10},
+	}
+	limit := QuotaSetToProjectQuota(resources, detail.Limit)
+
+	var leaf tree.Node
+	applyOSSyncState(&leaf, "os-1", measureImport(resources, limit, detail))
+
+	if leaf.OSInUse["cores"] != 80 || leaf.OSInUse["ram"] != 160 || leaf.OSInUse["storage"] != 0 {
+		t.Errorf("in use = %v, want 80 cores, 160 GB RAM, 0 GB storage", leaf.OSInUse)
+	}
+	if _, measured := leaf.OSInUse["storage"]; !measured {
+		t.Error("storage was measured as 0 and must not read as unmeasured")
+	}
+	if leaf.OSServers == nil || *leaf.OSServers != 10 || leaf.OSOvercommitted {
+		t.Errorf("servers %v, overcommitted %v", leaf.OSServers, leaf.OSOvercommitted)
+	}
+}

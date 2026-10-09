@@ -1865,6 +1865,9 @@ func (r *Reconciler) upsertImported(
 	}
 
 	var osLimit common.ProjectQuota
+	// What the import uses, from the same response as its limit; nil when that
+	// could not be read, and then the last known values stay.
+	var measured *osMeasurement
 	detail, err := r.osClient.GetProjectQuotaDetail(osProject.ID)
 	if err != nil {
 		r.log.Warnw("Could not fetch quota for import",
@@ -1872,6 +1875,7 @@ func (r *Reconciler) upsertImported(
 		osLimit = common.ProjectQuota{}
 	} else {
 		osLimit = QuotaSetToProjectQuota(r.resources(), detail.Limit)
+		measured = measureImport(r.resources(), osLimit, detail)
 	}
 
 	// Resolve project members. The tree model has no owner for imports (the owner
@@ -1937,6 +1941,7 @@ func (r *Reconciler) upsertImported(
 		OSProjectID:              osProject.ID,
 		OSProjectName:            osProject.Name,
 	}
+	applyOSSyncState(&leaf, osProject.ID, measured)
 
 	r.log.Infow("Upserting imported leaf",
 		"node_id", syntheticID, "os_project_id", osProject.ID,
@@ -1963,6 +1968,7 @@ func (r *Reconciler) upsertImported(
 				n.ExternalGroupAssignments = leaf.ExternalGroupAssignments
 				n.OSProjectID = leaf.OSProjectID
 				n.OSProjectName = leaf.OSProjectName
+				applyOSSyncState(n, leaf.OSProjectID, measured)
 				return nil
 			})
 			if err != nil {
@@ -1981,6 +1987,17 @@ func (r *Reconciler) upsertImported(
 		res.projectsSynced++
 	} else {
 		res.importedLeaves++
+	}
+}
+
+// measureImport is what an imported project uses, read like a managed one's.
+// Its limit is its OpenStack quota, so overcommitted means OpenStack already
+// holds more than the quota allows.
+func measureImport(resources []common.ManagedProject, limit common.ProjectQuota, detail *osclient.ProjectQuotaDetail) *osMeasurement {
+	return &osMeasurement{
+		overcommitted: IsProjectOvercommitted(resources, limit, detail),
+		inUse:         ProjectInUse(resources, detail),
+		servers:       detail.InUse.Instances,
 	}
 }
 

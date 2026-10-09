@@ -187,6 +187,7 @@ func TestImportAndMergeMembers(t *testing.T) {
 		{Email: "a@x", RoleName: "admin"},
 		{Email: "b@x", RoleName: "reader"},
 		{Email: "owner@x", RoleName: "member"},
+		{Email: "svc-backup", RoleName: "member"},
 	})
 	want := []common.AuthorizedUser{{Token: "user:a@x", OpenstackRole: "member"}, {Token: "user:b@x", OpenstackRole: "reader"}, {Token: "user:owner@x", OpenstackRole: "member"}}
 	if len(imported) != len(want) {

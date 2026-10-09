@@ -27,6 +27,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/mail"
 	"slices"
 	"strings"
 	"sync"
@@ -2013,6 +2014,7 @@ func measureImport(resources []common.ManagedProject, limit common.ProjectQuota,
 }
 
 // importMembers turns an OpenStack project's members into authorized users.
+// Accounts without an e-mail address are left out.
 // The tree knows two roles, member and reader; a reader stays one, every other
 // role — admin, or one a service defines — becomes member, which is what the
 // project's own people get. Someone holding several roles appears once, with
@@ -2021,7 +2023,14 @@ func importMembers(members []osclient.ProjectMemberInfo) []common.AuthorizedUser
 	out := []common.AuthorizedUser{}
 	at := map[string]int{}
 	for _, m := range members {
-		token := common.UserPrefix + strings.ToLower(strings.TrimSpace(m.Email))
+		email := strings.ToLower(strings.TrimSpace(m.Email))
+		// Keystone falls back to the user name where an account has no e-mail —
+		// a service account, a local user. Those are no persons of the tree, and
+		// the member sync leaves accounts without an address alone.
+		if _, err := mail.ParseAddress(email); err != nil {
+			continue
+		}
+		token := common.UserPrefix + email
 		role := treeRole(m.RoleName)
 		if i, seen := at[token]; seen {
 			if role == "member" {

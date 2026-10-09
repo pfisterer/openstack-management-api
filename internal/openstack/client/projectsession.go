@@ -134,17 +134,27 @@ func (s *ProjectSession) collect(pager pagination.Pager, what string, each func(
 // ── Magnum ────────────────────────────────────────────────────────────────────
 
 // ListClusters lists the project's Kubernetes clusters.
+//
+// Magnum does not scope this by the token: a user with the admin role gets the
+// clusters of every project, even when signed in to one. The short listing
+// also leaves out project_id, so every cluster looked foreign — the purge
+// skipped them all, its own included. The detail listing names the project;
+// other projects' clusters are dropped here, since that is how Magnum behaves
+// rather than a listing gone wrong.
 func (s *ProjectSession) ListClusters() ([]Resource, error) {
 	if s.magnum == nil {
 		return nil, nil
 	}
-	return s.collect(clusters.List(s.magnum, clusters.ListOpts{}), "clusters", func(page pagination.Page) ([]Resource, error) {
+	return s.collect(clusters.ListDetail(s.magnum, clusters.ListOpts{}), "clusters", func(page pagination.Page) ([]Resource, error) {
 		list, err := clusters.ExtractClusters(page)
 		if err != nil {
 			return nil, err
 		}
 		out := make([]Resource, 0, len(list))
 		for _, c := range list {
+			if c.ProjectID != "" && c.ProjectID != s.ProjectID {
+				continue
+			}
 			out = append(out, Resource{ID: c.UUID, Name: c.Name, Status: c.Status, ProjectID: c.ProjectID})
 		}
 		return out, nil

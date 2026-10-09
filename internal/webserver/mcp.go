@@ -300,7 +300,7 @@ type mcpSetAdminsInput struct {
 type mcpAllocationInput struct {
 	ID       string         `json:"id" jsonschema:"id of the project"`
 	BudgetID string         `json:"budget_id" jsonschema:"id of a budget above the project's own budget that you manage; the allocation is charged there"`
-	Limit    map[string]int `json:"limit" jsonschema:"the whole allocation from that budget, not a delta, e.g. {\"gpu\": 1}; {} removes it"`
+	Limit    map[string]int `json:"limit" jsonschema:"the whole allocation from that budget, not a delta, e.g. {\"cores\": 8}; {} removes it"`
 	Reason   string         `json:"reason,omitempty" jsonschema:"why; required when granting or raising, the managers of the budgets in between read it"`
 }
 

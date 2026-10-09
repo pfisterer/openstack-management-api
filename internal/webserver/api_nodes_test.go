@@ -313,7 +313,7 @@ func TestUpdateNode_PolicyVsCapacityAuthz(t *testing.T) {
 
 	// … but NOT their own limit (that is the parent chain's decision).
 	// Note: a budget limit is a complete map — missing resources mean 0.
-	biggerLimit := common.ProjectQuota{"cores": 25, "ram": 80, "storage": 500, "gpu": 2}
+	biggerLimit := common.ProjectQuota{"cores": 25, "ram": 80, "storage": 500}
 	rr = do(t, h, http.MethodPut, "/v1/nodes/b_cs_faculty", userFaculty, tree.UpdateNodeRequest{Limit: &biggerLimit})
 	assertStatus(t, rr, http.StatusForbidden)
 
@@ -327,7 +327,7 @@ func TestUpdateNode_PolicyVsCapacityAuthz(t *testing.T) {
 	assertStatus(t, rr, http.StatusBadRequest)
 
 	// Shrinking below the subtree's active usage is rejected.
-	tiny := common.ProjectQuota{"cores": 1, "ram": 1, "storage": 1, "gpu": 0}
+	tiny := common.ProjectQuota{"cores": 1, "ram": 1, "storage": 1}
 	rr = do(t, h, http.MethodPut, "/v1/nodes/b_cs_faculty", userCSAdmin, tree.UpdateNodeRequest{Limit: &tiny})
 	assertStatus(t, rr, http.StatusBadRequest)
 
@@ -400,7 +400,7 @@ func TestPromote_Flow(t *testing.T) {
 
 	// Root promotes with a fitting limit override.
 	ok := req
-	ok.Limit = common.ProjectQuota{"cores": 5, "ram": 16, "storage": 100, "gpu": 0}
+	ok.Limit = common.ProjectQuota{"cores": 5, "ram": 16, "storage": 100}
 	rr := do(t, h, http.MethodPost, "/v1/nodes/p_imported_001/promote", userRoot, ok)
 	assertStatus(t, rr, http.StatusOK)
 	var n tree.Node

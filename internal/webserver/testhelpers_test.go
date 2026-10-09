@@ -28,7 +28,7 @@ const (
 
 // quotaResourceIDs matches the resource IDs used in mock data. Kept as plain
 // ids for the places that sum (UsageByStatus.Total takes the arithmetic set).
-var quotaResourceIDs = []string{"cores", "ram", "storage", "gpu"}
+var quotaResourceIDs = []string{"cores", "ram", "storage"}
 
 // quotaResources is the same set as a catalogue, for constructing the service.
 var quotaResources = func() []common.ManagedProject {

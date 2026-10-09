@@ -133,7 +133,7 @@ openstackManagementApi:
     # department belongs in as one group token, not as N individual entries.
     maxAuthorizedUsers: 32
     # The managed resources of this deployment. Empty uses the built-in set
-    # (cores, ram, storage, gpu plus the static network/storage quotas).
+    # (cores, ram, storage plus the static network/storage quotas).
     #
     # A resource is either a quantity or an availability:
     #

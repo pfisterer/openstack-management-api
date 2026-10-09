@@ -466,14 +466,6 @@ func defaultResourceCatalogue() []common.ManagedProject {
 			// detail response the reconciler already fetches.
 			OSOvercommitCheck: true,
 		},
-		{
-			ID: "gpu", Name: "GPUs", Default: 0, Min: 0, Max: 1000,
-			Group:    "Compute",
-			Unit:     "units",
-			Message:  "0 - 1000 GPUs",
-			ShowOnUI: true,
-			// No standard OpenStack quota field for GPUs; OSQuotaField intentionally empty.
-		},
 
 		// ── Static network/storage quotas (not shown on UI, fixed at project creation) ─
 		// To change a default, update the Default field here. The OSQuotaField drives the

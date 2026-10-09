@@ -94,13 +94,13 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			// (a root admin creates the department budgets), it does not take
 			// requests. Nothing in the model enforces that — it is a policy
 			// decision, and this is what that decision looks like as data.
-			Limit:     common.ProjectQuota{"cores": common.UnlimitedQuota, "ram": common.UnlimitedQuota, "storage": common.UnlimitedQuota, "gpu": common.UnlimitedQuota},
+			Limit:     common.ProjectQuota{"cores": common.UnlimitedQuota, "ram": common.UnlimitedQuota, "storage": common.UnlimitedQuota},
 			CreatedBy: "System", CreatedAt: "2025-01-01T00:00:00Z",
 		},
 		{
 			ID: unassignedID, Kind: tree.KindBudget, ParentID: &rootID, Status: tree.StatusApproved,
 			Name:      "Unassigned OpenStack Imports",
-			Limit:     common.ProjectQuota{"cores": 0, "ram": 0, "storage": 0, "gpu": 0},
+			Limit:     common.ProjectQuota{"cores": 0, "ram": 0, "storage": 0},
 			CreatedBy: "System", CreatedAt: "2025-01-01T00:00:00Z",
 		},
 
@@ -110,7 +110,7 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			Name:               "Computer Science Dept",
 			AdminScope:         common.TokenList{DeptCSAdmin},
 			EligibleRequesters: common.TokenList{DeptCSFaculty, "user:faculty@cs.example", "user:admin@cs.example"},
-			Limit:              common.ProjectQuota{"cores": 30, "ram": 100, "storage": 600, "gpu": 4},
+			Limit:              common.ProjectQuota{"cores": 30, "ram": 100, "storage": 600},
 			CreatedBy:          "root.admin@uni.example", CreatedAt: "2025-06-15T10:30:00Z",
 			TerminationDate: plusDays(365),
 		},
@@ -119,7 +119,7 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			Name:               "CS Faculty Pool",
 			AdminScope:         common.TokenList{DeptCSFaculty},
 			EligibleRequesters: common.TokenList{CSStudentGroup, "user:cs-student@cs.com", "user:faculty@cs.example"},
-			Limit:              common.ProjectQuota{"cores": 20, "ram": 64, "storage": 400, "gpu": 2},
+			Limit:              common.ProjectQuota{"cores": 20, "ram": 64, "storage": 400},
 			CreatedBy:          "admin@cs.example", CreatedAt: "2025-08-01T09:00:00Z",
 			TerminationDate: plusDays(365),
 		},
@@ -131,8 +131,8 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			Name:               "CS Students (Small VM)",
 			AdminScope:         common.TokenList{DeptCSFaculty},
 			EligibleRequesters: common.TokenList{CSStudentGroup},
-			AutoApprove:        &tree.AutoApprove{PerRequesterLimit: common.ProjectQuota{"cores": 2, "ram": 4, "storage": 20, "gpu": 0}},
-			Limit:              common.ProjectQuota{"cores": 10, "ram": 20, "storage": 100, "gpu": 0},
+			AutoApprove:        &tree.AutoApprove{PerRequesterLimit: common.ProjectQuota{"cores": 2, "ram": 4, "storage": 20}},
+			Limit:              common.ProjectQuota{"cores": 10, "ram": 20, "storage": 100},
 			CreatedBy:          "faculty@cs.example", CreatedAt: "2025-09-01T09:00:00Z",
 		},
 		{
@@ -140,7 +140,7 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			Name:               "Biology Dept",
 			AdminScope:         common.TokenList{DeptBioGroup},
 			EligibleRequesters: common.TokenList{DeptBioGroup, "user:faculty@bio.example"},
-			Limit:              common.ProjectQuota{"cores": 300, "ram": 1000, "storage": 3000, "gpu": 20},
+			Limit:              common.ProjectQuota{"cores": 300, "ram": 1000, "storage": 3000},
 			CreatedBy:          "root.admin@uni.example", CreatedAt: "2025-07-20T14:15:00Z",
 		},
 		{
@@ -156,10 +156,10 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			Name:       "Robotics Lab WS26",
 			Reason:     "A dedicated budget for the robotics lab course next semester",
 			AdminScope: common.TokenList{"user:faculty@cs.example"},
-			Limit:      common.ProjectQuota{"cores": 8, "ram": 32, "storage": 200, "gpu": 1},
+			Limit:      common.ProjectQuota{"cores": 8, "ram": 32, "storage": 200},
 			CreatedBy:  "faculty@cs.example", CreatedAt: "2026-03-01T10:00:00Z",
 			TerminationDate: plusDays(365),
-			History:         created("faculty@cs.example", common.ProjectQuota{"cores": 8, "ram": 32, "storage": 200, "gpu": 1}, tree.StatusPending),
+			History:         created("faculty@cs.example", common.ProjectQuota{"cores": 8, "ram": 32, "storage": 200}, tree.StatusPending),
 		},
 
 		// ── Project leaves ────────────────────────────────────────────────────
@@ -168,7 +168,7 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			Name:   "Faculty research sandbox",
 			Reason: "Faculty research sandbox",
 			Owner:  "user:faculty@cs.example",
-			Limit:  common.ProjectQuota{"cores": 4, "ram": 16, "storage": 100, "gpu": 0},
+			Limit:  common.ProjectQuota{"cores": 4, "ram": 16, "storage": 100},
 			AuthorizedUsers: []common.AuthorizedUser{
 				{Token: DeptCSFaculty, OpenstackRole: "member"},
 				// A read-only participant: the student may look at the project in
@@ -178,7 +178,7 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			},
 			TerminationDate: plusDays(90),
 			CreatedBy:       "faculty@cs.example", CreatedAt: "2026-01-20T10:00:00Z",
-			History: created("faculty@cs.example", common.ProjectQuota{"cores": 4, "ram": 16, "storage": 100, "gpu": 0}, tree.StatusPending),
+			History: created("faculty@cs.example", common.ProjectQuota{"cores": 4, "ram": 16, "storage": 100}, tree.StatusPending),
 		},
 		{
 			// Exceeds the student per-requester limit → stayed pending for a
@@ -187,22 +187,22 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			Name:   "Student course project",
 			Reason: "Student course project needs compute (exceeds auto-approve limit)",
 			Owner:  "user:cs-student@cs.com",
-			Limit:  common.ProjectQuota{"cores": 2, "ram": 8, "storage": 50, "gpu": 0},
+			Limit:  common.ProjectQuota{"cores": 2, "ram": 8, "storage": 50},
 			AuthorizedUsers: []common.AuthorizedUser{
 				{Token: "user:cs-student@cs.com", OpenstackRole: "member"},
 			},
 			TerminationDate: plusDays(30),
 			CreatedBy:       "cs-student@cs.com", CreatedAt: "2026-01-23T08:00:00Z",
-			History: created("cs-student@cs.com", common.ProjectQuota{"cores": 2, "ram": 8, "storage": 50, "gpu": 0}, tree.StatusPending),
+			History: created("cs-student@cs.com", common.ProjectQuota{"cores": 2, "ram": 8, "storage": 50}, tree.StatusPending),
 		},
 		{
 			ID: "p_003", Kind: tree.KindProject, ParentID: &facultyID, Status: tree.StatusChangePending,
 			Name:   "Faculty ML workload",
 			Reason: "Expanded faculty ML workload",
 			Owner:  "user:faculty@cs.example",
-			Limit:  common.ProjectQuota{"cores": 8, "ram": 32, "storage": 200, "gpu": 0},
+			Limit:  common.ProjectQuota{"cores": 8, "ram": 32, "storage": 200},
 			Pending: &tree.PendingChanges{
-				Limit:           &common.ProjectQuota{"cores": 12, "ram": 48, "storage": 300, "gpu": 0},
+				Limit:           &common.ProjectQuota{"cores": 12, "ram": 48, "storage": 300},
 				TerminationDate: plusDays(180),
 				AuthorizedUsers: &[]common.AuthorizedUser{
 					{Token: DeptCSFaculty, OpenstackRole: "member"},
@@ -214,20 +214,20 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			},
 			TerminationDate: plusDays(60),
 			CreatedBy:       "faculty@cs.example", CreatedAt: "2026-01-15T10:00:00Z",
-			History: created("faculty@cs.example", common.ProjectQuota{"cores": 8, "ram": 32, "storage": 200, "gpu": 0}, tree.StatusPending),
+			History: created("faculty@cs.example", common.ProjectQuota{"cores": 8, "ram": 32, "storage": 200}, tree.StatusPending),
 		},
 		{
 			ID: "p_004", Kind: tree.KindProject, ParentID: &bioID, Status: tree.StatusApproved,
 			Name:   "Genomics pipeline cluster",
 			Reason: "Genomics pipeline cluster",
 			Owner:  "user:faculty@bio.example",
-			Limit:  common.ProjectQuota{"cores": 16, "ram": 64, "storage": 800, "gpu": 8},
+			Limit:  common.ProjectQuota{"cores": 16, "ram": 64, "storage": 800},
 			AuthorizedUsers: []common.AuthorizedUser{
 				{Token: DeptBioGroup, OpenstackRole: "member"},
 			},
 			TerminationDate: plusDays(180),
 			CreatedBy:       "faculty@bio.example", CreatedAt: "2026-02-01T09:00:00Z",
-			History: created("faculty@bio.example", common.ProjectQuota{"cores": 16, "ram": 64, "storage": 800, "gpu": 8}, tree.StatusApproved),
+			History: created("faculty@bio.example", common.ProjectQuota{"cores": 16, "ram": 64, "storage": 800}, tree.StatusApproved),
 		},
 		{
 			// Imported by the reconciler: an OpenStack project unknown to the
@@ -237,7 +237,7 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			Reason:        "OpenStack project: legacy-ml-workload (os-project-abc-123)",
 			OSProjectID:   "os-project-abc-123",
 			OSProjectName: "legacy-ml-workload",
-			Limit:         common.ProjectQuota{"cores": 9, "ram": 16, "storage": 100, "gpu": 0},
+			Limit:         common.ProjectQuota{"cores": 9, "ram": 16, "storage": 100},
 			AuthorizedUsers: []common.AuthorizedUser{
 				{Token: "user:faculty@cs.example", OpenstackRole: "member"},
 				{Token: DeptCSFaculty, OpenstackRole: "member"},

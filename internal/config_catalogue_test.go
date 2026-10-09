@@ -22,12 +22,12 @@ func TestLoadResourceCatalogue_FallsBackToTheBuiltInSet(t *testing.T) {
 	for _, d := range defs {
 		byID[d.ID] = d
 	}
-	for _, want := range []string{"cores", "ram", "storage", "gpu"} {
+	for _, want := range []string{"cores", "ram", "storage"} {
 		if _, ok := byID[want]; !ok {
 			t.Errorf("default catalogue is missing %q", want)
 		}
 	}
-	// The four originals predate kinds and must still count, or every existing
+	// The originals predate kinds and must still count, or every existing
 	// budget's arithmetic changes underneath it.
 	if !byID["cores"].IsCount() {
 		t.Error("cores must remain a counted resource")

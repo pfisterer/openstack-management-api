@@ -31,9 +31,4 @@ func TestDefaultResources_MeasureEverythingOpenStackCounts(t *testing.T) {
 		}
 	}
 
-	// The other direction: claiming to measure something OpenStack cannot count
-	// would invent a number. GPUs have no quota field at all.
-	if measured["gpu"] {
-		t.Error("gpu has no OpenStack quota field; measuring it would invent a number")
-	}
 }

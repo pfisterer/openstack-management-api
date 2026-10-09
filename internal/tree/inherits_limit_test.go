@@ -173,3 +173,21 @@ func TestInheritsLimit_ChecksUseTheLimitAbove(t *testing.T) {
 		t.Fatalf("a project directly below the group: %v", err)
 	}
 }
+
+// Changing who manages or may request under a budget that inherits is not a
+// change of its limit. It used to fail with "the root budget has nothing to
+// inherit from", because such an edit does not load the budgets above.
+func TestInheritsLimit_AccessCanBeEdited(t *testing.T) {
+	f := newChangeFixture(t, nil, nil)
+	group := f.newGroup(t, f.budget.ID, "ZWR")
+	n, err := f.svc.UpdateNode(group.ID, tree.UpdateNodeRequest{
+		AdminScope:         &common.TokenList{"group:root", "group:leiter-zwr"},
+		EligibleRequesters: &common.TokenList{"group:leiter-zwr"},
+	}, rootActor(), rootTokens)
+	if err != nil {
+		t.Fatalf("edit access: %v", err)
+	}
+	if !n.InheritsLimit || len(n.Limit) != 0 || len(n.EligibleRequesters) != 1 {
+		t.Errorf("after the edit: inherits %v, limit %v, requesters %v", n.InheritsLimit, n.Limit, n.EligibleRequesters)
+	}
+}

@@ -694,7 +694,9 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, user
 	if inherits && req.Limit != nil {
 		return Node{}, fmt.Errorf("the limit of this budget is inherited from the budget above; switch inheriting off to set one")
 	}
-	if inherits && binding == nil {
+	// Only where the chain was loaded: an edit of access or policy alone does
+	// not load it, and an inheriting budget then looked like the root.
+	if inherits && wantsCapacityEdit && binding == nil {
 		return Node{}, fmt.Errorf("the root budget has nothing to inherit from")
 	}
 	if inherits && !current.InheritsLimit {

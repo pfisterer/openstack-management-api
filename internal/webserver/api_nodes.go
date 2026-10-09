@@ -728,6 +728,39 @@ func setNodeAttributes(cfg APIConfig) gin.HandlerFunc {
 	}
 }
 
+// removeNodeExternalGroup takes a group given access in OpenStack off a project.
+//
+//	@Summary		Remove an external group from a project
+//	@Description	Removes a group that was assigned to the project in OpenStack rather than through the portal. The reconciler keeps such groups assigned while the project names them; after this the next pass removes the assignment in OpenStack. The project's owner and admins and the managers of its budgets may do it, without approval.
+//	@Tags			nodes
+//	@Produce		json
+//	@Security		Bearer
+//	@Param			id		path		string	true	"Node ID"
+//	@Param			groupId	path		string	true	"OpenStack group ID"
+//	@Success		200		{object}	tree.Node	"Updated node."
+//	@Failure		400		{object}	map[string]any	"Bad request."
+//	@Failure		401		{object}	map[string]any	"Unauthorized."
+//	@Failure		403		{object}	map[string]any	"Forbidden."
+//	@Failure		404		{object}	map[string]any	"Not found."
+//	@ID				removeNodeExternalGroup
+//	@Router			/v1/nodes/{id}/external-groups/{groupId} [delete]
+func removeNodeExternalGroup(cfg APIConfig) gin.HandlerFunc {
+	svc := cfg.Service
+	return func(c *gin.Context) {
+		auth, err := mustGetAuthContext(c)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
+			return
+		}
+		node, err := svc.RemoveExternalGroup(c.Param("id"), c.Param("groupId"), tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
+		if err != nil {
+			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, node)
+	}
+}
+
 // setNodeAllocation grants, changes or removes what a project draws from a
 // budget above its own.
 //

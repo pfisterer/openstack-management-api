@@ -29,6 +29,7 @@ var (
 // student budget holding neither, and one student project of 4 cores in it.
 type allocationFixture struct {
 	svc       *tree.Service
+	store     *tree.InMemoryStore
 	uni, stud tree.Node
 	project   tree.Node
 }
@@ -36,7 +37,8 @@ type allocationFixture struct {
 func newAllocationFixture(t *testing.T) allocationFixture {
 	t.Helper()
 	log := zap.NewNop().Sugar()
-	svc := tree.NewService(tree.NewInMemoryStore(log), roleprovider.NewMockRoleProvider(), allocationResources,
+	store := tree.NewInMemoryStore(log)
+	svc := tree.NewService(store, roleprovider.NewMockRoleProvider(), allocationResources,
 		common.TokenList{"group:root"}, 5*time.Second, common.DefaultMaxAuthorizedUsers, testAccounting, log)
 	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
 		t.Fatalf("bootstrap: %v", err)
@@ -64,7 +66,7 @@ func newAllocationFixture(t *testing.T) allocationFixture {
 	if p.Status != tree.StatusApproved {
 		t.Fatalf("setup: the project should be auto-approved, got %q", p.Status)
 	}
-	return allocationFixture{svc: svc, uni: uni, stud: stud, project: p}
+	return allocationFixture{svc: svc, store: store, uni: uni, stud: stud, project: p}
 }
 
 func (f allocationFixture) allocate(t *testing.T, tokens common.TokenList, limit common.ProjectQuota, reason string) (tree.Node, error) {

@@ -208,3 +208,21 @@ func TestImportAndMergeMembers(t *testing.T) {
 		t.Errorf("merged %v: want b kept as set on the leaf, a and the newcomer added, the owner left out", got)
 	}
 }
+
+// Only the groups this service manages become members; every other group is
+// kept as an external assignment, so it cannot block adopting the project.
+func TestImportGroups(t *testing.T) {
+	members, external := importGroups("managed-", []importedGroup{
+		{id: "g1", name: "managed-wwi23seb--dozent", role: "admin"},
+		{id: "g2", name: "fakultaet-wi", role: "admin"},
+		{id: "g2", name: "fakultaet-wi", role: "reader"},
+		{id: "g3", name: "", role: "reader"},
+	})
+	if len(members) != 1 || members[0].Token != "group:wwi23seb#dozent" || members[0].OpenstackRole != "member" {
+		t.Errorf("members = %v, want the managed group as member", members)
+	}
+	if len(external) != 2 || external[0].GroupID != "g2" || external[0].GroupName != "fakultaet-wi" || external[0].Role != "member" ||
+		external[1].GroupID != "g3" || external[1].Role != "reader" {
+		t.Errorf("external = %v, want fakultaet-wi once as member and the unresolved group as reader", external)
+	}
+}

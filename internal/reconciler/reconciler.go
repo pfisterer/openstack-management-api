@@ -1919,23 +1919,20 @@ func (r *Reconciler) upsertImported(
 		r.log.Warnw("Could not fetch group roles for import",
 			"os_project_id", osProject.ID, "error", err)
 	} else {
+		var groups []importedGroup
 		for _, g := range groupRoles {
-			osGroup, err := r.osClient.GetGroupByID(g.GroupID)
-			if err != nil || osGroup == nil {
-				// Can't resolve the group name — treat as external and preserve by ID.
+			ig := importedGroup{id: g.GroupID, role: g.RoleName}
+			if osGroup, err := r.osClient.GetGroupByID(g.GroupID); err == nil && osGroup != nil {
+				ig.name = osGroup.Name
+			} else {
 				r.log.Debugw("Could not resolve OS group, storing as external",
 					"group_id", g.GroupID, "os_project_id", osProject.ID)
-				externalGroups = append(externalGroups, common.ExternalGroupAssignment{
-					GroupID: g.GroupID,
-					Role:    g.RoleName,
-				})
-				continue
 			}
-			authorizedUsers = append(authorizedUsers, common.AuthorizedUser{
-				Token:         groupTokenForKeystoneName(r.cfg.GroupPrefix, osGroup.Name),
-				OpenstackRole: g.RoleName,
-			})
+			groups = append(groups, ig)
 		}
+		members, external := importGroups(r.cfg.GroupPrefix, groups)
+		authorizedUsers = append(authorizedUsers, members...)
+		externalGroups = external
 	}
 
 	parent := tree.UnassignedNodeID
@@ -2025,10 +2022,7 @@ func importMembers(members []osclient.ProjectMemberInfo) []common.AuthorizedUser
 	at := map[string]int{}
 	for _, m := range members {
 		token := common.UserPrefix + strings.ToLower(strings.TrimSpace(m.Email))
-		role := "member"
-		if strings.EqualFold(m.RoleName, "reader") {
-			role = "reader"
-		}
+		role := treeRole(m.RoleName)
 		if i, seen := at[token]; seen {
 			if role == "member" {
 				out[i].OpenstackRole = role
@@ -2039,6 +2033,55 @@ func importMembers(members []osclient.ProjectMemberInfo) []common.AuthorizedUser
 		out = append(out, common.AuthorizedUser{Token: token, OpenstackRole: role})
 	}
 	return out
+}
+
+// importedGroup is one group role assignment of a project in OpenStack; name
+// is empty when the group could not be looked up.
+type importedGroup struct{ id, name, role string }
+
+// importGroups splits a project's groups. The ones this service manages (named
+// with its prefix) are its group tokens and become members; every other group
+// was set up in OpenStack, is unknown to the role provider, and is kept as an
+// external assignment — preserved by the reconciler, shown and removable in the
+// portal, never a token that could block adopting the project. Roles become
+// member or reader, as for persons; a group with several roles appears once.
+func importGroups(prefix string, groups []importedGroup) ([]common.AuthorizedUser, []common.ExternalGroupAssignment) {
+	var members []common.AuthorizedUser
+	var external []common.ExternalGroupAssignment
+	memberAt, externalAt := map[string]int{}, map[string]int{}
+	for _, g := range groups {
+		role := treeRole(g.role)
+		if prefix != "" && strings.HasPrefix(g.name, prefix) {
+			token := groupTokenForKeystoneName(prefix, g.name)
+			if i, seen := memberAt[token]; seen {
+				if role == "member" {
+					members[i].OpenstackRole = role
+				}
+				continue
+			}
+			memberAt[token] = len(members)
+			members = append(members, common.AuthorizedUser{Token: token, OpenstackRole: role})
+			continue
+		}
+		if i, seen := externalAt[g.id]; seen {
+			if role == "member" {
+				external[i].Role = role
+			}
+			continue
+		}
+		externalAt[g.id] = len(external)
+		external = append(external, common.ExternalGroupAssignment{GroupID: g.id, GroupName: g.name, Role: role})
+	}
+	return members, external
+}
+
+// treeRole maps an OpenStack role onto the two the tree knows: reader stays,
+// everything else — admin, or a role a service defines — becomes member.
+func treeRole(name string) string {
+	if strings.EqualFold(strings.TrimSpace(name), "reader") {
+		return "reader"
+	}
+	return "member"
 }
 
 // mergeMembers adds to a promoted leaf's authorized users everyone OpenStack
@@ -2257,7 +2300,7 @@ func (r *Reconciler) syncGroupMembers(ctx context.Context, groupToken, groupName
 // single project based on the group: tokens in the leaf's AuthorizedUsers.
 // Non-fatal: errors are logged and skipped.
 func (r *Reconciler) syncGroupAssignments(leaf tree.Node, osProjectID string, groupTokenToOSID map[string]string) {
-	if r.osClient == nil || r.cfg.DryRun || len(groupTokenToOSID) == 0 {
+	if r.osClient == nil || r.cfg.DryRun {
 		if r.cfg.DryRun {
 			r.log.Debugw("Dry run: skipping group assignment sync",
 				"node_id", leaf.ID, "os_project_id", osProjectID)
@@ -2265,13 +2308,23 @@ func (r *Reconciler) syncGroupAssignments(leaf tree.Node, osProjectID string, gr
 		return
 	}
 
-	// Build desired group assignments for this leaf.
+	// Build desired group assignments for this leaf. A group of the leaf whose
+	// Keystone group this pass could not look up leaves the desired set
+	// incomplete; the cleanup below would then remove that group's access, so
+	// the leaf waits for the next pass instead.
 	type desired struct{ groupID, roleName string }
 	var desiredList []desired
 	for _, au := range leaf.AuthorizedUsers {
-		if id, ok := groupTokenToOSID[au.Token]; ok {
-			desiredList = append(desiredList, desired{groupID: id, roleName: au.OpenstackRole})
+		if !strings.HasPrefix(au.Token, common.GroupPrefix) {
+			continue
 		}
+		id, ok := groupTokenToOSID[au.Token]
+		if !ok {
+			r.log.Warnw("Group not resolved in this pass, skipping group assignment sync",
+				"node_id", leaf.ID, "group", au.Token)
+			return
+		}
+		desiredList = append(desiredList, desired{groupID: id, roleName: au.OpenstackRole})
 	}
 	// External groups have no delegation token — add them by their OS group ID directly
 	// so they are always preserved and never removed by the cleanup pass below.

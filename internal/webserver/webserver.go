@@ -115,6 +115,7 @@ type APIService interface {
 	TransferOwner(id string, req tree.TransferOwnerRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
 	SetAllocation(id string, req tree.AllocationRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
 	SetAttributes(id string, req tree.SetAttributesRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
+	RemoveExternalGroup(id, groupID string, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
 	AllocationSources(id string, userTokens common.TokenList) ([]tree.Node, error)
 	UsageScope(id string, userTokens common.TokenList) (*tree.Node, error)
 	AttributesVisible(n *tree.Node, userTokens common.TokenList) (bool, error)
@@ -138,9 +139,9 @@ type APIConfig struct {
 	Catalog common.ResourceCatalog
 	// CatalogAdmin runs the root admins' catalogue steps; nil leaves the
 	// routes answering 503.
-	CatalogAdmin *catalog.Admin
-	Service      APIService
-	DummyDevUsers      []string
+	CatalogAdmin  *catalog.Admin
+	Service       APIService
+	DummyDevUsers []string
 	// ProvisioningEnabled mirrors "the reconciler is configured and running".
 	// A function, not a bool: the reconciler may still be connecting when the
 	// server starts, and a value frozen at startup would tell every client for
@@ -288,6 +289,7 @@ func RegisterApiRoutes(v1 *gin.RouterGroup, cfg APIConfig, log *zap.SugaredLogge
 		nodes.POST("/:id/transfer-owner", transferNodeOwner(cfg))
 		nodes.PUT("/:id/allocations", setNodeAllocation(cfg))
 		nodes.PUT("/:id/attributes", setNodeAttributes(cfg))
+		nodes.DELETE("/:id/external-groups/:groupId", removeNodeExternalGroup(cfg))
 		nodes.GET("/:id/allocation-sources", listAllocationSources(cfg))
 		nodes.GET("/:id/usage", getNodeUsage(cfg))
 		nodes.POST("/:id/promote", promoteNode(cfg))

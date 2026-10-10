@@ -317,10 +317,14 @@ type uiResource struct {
 	Kind     string `json:"kind,omitempty"`
 	Group    string `json:"group,omitempty"`
 	ShowOnUI bool   `json:"show_on_ui,omitempty"`
+	// GrantType is the kind of an availability (network, flavor, image), which
+	// tells how its use is counted — devices on a network, servers otherwise.
+	// The type only: the target stays private.
+	GrantType string `json:"grant_type,omitempty"`
 }
 
 func uiResourceFrom(r common.ManagedProject) uiResource {
-	return uiResource{
+	out := uiResource{
 		ID:       r.ID,
 		Name:     r.Name,
 		Default:  r.Default,
@@ -332,6 +336,10 @@ func uiResourceFrom(r common.ManagedProject) uiResource {
 		Group:    r.Group,
 		ShowOnUI: r.ShowOnUI,
 	}
+	if r.Grant != nil {
+		out.GrantType = r.Grant.Type
+	}
+	return out
 }
 
 // getConfig returns the system-wide resource configuration.

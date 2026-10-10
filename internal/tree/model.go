@@ -459,6 +459,11 @@ type Node struct {
 	// with OSServers. Not a catalogue resource: for a managed project it
 	// follows the cores (os_linked_field), an import has its own.
 	OSServerLimit *int `json:"os_server_limit,omitempty"`
+	// OSGrantUse says, per availability of the catalogue (a network, flavour or
+	// image), how many of the project's servers or devices use it: whether
+	// switching it off would take something away. A missing key means "not
+	// measured", like OSInUse.
+	OSGrantUse common.ProjectQuota `json:"os_grant_use,omitempty"`
 	// Purge is how far emptying the project before its deletion has got,
 	// written by the reconciler on every pass while it runs, so its owner
 	// sees why a deletion takes long.

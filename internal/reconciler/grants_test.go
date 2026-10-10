@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	osclient "github.com/pfisterer/openstack-management-api/internal/openstack/client"
 	"github.com/pfisterer/openstack-management-api/internal/tree"
 	"go.uber.org/zap"
 )
@@ -217,4 +218,32 @@ type failingGrants struct{ fakeGrants }
 
 func (f *failingGrants) HasGrant(common.Grant, string) (bool, error) {
 	return false, errors.New("unreachable")
+}
+
+// Every availability of the catalogue gets a figure, 0 for one nothing uses;
+// use that could not be read gives nil, never a row of zeros.
+func TestProjectGrantUse(t *testing.T) {
+	use := osclient.GrantUse{"os-1": {"net-1": 2}, "os-2": {"flavor-1": 1}}
+
+	got := projectGrantUse(grantCatalogue, use, "os-1")
+	if len(got) != 2 || got["dhbw-ipv4"] != 2 || got["gpu-rtx6000"] != 0 {
+		t.Errorf("got %v, want the network used twice, the flavour not at all", got)
+	}
+	if _, ok := got["cores"]; ok {
+		t.Error("cores is no availability")
+	}
+	if projectGrantUse(grantCatalogue, nil, "os-1") != nil {
+		t.Error("unread use must stay nil")
+	}
+}
+
+// An unread use keeps the stored one; a read one replaces it and counts as a change.
+func TestApplyOSSyncState_GrantUse(t *testing.T) {
+	leaf := tree.Node{OSProjectID: "os-1", OSGrantUse: common.ProjectQuota{"dhbw-ipv4": 1}}
+	if applyOSSyncState(&leaf, "os-1", &osMeasurement{}) && leaf.OSGrantUse["dhbw-ipv4"] != 1 {
+		t.Errorf("unread use overwrote the stored one: %v", leaf.OSGrantUse)
+	}
+	if !applyOSSyncState(&leaf, "os-1", &osMeasurement{grantUse: common.ProjectQuota{"dhbw-ipv4": 0}}) || leaf.OSGrantUse["dhbw-ipv4"] != 0 {
+		t.Errorf("fresh use not applied: %v", leaf.OSGrantUse)
+	}
 }

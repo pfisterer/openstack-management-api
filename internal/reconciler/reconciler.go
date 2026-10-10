@@ -548,6 +548,10 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 	// assigning groups to projects.
 	groupTokenToOSID := r.syncGroups(ctx, activeLeaves, &res)
 
+	// What uses each availability, for all projects in one read; nil when it
+	// could not be read.
+	grantUse := r.readGrantUse()
+
 	// ── Phase 4: Storage → OpenStack (project create / quota sync) ───────────
 
 	// claimedOSProjects guards against two leaves recovering the same project:
@@ -587,6 +591,9 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 				r.log.Warnw("Failed to sync quota for leaf", "node_id", leaf.ID, "os_project_id", osProject.ID, "error", err)
 				continue
 			}
+			if m != nil {
+				m.grantUse = projectGrantUse(r.resources(), grantUse, osProject.ID)
+			}
 			if applyOSSyncState(&leaf, osProject.ID, m) && !r.cfg.DryRun {
 				r.persistOSSyncState(ctx, leaf.ID, osProject.ID, m)
 			}
@@ -620,7 +627,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 			// (e.g. hard-deleted) — treat as orphaned and import.
 		}
 		// Either untagged (externally created) or orphaned — import as an imported leaf.
-		r.upsertImported(ctx, osProject, importedByOSProjectID, &res)
+		r.upsertImported(ctx, osProject, importedByOSProjectID, grantUse, &res)
 		delete(importedByOSProjectID, osID) // mark as seen so we don't remove it below
 	}
 
@@ -1566,7 +1573,8 @@ func applyOSSyncState(leaf *tree.Node, osProjectID string, m *osMeasurement) boo
 	if m != nil {
 		changed = changed || leaf.OSOvercommitted != m.overcommitted || !quotaEqual(leaf.OSInUse, m.inUse) ||
 			leaf.OSServers == nil || *leaf.OSServers != m.servers ||
-			leaf.OSServerLimit == nil || *leaf.OSServerLimit != m.serverLimit
+			leaf.OSServerLimit == nil || *leaf.OSServerLimit != m.serverLimit ||
+			(m.grantUse != nil && !quotaEqual(leaf.OSGrantUse, m.grantUse))
 	}
 	if !changed {
 		return false
@@ -1578,6 +1586,9 @@ func applyOSSyncState(leaf *tree.Node, osProjectID string, m *osMeasurement) boo
 		servers, serverLimit := m.servers, m.serverLimit
 		leaf.OSServers = &servers
 		leaf.OSServerLimit = &serverLimit
+		if m.grantUse != nil {
+			leaf.OSGrantUse = m.grantUse
+		}
 	}
 	return true
 }
@@ -1591,6 +1602,9 @@ type osMeasurement struct {
 	// serverLimit is how many OpenStack allows.
 	servers     int
 	serverLimit int
+	// grantUse is what uses each availability; nil when it could not be read,
+	// and then the last known values stay.
+	grantUse common.ProjectQuota
 }
 
 // removeStaleImports deletes imported leaves whose OpenStack project is no longer
@@ -1876,6 +1890,7 @@ func (r *Reconciler) upsertImported(
 	ctx context.Context,
 	osProject osclient.ProjectInfo,
 	existing map[string]tree.Node,
+	grantUse osclient.GrantUse,
 	res *reconcileResult,
 ) {
 	syntheticID := "p_" + uuid.New().String()
@@ -1895,6 +1910,7 @@ func (r *Reconciler) upsertImported(
 	} else {
 		osLimit = QuotaSetToProjectQuota(r.resources(), detail.Limit)
 		measured = measureImport(r.resources(), osLimit, detail)
+		measured.grantUse = projectGrantUse(r.resources(), grantUse, osProject.ID)
 	}
 	var prevLimit common.ProjectQuota
 	if prev, ok := existing[osProject.ID]; ok {
@@ -2033,6 +2049,51 @@ func importGrants(c grantClient, defs []common.ManagedProject, osProjectID strin
 			limit[def.ID] = 0
 		}
 	}
+}
+
+// readGrantUse reads what uses the availabilities of the catalogue, for all
+// projects; nil when OpenStack could not be read, so no project's last known
+// values are overwritten with "nothing".
+func (r *Reconciler) readGrantUse() osclient.GrantUse {
+	var flavors, images, networks []string
+	for _, def := range r.resources() {
+		if !def.IsBool() || def.Grant == nil {
+			continue
+		}
+		switch def.Grant.Type {
+		case common.GrantFlavor:
+			flavors = append(flavors, def.Grant.Target)
+		case common.GrantImage:
+			images = append(images, def.Grant.Target)
+		case common.GrantNetwork:
+			networks = append(networks, def.Grant.Target)
+		}
+	}
+	if len(flavors)+len(images)+len(networks) == 0 {
+		return nil
+	}
+	use, err := r.osClient.ReadGrantUse(flavors, images, networks)
+	if err != nil {
+		r.log.Warnw("Could not read what uses the availabilities; keeping the last known values", "error", err)
+		return nil
+	}
+	return use
+}
+
+// projectGrantUse is one project's share of use, keyed by catalogue resource:
+// every availability appears, with 0 for one nothing uses. nil when use could
+// not be read at all.
+func projectGrantUse(defs []common.ManagedProject, use osclient.GrantUse, osProjectID string) common.ProjectQuota {
+	if use == nil {
+		return nil
+	}
+	out := common.ProjectQuota{}
+	for _, def := range defs {
+		if def.IsBool() && def.Grant != nil {
+			out[def.ID] = use[osProjectID][def.Grant.Target]
+		}
+	}
+	return out
 }
 
 // measureImport is what an imported project uses, read like a managed one's.

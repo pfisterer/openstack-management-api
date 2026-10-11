@@ -2,9 +2,10 @@ package tree
 
 import (
 	"context"
-	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 	"testing"
 	"time"
+
+	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"go.uber.org/zap"

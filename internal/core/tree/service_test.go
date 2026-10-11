@@ -2,10 +2,11 @@ package tree_test
 
 import (
 	"context"
-	"github.com/pfisterer/openstack-management-api/internal/dev"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/pfisterer/openstack-management-api/internal/dev"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"

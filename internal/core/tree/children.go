@@ -4,12 +4,13 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 	"math"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 )

@@ -2,10 +2,11 @@ package tree_test
 
 import (
 	"context"
-	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"

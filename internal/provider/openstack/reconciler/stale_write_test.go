@@ -20,7 +20,7 @@ func staleWriteReconciler(t *testing.T) (*Reconciler, *nodestore.InMemoryStore) 
 	t.Helper()
 	log := zap.NewNop().Sugar()
 	store := nodestore.NewInMemoryStore(log)
-	return &Reconciler{nodes: tree.NewProviderSync(store), log: log}, store
+	return &Reconciler{nodes: tree.NewProviderSync(store, osclient.Provider), log: log}, store
 }
 
 func TestOSSyncStateDoesNotRevertAChangeMadeDuringThePass(t *testing.T) {
@@ -45,7 +45,7 @@ func TestOSSyncStateDoesNotRevertAChangeMadeDuringThePass(t *testing.T) {
 	if got.Status != model.StatusChangePending || got.Pending == nil || got.Pending.Limit == nil || (*got.Pending.Limit)["cores"] != 8 {
 		t.Errorf("the change request was lost: status %q, pending %+v", got.Status, got.Pending)
 	}
-	if got.ExternalID != "os-1" || !got.Overcommitted || got.InUse["cores"] != 3 {
+	if b := got.Binding(osclient.Provider); b.ExternalID != "os-1" || !b.Overcommitted || b.InUse["cores"] != 3 {
 		t.Errorf("the measured OpenStack state was not written: %+v", got)
 	}
 }
@@ -64,8 +64,8 @@ func TestOSProjectIDIsWrittenOntoTheCurrentNode(t *testing.T) {
 	r.persistOSProjectID(ctx, "p_1", "os-new")
 
 	got, _ := store.GetNode(ctx, "p_1")
-	if got.Status != model.StatusReleased || got.ExternalID != "os-new" {
-		t.Errorf("got status %q / os id %q, want released / os-new", got.Status, got.ExternalID)
+	if got.Status != model.StatusReleased || osID(*got) != "os-new" {
+		t.Errorf("got status %q / os id %q, want released / os-new", got.Status, osID(*got))
 	}
 }
 
@@ -76,7 +76,7 @@ func TestStaleImportIsNotDeletedOnceItWasPromoted(t *testing.T) {
 
 	// The pass loaded an import whose project left the scope; in the meantime an
 	// admin promoted it into the managed tree.
-	loaded := model.Node{ID: "p_imp", Kind: model.KindProject, ParentID: &parent, Status: model.StatusImported, ExternalID: "os-gone"}
+	loaded := model.Node{ID: "p_imp", Kind: model.KindProject, ParentID: &parent, Status: model.StatusImported, Bindings: boundTo("os-gone")}
 	now := loaded
 	now.Status = model.StatusPending
 	if err := store.UpsertNode(ctx, now); err != nil {

@@ -35,7 +35,7 @@ func archivedSvc(t *testing.T, acc Accounting) (*Service, model.Node, model.Node
 		{ID: "p", Kind: model.KindProject, ParentID: &chairID, Status: model.StatusArchived, Name: "Old",
 			Limit:       common.ProjectQuota{"cores": 4, "storage": 50},
 			Allocations: []model.Allocation{{BudgetID: uniID, Limit: common.ProjectQuota{"cores": 2}}},
-			InUse:       common.ProjectQuota{"cores": 0, "storage": 30}},
+			Bindings:    map[string]model.Binding{"openstack": {InUse: common.ProjectQuota{"cores": 0, "storage": 30}}}},
 	} {
 		if err := store.UpsertNode(ctx, n); err != nil {
 			t.Fatal(err)

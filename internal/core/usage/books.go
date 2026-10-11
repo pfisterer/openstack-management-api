@@ -45,7 +45,9 @@ type Books struct {
 	store   Store
 	nodes   Nodes
 	catalog []common.Resource
-	log     *zap.SugaredLogger
+	// provider is whose binding holds the project's ID and measurements.
+	provider string
+	log      *zap.SugaredLogger
 
 	// BackfillDays is how far back the first run reaches. Nova's records go
 	// back as far as they have not been archived, so the history from before
@@ -57,8 +59,9 @@ type Books struct {
 	now           func() time.Time
 }
 
-func NewBooks(store Store, nodes Nodes, catalog []common.Resource, log *zap.SugaredLogger) *Books {
-	return &Books{store: store, nodes: nodes, catalog: catalog, log: log,
+// NewBooks keeps the books of the projects provider carries out: its binding holds the project's ID there and its measured storage.
+func NewBooks(store Store, nodes Nodes, catalog []common.Resource, provider string, log *zap.SugaredLogger) *Books {
+	return &Books{store: store, nodes: nodes, catalog: catalog, provider: provider, log: log,
 		BackfillDays: 365, MaxDaysPerRun: 31, now: time.Now}
 }
 
@@ -119,10 +122,11 @@ func (c *Books) RecordDay(ctx context.Context, day time.Time, report DayReport) 
 
 	var rows []Day
 	for _, n := range all {
-		if n.Kind != model.KindProject || n.ExternalID == "" {
+		bound := n.Binding(c.provider)
+		if n.Kind != model.KindProject || bound.ExternalID == "" {
 			continue
 		}
-		u, used := byProject[n.ExternalID]
+		u, used := byProject[bound.ExternalID]
 		// A project that existed but ran nothing still gets its row: an idle
 		// reservation is exactly what utilisation has to show.
 		if !used && !holdsResources(n.Status) {
@@ -130,7 +134,7 @@ func (c *Books) RecordDay(ctx context.Context, day time.Time, report DayReport) 
 		}
 		people, groups := peopleOf(n)
 		row := Day{
-			Day: day, NodeID: n.ID, ExternalID: n.ExternalID,
+			Day: day, NodeID: n.ID, ExternalID: bound.ExternalID,
 			ProjectName: n.Name, Owner: n.OwnerEmail(), Status: n.Status,
 			People: people, Groups: groups,
 			ServerHours: u.ServerHours, VCPUHours: u.VCPUHours,
@@ -144,10 +148,10 @@ func (c *Books) RecordDay(ctx context.Context, day time.Time, report DayReport) 
 		}
 		row.Attributes = attributesOf(n, budgets)
 		if !backfilled && storageID != "" {
-			row.StorageGB = float64(n.InUse[storageID])
+			row.StorageGB = float64(bound.InUse[storageID])
 		}
 		if ipv4 != nil {
-			v := ipv4[n.ExternalID]
+			v := ipv4[bound.ExternalID]
 			row.PublicIPv4 = &v
 		}
 		rows = append(rows, row)

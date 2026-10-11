@@ -7,6 +7,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// Provider is OpenStack's name in the tree: a leaf's binding under it holds the project's OpenStack ID and what the reconciler measured.
+const Provider = "openstack"
+
 // Config describes OpenStack authentication and client settings, as the
 // deployment configures them (OS_* / OPENSTACK_* environment variables).
 //

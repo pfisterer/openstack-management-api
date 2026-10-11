@@ -349,7 +349,7 @@ func (r *Reconciler) syncGroupAssignments(leaf model.Node, osProjectID string, g
 	}
 	// External groups have no delegation token — add them by their OS group ID directly
 	// so they are always preserved and never removed by the cleanup pass below.
-	for _, eg := range leaf.ExternalGroupAssignments {
+	for _, eg := range leaf.Binding(osclient.Provider).ExternalGroupAssignments {
 		desiredList = append(desiredList, desired{groupID: eg.GroupID, roleName: eg.Role})
 	}
 

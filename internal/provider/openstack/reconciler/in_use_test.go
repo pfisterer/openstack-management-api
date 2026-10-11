@@ -75,7 +75,7 @@ func TestMeasureImport(t *testing.T) {
 	}
 	limit := QuotaSetToProjectQuota(resources, detail.Limit)
 
-	var leaf model.Node
+	var leaf model.Binding
 	tree.ApplyObservation(&leaf, "os-1", measureImport(resources, limit, detail))
 
 	if leaf.InUse["cores"] != 80 || leaf.InUse["ram"] != 160 || leaf.InUse["storage"] != 0 {

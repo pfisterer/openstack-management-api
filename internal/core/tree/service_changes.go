@@ -9,8 +9,8 @@ import (
 )
 
 // ProviderSync is the reconciler's view of this tree. Its Changes fire when the service changed what is wanted, so a change made through the API (REST or MCP) is carried out right away instead of at the next interval. The reconciler's own reports go to the plain store and do not fire, or every run would start the next one.
-func (s *Service) ProviderSync() *ProviderSync {
-	return &ProviderSync{store: s.plain, changes: s.changes}
+func (s *Service) ProviderSync(provider string) *ProviderSync {
+	return &ProviderSync{store: s.plain, provider: provider, changes: s.changes}
 }
 
 // signalChange marks that the wanted state changed. Non-blocking with room for one: changes that arrive while the reconciler runs fold into one follow-up run, and the interval catches anything else.

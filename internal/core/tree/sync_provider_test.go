@@ -17,7 +17,7 @@ import (
 // declared limit — which is exactly the shrink-after-filling loophole that
 // billing the maximum exists to close, reopened by a transient API error.
 func TestApplyObservation_UnmeasuredPassKeepsTheLastKnownUsage(t *testing.T) {
-	leaf := model.Node{
+	leaf := model.Binding{
 		ExternalID:    "os-1",
 		Overcommitted: true,
 		InUse:         common.ProjectQuota{"cores": 8, "ram": 5},
@@ -39,7 +39,7 @@ func TestApplyObservation_UnmeasuredPassKeepsTheLastKnownUsage(t *testing.T) {
 // The project id is tracked even when the quota detail was unreadable — it does
 // not come from the measurement, so there is no reason to lose it.
 func TestApplyObservation_UnmeasuredPassStillAdoptsTheProjectID(t *testing.T) {
-	leaf := model.Node{InUse: common.ProjectQuota{"cores": 8}}
+	leaf := model.Binding{InUse: common.ProjectQuota{"cores": 8}}
 
 	if !ApplyObservation(&leaf, "os-new", nil) {
 		t.Fatal("a new OS project id has to be persisted")
@@ -55,7 +55,7 @@ func TestApplyObservation_UnmeasuredPassStillAdoptsTheProjectID(t *testing.T) {
 // A real measurement overwrites, including back down to zero: a project that
 // genuinely released its servers must stop being billed for them.
 func TestApplyObservation_MeasuredPassOverwrites(t *testing.T) {
-	leaf := model.Node{
+	leaf := model.Binding{
 		ExternalID:    "os-1",
 		Overcommitted: true,
 		InUse:         common.ProjectQuota{"cores": 8, "ram": 5},
@@ -76,7 +76,7 @@ func TestApplyObservation_MeasuredPassOverwrites(t *testing.T) {
 // every leaf on every tick.
 func TestApplyObservation_IdenticalMeasurementIsNotAChange(t *testing.T) {
 	servers, serverLimit := 1, 2
-	leaf := model.Node{ExternalID: "os-1", InUse: common.ProjectQuota{"cores": 2}, Servers: &servers, ServerLimit: &serverLimit}
+	leaf := model.Binding{ExternalID: "os-1", InUse: common.ProjectQuota{"cores": 2}, Servers: &servers, ServerLimit: &serverLimit}
 
 	if ApplyObservation(&leaf, "os-1", &Observation{InUse: common.ProjectQuota{"cores": 2}, Servers: 1, ServerLimit: 2}) {
 		t.Error("nothing changed, but the node was marked for persisting")
@@ -86,7 +86,7 @@ func TestApplyObservation_IdenticalMeasurementIsNotAChange(t *testing.T) {
 // The server count is part of the measurement: written with it, and a change
 // in it alone is worth persisting.
 func TestApplyObservation_ServerCount(t *testing.T) {
-	leaf := model.Node{ExternalID: "os-1", InUse: common.ProjectQuota{"cores": 2}}
+	leaf := model.Binding{ExternalID: "os-1", InUse: common.ProjectQuota{"cores": 2}}
 
 	if !ApplyObservation(&leaf, "os-1", &Observation{InUse: common.ProjectQuota{"cores": 2}, Servers: 3}) {
 		t.Fatal("a first server count has to be persisted")
@@ -101,7 +101,7 @@ func TestApplyObservation_ServerCount(t *testing.T) {
 
 // An unread use keeps the stored one; a read one replaces it and counts as a change.
 func TestApplyObservation_GrantUse(t *testing.T) {
-	leaf := model.Node{ExternalID: "os-1", GrantUse: common.ProjectQuota{"dhbw-ipv4": 1}}
+	leaf := model.Binding{ExternalID: "os-1", GrantUse: common.ProjectQuota{"dhbw-ipv4": 1}}
 	if ApplyObservation(&leaf, "os-1", &Observation{}) && leaf.GrantUse["dhbw-ipv4"] != 1 {
 		t.Errorf("unread use overwrote the stored one: %v", leaf.GrantUse)
 	}
@@ -118,7 +118,7 @@ func providerSyncWith(t *testing.T, nodes ...model.Node) (*ProviderSync, nodesto
 			t.Fatal(err)
 		}
 	}
-	return NewProviderSync(store), store
+	return NewProviderSync(store, "openstack"), store
 }
 
 func nodeIn(t *testing.T, store nodestore.Store, id string) model.Node {
@@ -161,14 +161,14 @@ func TestRefreshImportLeavesAPromotionAlone(t *testing.T) {
 		model.Node{ID: "p_2", Kind: model.KindProject, Status: model.StatusPending, Name: "old"},
 		model.Node{ID: "p_3", Kind: model.KindProject, Status: model.StatusImported, Name: "old"})
 	for _, id := range []string{"p_1", "p_2", "p_3"} {
-		if err := p.RefreshImport(ctx, model.Node{ID: id, Name: "new", ExternalID: "os-" + id}, nil); err != nil {
+		if err := p.RefreshImport(ctx, model.Node{ID: id, Name: "new", Bindings: map[string]model.Binding{"openstack": {ExternalID: "os-" + id}}}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if nodeIn(t, store, "p_1").Name != "old" || nodeIn(t, store, "p_2").Name != "old" {
 		t.Error("a node being adopted or adopted was refreshed as an import")
 	}
-	if n := nodeIn(t, store, "p_3"); n.Name != "new" || n.ExternalID != "os-p_3" {
+	if n := nodeIn(t, store, "p_3"); n.Name != "new" || n.Binding("openstack").ExternalID != "os-p_3" {
 		t.Errorf("import not refreshed: %+v", n)
 	}
 }
@@ -191,5 +191,33 @@ func TestRemoveGuards(t *testing.T) {
 	}
 	if ok, _ := p.RemoveImport(ctx, "p_imp"); !ok {
 		t.Error("an import was kept")
+	}
+}
+
+// A provider writes only its own side of a project: what another provider reported stays as it was.
+func TestProviderSync_WritesOnlyItsOwnBinding(t *testing.T) {
+	ctx := context.Background()
+	theirs := model.Binding{ExternalID: "ws-1", InUse: common.ProjectQuota{"gpu_hours": 3}}
+	p, store := providerSyncWith(t, model.Node{ID: "p_1", Kind: model.KindProject, Status: model.StatusApproved,
+		Bindings: map[string]model.Binding{"workspaces": theirs}})
+
+	if err := p.RecordExternalID(ctx, "p_1", "os-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.RecordObservation(ctx, "p_1", "os-1", &Observation{InUse: common.ProjectQuota{"cores": 2}, Servers: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.RecordPurgeProgress(ctx, "p_1", PurgeReport{Step: "servers", Steps: 3}); err != nil {
+		t.Fatal(err)
+	}
+	n := nodeIn(t, store, "p_1")
+	if os := n.Binding("openstack"); os.ExternalID != "os-1" || os.InUse["cores"] != 2 || os.Purge == nil {
+		t.Errorf("openstack binding = %+v", os)
+	}
+	if ws := n.Binding("workspaces"); ws.ExternalID != "ws-1" || !quotaEqual(ws.InUse, theirs.InUse) || ws.Purge != nil {
+		t.Errorf("the other provider's binding changed: %+v", ws)
+	}
+	if got := n.InUse(); got["cores"] != 2 || got["gpu_hours"] != 3 {
+		t.Errorf("InUse across providers = %v, want both", got)
 	}
 }

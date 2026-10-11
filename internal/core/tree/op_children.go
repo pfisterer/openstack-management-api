@@ -77,10 +77,11 @@ func numericSort(key string) (func(model.Node) float64, bool) {
 	switch {
 	case key == ChildSortServers:
 		return func(n model.Node) float64 {
-			if n.Servers == nil {
+			servers, measured := n.ServerCount()
+			if !measured {
 				return -1
 			}
-			return float64(*n.Servers)
+			return float64(servers)
 		}, true
 	case strings.HasPrefix(key, ChildSortReservedPrefix) && len(key) > len(ChildSortReservedPrefix):
 		id := strings.TrimPrefix(key, ChildSortReservedPrefix)
@@ -94,7 +95,7 @@ func numericSort(key string) (func(model.Node) float64, bool) {
 	case strings.HasPrefix(key, ChildSortUsedPrefix) && len(key) > len(ChildSortUsedPrefix):
 		id := strings.TrimPrefix(key, ChildSortUsedPrefix)
 		return func(n model.Node) float64 {
-			v, ok := n.InUse[id]
+			v, ok := n.InUse()[id]
 			if !ok {
 				return -1
 			}

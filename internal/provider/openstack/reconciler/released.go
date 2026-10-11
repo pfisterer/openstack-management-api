@@ -69,7 +69,7 @@ func (r *Reconciler) removeReleasedLeavesWithoutProject(
 		// project is right there, its resource-id tag is not — which any
 		// project admin can arrange in Horizon with two clicks. In scope is in
 		// scope, so this is not a deletion. One map lookup, no API call.
-		if _, inScope := osProjectByOSID[leaf.ExternalID]; inScope && leaf.ExternalID != "" {
+		if _, inScope := osProjectByOSID[osID(leaf)]; inScope && osID(leaf) != "" {
 			continue
 		}
 
@@ -77,7 +77,7 @@ func (r *Reconciler) removeReleasedLeavesWithoutProject(
 		// from it, and keeping the record would leave the tree disagreeing with
 		// the cloud.
 		r.log.Infow("Removing released leaf — its OpenStack project is gone",
-			"node_id", leaf.ID, "name", leaf.Name, "os_project_id", leaf.ExternalID,
+			"node_id", leaf.ID, "name", leaf.Name, "os_project_id", osID(leaf),
 			"dry_run", r.cfg.DryRun)
 		if !r.cfg.DryRun {
 			deleted, err := r.nodes.RemoveRetired(ctx, leaf.ID)

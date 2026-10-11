@@ -38,15 +38,15 @@ func fixture(t *testing.T) (*Books, *MemoryStore) {
 			Attributes: model.Attributes{"billing": {"cost_center": "4711"}}},
 		{ID: "stud", Kind: model.KindBudget, Name: "Students", ParentID: ptr("uni"), Status: model.StatusApproved},
 		{ID: "p_run", Kind: model.KindProject, Name: "Thesis", ParentID: ptr("stud"), Status: model.StatusApproved,
-			Owner: "user:a@x", ExternalID: "os-run",
+			Owner:           "user:a@x",
 			Limit:           common.ProjectQuota{"cores": 4, "storage": 50, "ipv4": 0, "ports": 10},
 			Allocations:     []model.Allocation{{BudgetID: "uni", Limit: common.ProjectQuota{"cores": 8, "ipv4": 1}}},
 			AdminScope:      common.TokenList{"user:b@x"},
 			AuthorizedUsers: []common.AuthorizedUser{{Token: "user:a@x"}, {Token: "user:c@x"}, {Token: "group:course"}},
-			InUse:           common.ProjectQuota{"storage": 30},
+			Bindings:        map[string]model.Binding{"openstack": {ExternalID: "os-run", InUse: common.ProjectQuota{"storage": 30}}},
 			Attributes:      model.Attributes{"funding": {"wbs": "D-1"}}},
 		{ID: "p_idle", Kind: model.KindProject, Name: "Idle", ParentID: ptr("stud"), Status: model.StatusApproved,
-			Owner: "user:d@x", ExternalID: "os-idle", Limit: common.ProjectQuota{"cores": 2}},
+			Owner: "user:d@x", Bindings: map[string]model.Binding{"openstack": {ExternalID: "os-idle"}}, Limit: common.ProjectQuota{"cores": 2}},
 		{ID: "p_rej", Kind: model.KindProject, Name: "No", ParentID: ptr("stud"), Status: model.StatusRejected, Owner: "user:e@x"},
 	} {
 		if err := nodes.UpsertNode(ctx, n); err != nil {
@@ -54,7 +54,7 @@ func fixture(t *testing.T) (*Books, *MemoryStore) {
 		}
 	}
 	store := NewMemoryStore()
-	c := NewBooks(store, nodes, catalog, zap.NewNop().Sugar())
+	c := NewBooks(store, nodes, catalog, "openstack", zap.NewNop().Sugar())
 	c.now = func() time.Time { return time.Date(2026, 10, 5, 9, 0, 0, 0, time.UTC) }
 	return c, store
 }

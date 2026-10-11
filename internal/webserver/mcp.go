@@ -147,14 +147,18 @@ type mcpProject struct {
 	Allocations []mcpAllocation `json:"allocations,omitempty" jsonschema:"resources this project draws from budgets above its own, on top of its own share; a change request changes only the own share"`
 	// What a pending request or change asks for. Without it a manager asked to
 	// approve "with less" cannot know what "more" was.
-	RequestedLimit     map[string]int `json:"requested_limit,omitempty" jsonschema:"resources a pending request or change asks for; limit keeps what is granted until it is decided"`
-	InUse              map[string]int `json:"in_use,omitempty" jsonschema:"what OpenStack reports as actually used; a missing key means not measured, not zero"`
-	AvailableResources []string       `json:"available_resources,omitempty" jsonschema:"on a budget: the resource ids a request under it may name"`
-	ExternalID         string         `json:"external_id,omitempty" jsonschema:"the project where it runs (the OpenStack project ID), empty while it is still being created"`
-	ExternalName       string         `json:"external_name,omitempty" jsonschema:"its name where it runs, which is what the OpenStack dashboard and the CLI show"`
-	TerminationDate    string         `json:"termination_date,omitempty" jsonschema:"intended end of life"`
-	MaxProjectTermDays int            `json:"max_project_term_days,omitempty" jsonschema:"on a budget: a project below it may end at most this many days after the day it is requested or extended"`
-	InheritsLimit      bool           `json:"inherits_limit,omitempty" jsonschema:"on a budget: it only structures the tree and passes on the limit of the budget above, which limit shows"`
+	RequestedLimit     map[string]int       `json:"requested_limit,omitempty" jsonschema:"resources a pending request or change asks for; limit keeps what is granted until it is decided"`
+	InUse              map[string]int       `json:"in_use,omitempty" jsonschema:"what the providers report as actually used; a missing key means not measured, not zero"`
+	AvailableResources []string             `json:"available_resources,omitempty" jsonschema:"on a budget: the resource ids a request under it may name"`
+	RunsAt             map[string]mcpRunsAt `json:"runs_at,omitempty" jsonschema:"per provider (e.g. openstack) where the project runs; missing while it is still being created"`
+	TerminationDate    string               `json:"termination_date,omitempty" jsonschema:"intended end of life"`
+	MaxProjectTermDays int                  `json:"max_project_term_days,omitempty" jsonschema:"on a budget: a project below it may end at most this many days after the day it is requested or extended"`
+	InheritsLimit      bool                 `json:"inherits_limit,omitempty" jsonschema:"on a budget: it only structures the tree and passes on the limit of the budget above, which limit shows"`
+}
+
+type mcpRunsAt struct {
+	ExternalID   string `json:"external_id,omitempty" jsonschema:"the project's ID at the provider (for openstack the OpenStack project ID)"`
+	ExternalName string `json:"external_name,omitempty" jsonschema:"its name there, which is what the provider's dashboard and CLI show"`
 }
 
 type mcpAllocation struct {
@@ -176,10 +180,8 @@ func toMCPProject(n model.Node) mcpProject {
 		Shared:             n.Kind == model.KindProject && len(n.AdminScope) > 0,
 		PaidFromName:       n.ParentName,
 		Limit:              n.EffectiveLimit(),
-		InUse:              n.InUse,
+		InUse:              n.InUse(),
 		AvailableResources: n.AvailableResources,
-		ExternalID:         n.ExternalID,
-		ExternalName:       n.ExternalName,
 		DeletionRequested:  slices.Contains(n.Flags, model.FlagDeleteRequested),
 		InheritsLimit:      n.InheritsLimit,
 	}
@@ -194,6 +196,15 @@ func toMCPProject(n model.Node) mcpProject {
 	}
 	if n.MaxProjectTermDays != nil {
 		p.MaxProjectTermDays = *n.MaxProjectTermDays
+	}
+	for provider, b := range n.Bindings {
+		if b.ExternalID == "" {
+			continue
+		}
+		if p.RunsAt == nil {
+			p.RunsAt = map[string]mcpRunsAt{}
+		}
+		p.RunsAt[provider] = mcpRunsAt{ExternalID: b.ExternalID, ExternalName: b.ExternalName}
 	}
 	for _, a := range n.Allocations {
 		p.Allocations = append(p.Allocations, mcpAllocation{BudgetID: a.BudgetID, BudgetName: a.BudgetName, Limit: a.Limit, Reason: a.Reason})

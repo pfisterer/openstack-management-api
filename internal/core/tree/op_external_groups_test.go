@@ -15,10 +15,10 @@ func TestRemoveExternalGroup(t *testing.T) {
 	f := newAllocationFixture(t)
 	// The fixture's project, with two groups from OpenStack.
 	n := mustGet(t, f.svc, f.project.ID)
-	n.ExternalGroupAssignments = []common.ExternalGroupAssignment{
+	n.Bindings = map[string]model.Binding{"openstack": {ExternalGroupAssignments: []common.ExternalGroupAssignment{
 		{GroupID: "g1", GroupName: "fakultaet-wi", Role: "member"},
 		{GroupID: "g2", GroupName: "team", Role: "reader"},
-	}
+	}}}
 	if err := f.store.UpsertNode(context.Background(), n); err != nil {
 		t.Fatal(err)
 	}
@@ -30,8 +30,8 @@ func TestRemoveExternalGroup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("owner: %v", err)
 	}
-	if len(got.ExternalGroupAssignments) != 1 || got.ExternalGroupAssignments[0].GroupID != "g2" {
-		t.Errorf("left %v, want only g2", got.ExternalGroupAssignments)
+	if left := got.Binding("openstack").ExternalGroupAssignments; len(left) != 1 || left[0].GroupID != "g2" {
+		t.Errorf("left %v, want only g2", left)
 	}
 	if last := got.History[len(got.History)-1]; last.Event != "external_group_removed" || last.Reason == nil || *last.Reason != "fakultaet-wi" {
 		t.Errorf("history %+v", last)

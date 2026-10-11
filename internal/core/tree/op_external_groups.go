@@ -32,11 +32,17 @@ func (s *Service) RemoveExternalGroup(id, groupID string, actor model.Actor, use
 			return model.Node{}, common.ErrForbidden
 		}
 	}
-	i := slices.IndexFunc(current.ExternalGroupAssignments, func(g common.ExternalGroupAssignment) bool { return g.GroupID == groupID })
-	if i < 0 {
+	// Whichever provider assigned it: group IDs are the provider's own, and only one of them knows this one.
+	provider, name := "", ""
+	for p, b := range current.Bindings {
+		if i := slices.IndexFunc(b.ExternalGroupAssignments, func(g common.ExternalGroupAssignment) bool { return g.GroupID == groupID }); i >= 0 {
+			provider, name = p, b.ExternalGroupAssignments[i].GroupName
+			break
+		}
+	}
+	if provider == "" {
 		return model.Node{}, fmt.Errorf("external group %w", common.ErrNotFound)
 	}
-	name := current.ExternalGroupAssignments[i].GroupName
 	if name == "" {
 		name = groupID
 	}
@@ -45,11 +51,13 @@ func (s *Service) RemoveExternalGroup(id, groupID string, actor model.Actor, use
 
 	var updated model.Node
 	found, err := s.store.UpdateNode(ctx, id, func(n *model.Node) error {
-		n.ExternalGroupAssignments = slices.DeleteFunc(slices.Clone(n.ExternalGroupAssignments),
-			func(g common.ExternalGroupAssignment) bool { return g.GroupID == groupID })
-		if len(n.ExternalGroupAssignments) == 0 {
-			n.ExternalGroupAssignments = nil
-		}
+		n.EditBinding(provider, func(b *model.Binding) {
+			b.ExternalGroupAssignments = slices.DeleteFunc(slices.Clone(b.ExternalGroupAssignments),
+				func(g common.ExternalGroupAssignment) bool { return g.GroupID == groupID })
+			if len(b.ExternalGroupAssignments) == 0 {
+				b.ExternalGroupAssignments = nil
+			}
+		})
 		n.History = append(slices.Clone(n.History), entry)
 		updated = *n
 		return nil

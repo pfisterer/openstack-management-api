@@ -21,8 +21,8 @@ func ids(nodes []model.Node) []string {
 func TestSortChildren_ByResource(t *testing.T) {
 	one, three := 1, 3
 	nodes := []model.Node{
-		{ID: "a", Limit: common.ProjectQuota{"cores": 10}, InUse: common.ProjectQuota{"cores": 0}, Servers: &one},
-		{ID: "b", Limit: common.ProjectQuota{"cores": 9}, InUse: common.ProjectQuota{"cores": 4}, Servers: &three},
+		{ID: "a", Limit: common.ProjectQuota{"cores": 10}, Bindings: map[string]model.Binding{"openstack": {InUse: common.ProjectQuota{"cores": 0}, Servers: &one}}},
+		{ID: "b", Limit: common.ProjectQuota{"cores": 9}, Bindings: map[string]model.Binding{"openstack": {InUse: common.ProjectQuota{"cores": 4}, Servers: &three}}},
 		{ID: "c", Limit: common.ProjectQuota{"cores": common.UnlimitedQuota}},
 		{ID: "d", Limit: common.ProjectQuota{"cores": 2},
 			Allocations: []model.Allocation{{BudgetID: "x", Limit: common.ProjectQuota{"cores": 16}}}},

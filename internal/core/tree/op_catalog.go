@@ -176,17 +176,17 @@ func grantsNothing(q common.ProjectQuota) bool {
 	return true
 }
 
-// ProjectsByExternalID maps the external (OpenStack) project ID of every project that has one
-// to the project, so a grant found in OpenStack can be named.
-func (s *Service) ProjectsByExternalID(ctx context.Context) (map[string]Holder, error) {
+// ProjectsByExternalID maps the ID at provider of every project that has one
+// to the project, so a grant found there can be named.
+func (s *Service) ProjectsByExternalID(ctx context.Context, provider string) (map[string]Holder, error) {
 	nodes, err := s.store.ListNodes(ctx, nodestore.NodeQuery{Kinds: []string{model.KindProject}}, 0, 0)
 	if err != nil {
 		return nil, fmt.Errorf("list projects: %w", err)
 	}
 	out := make(map[string]Holder, len(nodes))
 	for _, n := range nodes {
-		if n.ExternalID != "" {
-			out[n.ExternalID] = Holder{NodeID: n.ID, Name: nodeLabel(n), Kind: n.Kind, Status: n.Status}
+		if id := n.Binding(provider).ExternalID; id != "" {
+			out[id] = Holder{NodeID: n.ID, Name: nodeLabel(n), Kind: n.Kind, Status: n.Status}
 		}
 	}
 	return out, nil

@@ -21,15 +21,21 @@ import (
 // to the node as it is NOW: a pass loads its leaves once and then spends seconds
 // per leaf in OpenStack, and a user may have filed a change, been approved or
 // released the project meanwhile.
+//
+// One per provider: what it reports lands in the leaf's binding under its name.
 type ProviderSync struct {
-	store   nodestore.Store
-	changes <-chan struct{}
+	store    nodestore.Store
+	provider string
+	changes  <-chan struct{}
 }
 
-// NewProviderSync is a view of the tree straight from its store, without a service that announces changes; Service.ProviderSync is the one with them.
-func NewProviderSync(store nodestore.Store) *ProviderSync {
-	return &ProviderSync{store: store}
+// NewProviderSync is provider's view of the tree straight from its store, without a service that announces changes; Service.ProviderSync is the one with them.
+func NewProviderSync(store nodestore.Store, provider string) *ProviderSync {
+	return &ProviderSync{store: store, provider: provider}
 }
+
+// Provider is whose view this is.
+func (p *ProviderSync) Provider() string { return p.provider }
 
 // Changes receives when the service changed what is wanted since the last receive. Nil — never ready — for a view made by NewProviderSync.
 func (p *ProviderSync) Changes() <-chan struct{} { return p.changes }
@@ -49,20 +55,20 @@ func (p *ProviderSync) Budgets(ctx context.Context) ([]model.Node, error) {
 // be cleaned up.
 func (p *ProviderSync) RecordExternalID(ctx context.Context, leafID, externalID string) error {
 	_, err := p.store.UpdateNode(ctx, leafID, func(n *model.Node) error {
-		if n.ExternalID == externalID {
+		if n.Binding(p.provider).ExternalID == externalID {
 			return nodestore.ErrSkipUpdate
 		}
-		n.ExternalID = externalID
+		n.EditBinding(p.provider, func(b *model.Binding) { b.ExternalID = externalID })
 		return nil
 	})
 	return err
 }
 
-// RecordObservation writes what a pass found in OpenStack, touching only those
-// fields and only when something changed (see ApplyObservation).
+// RecordObservation writes what a pass found at the provider, touching only
+// those fields and only when something changed (see ApplyObservation).
 func (p *ProviderSync) RecordObservation(ctx context.Context, leafID, externalID string, o *Observation) error {
 	_, err := p.store.UpdateNode(ctx, leafID, func(n *model.Node) error {
-		if !ApplyObservation(n, externalID, o) {
+		if !Observe(n, p.provider, externalID, o) {
 			return nodestore.ErrSkipUpdate
 		}
 		return nil
@@ -98,7 +104,7 @@ type PurgeReport struct {
 // every 30 s for nothing.
 func (p *ProviderSync) RecordPurgeProgress(ctx context.Context, leafID string, r PurgeReport) error {
 	_, err := p.store.UpdateNode(ctx, leafID, func(n *model.Node) error {
-		prev := n.Purge
+		prev := n.Binding(p.provider).Purge
 		removed := r.Removed
 		if prev != nil {
 			removed += prev.Removed
@@ -106,11 +112,12 @@ func (p *ProviderSync) RecordPurgeProgress(ctx context.Context, leafID string, r
 		if prev != nil && prev.Step == r.Step && prev.Blocked == r.Blocked && prev.Detail == r.Detail && r.Removed == 0 {
 			return nodestore.ErrSkipUpdate
 		}
-		n.Purge = &model.PurgeProgress{
+		next := &model.PurgeProgress{
 			Step: r.Step, Index: r.Index, Steps: r.Steps,
 			Blocked: r.Blocked, Detail: r.Detail,
 			Removed: removed, UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 		}
+		n.EditBinding(p.provider, func(b *model.Binding) { b.Purge = next })
 		return nil
 	})
 	return err
@@ -146,10 +153,12 @@ func (p *ProviderSync) RefreshImport(ctx context.Context, leaf model.Node, o *Ob
 		n.Reason = leaf.Reason
 		n.Limit = leaf.Limit
 		n.AuthorizedUsers = leaf.AuthorizedUsers
-		n.ExternalGroupAssignments = leaf.ExternalGroupAssignments
-		n.ExternalID = leaf.ExternalID
-		n.ExternalName = leaf.ExternalName
-		ApplyObservation(n, leaf.ExternalID, o)
+		found := leaf.Binding(p.provider)
+		n.EditBinding(p.provider, func(b *model.Binding) {
+			b.ExternalGroupAssignments = found.ExternalGroupAssignments
+			b.ExternalName = found.ExternalName
+			ApplyObservation(b, found.ExternalID, o)
+		})
 		return nil
 	})
 	return err
@@ -197,7 +206,7 @@ func MergeMembers(leafUsers, current []common.AuthorizedUser, owner string) []co
 	return out
 }
 
-// Observation is what one pass read from OpenStack about a project. A nil
+// Observation is what one pass read from the provider about a project. A nil
 // *Observation means it could not be read — "not measured", never "nothing in
 // use".
 type Observation struct {
@@ -222,28 +231,38 @@ type Observation struct {
 // back to the declared limit until the next successful pass — the
 // shrink-after-filling loophole, reopened by a transient API error, and
 // Overcommitted cleared along with it so the UI stopped warning too.
-func ApplyObservation(n *model.Node, externalID string, o *Observation) bool {
-	changed := n.ExternalID != externalID
+func ApplyObservation(b *model.Binding, externalID string, o *Observation) bool {
+	changed := b.ExternalID != externalID
 	if o != nil {
-		changed = changed || n.Overcommitted != o.Overcommitted || !quotaEqual(n.InUse, o.InUse) ||
-			n.Servers == nil || *n.Servers != o.Servers ||
-			n.ServerLimit == nil || *n.ServerLimit != o.ServerLimit ||
-			(o.GrantUse != nil && !quotaEqual(n.GrantUse, o.GrantUse))
+		changed = changed || b.Overcommitted != o.Overcommitted || !quotaEqual(b.InUse, o.InUse) ||
+			b.Servers == nil || *b.Servers != o.Servers ||
+			b.ServerLimit == nil || *b.ServerLimit != o.ServerLimit ||
+			(o.GrantUse != nil && !quotaEqual(b.GrantUse, o.GrantUse))
 	}
 	if !changed {
 		return false
 	}
-	n.ExternalID = externalID
+	b.ExternalID = externalID
 	if o != nil {
-		n.Overcommitted = o.Overcommitted
-		n.InUse = o.InUse
+		b.Overcommitted = o.Overcommitted
+		b.InUse = o.InUse
 		servers, serverLimit := o.Servers, o.ServerLimit
-		n.Servers = &servers
-		n.ServerLimit = &serverLimit
+		b.Servers = &servers
+		b.ServerLimit = &serverLimit
 		if o.GrantUse != nil {
-			n.GrantUse = o.GrantUse
+			b.GrantUse = o.GrantUse
 		}
 	}
+	return true
+}
+
+// Observe is ApplyObservation on provider's binding of n. The binding is only replaced when something changed.
+func Observe(n *model.Node, provider, externalID string, o *Observation) bool {
+	b := n.Binding(provider)
+	if !ApplyObservation(&b, externalID, o) {
+		return false
+	}
+	n.EditBinding(provider, func(nb *model.Binding) { *nb = b })
 	return true
 }
 

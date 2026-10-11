@@ -495,8 +495,8 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 	// importedByOSProjectID: existing imported leaves keyed by their OSProjectID.
 	importedByOSProjectID := make(map[string]model.Node, len(existingImported))
 	for _, leaf := range existingImported {
-		if leaf.ExternalID != "" {
-			importedByOSProjectID[leaf.ExternalID] = leaf
+		if osID(leaf) != "" {
+			importedByOSProjectID[osID(leaf)] = leaf
 		}
 	}
 
@@ -548,7 +548,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 				continue
 			}
 			res.projectsCreated++
-			leaf.ExternalID = created.ID
+			leaf.EditBinding(osclient.Provider, func(b *model.Binding) { b.ExternalID = created.ID })
 			if !r.cfg.DryRun {
 				r.persistOSProjectID(ctx, leaf.ID, created.ID)
 			}
@@ -563,7 +563,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 			if m != nil {
 				m.GrantUse = projectGrantUse(r.resources(), grantUse, osProject.ID)
 			}
-			if tree.ApplyObservation(&leaf, osProject.ID, m) && !r.cfg.DryRun {
+			if tree.Observe(&leaf, osclient.Provider, osProject.ID, m) && !r.cfg.DryRun {
 				r.persistOSSyncState(ctx, leaf.ID, osProject.ID, m)
 			}
 			r.syncMembers(leaf, osProject.ID)

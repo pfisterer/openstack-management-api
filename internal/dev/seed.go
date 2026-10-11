@@ -236,18 +236,20 @@ func DefaultMockTreeState() ([]common.Identity, []model.Node) {
 			// Imported by the reconciler: an OpenStack project unknown to the
 			// system, parked under "unassigned" until a root admin promotes it.
 			ID: "p_imported_001", Kind: model.KindProject, ParentID: &unassignedID, Status: model.StatusImported,
-			Name:         "legacy-ml-workload",
-			Reason:       "OpenStack project: legacy-ml-workload (os-project-abc-123)",
-			ExternalID:   "os-project-abc-123",
-			ExternalName: "legacy-ml-workload",
-			Limit:        common.ProjectQuota{"cores": 9, "ram": 16, "storage": 100},
+			Name:   "legacy-ml-workload",
+			Reason: "OpenStack project: legacy-ml-workload (os-project-abc-123)",
+			Limit:  common.ProjectQuota{"cores": 9, "ram": 16, "storage": 100},
 			AuthorizedUsers: []common.AuthorizedUser{
 				{Token: "user:faculty@cs.example", OpenstackRole: "member"},
 				{Token: DeptCSFaculty, OpenstackRole: "member"},
 			},
-			ExternalGroupAssignments: []common.ExternalGroupAssignment{
-				{GroupID: "os-group-ldap-001", GroupName: "legacy-ldap-researchers", Role: "member"},
-			},
+			Bindings: map[string]model.Binding{"openstack": {
+				ExternalID:   "os-project-abc-123",
+				ExternalName: "legacy-ml-workload",
+				ExternalGroupAssignments: []common.ExternalGroupAssignment{
+					{GroupID: "os-group-ldap-001", GroupName: "legacy-ldap-researchers", Role: "member"},
+				},
+			}},
 			CreatedBy: "System", CreatedAt: "2026-02-15T00:00:00Z",
 		},
 	}

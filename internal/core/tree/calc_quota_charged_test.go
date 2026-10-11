@@ -10,7 +10,7 @@ import (
 var chargedResources = []string{"cores", "ram"}
 
 func leafWith(limit, inUse common.ProjectQuota) model.Node {
-	return model.Node{ID: "leaf", Limit: limit, InUse: inUse}
+	return model.Node{ID: "leaf", Limit: limit, Bindings: map[string]model.Binding{"openstack": {InUse: inUse}}}
 }
 
 func TestChargedQuota_DisabledKeepsDeclaredLimit(t *testing.T) {
@@ -67,9 +67,9 @@ func TestBuildRolledUpUsage_MaxAppliesPerLeafNotToTheSum(t *testing.T) {
 	budget := "budget"
 	leaves := []model.Node{
 		{ID: "a", ParentID: &budget, Status: model.StatusApproved,
-			Limit: common.ProjectQuota{"cores": 1}, InUse: common.ProjectQuota{"cores": 8}},
+			Limit: common.ProjectQuota{"cores": 1}, Bindings: map[string]model.Binding{"openstack": {InUse: common.ProjectQuota{"cores": 8}}}},
 		{ID: "b", ParentID: &budget, Status: model.StatusApproved,
-			Limit: common.ProjectQuota{"cores": 8}, InUse: common.ProjectQuota{"cores": 2}},
+			Limit: common.ProjectQuota{"cores": 8}, Bindings: map[string]model.Binding{"openstack": {InUse: common.ProjectQuota{"cores": 2}}}},
 	}
 	parentMap := map[string]*string{budget: nil}
 

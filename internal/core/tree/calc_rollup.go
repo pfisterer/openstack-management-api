@@ -228,8 +228,9 @@ func (s *Service) leafCost(leaf model.Node) (common.ProjectQuota, bool) {
 // shelved, floating IPs released, quotas frozen — holds nothing any more.
 func archivedQuota(leaf model.Node, storageIDs []string) common.ProjectQuota {
 	out := common.ProjectQuota{}
+	used := leaf.InUse()
 	for _, id := range storageIDs {
-		if inUse, measured := leaf.InUse[id]; measured {
+		if inUse, measured := used[id]; measured {
 			out[id] = inUse
 		} else if v := leaf.Limit[id]; v > 0 {
 			out[id] = v
@@ -270,6 +271,7 @@ func chargedQuota(leaf model.Node, resourceIDs []string, chargeInUse bool) commo
 	// included; whatever runs over that is charged to its own budget, which is
 	// where the project lives.
 	total := leaf.EffectiveLimit()
+	used := leaf.InUse()
 	out := make(common.ProjectQuota, len(resourceIDs))
 	for _, id := range resourceIDs {
 		limit := leaf.Limit[id]
@@ -277,7 +279,7 @@ func chargedQuota(leaf model.Node, resourceIDs []string, chargeInUse bool) commo
 		if total[id] == common.UnlimitedQuota {
 			continue
 		}
-		inUse, measured := leaf.InUse[id]
+		inUse, measured := used[id]
 		if measured && inUse > total[id] {
 			out[id] = limit + inUse - total[id]
 		}

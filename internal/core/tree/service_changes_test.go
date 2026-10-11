@@ -16,7 +16,7 @@ func TestChanges(t *testing.T) {
 	ctx := context.Background()
 	log := zap.NewNop().Sugar()
 	svc := NewService(nodestore.NewInMemoryStore(log), nil, []common.Resource{{ID: "cores", Name: "Cores"}}, nil, time.Second, 0, Accounting{}, log)
-	sync := svc.ProviderSync()
+	sync := svc.ProviderSync("openstack")
 	expect := func(step string, want bool) {
 		t.Helper()
 		select {

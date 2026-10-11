@@ -38,15 +38,15 @@ func (r *Reconciler) promoteImportedLeaves(
 			continue
 		}
 
-		osProject, ok := osProjectByOSID[leaf.ExternalID]
+		osProject, ok := osProjectByOSID[osID(leaf)]
 		if !ok {
 			r.log.Warnw("Cannot promote: OS project not found in scope",
-				"node_id", leaf.ID, "os_project_id", leaf.ExternalID)
+				"node_id", leaf.ID, "os_project_id", osID(leaf))
 			continue
 		}
 
 		r.log.Infow("Promoting imported leaf to managed project",
-			"node_id", leaf.ID, "os_project_id", leaf.ExternalID, "dry_run", r.cfg.DryRun)
+			"node_id", leaf.ID, "os_project_id", osID(leaf), "dry_run", r.cfg.DryRun)
 
 		if !r.cfg.DryRun {
 			if err := r.osClient.TagProjectForNode(osProject.ID, leaf.ID, osProject.Tags); err != nil {
@@ -83,8 +83,8 @@ func (r *Reconciler) promoteImportedLeaves(
 		}
 
 		// Remove from Phase-5 maps so the newly-tagged OS project is not re-imported.
-		delete(osProjectByOSID, leaf.ExternalID)
-		delete(importedByOSProjectID, leaf.ExternalID)
+		delete(osProjectByOSID, osID(leaf))
+		delete(importedByOSProjectID, osID(leaf))
 		osProjectByResourceID[leaf.ID] = osProject
 
 		res.projectsPromoted++
@@ -192,21 +192,22 @@ func (r *Reconciler) upsertImported(
 
 	parent := model.UnassignedNodeID
 	leaf := model.Node{
-		ID:                       syntheticID,
-		Kind:                     model.KindProject,
-		ParentID:                 &parent,
-		Status:                   model.StatusImported,
-		Name:                     osProject.Name,
-		Reason:                   fmt.Sprintf("OpenStack project: %s (%s)", osProject.Name, osProject.ID),
-		Limit:                    osLimit,
-		AuthorizedUsers:          authorizedUsers,
-		ExternalGroupAssignments: externalGroups,
-		History:                  []model.HistoryEntry{},
-		CreatedBy:                "System",
-		ExternalID:               osProject.ID,
-		ExternalName:             osProject.Name,
+		ID:              syntheticID,
+		Kind:            model.KindProject,
+		ParentID:        &parent,
+		Status:          model.StatusImported,
+		Name:            osProject.Name,
+		Reason:          fmt.Sprintf("OpenStack project: %s (%s)", osProject.Name, osProject.ID),
+		Limit:           osLimit,
+		AuthorizedUsers: authorizedUsers,
+		History:         []model.HistoryEntry{},
+		CreatedBy:       "System",
 	}
-	tree.ApplyObservation(&leaf, osProject.ID, measured)
+	leaf.EditBinding(osclient.Provider, func(b *model.Binding) {
+		b.ExternalName = osProject.Name
+		b.ExternalGroupAssignments = externalGroups
+		tree.ApplyObservation(b, osProject.ID, measured)
+	})
 
 	r.log.Infow("Upserting imported leaf",
 		"node_id", syntheticID, "os_project_id", osProject.ID,

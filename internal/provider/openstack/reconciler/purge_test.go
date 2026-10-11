@@ -532,10 +532,10 @@ func TestRecordPurgeProgress(t *testing.T) {
 	if err := store.UpsertNode(ctx, model.Node{ID: "p", Kind: model.KindProject, Status: model.StatusArchived}); err != nil {
 		t.Fatal(err)
 	}
-	r := &Reconciler{nodes: tree.NewProviderSync(store), cfg: Config{PurgeSkipStages: []string{"stacks"}}}
+	r := &Reconciler{nodes: tree.NewProviderSync(store, osclient.Provider), cfg: Config{PurgeSkipStages: []string{"stacks"}}}
 	get := func() *model.PurgeProgress {
 		n, _ := store.GetNode(ctx, "p")
-		return n.Purge
+		return n.Binding(osclient.Provider).Purge
 	}
 
 	r.recordPurgeProgress(ctx, "p", purgeResult{stage: "servers", removed: 2}, zap.NewNop().Sugar())

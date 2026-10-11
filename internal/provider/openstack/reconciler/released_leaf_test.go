@@ -24,8 +24,8 @@ func TestReleasedLeafIsRemovedOnceItsProjectIsGone(t *testing.T) {
 	var res reconcileResult
 	r.removeReleasedLeavesWithoutProject(context.Background(),
 		map[string]model.Node{
-			"p_1": {ID: "p_1", ExternalID: "os-1"},
-			"p_2": {ID: "p_2", ExternalID: "os-2"},
+			"p_1": {ID: "p_1", Bindings: boundTo("os-1")},
+			"p_2": {ID: "p_2", Bindings: boundTo("os-2")},
 		}, map[string]osclient.ProjectInfo{}, &res)
 
 	if len(store.deleted) != 2 {
@@ -73,7 +73,7 @@ func TestReleasedLeafRemovalRespectsTheSafetySwitches(t *testing.T) {
 
 			var res reconcileResult
 			r.removeReleasedLeavesWithoutProject(context.Background(),
-				map[string]model.Node{"p_1": {ID: "p_1", ExternalID: "os-1"}},
+				map[string]model.Node{"p_1": {ID: "p_1", Bindings: boundTo("os-1")}},
 				map[string]osclient.ProjectInfo{}, &res)
 
 			if len(store.deleted) != tc.wantDeleted {
@@ -95,7 +95,7 @@ func TestReleasedLeafWithAnUntaggedProjectInScopeIsKept(t *testing.T) {
 
 	var res reconcileResult
 	r.removeReleasedLeavesWithoutProject(context.Background(),
-		map[string]model.Node{"p_1": {ID: "p_1", ExternalID: "os-1"}},
+		map[string]model.Node{"p_1": {ID: "p_1", Bindings: boundTo("os-1")}},
 		map[string]osclient.ProjectInfo{"os-1": {ID: "os-1"}}, &res)
 
 	if len(store.deleted) != 0 || res.releasedLeavesRemoved != 0 {

@@ -25,10 +25,10 @@ func chooseRecoverableProject(
 	claimed map[string]string,
 	log *zap.SugaredLogger,
 ) (osclient.ProjectInfo, bool) {
-	if leaf.ExternalID == "" {
+	if osID(leaf) == "" {
 		return osclient.ProjectInfo{}, false // never had one — Phase 4 creates it
 	}
-	osProject, exists := osProjectByOSID[leaf.ExternalID]
+	osProject, exists := osProjectByOSID[osID(leaf)]
 	if !exists {
 		return osclient.ProjectInfo{}, false // really gone (deleted, or moved out of scope)
 	}

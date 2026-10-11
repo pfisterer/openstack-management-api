@@ -273,10 +273,10 @@ func RunApplication() {
 				ManagedProjectTag:        config.Reconciler.ManagedProjectTag,
 				StatusTagPrefix:          config.Reconciler.StatusTagPrefix,
 			}
-			rec := reconciler.New(treeSvc.ProviderSync(), osClient, reconcilerCfg, config.ProjectDefinitions, roleProvider, logger)
+			rec := reconciler.New(treeSvc.ProviderSync(osclient.Provider), osClient, reconcilerCfg, config.ProjectDefinitions, roleProvider, logger)
 			rec.UseCatalog(resourceCatalog)
 			if config.Reconciler.UsageEnabled {
-				books := usage.NewBooks(usageStore, nodeStore, osclient.CoreResources(config.ProjectDefinitions), logger)
+				books := usage.NewBooks(usageStore, nodeStore, osclient.CoreResources(config.ProjectDefinitions), osclient.Provider, logger)
 				books.BackfillDays = config.Reconciler.UsageBackfillDays
 				rec.SetUsage(books, reconciler.NewUsageSource(osClient, config.Reconciler.UsagePublicNetworks))
 			}

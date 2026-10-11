@@ -53,7 +53,7 @@ func project(id string, tags ...string) osclient.ProjectInfo {
 // leaf remembers, not treated as missing.
 func TestChooseRecoverableProject(t *testing.T) {
 	log := zap.NewNop().Sugar()
-	leaf := model.Node{ID: "p_001", ExternalID: "os-1"}
+	leaf := model.Node{ID: "p_001", Bindings: boundTo("os-1")}
 
 	tests := []struct {
 		name    string
@@ -113,7 +113,7 @@ func TestChooseRecoverableProject(t *testing.T) {
 			if ok != tc.want {
 				t.Fatalf("ok = %v, want %v", ok, tc.want)
 			}
-			if ok && got.ID != tc.leaf.ExternalID {
+			if ok && got.ID != osID(tc.leaf) {
 				t.Errorf("recovered the wrong project: %q", got.ID)
 			}
 		})
@@ -135,7 +135,7 @@ func newRecoveryReconciler(nodes TreeSync, cfg Config) *Reconciler {
 func TestRecoverUntaggedProjectHidesItFromTheImportPhase(t *testing.T) {
 	store := &deletedStore{}
 	r := newRecoveryReconciler(store, Config{})
-	leaf := model.Node{ID: "p_001", ExternalID: "os-1"}
+	leaf := model.Node{ID: "p_001", Bindings: boundTo("os-1")}
 	byOSID := map[string]osclient.ProjectInfo{"os-1": project("os-1")}
 	res := reconcileResult{}
 
@@ -158,8 +158,8 @@ func TestRecoverUntaggedProjectHidesItFromTheImportPhase(t *testing.T) {
 func TestRecoverUntaggedProjectRemovesTheShadowingImport(t *testing.T) {
 	store := &deletedStore{}
 	r := newRecoveryReconciler(store, Config{})
-	leaf := model.Node{ID: "p_001", ExternalID: "os-1"}
-	imported := map[string]model.Node{"os-1": {ID: "p_shadow", ExternalID: "os-1", Status: model.StatusImported}}
+	leaf := model.Node{ID: "p_001", Bindings: boundTo("os-1")}
+	imported := map[string]model.Node{"os-1": {ID: "p_shadow", Bindings: boundTo("os-1"), Status: model.StatusImported}}
 	res := reconcileResult{}
 
 	if _, ok := r.recoverUntaggedProject(context.Background(), leaf,

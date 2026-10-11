@@ -300,7 +300,10 @@ func (s *Service) SearchNodes(userTokens common.TokenList, query string, limit, 
 func nodeMatches(n model.Node, needle string) bool {
 	fields := []string{
 		n.Name, n.Reason, n.ID, n.Owner, n.CreatedBy,
-		n.ExternalName, n.ExternalID, n.Status,
+		n.Status,
+	}
+	for _, b := range n.Bindings {
+		fields = append(fields, b.ExternalName, b.ExternalID)
 	}
 	fields = append(fields, n.AdminScope...)
 	fields = append(fields, n.EligibleRequesters...)

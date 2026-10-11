@@ -228,7 +228,7 @@ func (s *Service) PromoteNode(id string, req PromoteNodeRequest, actor Actor, us
 	historyEntry.ParentFrom = current.ParentID
 	historyEntry.ParentTo = &newParent.ID
 	historyEntry.OwnerTo = &owner
-	historyEntry.Reason = common.Ptr(req.Reason)
+	historyEntry.Reason = new(req.Reason)
 
 	updated := *current
 	updated.ParentID = &newParent.ID

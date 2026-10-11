@@ -551,7 +551,7 @@ func MarkArchived(n *Node) bool {
 		return false
 	}
 	entry := newHistoryEntry("archived", Actor{Via: ChannelReconciler}, StatusArchived)
-	entry.StatusFrom = common.Ptr(StatusReleased)
+	entry.StatusFrom = new(StatusReleased)
 	n.Status = StatusArchived
 	n.History = append(slices.Clone(n.History), entry)
 	return true

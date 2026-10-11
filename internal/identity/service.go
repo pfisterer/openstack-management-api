@@ -130,7 +130,7 @@ func (s *Service) ResolveEffectiveUserTokens(actorEmail string, originalTokens c
 		return tokens
 	}
 
-	return ApplyRoleSwitchOverride(originalTokens, common.Ptr(override))
+	return ApplyRoleSwitchOverride(originalTokens, new(override))
 }
 
 // ResolveEffectiveEmail returns the email the actor is acting AS. It equals the
@@ -222,7 +222,7 @@ func (s *Service) GetUserGroupSwitchForActor(actorEmail string) *string {
 		return nil
 	}
 	if override := s.currentGroupOverrides()[actor]; override != "" {
-		return common.Ptr(override)
+		return new(override)
 	}
 	return nil
 }

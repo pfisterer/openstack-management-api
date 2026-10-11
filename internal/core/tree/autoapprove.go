@@ -54,7 +54,7 @@ func autoApproveReason(budget *Node) string {
 // autoApprovedEntry records an approval nobody had to give.
 func autoApprovedEntry(actor Actor, statusFrom, reason string) HistoryEntry {
 	entry := newHistoryEntry("approved", Actor{Email: "system:auto-approval", Via: actor.Channel()}, StatusApproved)
-	entry.StatusFrom = common.Ptr(statusFrom)
-	entry.Reason = common.Ptr(reason)
+	entry.StatusFrom = new(statusFrom)
+	entry.Reason = new(reason)
 	return entry
 }

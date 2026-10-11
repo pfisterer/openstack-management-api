@@ -40,7 +40,7 @@ func (s *Service) RemoveExternalGroup(id, groupID string, actor Actor, userToken
 		name = groupID
 	}
 	entry := newHistoryEntry("external_group_removed", actor, current.Status)
-	entry.Reason = common.Ptr(name)
+	entry.Reason = new(name)
 
 	var updated Node
 	found, err := s.store.UpdateNode(ctx, id, func(n *Node) error {

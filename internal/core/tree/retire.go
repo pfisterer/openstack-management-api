@@ -34,7 +34,7 @@ func (s *Service) ReleaseNode(id string, req ReleaseNodeRequest, actor Actor, us
 	}
 
 	historyEntry := newHistoryEntry("released", actor, StatusReleased)
-	historyEntry.StatusFrom = common.Ptr(StatusApproved)
+	historyEntry.StatusFrom = new(StatusApproved)
 	historyEntry.LimitFrom = &current.Limit
 
 	updated := *current

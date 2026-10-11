@@ -157,7 +157,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 
 	createdEntry := newHistoryEntry("created", actor, StatusPending)
 	createdEntry.LimitTo = &req.Limit
-	createdEntry.Reason = common.Ptr(req.Reason)
+	createdEntry.Reason = new(req.Reason)
 
 	if req.Kind == KindProject {
 		node.ID = "p_" + uuid.New().String()
@@ -199,8 +199,8 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor Actor, userEmail strin
 		}
 		node.Status = StatusApproved
 		approvedEntry := newHistoryEntry("approved", actor, StatusApproved)
-		approvedEntry.StatusFrom = common.Ptr(StatusPending)
-		approvedEntry.Reason = common.Ptr("Created directly by a manager")
+		approvedEntry.StatusFrom = new(StatusPending)
+		approvedEntry.Reason = new("Created directly by a manager")
 		node.History = append(node.History, approvedEntry)
 
 	case req.Kind == KindProject && parent.AutoApprove != nil:
@@ -247,10 +247,10 @@ func isLeafDirectEdit(req UpdateNodeRequest) bool {
 // Everything else about a leaf still goes through RequestChange.
 func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, userTokens common.TokenList) (Node, error) {
 	if req.AdminScope != nil {
-		req.AdminScope = common.Ptr(common.CanonicalTokens(*req.AdminScope))
+		req.AdminScope = new(common.CanonicalTokens(*req.AdminScope))
 	}
 	if req.EligibleRequesters != nil {
-		req.EligibleRequesters = common.Ptr(common.CanonicalTokens(*req.EligibleRequesters))
+		req.EligibleRequesters = new(common.CanonicalTokens(*req.EligibleRequesters))
 	}
 	// A new end date is carried down the subtree, which must not interleave
 	// with an approval deciding on one of its nodes.
@@ -392,11 +392,11 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor Actor, user
 	}
 	if inherits && !current.InheritsLimit {
 		historyEntry.LimitFrom = &current.Limit
-		historyEntry.Reason = common.Ptr("Inherits the limit of the budget above")
+		historyEntry.Reason = new("Inherits the limit of the budget above")
 		updated.Limit = common.ProjectQuota{}
 	}
 	if !inherits && current.InheritsLimit && req.Limit == nil && binding != nil {
-		req.Limit = common.Ptr(maps.Clone(binding.Limit))
+		req.Limit = new(maps.Clone(binding.Limit))
 	}
 	updated.InheritsLimit = inherits
 
@@ -521,7 +521,7 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor Actor, u
 	if current.Status == StatusPending {
 		// Amend the not-yet-approved request in place.
 		historyEntry := newHistoryEntry("amended", actor, StatusPending)
-		historyEntry.StatusFrom = common.Ptr(StatusPending)
+		historyEntry.StatusFrom = new(StatusPending)
 		if req.Limit != nil {
 			historyEntry.LimitFrom = &current.Limit
 			historyEntry.LimitTo = req.Limit

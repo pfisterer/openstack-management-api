@@ -1,4 +1,4 @@
-package app
+package reconciler
 
 import (
 	"cmp"
@@ -9,12 +9,10 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/catalog"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
-	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/reconciler"
-	"github.com/pfisterer/openstack-management-api/internal/webserver"
 	"go.uber.org/zap"
 )
 
-// reconcilerSupervisor keeps the reconciler's slot filled while the OpenStack
+// Supervisor keeps the reconciler's slot filled while the OpenStack
 // connection is being established, and hands the real one over once it is.
 //
 // It exists because the startup used to treat a network error as permanent: if
@@ -29,24 +27,22 @@ import (
 // The webserver holds this from the start, so /v1/config and the admin routes
 // can answer honestly ("connecting" rather than "disabled") instead of the API
 // having to be rewired once the connection succeeds.
-type reconcilerSupervisor struct {
+type Supervisor struct {
 	// inner is nil until the first successful connection. Read on every API
 	// request, written once by the retry loop.
-	inner atomic.Pointer[reconciler.Reconciler]
+	inner atomic.Pointer[Reconciler]
 
 	// Backoff bounds, overridable so tests do not have to wait out a real one.
 	// Zero means the package defaults.
 	minDelay, maxDelay time.Duration
 }
 
-var (
-	_ webserver.ReconcilerAPI = (*reconcilerSupervisor)(nil)
-	_ catalog.OpenStack       = (*reconcilerSupervisor)(nil)
-)
+// It answers the catalogue's questions to OpenStack, too.
+var _ catalog.OpenStack = (*Supervisor)(nil)
 
-func (s *reconcilerSupervisor) Ready() bool { return s.inner.Load() != nil }
+func (s *Supervisor) Ready() bool { return s.inner.Load() != nil }
 
-func (s *reconcilerSupervisor) Trigger() {
+func (s *Supervisor) Trigger() {
 	if rec := s.inner.Load(); rec != nil {
 		rec.Trigger()
 	}
@@ -54,23 +50,23 @@ func (s *reconcilerSupervisor) Trigger() {
 
 // GetStatus reports an empty status with an explanation while connecting, so a
 // caller can tell "not up yet" from "ran and found nothing".
-func (s *reconcilerSupervisor) GetStatus() reconciler.Status {
+func (s *Supervisor) GetStatus() Status {
 	if rec := s.inner.Load(); rec != nil {
 		return rec.GetStatus()
 	}
-	return reconciler.Status{LastError: "connecting to OpenStack — no run has completed yet"}
+	return Status{LastError: "connecting to OpenStack — no run has completed yet"}
 }
 
 // CheckGrantTarget and GrantedProjects let root admins ask the cloud about an
 // availability (package catalog); until connected there is nobody to ask.
-func (s *reconcilerSupervisor) CheckGrantTarget(g osclient.Grant) error {
+func (s *Supervisor) CheckGrantTarget(g osclient.Grant) error {
 	if rec := s.inner.Load(); rec != nil {
 		return rec.CheckGrantTarget(g)
 	}
 	return catalog.ErrUnavailable
 }
 
-func (s *reconcilerSupervisor) GrantedProjects(g osclient.Grant) ([]string, error) {
+func (s *Supervisor) GrantedProjects(g osclient.Grant) ([]string, error) {
 	if rec := s.inner.Load(); rec != nil {
 		return rec.GrantedProjects(g)
 	}
@@ -91,7 +87,7 @@ const (
 //
 // build is what needs a live connection — it is passed in so this file stays out
 // of the wiring details in RunApplication.
-func (s *reconcilerSupervisor) connectAndStart(ctx context.Context, build func() (*reconciler.Reconciler, error), log *zap.SugaredLogger) {
+func (s *Supervisor) ConnectAndStart(ctx context.Context, build func() (*Reconciler, error), log *zap.SugaredLogger) {
 	go func() {
 		if rec := s.connectWithRetry(ctx, build, log); rec != nil {
 			rec.Start(ctx) // blocks until ctx is done
@@ -104,7 +100,7 @@ func (s *reconcilerSupervisor) connectAndStart(ctx context.Context, build func()
 //
 // Kept separate from starting the reconciler so the retry behaviour can be
 // tested without a running reconciler behind it.
-func (s *reconcilerSupervisor) connectWithRetry(ctx context.Context, build func() (*reconciler.Reconciler, error), log *zap.SugaredLogger) *reconciler.Reconciler {
+func (s *Supervisor) connectWithRetry(ctx context.Context, build func() (*Reconciler, error), log *zap.SugaredLogger) *Reconciler {
 	minDelay := cmp.Or(s.minDelay, reconnectMinDelay)
 	maxDelay := cmp.Or(s.maxDelay, reconnectMaxDelay)
 

@@ -1,7 +1,6 @@
 package app
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -119,48 +118,6 @@ func configureAuthMiddleware(cfg *WebServerConfig, tokenLookup identity.TokenLoo
 		authMiddleware = identity.CombinedAuthMiddleware(oidcAuthVerifier, tokenLookup, userTokenResolver, log)
 	}
 	return authMiddleware, verifier, nil
-}
-
-// newOpenstackClient builds the OpenStack client for the configured
-// authentication method. Application credentials are the default; password auth
-// for a service user exists because an application credential is always
-// project-scoped and therefore cannot create projects on a cloud that enforces
-// the modern RBAC scope defaults.
-func newOpenstackClient(cfg OpenstackConfiguration, log *zap.Logger, logger *zap.SugaredLogger) (*osclient.OpenStackClient, error) {
-	switch cfg.AuthMethod() {
-	case OpenstackAuthAppCredential:
-		logger.Infow("OpenStack auth: application credential", "auth_url", cfg.AuthURL)
-		return osclient.NewOSAdminWithAppCredential(
-			cfg.AuthURL,
-			cfg.ApplicationCredentialID,
-			cfg.ApplicationCredentialSecret,
-			cfg.ProjectID,
-			cfg.Region,
-			cfg.Insecure,
-			log,
-			logger,
-		)
-
-	case OpenstackAuthPassword:
-		opts := osclient.PasswordAuthOpts{
-			Username:          cfg.Username,
-			Password:          cfg.Password,
-			UserDomainName:    cfg.UserDomainName,
-			SystemScope:       cfg.SystemScope,
-			DomainName:        cfg.DomainName,
-			ProjectID:         cfg.ProjectID,
-			ProjectName:       cfg.ProjectName,
-			ProjectDomainName: cfg.ProjectDomainName,
-		}
-		logger.Infow("OpenStack auth: password",
-			"auth_url", cfg.AuthURL, "user", cfg.Username,
-			"system_scope", cfg.SystemScope, "domain", cfg.DomainName,
-			"project", cmp.Or(cfg.ProjectName, cfg.ProjectID))
-		return osclient.NewOSAdminWithPassword(cfg.AuthURL, opts, cfg.Region, cfg.Insecure, log, logger)
-
-	default:
-		return nil, fmt.Errorf("no OpenStack credentials configured: set OS_APPLICATION_CREDENTIAL_ID/_SECRET or OS_USERNAME/OS_PASSWORD")
-	}
 }
 
 func RunApplication() {
@@ -293,10 +250,10 @@ func RunApplication() {
 
 		// Connecting to OpenStack is retried in the background rather than done
 		// once here: a cloud that is away for a minute must not disable
-		// provisioning until somebody restarts the pod. See reconcilerSupervisor.
-		supervisor := &reconcilerSupervisor{}
-		supervisor.connectAndStart(ctx, func() (*reconciler.Reconciler, error) {
-			osClient, osErr := newOpenstackClient(config.Openstack, log, logger)
+		// provisioning until somebody restarts the pod. See reconciler.Supervisor.
+		supervisor := &reconciler.Supervisor{}
+		supervisor.ConnectAndStart(ctx, func() (*reconciler.Reconciler, error) {
+			osClient, osErr := osclient.NewFromConfig(config.Openstack, log, logger)
 			if osErr != nil {
 				return nil, osErr
 			}
@@ -331,6 +288,7 @@ func RunApplication() {
 			}
 			return rec, nil
 		}, logger)
+		var _ webserver.ReconcilerAPI = supervisor
 		reconcilerAPI = supervisor
 		catalogAdmin.OpenStack = supervisor
 	} else {
@@ -381,21 +339,4 @@ func RunApplication() {
 	}
 
 	logger.Info("Application completed successfully")
-}
-
-// retirementConfig tells the UI what releasing a project leads to here.
-func retirementConfig(config AppConfiguration) webserver.RetirementConfig {
-	out := webserver.RetirementConfig{
-		ChargeReleased: config.ChargeReleased,
-		ChargeArchived: config.ChargeArchived,
-		Delete:         reconciler.ReleasedDeleteNever,
-	}
-	if config.Reconciler.Enabled {
-		out.Archive = config.Reconciler.ReleasedArchive
-		if config.Reconciler.ReleasedDelete != "" {
-			out.Delete = config.Reconciler.ReleasedDelete
-		}
-		out.DeleteGraceDays = config.Reconciler.ReleasedDeleteGraceDays
-	}
-	return out
 }

@@ -1,4 +1,4 @@
-package app
+package reconciler
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/reconciler"
 	"go.uber.org/zap"
 )
 
@@ -16,7 +15,7 @@ import (
 // appears in the UI at all, and a startup that gave up left it hidden for the
 // life of the pod.
 func TestReconcilerSupervisor_NotReadyBeforeConnected(t *testing.T) {
-	s := &reconcilerSupervisor{}
+	s := &Supervisor{}
 
 	if s.Ready() {
 		t.Error("Ready() = true before any connection")
@@ -36,14 +35,14 @@ func TestReconcilerSupervisor_RetriesUntilItConnects(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	s := &reconcilerSupervisor{minDelay: 5 * time.Millisecond, maxDelay: 20 * time.Millisecond}
-	go s.connectWithRetry(ctx, func() (*reconciler.Reconciler, error) {
+	s := &Supervisor{minDelay: 5 * time.Millisecond, maxDelay: 20 * time.Millisecond}
+	go s.connectWithRetry(ctx, func() (*Reconciler, error) {
 		if attempts.Add(1) < 3 {
 			return nil, errors.New("dial tcp: i/o timeout")
 		}
 		// Returning nil here would make Ready() lie; a real build returns a
 		// reconciler, so give it one. Start() on it is what blocks afterwards.
-		return &reconciler.Reconciler{}, nil
+		return &Reconciler{}, nil
 	}, zap.NewNop().Sugar())
 
 	deadline := time.After(5 * time.Second)
@@ -65,7 +64,7 @@ func TestReconcilerSupervisor_StopsOnContextCancel(t *testing.T) {
 	var attempts atomic.Int32
 	ctx, cancel := context.WithCancel(context.Background())
 
-	s := &reconcilerSupervisor{minDelay: 5 * time.Millisecond, maxDelay: 20 * time.Millisecond}
+	s := &Supervisor{minDelay: 5 * time.Millisecond, maxDelay: 20 * time.Millisecond}
 	// Wait for the loop to return rather than sampling the counter around
 	// cancel(): the backoff timer can fire in the same instant, so an attempt
 	// already inside build() gets counted after the cancel through no fault of
@@ -74,7 +73,7 @@ func TestReconcilerSupervisor_StopsOnContextCancel(t *testing.T) {
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
-		s.connectWithRetry(ctx, func() (*reconciler.Reconciler, error) {
+		s.connectWithRetry(ctx, func() (*Reconciler, error) {
 			attempts.Add(1)
 			return nil, errors.New("dial tcp: i/o timeout")
 		}, zap.NewNop().Sugar())

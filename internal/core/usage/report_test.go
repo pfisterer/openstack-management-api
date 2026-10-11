@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
 var testMapping = Mapping{Cores: "cores", RAM: "ram", Storage: "storage", RAMToGB: 1}
@@ -59,8 +59,8 @@ func TestBuildReport_SumsAndUtilisation(t *testing.T) {
 // A change of attributes within the period splits the project, so each part
 // is billed where it belonged on the day.
 func TestBuildReport_SplitsByAttributes(t *testing.T) {
-	a := tree.Attributes{"billing": {"cost_center": "1"}}
-	b := tree.Attributes{"billing": {"cost_center": "2"}}
+	a := model.Attributes{"billing": {"cost_center": "1"}}
+	b := model.Attributes{"billing": {"cost_center": "2"}}
 	rows := []Day{
 		{Day: day("2026-10-01"), NodeID: "p1", VCPUHours: 10, Attributes: a},
 		{Day: day("2026-10-02"), NodeID: "p1", VCPUHours: 10, Attributes: a},

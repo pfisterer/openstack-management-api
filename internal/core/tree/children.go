@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
@@ -71,10 +72,10 @@ const (
 // numericSort tells whether key orders by a number, and reads that number off
 // a node. Unlimited sorts above every amount; not measured below every one, so
 // a project nobody has looked at yet is not mistaken for an idle one.
-func numericSort(key string) (func(Node) float64, bool) {
+func numericSort(key string) (func(model.Node) float64, bool) {
 	switch {
 	case key == ChildSortServers:
-		return func(n Node) float64 {
+		return func(n model.Node) float64 {
 			if n.Servers == nil {
 				return -1
 			}
@@ -82,7 +83,7 @@ func numericSort(key string) (func(Node) float64, bool) {
 		}, true
 	case strings.HasPrefix(key, ChildSortReservedPrefix) && len(key) > len(ChildSortReservedPrefix):
 		id := strings.TrimPrefix(key, ChildSortReservedPrefix)
-		return func(n Node) float64 {
+		return func(n model.Node) float64 {
 			v := n.EffectiveLimit()[id]
 			if v == common.UnlimitedQuota {
 				return math.Inf(1)
@@ -91,7 +92,7 @@ func numericSort(key string) (func(Node) float64, bool) {
 		}, true
 	case strings.HasPrefix(key, ChildSortUsedPrefix) && len(key) > len(ChildSortUsedPrefix):
 		id := strings.TrimPrefix(key, ChildSortUsedPrefix)
-		return func(n Node) float64 {
+		return func(n model.Node) float64 {
 			v, ok := n.InUse[id]
 			if !ok {
 				return -1
@@ -109,9 +110,9 @@ func (f ChildFilter) needsMemory() bool {
 // Validate refuses values that would otherwise be silently ignored.
 func (f ChildFilter) Validate() error {
 	switch f.Kind {
-	case "", KindBudget, KindProject:
+	case "", model.KindBudget, model.KindProject:
 	default:
-		return fmt.Errorf("kind must be %q or %q", KindBudget, KindProject)
+		return fmt.Errorf("kind must be %q or %q", model.KindBudget, model.KindProject)
 	}
 	switch f.Sort {
 	case "", ChildSortName, ChildSortOwner, ChildSortStatus, ChildSortEnd, ChildSortCreated:
@@ -170,7 +171,7 @@ func (s *Service) ListChildren(parentID string, f ChildFilter, userTokens common
 	}
 
 	if f.Allocated || f.Deep {
-		parentMap, err := s.buildSubtreeParentMap(ctx, []Node{*parent})
+		parentMap, err := s.buildSubtreeParentMap(ctx, []model.Node{*parent})
 		if err != nil {
 			return NodePage{}, fmt.Errorf("walk subtree: %w", err)
 		}
@@ -178,19 +179,19 @@ func (s *Service) ListChildren(parentID string, f ChildFilter, userTokens common
 		for id := range parentMap {
 			q.ParentIDs = append(q.ParentIDs, id)
 		}
-		q.Kinds = []string{KindProject}
+		q.Kinds = []string{model.KindProject}
 	}
 	children, err := s.store.ListNodes(ctx, q, 0, 0)
 	if err != nil {
 		return NodePage{}, fmt.Errorf("load children: %w", err)
 	}
 	if f.Allocated {
-		children = slices.DeleteFunc(children, func(n Node) bool {
-			return !slices.ContainsFunc(n.Allocations, func(a Allocation) bool { return a.BudgetID == parentID })
+		children = slices.DeleteFunc(children, func(n model.Node) bool {
+			return !slices.ContainsFunc(n.Allocations, func(a model.Allocation) bool { return a.BudgetID == parentID })
 		})
 	}
 	if needle := strings.ToLower(strings.TrimSpace(f.Query)); needle != "" {
-		children = slices.DeleteFunc(children, func(n Node) bool { return !nodeMatches(n, needle) })
+		children = slices.DeleteFunc(children, func(n model.Node) bool { return !nodeMatches(n, needle) })
 	}
 	if f.Group != "" {
 		children, err = s.filterByGroup(ctx, children, common.CanonicalToken(f.Group), f.GroupMode)
@@ -207,9 +208,9 @@ func (s *Service) ListChildren(parentID string, f ChildFilter, userTokens common
 	return newNodePage(decorated, len(children), limit, offset), nil
 }
 
-func (s *Service) filterByGroup(ctx context.Context, nodes []Node, token, mode string) ([]Node, error) {
+func (s *Service) filterByGroup(ctx context.Context, nodes []model.Node, token, mode string) ([]model.Node, error) {
 	if mode != GroupOwner {
-		return slices.DeleteFunc(nodes, func(n Node) bool { return !grantsAccess(n, token) }), nil
+		return slices.DeleteFunc(nodes, func(n model.Node) bool { return !grantsAccess(n, token) }), nil
 	}
 
 	owners := map[string]bool{}
@@ -222,12 +223,12 @@ func (s *Service) filterByGroup(ctx context.Context, nodes []Node, token, mode s
 	if err != nil {
 		return nil, err
 	}
-	return slices.DeleteFunc(nodes, func(n Node) bool { return !holds[n.OwnerEmail()] }), nil
+	return slices.DeleteFunc(nodes, func(n model.Node) bool { return !holds[n.OwnerEmail()] }), nil
 }
 
 // grantsAccess reports whether the token is named on the node: as its owner,
 // an admin, or a member.
-func grantsAccess(n Node, token string) bool {
+func grantsAccess(n model.Node, token string) bool {
 	if n.Owner == token || slices.Contains(n.AdminScope, token) {
 		return true
 	}
@@ -327,12 +328,12 @@ func (c *tokenCache) get(ctx context.Context, roles roles.Provider, email string
 
 // sortChildren orders by the key, ties broken by id so a page boundary never
 // moves between two requests.
-func sortChildren(nodes []Node, key string, desc bool) {
+func sortChildren(nodes []model.Node, key string, desc bool) {
 	if key == "" {
 		return
 	}
 	if num, ok := numericSort(key); ok {
-		slices.SortStableFunc(nodes, func(a, b Node) int {
+		slices.SortStableFunc(nodes, func(a, b model.Node) int {
 			c := cmp.Compare(num(a), num(b))
 			if desc {
 				c = -c
@@ -344,7 +345,7 @@ func sortChildren(nodes []Node, key string, desc bool) {
 		})
 		return
 	}
-	value := func(n Node) string {
+	value := func(n model.Node) string {
 		switch key {
 		case ChildSortName:
 			return strings.ToLower(cmp.Or(n.Name, n.Reason))
@@ -362,7 +363,7 @@ func sortChildren(nodes []Node, key string, desc bool) {
 		}
 		return ""
 	}
-	slices.SortStableFunc(nodes, func(a, b Node) int {
+	slices.SortStableFunc(nodes, func(a, b model.Node) int {
 		c := strings.Compare(value(a), value(b))
 		if desc {
 			c = -c

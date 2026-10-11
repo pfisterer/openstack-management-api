@@ -7,11 +7,12 @@ import (
 	"slices"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
 // buildSubtreeParentMap performs a BFS over BUDGET nodes from the given roots,
 // building a map of every subtree budget ID → its parent ID (roots included).
-func (s *Service) buildSubtreeParentMap(ctx context.Context, roots []Node) (map[string]*string, error) {
+func (s *Service) buildSubtreeParentMap(ctx context.Context, roots []model.Node) (map[string]*string, error) {
 	parentMap := make(map[string]*string, len(roots))
 	queue := make([]string, 0, len(roots))
 	for _, n := range roots {
@@ -23,7 +24,7 @@ func (s *Service) buildSubtreeParentMap(ctx context.Context, roots []Node) (map[
 	}
 
 	for len(queue) > 0 {
-		children, err := s.store.ListNodes(ctx, NodeQuery{ParentIDs: queue, Kinds: []string{KindBudget}}, 0, 0)
+		children, err := s.store.ListNodes(ctx, NodeQuery{ParentIDs: queue, Kinds: []string{model.KindBudget}}, 0, 0)
 		if err != nil {
 			return nil, fmt.Errorf("load child budgets: %w", err)
 		}
@@ -45,9 +46,9 @@ func (s *Service) buildSubtreeParentMap(ctx context.Context, roots []Node) (map[
 // Three phases: (1) BFS discovers the budget subtree, (2) one batched load fetches
 // all active leaves across the subtree, (3) each leaf's limit is attributed upward
 // from its parent through every tracked ancestor.
-func (s *Service) loadSubtreeUsage(ctx context.Context, roots []Node) (UsagePerNode, error) {
+func (s *Service) loadSubtreeUsage(ctx context.Context, roots []model.Node) (model.UsagePerNode, error) {
 	if len(roots) == 0 {
-		return make(UsagePerNode), nil
+		return make(model.UsagePerNode), nil
 	}
 
 	parentMap, err := s.buildSubtreeParentMap(ctx, roots)
@@ -61,7 +62,7 @@ func (s *Service) loadSubtreeUsage(ctx context.Context, roots []Node) (UsagePerN
 	}
 	leaves, err := s.store.ListNodes(ctx, NodeQuery{
 		ParentIDs: budgetIDs,
-		Kinds:     []string{KindProject},
+		Kinds:     []string{model.KindProject},
 		Statuses:  s.chargedStatuses(),
 	}, 0, 0)
 	if err != nil {
@@ -74,9 +75,9 @@ func (s *Service) loadSubtreeUsage(ctx context.Context, roots []Node) (UsagePerN
 // loadSubtreeUsageAndAllocations is loadSubtreeUsage plus, per budget, what it
 // has allocated to projects further down (see Node.AllocatedOut) — from the
 // same leaves, so the two cannot disagree.
-func (s *Service) loadSubtreeUsageAndAllocations(ctx context.Context, roots []Node) (UsagePerNode, map[string]AllocatedOut, error) {
+func (s *Service) loadSubtreeUsageAndAllocations(ctx context.Context, roots []model.Node) (model.UsagePerNode, map[string]model.AllocatedOut, error) {
 	if len(roots) == 0 {
-		return make(UsagePerNode), nil, nil
+		return make(model.UsagePerNode), nil, nil
 	}
 	parentMap, err := s.buildSubtreeParentMap(ctx, roots)
 	if err != nil {
@@ -88,7 +89,7 @@ func (s *Service) loadSubtreeUsageAndAllocations(ctx context.Context, roots []No
 	}
 	leaves, err := s.store.ListNodes(ctx, NodeQuery{
 		ParentIDs: budgetIDs,
-		Kinds:     []string{KindProject},
+		Kinds:     []string{model.KindProject},
 		Statuses:  s.chargedStatuses(),
 	}, 0, 0)
 	if err != nil {
@@ -98,7 +99,7 @@ func (s *Service) loadSubtreeUsageAndAllocations(ctx context.Context, roots []No
 	for _, r := range roots {
 		wanted[r.ID] = true
 	}
-	allocated := map[string]AllocatedOut{}
+	allocated := map[string]model.AllocatedOut{}
 	for _, leaf := range leaves {
 		if _, held := s.leafCost(leaf); !held {
 			continue
@@ -128,16 +129,16 @@ func (s *Service) loadSubtreeUsageAndAllocations(ctx context.Context, roots []No
 // its entire subtree — not just its direct children. A leaf's allocations from
 // budgets further up are attributed from THEIR budget upwards: the budgets in
 // between never held them, so they never carry them either.
-func buildRolledUpUsage(leaves []Node, parentMap map[string]*string, resourceIDs []string, cost leafCostFunc) UsagePerNode {
-	result := make(UsagePerNode)
-	charge := func(leaf Node, from string, amount common.ProjectQuota) {
+func buildRolledUpUsage(leaves []model.Node, parentMap map[string]*string, resourceIDs []string, cost leafCostFunc) model.UsagePerNode {
+	result := make(model.UsagePerNode)
+	charge := func(leaf model.Node, from string, amount common.ProjectQuota) {
 		current := from
 		for {
 			if _, tracked := parentMap[current]; !tracked {
 				return // outside the tracked subtree — stop climbing
 			}
 			if result[current] == nil {
-				result[current] = make(UsageByStatus)
+				result[current] = make(model.UsageByStatus)
 			}
 			entry := result[current][leaf.Status]
 			entry.Limit = quotaAdd(entry.Limit, amount, resourceIDs)
@@ -175,7 +176,7 @@ func buildRolledUpUsage(leaves []Node, parentMap map[string]*string, resourceIDs
 func (s *Service) ownerActiveUsage(ctx context.Context, budgetID string, ownerToken string) (common.ProjectQuota, error) {
 	leaves, err := s.store.ListNodes(ctx, NodeQuery{
 		ParentIDs: []string{budgetID},
-		Kinds:     []string{KindProject},
+		Kinds:     []string{model.KindProject},
 		Statuses:  s.chargedStatuses(),
 		Owner:     ownerToken,
 	}, 0, 0)
@@ -198,24 +199,24 @@ func (s *Service) ownerActiveUsage(ctx context.Context, budgetID string, ownerTo
 // billed in one view and moves for free in another. What a leaf in one of them
 // costs is leafCost's answer.
 func (s *Service) chargedStatuses() []string {
-	statuses := slices.Clone(ActiveStatuses)
+	statuses := slices.Clone(model.ActiveStatuses)
 	if s.accounting.ChargeReleased {
-		statuses = append(statuses, StatusReleased)
+		statuses = append(statuses, model.StatusReleased)
 	}
 	if s.accounting.ChargeArchived {
-		statuses = append(statuses, StatusArchived)
+		statuses = append(statuses, model.StatusArchived)
 	}
 	return statuses
 }
 
 // leafCostFunc says what one leaf costs its own budget, and whether its
 // allocations are charged to theirs as well.
-type leafCostFunc func(leaf Node) (own common.ProjectQuota, withAllocations bool)
+type leafCostFunc func(leaf model.Node) (own common.ProjectQuota, withAllocations bool)
 
 // leafCost is the deployment's leafCostFunc: an archived leaf costs the storage
 // it still holds, everything else costs its chargedQuota plus its allocations.
-func (s *Service) leafCost(leaf Node) (common.ProjectQuota, bool) {
-	if leaf.Status == StatusArchived {
+func (s *Service) leafCost(leaf model.Node) (common.ProjectQuota, bool) {
+	if leaf.Status == model.StatusArchived {
 		return archivedQuota(leaf, s.storageIDs), false
 	}
 	return chargedQuota(leaf, s.countIDs, s.accounting.ChargeInUse), true
@@ -224,7 +225,7 @@ func (s *Service) leafCost(leaf Node) (common.ProjectQuota, bool) {
 // archivedQuota is the storage an archived leaf still holds: what OpenStack
 // measured, or its own limit where nothing was measured. The rest — servers
 // shelved, floating IPs released, quotas frozen — holds nothing any more.
-func archivedQuota(leaf Node, storageIDs []string) common.ProjectQuota {
+func archivedQuota(leaf model.Node, storageIDs []string) common.ProjectQuota {
 	out := common.ProjectQuota{}
 	for _, id := range storageIDs {
 		if inUse, measured := leaf.InUse[id]; measured {
@@ -260,7 +261,7 @@ func archivedQuota(leaf Node, storageIDs []string) common.ProjectQuota {
 // The result must be computed PER LEAF and only then summed: max() does not
 // distribute over addition, so applying it to an already-aggregated total
 // gives a different (and wrong) answer.
-func chargedQuota(leaf Node, resourceIDs []string, chargeInUse bool) common.ProjectQuota {
+func chargedQuota(leaf model.Node, resourceIDs []string, chargeInUse bool) common.ProjectQuota {
 	if !chargeInUse {
 		return leaf.Limit
 	}

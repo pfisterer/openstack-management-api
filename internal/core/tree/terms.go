@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"slices"
 	"time"
+
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
 // endsNoLater reports whether the RFC 3339 date next is not after bound; a nil
@@ -28,7 +30,7 @@ func endsNoLater(next string, bound *string) bool {
 // chainEnd is the earliest end date along a chain of budgets — the date no node
 // below them may outlive. Nil when none of them ends. Unparseable dates bound
 // nothing; the budget form never writes one.
-func chainEnd(chain []Node) *string {
+func chainEnd(chain []model.Node) *string {
 	var earliest *string
 	var earliestAt time.Time
 	for _, n := range chain {
@@ -65,7 +67,7 @@ func fitEnd(end, bound *string) (*string, error) {
 
 // chainMaxTerm is the shortest maximum project term along a chain of budgets —
 // the one every project below them obeys. Nil when none of them sets one.
-func chainMaxTerm(chain []Node) *int {
+func chainMaxTerm(chain []model.Node) *int {
 	var shortest *int
 	for _, n := range chain {
 		if n.MaxProjectTermDays != nil && (shortest == nil || *n.MaxProjectTermDays < *shortest) {
@@ -88,7 +90,7 @@ func termEnd(now time.Time, days int) string {
 // projectBound is the latest end a project below the chain may have at now:
 // the earliest budget end, or the end of the shortest term, whichever comes
 // first. term reports which of the two it is, for the message that names it.
-func projectBound(chain []Node, now time.Time) (bound *string, term *int) {
+func projectBound(chain []model.Node, now time.Time) (bound *string, term *int) {
 	end := chainEnd(chain)
 	days := chainMaxTerm(chain)
 	if days == nil {
@@ -103,7 +105,7 @@ func projectBound(chain []Node, now time.Time) (bound *string, term *int) {
 
 // fitProjectEnd is fitEnd for a project, which also obeys the maximum term of
 // the budgets above: no end asked means the bound, a later one is refused.
-func fitProjectEnd(end *string, chain []Node, now time.Time) (*string, error) {
+func fitProjectEnd(end *string, chain []model.Node, now time.Time) (*string, error) {
 	bound, term := projectBound(chain, now)
 	if term == nil {
 		return fitEnd(end, bound)
@@ -149,7 +151,7 @@ func dateOnly(ts string) string {
 // it, pending requests and proposals included. Each node is changed on its
 // current stored state (the reconciler writes too) and says why in its history.
 // Returns how many nodes it changed. Callers hold approvalMu.
-func (s *Service) shortenSubtreeEnds(ctx context.Context, parentIDs []string, end string, actor Actor, reason string) (int, error) {
+func (s *Service) shortenSubtreeEnds(ctx context.Context, parentIDs []string, end string, actor model.Actor, reason string) (int, error) {
 	changed := 0
 	for len(parentIDs) > 0 {
 		children, err := s.store.ListNodes(ctx, NodeQuery{ParentIDs: parentIDs}, 0, 0)
@@ -158,13 +160,13 @@ func (s *Service) shortenSubtreeEnds(ctx context.Context, parentIDs []string, en
 		}
 		parentIDs = nil
 		for _, child := range children {
-			if IsTerminalStatus(child.Status) || child.Status == StatusImported {
+			if model.IsTerminalStatus(child.Status) || child.Status == model.StatusImported {
 				continue
 			}
-			if child.Kind == KindBudget {
+			if child.Kind == model.KindBudget {
 				parentIDs = append(parentIDs, child.ID)
 			}
-			wrote, err := s.store.UpdateNode(ctx, child.ID, func(n *Node) error {
+			wrote, err := s.store.UpdateNode(ctx, child.ID, func(n *model.Node) error {
 				return shortenEnd(n, end, actor, reason)
 			})
 			if err != nil {
@@ -183,7 +185,7 @@ func (s *Service) shortenSubtreeEnds(ctx context.Context, parentIDs []string, en
 // that ends later than the term allows from now — or never — is shortened to
 // it, waiting requests and proposals included. Returns how many nodes it
 // changed. Callers hold approvalMu.
-func (s *Service) shortenSubtreeTerms(ctx context.Context, parentIDs []string, days int, now time.Time, actor Actor, reason string) (int, error) {
+func (s *Service) shortenSubtreeTerms(ctx context.Context, parentIDs []string, days int, now time.Time, actor model.Actor, reason string) (int, error) {
 	end := termEnd(now, days)
 	changed := 0
 	for len(parentIDs) > 0 {
@@ -193,13 +195,13 @@ func (s *Service) shortenSubtreeTerms(ctx context.Context, parentIDs []string, d
 		}
 		parentIDs = nil
 		for _, child := range children {
-			if IsTerminalStatus(child.Status) || child.Status == StatusImported {
+			if model.IsTerminalStatus(child.Status) || child.Status == model.StatusImported {
 				continue
 			}
-			mutate := func(n *Node) error { return shortenEnd(n, end, actor, reason) }
-			if child.Kind == KindBudget {
+			mutate := func(n *model.Node) error { return shortenEnd(n, end, actor, reason) }
+			if child.Kind == model.KindBudget {
 				parentIDs = append(parentIDs, child.ID)
-				mutate = func(n *Node) error { return shortenTerm(n, days, actor, reason) }
+				mutate = func(n *model.Node) error { return shortenTerm(n, days, actor, reason) }
 			}
 			wrote, err := s.store.UpdateNode(ctx, child.ID, mutate)
 			if err != nil {
@@ -215,12 +217,12 @@ func (s *Service) shortenSubtreeTerms(ctx context.Context, parentIDs []string, d
 
 // shortenTerm lowers a budget's maximum project term to days where it allows
 // longer or sets none. ErrSkipUpdate when it is already as short.
-func shortenTerm(n *Node, days int, actor Actor, reason string) error {
+func shortenTerm(n *model.Node, days int, actor model.Actor, reason string) error {
 	if n.MaxProjectTermDays != nil && *n.MaxProjectTermDays <= days {
 		return ErrSkipUpdate
 	}
 	n.MaxProjectTermDays = &days
-	entry := newHistoryEntry("term_shortened", actor, n.Status)
+	entry := model.NewHistoryEntry("term_shortened", actor, n.Status)
 	entry.Reason = &reason
 	n.History = append(slices.Clone(n.History), entry)
 	return nil
@@ -228,14 +230,14 @@ func shortenTerm(n *Node, days int, actor Actor, reason string) error {
 
 // shortenEnd moves n's end date — and that of a proposal waiting on it — to end
 // where it runs longer or has none. ErrSkipUpdate when nothing runs longer.
-func shortenEnd(n *Node, end string, actor Actor, reason string) error {
+func shortenEnd(n *model.Node, end string, actor model.Actor, reason string) error {
 	longer := func(d *string) bool { return d == nil || !endsNoLater(*d, &end) }
 	cutProposal := n.Pending != nil && n.Pending.TerminationDate != nil && longer(n.Pending.TerminationDate)
 	cutNode := longer(n.TerminationDate)
 	if !cutNode && !cutProposal {
 		return ErrSkipUpdate
 	}
-	entry := newHistoryEntry("end_shortened", actor, n.Status)
+	entry := model.NewHistoryEntry("end_shortened", actor, n.Status)
 	entry.Reason = &reason
 	if cutNode {
 		entry.TerminationDateFrom = n.TerminationDate
@@ -257,12 +259,12 @@ func shortenEnd(n *Node, end string, actor Actor, reason string) error {
 
 // endsWithReason is the history note on a node whose end date followed the
 // budget it draws from.
-func endsWithReason(budget Node) string {
+func endsWithReason(budget model.Node) string {
 	return fmt.Sprintf("Ends with budget %q", nodeLabel(budget))
 }
 
 // termReason is the history note on a node shortened to the maximum project
 // term of a budget above it.
-func termReason(budget Node, days int) string {
+func termReason(budget model.Node, days int) string {
 	return fmt.Sprintf("Projects in budget %q run at most %d days at a time", nodeLabel(budget), days)
 }

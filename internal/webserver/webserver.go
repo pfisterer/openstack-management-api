@@ -2,11 +2,13 @@ package webserver
 
 import (
 	"fmt"
-	"github.com/pfisterer/openstack-management-api/internal/core/roles"
-	"github.com/pfisterer/openstack-management-api/internal/identity"
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/roles"
+	"github.com/pfisterer/openstack-management-api/internal/identity"
 
 	"github.com/gin-contrib/cors"
 	ginzap "github.com/gin-contrib/zap"
@@ -103,7 +105,7 @@ type IdentityAPI interface {
 // It is implemented by tree.Service.
 type APIService interface {
 	// Node reads / views
-	GetNode(id string, userTokens common.TokenList) (*tree.Node, error)
+	GetNode(id string, userTokens common.TokenList) (*model.Node, error)
 	ListChildren(parentID string, filter tree.ChildFilter, userTokens common.TokenList, limit, offset int) (tree.NodePage, error)
 	ListMine(userEmail string, userTokens common.TokenList, limit, offset int) (tree.NodePage, error)
 	ListMyBudgets(userTokens common.TokenList, limit, offset int) (tree.NodePage, error)
@@ -113,23 +115,23 @@ type APIService interface {
 	SearchNodes(userTokens common.TokenList, query string, limit, offset int) (tree.NodePage, error)
 
 	// Node lifecycle
-	CreateNode(req tree.CreateNodeRequest, actor tree.Actor, userEmail string, userTokens common.TokenList) (tree.Node, error)
-	UpdateNode(id string, req tree.UpdateNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
-	RequestChange(id string, req tree.ChangeNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
-	ApproveNode(id string, req tree.ApproveNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
-	RejectNode(id string, req tree.RejectNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
-	ReleaseNode(id string, req tree.ReleaseNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
-	RequestDeletion(id string, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
-	ReparentNode(id string, req tree.ReparentNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
-	TransferOwner(id string, req tree.TransferOwnerRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
-	SetAllocation(id string, req tree.AllocationRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
-	SetAttributes(id string, req tree.SetAttributesRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
-	RemoveExternalGroup(id, groupID string, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
-	AllocationSources(id string, userTokens common.TokenList) ([]tree.Node, error)
-	UsageScope(id string, userTokens common.TokenList) (*tree.Node, error)
-	AttributesVisible(n *tree.Node, userTokens common.TokenList) (bool, error)
-	PromoteNode(id string, req tree.PromoteNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
-	DeleteNode(id string, actor tree.Actor, userTokens common.TokenList) error
+	CreateNode(req tree.CreateNodeRequest, actor model.Actor, userEmail string, userTokens common.TokenList) (model.Node, error)
+	UpdateNode(id string, req tree.UpdateNodeRequest, actor model.Actor, userTokens common.TokenList) (model.Node, error)
+	RequestChange(id string, req tree.ChangeNodeRequest, actor model.Actor, userTokens common.TokenList) (model.Node, error)
+	ApproveNode(id string, req tree.ApproveNodeRequest, actor model.Actor, userTokens common.TokenList) (model.Node, error)
+	RejectNode(id string, req tree.RejectNodeRequest, actor model.Actor, userTokens common.TokenList) (model.Node, error)
+	ReleaseNode(id string, req tree.ReleaseNodeRequest, actor model.Actor, userTokens common.TokenList) (model.Node, error)
+	RequestDeletion(id string, actor model.Actor, userTokens common.TokenList) (model.Node, error)
+	ReparentNode(id string, req tree.ReparentNodeRequest, actor model.Actor, userTokens common.TokenList) (model.Node, error)
+	TransferOwner(id string, req tree.TransferOwnerRequest, actor model.Actor, userTokens common.TokenList) (model.Node, error)
+	SetAllocation(id string, req tree.AllocationRequest, actor model.Actor, userTokens common.TokenList) (model.Node, error)
+	SetAttributes(id string, req tree.SetAttributesRequest, actor model.Actor, userTokens common.TokenList) (model.Node, error)
+	RemoveExternalGroup(id, groupID string, actor model.Actor, userTokens common.TokenList) (model.Node, error)
+	AllocationSources(id string, userTokens common.TokenList) ([]model.Node, error)
+	UsageScope(id string, userTokens common.TokenList) (*model.Node, error)
+	AttributesVisible(n *model.Node, userTokens common.TokenList) (bool, error)
+	PromoteNode(id string, req tree.PromoteNodeRequest, actor model.Actor, userTokens common.TokenList) (model.Node, error)
+	DeleteNode(id string, actor model.Actor, userTokens common.TokenList) error
 }
 
 // APIConfig configures API route registration.

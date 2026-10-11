@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
 // What the tree does when root admins add, withdraw or remove an availability
@@ -39,7 +40,7 @@ func (s *Service) Holders(ctx context.Context, id string) ([]Holder, error) {
 	}
 	out := []Holder{}
 	for _, n := range nodes {
-		if n.ID == RootNodeID {
+		if n.ID == model.RootNodeID {
 			continue
 		}
 		h := Holder{NodeID: n.ID, Name: nodeLabel(n), Kind: n.Kind, Status: n.Status}
@@ -98,7 +99,7 @@ func (s *Service) ForgetResource(ctx context.Context, id string) (int, error) {
 func (s *Service) AdoptAvailability(ctx context.Context, id string) error {
 	s.approvalMu.Lock()
 	defer s.approvalMu.Unlock()
-	_, err := s.store.UpdateNode(ctx, RootNodeID, func(n *Node) error {
+	_, err := s.store.UpdateNode(ctx, model.RootNodeID, func(n *model.Node) error {
 		if n.Limit[id] == 1 {
 			return ErrSkipUpdate
 		}
@@ -124,7 +125,7 @@ func (s *Service) rewriteAll(ctx context.Context, edit func(common.ProjectQuota)
 	}
 	changed := 0
 	for _, listed := range nodes {
-		wrote, err := s.store.UpdateNode(ctx, listed.ID, func(n *Node) error {
+		wrote, err := s.store.UpdateNode(ctx, listed.ID, func(n *model.Node) error {
 			touched := false
 			if n.Limit != nil && edit(n.Limit) {
 				touched = true
@@ -177,7 +178,7 @@ func grantsNothing(q common.ProjectQuota) bool {
 // ProjectsByExternalID maps the external (OpenStack) project ID of every project that has one
 // to the project, so a grant found in OpenStack can be named.
 func (s *Service) ProjectsByExternalID(ctx context.Context) (map[string]Holder, error) {
-	nodes, err := s.store.ListNodes(ctx, NodeQuery{Kinds: []string{KindProject}}, 0, 0)
+	nodes, err := s.store.ListNodes(ctx, NodeQuery{Kinds: []string{model.KindProject}}, 0, 0)
 	if err != nil {
 		return nil, fmt.Errorf("list projects: %w", err)
 	}

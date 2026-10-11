@@ -3,7 +3,6 @@ package webserver_test
 import (
 	"context"
 	"encoding/json"
-	"github.com/pfisterer/openstack-management-api/internal/identity"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -11,8 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pfisterer/openstack-management-api/internal/identity"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"github.com/pfisterer/openstack-management-api/internal/dev"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
@@ -343,7 +345,7 @@ func TestMCP_ToolsDeclareTheirRequiredArguments(t *testing.T) {
 // tool has to land in the history marked as such, while the same change from
 // the UI does not.
 //
-// Worth going through the real endpoint rather than testing tree.Actor alone:
+// Worth going through the real endpoint rather than testing model.Actor alone:
 // the mechanism is one line in the tree package, but WHICH actor the MCP path
 // builds is decided here, in serviceActor, and that is the part a future tool
 // could get wrong.
@@ -399,9 +401,9 @@ func TestMCP_ChangesAreRecordedAsComingFromAnAgent(t *testing.T) {
 		t.Fatal("the new project has no history")
 	}
 	entry := node.History[0]
-	if entry.Via != tree.ChannelMCP {
+	if entry.Via != model.ChannelMCP {
 		t.Errorf("history says via=%q, want %q — an agent's change is indistinguishable from a person's",
-			entry.Via, tree.ChannelMCP)
+			entry.Via, model.ChannelMCP)
 	}
 	if entry.Actor == "" {
 		t.Error("history has no actor")
@@ -436,7 +438,7 @@ func TestMCP_SetProjectAdmins(t *testing.T) {
 		t.Fatalf("no budget to test with: %v", err)
 	}
 	budgetID := list.Projects[0].ID
-	if list.Projects[0].Kind != tree.KindBudget {
+	if list.Projects[0].Kind != model.KindBudget {
 		t.Errorf("kind = %q, want budget", list.Projects[0].Kind)
 	}
 	if res := call("set_project_admins", map[string]any{"id": budgetID, "admins": []string{"user:x@y"}}); !res.IsError {

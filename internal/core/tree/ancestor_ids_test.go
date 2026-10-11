@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 )
 
@@ -28,17 +29,17 @@ func TestListMyBudgets_AncestorsSpanUnmanagedLevels(t *testing.T) {
 
 	// root ─ Mannheim (someone else's) ─ WI-Budget (also mine)
 	mannheim, err := svc.CreateNode(tree.CreateNodeRequest{
-		Kind: tree.KindBudget, ParentID: tree.RootNodeID, Name: "Mannheim",
+		Kind: model.KindBudget, ParentID: model.RootNodeID, Name: "Mannheim",
 		Reason: "faculty", Limit: cores(64), AdminScope: other,
-	}, tree.UIActor("root@dhbw.de"), "root@dhbw.de", admin)
+	}, model.UIActor("root@dhbw.de"), "root@dhbw.de", admin)
 	if err != nil {
 		t.Fatalf("create Mannheim: %v", err)
 	}
 
 	wi, err := svc.CreateNode(tree.CreateNodeRequest{
-		Kind: tree.KindBudget, ParentID: mannheim.ID, Name: "WI-Budget",
+		Kind: model.KindBudget, ParentID: mannheim.ID, Name: "WI-Budget",
 		Reason: "course", Limit: cores(16), AdminScope: mine,
-	}, tree.UIActor("root@dhbw.de"), "root@dhbw.de", admin)
+	}, model.UIActor("root@dhbw.de"), "root@dhbw.de", admin)
 	if err != nil {
 		t.Fatalf("create WI-Budget: %v", err)
 	}
@@ -48,20 +49,20 @@ func TestListMyBudgets_AncestorsSpanUnmanagedLevels(t *testing.T) {
 		t.Fatalf("list my budgets: %v", err)
 	}
 
-	byID := map[string]tree.Node{}
+	byID := map[string]model.Node{}
 	for _, n := range page.Items {
 		byID[n.ID] = n
 	}
 
 	// The root itself is managed and has nowhere to sit above it.
-	if got := byID[tree.RootNodeID].AncestorIDs; len(got) != 0 {
+	if got := byID[model.RootNodeID].AncestorIDs; len(got) != 0 {
 		t.Fatalf("root ancestors = %v, want none", got)
 	}
 
 	// The whole point: WI-Budget's PARENT is not in the caller's list, but its
 	// grandparent is — and only the chain says so.
 	got := byID[wi.ID].AncestorIDs
-	want := []string{tree.RootNodeID, mannheim.ID}
+	want := []string{model.RootNodeID, mannheim.ID}
 	if len(got) != len(want) {
 		t.Fatalf("WI-Budget ancestors = %v, want %v", got, want)
 	}
@@ -90,8 +91,8 @@ func TestListMyBudgets_AncestorsSpanUnmanagedLevels(t *testing.T) {
 			roots = append(roots, n.ID)
 		}
 	}
-	if len(roots) != 1 || roots[0] != tree.RootNodeID {
-		t.Fatalf("top-most managed budgets = %v, want [%s]", roots, tree.RootNodeID)
+	if len(roots) != 1 || roots[0] != model.RootNodeID {
+		t.Fatalf("top-most managed budgets = %v, want [%s]", roots, model.RootNodeID)
 	}
 }
 
@@ -103,9 +104,9 @@ func TestListMyBudgets_ReturnsOnlyManagedNodes(t *testing.T) {
 	svc, _ := newSvc(t, admin)
 
 	mannheim, err := svc.CreateNode(tree.CreateNodeRequest{
-		Kind: tree.KindBudget, ParentID: tree.RootNodeID, Name: "Mannheim",
+		Kind: model.KindBudget, ParentID: model.RootNodeID, Name: "Mannheim",
 		Reason: "faculty", Limit: cores(64), AdminScope: common.TokenList{"user:clemens@dhbw.de"},
-	}, tree.UIActor("root@dhbw.de"), "root@dhbw.de", admin)
+	}, model.UIActor("root@dhbw.de"), "root@dhbw.de", admin)
 	if err != nil {
 		t.Fatalf("create Mannheim: %v", err)
 	}
@@ -119,7 +120,7 @@ func TestListMyBudgets_ReturnsOnlyManagedNodes(t *testing.T) {
 	}
 	// Its own ancestor is the root, which this caller does NOT manage — so it is
 	// top-most for them, and drawn once.
-	if got := page.Items[0].AncestorIDs; len(got) != 1 || got[0] != tree.RootNodeID {
-		t.Fatalf("ancestors = %v, want [%s]", got, tree.RootNodeID)
+	if got := page.Items[0].AncestorIDs; len(got) != 1 || got[0] != model.RootNodeID {
+		t.Fatalf("ancestors = %v, want [%s]", got, model.RootNodeID)
 	}
 }

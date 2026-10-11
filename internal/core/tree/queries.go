@@ -7,12 +7,13 @@ import (
 	"strings"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
 // GetNode fetches a single node, enforcing read authorization: the leaf owner, an
 // authorized user, a manager of the node or its ancestors, or an eligible
 // requester of the budget may read it. Returns (nil, nil) when not found.
-func (s *Service) GetNode(id string, userTokens common.TokenList) (*Node, error) {
+func (s *Service) GetNode(id string, userTokens common.TokenList) (*model.Node, error) {
 	if len(userTokens) == 0 {
 		return nil, common.ErrForbidden
 	}
@@ -41,7 +42,7 @@ func (s *Service) GetNode(id string, userTokens common.TokenList) (*Node, error)
 		return nil, common.ErrForbidden
 	}
 
-	withUsage, err := s.attachUsage(ctx, []Node{*node}, userTokens)
+	withUsage, err := s.attachUsage(ctx, []model.Node{*node}, userTokens)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +64,7 @@ func (s *Service) ListMine(userEmail string, userTokens common.TokenList, limit,
 		return NodePage{}, err
 	}
 	return s.listPage(ctx, NodeQuery{
-		Kinds:       []string{KindProject},
+		Kinds:       []string{model.KindProject},
 		Responsible: &ResponsibleQuery{Owner: owner, AdminAny: userTokens},
 	}, limit, offset, append(slices.Clone(userTokens), owner))
 }
@@ -100,7 +101,7 @@ func (s *Service) ListMyBudgets(userTokens common.TokenList, limit, offset int) 
 	defer cancel()
 
 	page, err := s.listPage(ctx, NodeQuery{
-		Kinds:         []string{KindBudget},
+		Kinds:         []string{model.KindBudget},
 		AdminScopeAny: userTokens,
 	}, limit, offset, userTokens)
 	if err != nil {
@@ -129,8 +130,8 @@ func (s *Service) ListEligibleForMe(userTokens common.TokenList, limit, offset i
 	defer cancel()
 
 	return s.listPage(ctx, NodeQuery{
-		Kinds:       []string{KindBudget},
-		Statuses:    []string{StatusApproved},
+		Kinds:       []string{model.KindBudget},
+		Statuses:    []string{model.StatusApproved},
 		EligibleAny: userTokens,
 	}, limit, offset, userTokens)
 }
@@ -166,7 +167,7 @@ func (s *Service) ListToManage(userTokens common.TokenList, includeSubtree bool,
 	defer cancel()
 
 	administered, err := s.store.ListNodes(ctx, NodeQuery{
-		Kinds:         []string{KindBudget},
+		Kinds:         []string{model.KindBudget},
 		AdminScopeAny: userTokens,
 	}, 0, 0)
 	if err != nil {
@@ -195,7 +196,7 @@ func (s *Service) ListToManage(userTokens common.TokenList, includeSubtree bool,
 
 	query := NodeQuery{
 		ParentIDs: parentIDs,
-		Statuses:  []string{StatusPending, StatusChangePending, StatusImported},
+		Statuses:  []string{model.StatusPending, model.StatusChangePending, model.StatusImported},
 	}
 	waiting, err := s.store.ListNodes(ctx, query, limit, offset)
 	if err != nil {
@@ -237,7 +238,7 @@ func (s *Service) SearchNodes(userTokens common.TokenList, query string, limit, 
 	defer cancel()
 
 	administered, err := s.store.ListNodes(ctx, NodeQuery{
-		Kinds:         []string{KindBudget},
+		Kinds:         []string{model.KindBudget},
 		AdminScopeAny: userTokens,
 	}, 0, 0)
 	if err != nil {
@@ -275,13 +276,13 @@ func (s *Service) SearchNodes(userTokens common.TokenList, query string, limit, 
 		}
 	}
 
-	matches := make([]Node, 0, 16)
+	matches := make([]model.Node, 0, 16)
 	for _, n := range candidates {
 		if nodeMatches(n, needle) {
 			matches = append(matches, n)
 		}
 	}
-	slices.SortFunc(matches, func(a, b Node) int { return strings.Compare(a.ID, b.ID) })
+	slices.SortFunc(matches, func(a, b model.Node) int { return strings.Compare(a.ID, b.ID) })
 
 	total := len(matches)
 	// Only the page itself is decorated (usage rollup, child count, parent name):
@@ -295,7 +296,7 @@ func (s *Service) SearchNodes(userTokens common.TokenList, query string, limit, 
 
 // nodeMatches reports whether a node contains the (already lower-cased) needle
 // in any of its searchable fields.
-func nodeMatches(n Node, needle string) bool {
+func nodeMatches(n model.Node, needle string) bool {
 	fields := []string{
 		n.Name, n.Reason, n.ID, n.Owner, n.CreatedBy,
 		n.ExternalName, n.ExternalID, n.Status,
@@ -317,7 +318,7 @@ func nodeMatches(n Node, needle string) bool {
 // may see it: a project to everyone who may see the project, a budget's
 // subtree to its managers and those above — a requester sees a budget, not what
 // the others in it use.
-func (s *Service) UsageScope(id string, userTokens common.TokenList) (*Node, error) {
+func (s *Service) UsageScope(id string, userTokens common.TokenList) (*model.Node, error) {
 	node, err := s.GetNode(id, userTokens)
 	if err != nil {
 		return nil, err
@@ -325,7 +326,7 @@ func (s *Service) UsageScope(id string, userTokens common.TokenList) (*Node, err
 	if node == nil {
 		return nil, fmt.Errorf("node %w", common.ErrNotFound)
 	}
-	if node.Kind == KindBudget {
+	if node.Kind == model.KindBudget {
 		ctx, cancel := s.newCtx()
 		defer cancel()
 		manages, err := s.managesNode(ctx, userTokens, node)

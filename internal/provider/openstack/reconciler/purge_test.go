@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gophercloud/gophercloud/openstack/identity/v3/projects"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 	"go.uber.org/zap"
@@ -347,14 +348,14 @@ func TestPurge_EveryStageRuns(t *testing.T) {
 
 func TestDeletionDue(t *testing.T) {
 	now := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
-	plain := tree.Node{}
-	asked := tree.Node{Flags: []string{tree.FlagDeleteRequested}}
+	plain := model.Node{}
+	asked := model.Node{Flags: []string{model.FlagDeleteRequested}}
 	overdue := []string{"pending-deletion:2026-10-06"}
 	notYet := []string{"pending-deletion:2026-10-07"}
 
 	for _, c := range []struct {
 		mode string
-		leaf tree.Node
+		leaf model.Node
 		tags []string
 		want bool
 	}{
@@ -527,11 +528,11 @@ func TestPurgeSteps(t *testing.T) {
 func TestRecordPurgeProgress(t *testing.T) {
 	ctx := context.Background()
 	store := tree.NewInMemoryStore(zap.NewNop().Sugar())
-	if err := store.UpsertNode(ctx, tree.Node{ID: "p", Kind: tree.KindProject, Status: tree.StatusArchived}); err != nil {
+	if err := store.UpsertNode(ctx, model.Node{ID: "p", Kind: model.KindProject, Status: model.StatusArchived}); err != nil {
 		t.Fatal(err)
 	}
 	r := &Reconciler{nodes: tree.NewProviderSync(store), cfg: Config{PurgeSkipStages: []string{"stacks"}}}
-	get := func() *tree.PurgeProgress {
+	get := func() *model.PurgeProgress {
 		n, _ := store.GetNode(ctx, "p")
 		return n.Purge
 	}

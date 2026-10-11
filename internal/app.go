@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/pfisterer/openstack-management-api/internal/core/roles"
-	"github.com/pfisterer/openstack-management-api/internal/identity"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/roles"
+	"github.com/pfisterer/openstack-management-api/internal/identity"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/cloud-self-service-golib/logging"
@@ -207,7 +209,7 @@ func RunApplication() {
 	// Bootstrap: optional mock seed into an empty store, then ensure the
 	// structural root/unassigned nodes (root admin scope is synced from config).
 	var mockIdentities []common.Identity
-	var mockNodes []tree.Node
+	var mockNodes []model.Node
 	if config.Storage.AddMockData {
 		mockIdentities, mockNodes = dev.DefaultMockTreeState()
 	}

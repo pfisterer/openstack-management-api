@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"go.uber.org/zap"
 )
 
@@ -15,7 +16,7 @@ import (
 // declared limit — which is exactly the shrink-after-filling loophole that
 // billing the maximum exists to close, reopened by a transient API error.
 func TestApplyObservation_UnmeasuredPassKeepsTheLastKnownUsage(t *testing.T) {
-	leaf := Node{
+	leaf := model.Node{
 		ExternalID:    "os-1",
 		Overcommitted: true,
 		InUse:         common.ProjectQuota{"cores": 8, "ram": 5},
@@ -37,7 +38,7 @@ func TestApplyObservation_UnmeasuredPassKeepsTheLastKnownUsage(t *testing.T) {
 // The project id is tracked even when the quota detail was unreadable — it does
 // not come from the measurement, so there is no reason to lose it.
 func TestApplyObservation_UnmeasuredPassStillAdoptsTheProjectID(t *testing.T) {
-	leaf := Node{InUse: common.ProjectQuota{"cores": 8}}
+	leaf := model.Node{InUse: common.ProjectQuota{"cores": 8}}
 
 	if !ApplyObservation(&leaf, "os-new", nil) {
 		t.Fatal("a new OS project id has to be persisted")
@@ -53,7 +54,7 @@ func TestApplyObservation_UnmeasuredPassStillAdoptsTheProjectID(t *testing.T) {
 // A real measurement overwrites, including back down to zero: a project that
 // genuinely released its servers must stop being billed for them.
 func TestApplyObservation_MeasuredPassOverwrites(t *testing.T) {
-	leaf := Node{
+	leaf := model.Node{
 		ExternalID:    "os-1",
 		Overcommitted: true,
 		InUse:         common.ProjectQuota{"cores": 8, "ram": 5},
@@ -74,7 +75,7 @@ func TestApplyObservation_MeasuredPassOverwrites(t *testing.T) {
 // every leaf on every tick.
 func TestApplyObservation_IdenticalMeasurementIsNotAChange(t *testing.T) {
 	servers, serverLimit := 1, 2
-	leaf := Node{ExternalID: "os-1", InUse: common.ProjectQuota{"cores": 2}, Servers: &servers, ServerLimit: &serverLimit}
+	leaf := model.Node{ExternalID: "os-1", InUse: common.ProjectQuota{"cores": 2}, Servers: &servers, ServerLimit: &serverLimit}
 
 	if ApplyObservation(&leaf, "os-1", &Observation{InUse: common.ProjectQuota{"cores": 2}, Servers: 1, ServerLimit: 2}) {
 		t.Error("nothing changed, but the node was marked for persisting")
@@ -84,7 +85,7 @@ func TestApplyObservation_IdenticalMeasurementIsNotAChange(t *testing.T) {
 // The server count is part of the measurement: written with it, and a change
 // in it alone is worth persisting.
 func TestApplyObservation_ServerCount(t *testing.T) {
-	leaf := Node{ExternalID: "os-1", InUse: common.ProjectQuota{"cores": 2}}
+	leaf := model.Node{ExternalID: "os-1", InUse: common.ProjectQuota{"cores": 2}}
 
 	if !ApplyObservation(&leaf, "os-1", &Observation{InUse: common.ProjectQuota{"cores": 2}, Servers: 3}) {
 		t.Fatal("a first server count has to be persisted")
@@ -99,7 +100,7 @@ func TestApplyObservation_ServerCount(t *testing.T) {
 
 // An unread use keeps the stored one; a read one replaces it and counts as a change.
 func TestApplyObservation_GrantUse(t *testing.T) {
-	leaf := Node{ExternalID: "os-1", GrantUse: common.ProjectQuota{"dhbw-ipv4": 1}}
+	leaf := model.Node{ExternalID: "os-1", GrantUse: common.ProjectQuota{"dhbw-ipv4": 1}}
 	if ApplyObservation(&leaf, "os-1", &Observation{}) && leaf.GrantUse["dhbw-ipv4"] != 1 {
 		t.Errorf("unread use overwrote the stored one: %v", leaf.GrantUse)
 	}
@@ -108,7 +109,7 @@ func TestApplyObservation_GrantUse(t *testing.T) {
 	}
 }
 
-func providerSyncWith(t *testing.T, nodes ...Node) (*ProviderSync, Store) {
+func providerSyncWith(t *testing.T, nodes ...model.Node) (*ProviderSync, Store) {
 	t.Helper()
 	store := NewInMemoryStore(zap.NewNop().Sugar())
 	for _, n := range nodes {
@@ -119,7 +120,7 @@ func providerSyncWith(t *testing.T, nodes ...Node) (*ProviderSync, Store) {
 	return NewProviderSync(store), store
 }
 
-func nodeIn(t *testing.T, store Store, id string) Node {
+func nodeIn(t *testing.T, store Store, id string) model.Node {
 	t.Helper()
 	n, err := store.GetNode(context.Background(), id)
 	if err != nil {
@@ -132,10 +133,10 @@ func nodeIn(t *testing.T, store Store, id string) Node {
 // OpenStack meanwhile; a promotion withdrawn during the pass is left alone.
 func TestPromote(t *testing.T) {
 	ctx := context.Background()
-	imported := Node{ID: "p_1", Kind: KindProject, Status: StatusImported, Owner: "user:owner@x",
-		Flags:           []string{FlagPromoteOnReconcile},
+	imported := model.Node{ID: "p_1", Kind: model.KindProject, Status: model.StatusImported, Owner: "user:owner@x",
+		Flags:           []string{model.FlagPromoteOnReconcile},
 		AuthorizedUsers: []common.AuthorizedUser{{Token: "user:a@x", OpenstackRole: "reader"}}}
-	withdrawn := Node{ID: "p_2", Kind: KindProject, Status: StatusImported}
+	withdrawn := model.Node{ID: "p_2", Kind: model.KindProject, Status: model.StatusImported}
 	p, store := providerSyncWith(t, imported, withdrawn)
 
 	current := []common.AuthorizedUser{{Token: "user:a@x", OpenstackRole: "member"}, {Token: "user:new@x", OpenstackRole: "member"}, {Token: "user:owner@x", OpenstackRole: "member"}}
@@ -143,10 +144,10 @@ func TestPromote(t *testing.T) {
 		t.Fatalf("promote: %v %v", ok, err)
 	}
 	n := nodeIn(t, store, "p_1")
-	if n.Status != StatusPending || slices.Contains(n.Flags, FlagPromoteOnReconcile) || len(n.AuthorizedUsers) != 2 || n.AuthorizedUsers[0].OpenstackRole != "reader" {
+	if n.Status != model.StatusPending || slices.Contains(n.Flags, model.FlagPromoteOnReconcile) || len(n.AuthorizedUsers) != 2 || n.AuthorizedUsers[0].OpenstackRole != "reader" {
 		t.Errorf("promoted node: %+v", n)
 	}
-	if ok, _ := p.Promote(ctx, "p_2", current); ok || nodeIn(t, store, "p_2").Status != StatusImported {
+	if ok, _ := p.Promote(ctx, "p_2", current); ok || nodeIn(t, store, "p_2").Status != model.StatusImported {
 		t.Error("a node without the promotion flag was promoted")
 	}
 }
@@ -155,11 +156,11 @@ func TestPromote(t *testing.T) {
 func TestRefreshImportLeavesAPromotionAlone(t *testing.T) {
 	ctx := context.Background()
 	p, store := providerSyncWith(t,
-		Node{ID: "p_1", Kind: KindProject, Status: StatusImported, Name: "old", Flags: []string{FlagPromoteOnReconcile}},
-		Node{ID: "p_2", Kind: KindProject, Status: StatusPending, Name: "old"},
-		Node{ID: "p_3", Kind: KindProject, Status: StatusImported, Name: "old"})
+		model.Node{ID: "p_1", Kind: model.KindProject, Status: model.StatusImported, Name: "old", Flags: []string{model.FlagPromoteOnReconcile}},
+		model.Node{ID: "p_2", Kind: model.KindProject, Status: model.StatusPending, Name: "old"},
+		model.Node{ID: "p_3", Kind: model.KindProject, Status: model.StatusImported, Name: "old"})
 	for _, id := range []string{"p_1", "p_2", "p_3"} {
-		if err := p.RefreshImport(ctx, Node{ID: id, Name: "new", ExternalID: "os-" + id}, nil); err != nil {
+		if err := p.RefreshImport(ctx, model.Node{ID: id, Name: "new", ExternalID: "os-" + id}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -175,9 +176,9 @@ func TestRefreshImportLeavesAPromotionAlone(t *testing.T) {
 func TestRemoveGuards(t *testing.T) {
 	ctx := context.Background()
 	p, _ := providerSyncWith(t,
-		Node{ID: "p_rel", Kind: KindProject, Status: StatusReleased},
-		Node{ID: "p_app", Kind: KindProject, Status: StatusApproved},
-		Node{ID: "p_imp", Kind: KindProject, Status: StatusImported})
+		model.Node{ID: "p_rel", Kind: model.KindProject, Status: model.StatusReleased},
+		model.Node{ID: "p_app", Kind: model.KindProject, Status: model.StatusApproved},
+		model.Node{ID: "p_imp", Kind: model.KindProject, Status: model.StatusImported})
 	if ok, _ := p.RemoveRetired(ctx, "p_app"); ok {
 		t.Error("an approved project was removed as retired")
 	}

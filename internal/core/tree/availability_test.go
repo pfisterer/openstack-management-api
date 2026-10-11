@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"go.uber.org/zap"
 )
 
@@ -34,10 +35,10 @@ func TestAvailability_DoesNotSumAcrossSiblings(t *testing.T) {
 	svc := availabilityService(t)
 
 	parent := "budget"
-	leaves := []Node{
-		{ID: "a", ParentID: &parent, Status: StatusApproved, Limit: common.ProjectQuota{"cores": 2, "dhbw-ipv4": 1}},
-		{ID: "b", ParentID: &parent, Status: StatusApproved, Limit: common.ProjectQuota{"cores": 3, "dhbw-ipv4": 1}},
-		{ID: "c", ParentID: &parent, Status: StatusApproved, Limit: common.ProjectQuota{"cores": 1, "dhbw-ipv4": 1}},
+	leaves := []model.Node{
+		{ID: "a", ParentID: &parent, Status: model.StatusApproved, Limit: common.ProjectQuota{"cores": 2, "dhbw-ipv4": 1}},
+		{ID: "b", ParentID: &parent, Status: model.StatusApproved, Limit: common.ProjectQuota{"cores": 3, "dhbw-ipv4": 1}},
+		{ID: "c", ParentID: &parent, Status: model.StatusApproved, Limit: common.ProjectQuota{"cores": 1, "dhbw-ipv4": 1}},
 	}
 	// The budget is the tracked root of this rollup: present as a key, with no
 	// parent of its own, so the climb stops there.
@@ -97,8 +98,8 @@ func TestAvailability_UnlimitedIsRefusedByName(t *testing.T) {
 // Delegation: a child cannot hold what its parent does not.
 func TestAvailability_CannotBeGrantedBeyondTheParent(t *testing.T) {
 	svc := availabilityService(t)
-	withhold := &Node{ID: "p", Limit: common.ProjectQuota{"cores": 10, "dhbw-ipv4": 0}}
-	grant := &Node{ID: "p", Limit: common.ProjectQuota{"cores": 10, "dhbw-ipv4": 1}}
+	withhold := &model.Node{ID: "p", Limit: common.ProjectQuota{"cores": 10, "dhbw-ipv4": 0}}
+	grant := &model.Node{ID: "p", Limit: common.ProjectQuota{"cores": 10, "dhbw-ipv4": 1}}
 
 	if err := svc.validateChildBudgetLimit(withhold, common.ProjectQuota{"dhbw-ipv4": 1}); err == nil {
 		t.Error("a child was granted an availability its parent does not hold")
@@ -113,13 +114,13 @@ func TestAvailability_CannotBeGrantedBeyondTheParent(t *testing.T) {
 func TestAvailability_DoesNotConsumeCapacity(t *testing.T) {
 	svc := availabilityService(t)
 	ctx := context.Background()
-	budget := Node{ID: "b", Kind: KindBudget, Status: StatusApproved,
+	budget := model.Node{ID: "b", Kind: model.KindBudget, Status: model.StatusApproved,
 		Limit: common.ProjectQuota{"cores": 4, "dhbw-ipv4": 1}}
 	if err := svc.store.UpsertNode(ctx, budget); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
-	err := svc.checkCapacity(ctx, []Node{budget}, common.ProjectQuota{"cores": 4, "dhbw-ipv4": 1}, nil)
+	err := svc.checkCapacity(ctx, []model.Node{budget}, common.ProjectQuota{"cores": 4, "dhbw-ipv4": 1}, nil)
 	if err != nil {
 		t.Fatalf("granting an availability was charged against the budget: %v", err)
 	}
@@ -128,7 +129,7 @@ func TestAvailability_DoesNotConsumeCapacity(t *testing.T) {
 func TestAvailableResources_RootSeesTheWholeCatalogue(t *testing.T) {
 	svc := availabilityService(t)
 
-	got := svc.availableResourcesFor(Node{ID: RootNodeID, Limit: common.ProjectQuota{}})
+	got := svc.availableResourcesFor(model.Node{ID: model.RootNodeID, Limit: common.ProjectQuota{}})
 
 	if len(got) != 2 {
 		t.Fatalf("root must see every resource, got %v", got)
@@ -151,7 +152,7 @@ func TestAvailableResources_BelowTheRootOnlyWhatWasDelegated(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			got := svc.availableResourcesFor(Node{ID: "child", Limit: tc.limit})
+			got := svc.availableResourcesFor(model.Node{ID: "child", Limit: tc.limit})
 
 			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
 				t.Fatalf("got %v, want %v", got, tc.want)
@@ -170,12 +171,12 @@ func TestAvailability_CannotBeWithdrawnWhileSomethingBelowHoldsIt(t *testing.T) 
 	svc := availabilityService(t)
 	ctx := context.Background()
 
-	budget := Node{ID: "b", Kind: KindBudget, Status: StatusApproved, Name: "Faculty",
+	budget := model.Node{ID: "b", Kind: model.KindBudget, Status: model.StatusApproved, Name: "Faculty",
 		Limit: common.ProjectQuota{"cores": 10, "dhbw-ipv4": 1}}
 	parent := budget.ID
-	leaf := Node{ID: "p1", Kind: KindProject, Status: StatusApproved, Name: "Someone's project",
+	leaf := model.Node{ID: "p1", Kind: model.KindProject, Status: model.StatusApproved, Name: "Someone's project",
 		ParentID: &parent, Limit: common.ProjectQuota{"cores": 2, "dhbw-ipv4": 1}}
-	for _, n := range []Node{budget, leaf} {
+	for _, n := range []model.Node{budget, leaf} {
 		if err := svc.store.UpsertNode(ctx, n); err != nil {
 			t.Fatalf("seed %s: %v", n.ID, err)
 		}
@@ -196,12 +197,12 @@ func TestAvailability_WithdrawalIsFineWhenNothingHoldsIt(t *testing.T) {
 	svc := availabilityService(t)
 	ctx := context.Background()
 
-	budget := Node{ID: "b", Kind: KindBudget, Status: StatusApproved,
+	budget := model.Node{ID: "b", Kind: model.KindBudget, Status: model.StatusApproved,
 		Limit: common.ProjectQuota{"cores": 10, "dhbw-ipv4": 1}}
 	parent := budget.ID
-	leaf := Node{ID: "p1", Kind: KindProject, Status: StatusApproved, ParentID: &parent,
+	leaf := model.Node{ID: "p1", Kind: model.KindProject, Status: model.StatusApproved, ParentID: &parent,
 		Limit: common.ProjectQuota{"cores": 2, "dhbw-ipv4": 0}}
-	for _, n := range []Node{budget, leaf} {
+	for _, n := range []model.Node{budget, leaf} {
 		if err := svc.store.UpsertNode(ctx, n); err != nil {
 			t.Fatalf("seed %s: %v", n.ID, err)
 		}
@@ -219,7 +220,7 @@ func TestAvailability_WithdrawalIgnoresTheNodeItself(t *testing.T) {
 	svc := availabilityService(t)
 	ctx := context.Background()
 
-	budget := Node{ID: "b", Kind: KindBudget, Status: StatusApproved,
+	budget := model.Node{ID: "b", Kind: model.KindBudget, Status: model.StatusApproved,
 		Limit: common.ProjectQuota{"dhbw-ipv4": 1}}
 	if err := svc.store.UpsertNode(ctx, budget); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -235,12 +236,12 @@ func TestAvailability_WithdrawalLeavesQuantitiesAlone(t *testing.T) {
 	svc := availabilityService(t)
 	ctx := context.Background()
 
-	budget := Node{ID: "b", Kind: KindBudget, Status: StatusApproved,
+	budget := model.Node{ID: "b", Kind: model.KindBudget, Status: model.StatusApproved,
 		Limit: common.ProjectQuota{"cores": 10, "dhbw-ipv4": 1}}
 	parent := budget.ID
-	leaf := Node{ID: "p1", Kind: KindProject, Status: StatusApproved, ParentID: &parent,
+	leaf := model.Node{ID: "p1", Kind: model.KindProject, Status: model.StatusApproved, ParentID: &parent,
 		Limit: common.ProjectQuota{"cores": 2, "dhbw-ipv4": 1}}
-	for _, n := range []Node{budget, leaf} {
+	for _, n := range []model.Node{budget, leaf} {
 		if err := svc.store.UpsertNode(ctx, n); err != nil {
 			t.Fatalf("seed %s: %v", n.ID, err)
 		}
@@ -278,7 +279,7 @@ func TestBootstrap_RootAdoptsResourcesNewToTheCatalogue(t *testing.T) {
 		t.Fatalf("bootstrap after the catalogue grew: %v", err)
 	}
 
-	root, err := store.GetNode(ctx, RootNodeID)
+	root, err := store.GetNode(ctx, model.RootNodeID)
 	if err != nil || root == nil {
 		t.Fatalf("load root: %v", err)
 	}
@@ -295,7 +296,7 @@ func TestBootstrap_RootAdoptsResourcesNewToTheCatalogue(t *testing.T) {
 // meant it.
 func TestBootstrap_RootAdoptionLeavesExistingLimitsAlone(t *testing.T) {
 	svc := availabilityService(t)
-	root := Node{ID: RootNodeID, Limit: common.ProjectQuota{"cores": 100, "dhbw-ipv4": 0}}
+	root := model.Node{ID: model.RootNodeID, Limit: common.ProjectQuota{"cores": 100, "dhbw-ipv4": 0}}
 
 	added := svc.adoptNewCatalogueResources(&root)
 
@@ -313,12 +314,12 @@ func TestAvailability_WithdrawalPassesABudgetThatInherits(t *testing.T) {
 	svc := availabilityService(t)
 	ctx := context.Background()
 
-	budget := Node{ID: "b", Kind: KindBudget, Status: StatusApproved,
+	budget := model.Node{ID: "b", Kind: model.KindBudget, Status: model.StatusApproved,
 		Limit: common.ProjectQuota{"cores": 10, "dhbw-ipv4": 1}}
 	parent := budget.ID
-	group := Node{ID: "g", Kind: KindBudget, Status: StatusApproved, ParentID: &parent, InheritsLimit: true,
+	group := model.Node{ID: "g", Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &parent, InheritsLimit: true,
 		Limit: common.ProjectQuota{}}
-	for _, n := range []Node{budget, group} {
+	for _, n := range []model.Node{budget, group} {
 		if err := svc.store.UpsertNode(ctx, n); err != nil {
 			t.Fatalf("seed %s: %v", n.ID, err)
 		}
@@ -328,7 +329,7 @@ func TestAvailability_WithdrawalPassesABudgetThatInherits(t *testing.T) {
 	}
 
 	inGroup := group.ID
-	leaf := Node{ID: "p1", Kind: KindProject, Status: StatusApproved, Name: "Below the group", ParentID: &inGroup,
+	leaf := model.Node{ID: "p1", Kind: model.KindProject, Status: model.StatusApproved, Name: "Below the group", ParentID: &inGroup,
 		Limit: common.ProjectQuota{"cores": 2, "dhbw-ipv4": 1}}
 	if err := svc.store.UpsertNode(ctx, leaf); err != nil {
 		t.Fatalf("seed leaf: %v", err)

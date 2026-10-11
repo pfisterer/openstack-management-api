@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"go.uber.org/zap"
 )
@@ -31,22 +32,22 @@ func fixture(t *testing.T) (*Books, *MemoryStore) {
 	t.Helper()
 	ctx := context.Background()
 	nodes := tree.NewInMemoryStore(zap.NewNop().Sugar())
-	for _, n := range []tree.Node{
-		{ID: "root", Kind: tree.KindBudget, Name: "Root", Status: tree.StatusApproved},
-		{ID: "uni", Kind: tree.KindBudget, Name: "Uni", ParentID: ptr("root"), Status: tree.StatusApproved,
-			Attributes: tree.Attributes{"billing": {"cost_center": "4711"}}},
-		{ID: "stud", Kind: tree.KindBudget, Name: "Students", ParentID: ptr("uni"), Status: tree.StatusApproved},
-		{ID: "p_run", Kind: tree.KindProject, Name: "Thesis", ParentID: ptr("stud"), Status: tree.StatusApproved,
+	for _, n := range []model.Node{
+		{ID: "root", Kind: model.KindBudget, Name: "Root", Status: model.StatusApproved},
+		{ID: "uni", Kind: model.KindBudget, Name: "Uni", ParentID: ptr("root"), Status: model.StatusApproved,
+			Attributes: model.Attributes{"billing": {"cost_center": "4711"}}},
+		{ID: "stud", Kind: model.KindBudget, Name: "Students", ParentID: ptr("uni"), Status: model.StatusApproved},
+		{ID: "p_run", Kind: model.KindProject, Name: "Thesis", ParentID: ptr("stud"), Status: model.StatusApproved,
 			Owner: "user:a@x", ExternalID: "os-run",
 			Limit:           common.ProjectQuota{"cores": 4, "storage": 50, "ipv4": 0, "ports": 10},
-			Allocations:     []tree.Allocation{{BudgetID: "uni", Limit: common.ProjectQuota{"cores": 8, "ipv4": 1}}},
+			Allocations:     []model.Allocation{{BudgetID: "uni", Limit: common.ProjectQuota{"cores": 8, "ipv4": 1}}},
 			AdminScope:      common.TokenList{"user:b@x"},
 			AuthorizedUsers: []common.AuthorizedUser{{Token: "user:a@x"}, {Token: "user:c@x"}, {Token: "group:course"}},
 			InUse:           common.ProjectQuota{"storage": 30},
-			Attributes:      tree.Attributes{"funding": {"wbs": "D-1"}}},
-		{ID: "p_idle", Kind: tree.KindProject, Name: "Idle", ParentID: ptr("stud"), Status: tree.StatusApproved,
+			Attributes:      model.Attributes{"funding": {"wbs": "D-1"}}},
+		{ID: "p_idle", Kind: model.KindProject, Name: "Idle", ParentID: ptr("stud"), Status: model.StatusApproved,
 			Owner: "user:d@x", ExternalID: "os-idle", Limit: common.ProjectQuota{"cores": 2}},
-		{ID: "p_rej", Kind: tree.KindProject, Name: "No", ParentID: ptr("stud"), Status: tree.StatusRejected, Owner: "user:e@x"},
+		{ID: "p_rej", Kind: model.KindProject, Name: "No", ParentID: ptr("stud"), Status: model.StatusRejected, Owner: "user:e@x"},
 	} {
 		if err := nodes.UpsertNode(ctx, n); err != nil {
 			t.Fatal(err)

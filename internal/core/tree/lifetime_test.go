@@ -4,16 +4,17 @@ import (
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 )
 
 var rootTokens = common.TokenList{"user:root@x", "group:root"}
 
-func rootActor() tree.Actor { return tree.UIActor("root@x") }
+func rootActor() model.Actor { return model.UIActor("root@x") }
 
-func mustCreate(t *testing.T, svc *tree.Service, req tree.CreateNodeRequest) tree.Node {
+func mustCreate(t *testing.T, svc *tree.Service, req tree.CreateNodeRequest) model.Node {
 	t.Helper()
-	if req.Kind == tree.KindBudget && req.AdminScope == nil {
+	if req.Kind == model.KindBudget && req.AdminScope == nil {
 		req.AdminScope = common.TokenList{"group:root"}
 	}
 	req.Reason = "t"
@@ -27,7 +28,7 @@ func mustCreate(t *testing.T, svc *tree.Service, req tree.CreateNodeRequest) tre
 	return n
 }
 
-func mustGet(t *testing.T, svc *tree.Service, id string) tree.Node {
+func mustGet(t *testing.T, svc *tree.Service, id string) model.Node {
 	t.Helper()
 	n, err := svc.GetNode(id, rootTokens)
 	if err != nil {
@@ -36,7 +37,7 @@ func mustGet(t *testing.T, svc *tree.Service, id string) tree.Node {
 	return *n
 }
 
-func endOf(n tree.Node) string {
+func endOf(n model.Node) string {
 	if n.TerminationDate == nil {
 		return "<none>"
 	}
@@ -55,24 +56,24 @@ func ptr(s string) *string { return &s }
 // and one asked for past it is refused — for projects and sub-budgets alike,
 // and however far up the end is set.
 func TestLifetime_CreateInheritsAndRefuses(t *testing.T) {
-	f := newChangeFixture(t, &tree.AutoApprove{}, ptr(sep2027))
+	f := newChangeFixture(t, &model.AutoApprove{}, ptr(sep2027))
 
 	if n := f.request(t, 1, nil); endOf(n) != sep2027 {
 		t.Fatalf("a project without an end should end with its budget, got %s", endOf(n))
 	}
 	if _, err := f.svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: f.budget.ID, Kind: tree.KindProject, Name: "vm", Reason: "vm",
+		ParentID: f.budget.ID, Kind: model.KindProject, Name: "vm", Reason: "vm",
 		Limit: cores(1), TerminationDate: ptr("2030-01-01T00:00:00Z"),
-	}, tree.UIActor("stud@x"), "stud@x", studTokens); err == nil {
+	}, model.UIActor("stud@x"), "stud@x", studTokens); err == nil {
 		t.Fatal("a project outliving its budget should be refused")
 	}
 
-	sub := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: f.budget.ID, Kind: tree.KindBudget, Limit: cores(2)})
+	sub := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: f.budget.ID, Kind: model.KindBudget, Limit: cores(2)})
 	if endOf(sub) != sep2027 {
 		t.Fatalf("a sub-budget without an end should end with its budget, got %s", endOf(sub))
 	}
 	// The grandparent's end binds too.
-	if n := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: sub.ID, Kind: tree.KindProject, Limit: cores(1)}); endOf(n) != sep2027 {
+	if n := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: sub.ID, Kind: model.KindProject, Limit: cores(1)}); endOf(n) != sep2027 {
 		t.Fatalf("a project two levels down should end with the budget above, got %s", endOf(n))
 	}
 }
@@ -82,13 +83,13 @@ func TestLifetime_CreateInheritsAndRefuses(t *testing.T) {
 // earlier already keep their date.
 func TestLifetime_ShorteningCascades(t *testing.T) {
 	f := newChangeFixture(t, nil, ptr(sep2027))
-	sub := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: f.budget.ID, Kind: tree.KindBudget, Limit: cores(5)})
-	deep := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: sub.ID, Kind: tree.KindProject, Limit: cores(1)})
+	sub := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: f.budget.ID, Kind: model.KindBudget, Limit: cores(5)})
+	deep := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: sub.ID, Kind: model.KindProject, Limit: cores(1)})
 	early := f.approved(t, 1, ptr(dec2026))
 	waiting := f.request(t, 1, ptr(sep2027))
 	proposing := f.approved(t, 1, ptr(dec2026))
 	proposing = f.change(t, proposing.ID, tree.ChangeNodeRequest{TerminationDate: ptr(sep2027)})
-	if proposing.Status != tree.StatusChangePending {
+	if proposing.Status != model.StatusChangePending {
 		t.Fatalf("setup: extension without a policy should wait, got %q", proposing.Status)
 	}
 
@@ -144,7 +145,7 @@ func TestLifetime_SettingAnEndCascades(t *testing.T) {
 // A sub-budget cannot be edited to outlive the budget above, nor lose its end.
 func TestLifetime_EditingABudgetStaysWithin(t *testing.T) {
 	f := newChangeFixture(t, nil, ptr(mar2027))
-	sub := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: f.budget.ID, Kind: tree.KindBudget, Limit: cores(2)})
+	sub := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: f.budget.ID, Kind: model.KindBudget, Limit: cores(2)})
 
 	if _, err := f.svc.UpdateNode(sub.ID, tree.UpdateNodeRequest{TerminationDate: ptr(sep2027)}, rootActor(), rootTokens); err == nil {
 		t.Error("a sub-budget outliving its budget should be refused")
@@ -157,10 +158,10 @@ func TestLifetime_EditingABudgetStaysWithin(t *testing.T) {
 // Moving a subtree under a budget that ends sooner shortens it on the way.
 func TestLifetime_ReparentShortens(t *testing.T) {
 	svc, _ := newSvc(t, common.TokenList{"group:root"})
-	from := mustCreate(t, svc, tree.CreateNodeRequest{ParentID: tree.RootNodeID, Kind: tree.KindBudget, Limit: cores(10)})
-	to := mustCreate(t, svc, tree.CreateNodeRequest{ParentID: tree.RootNodeID, Kind: tree.KindBudget, Limit: cores(10), TerminationDate: ptr(mar2027)})
-	sub := mustCreate(t, svc, tree.CreateNodeRequest{ParentID: from.ID, Kind: tree.KindBudget, Limit: cores(5)})
-	p := mustCreate(t, svc, tree.CreateNodeRequest{ParentID: sub.ID, Kind: tree.KindProject, Limit: cores(1)})
+	from := mustCreate(t, svc, tree.CreateNodeRequest{ParentID: model.RootNodeID, Kind: model.KindBudget, Limit: cores(10)})
+	to := mustCreate(t, svc, tree.CreateNodeRequest{ParentID: model.RootNodeID, Kind: model.KindBudget, Limit: cores(10), TerminationDate: ptr(mar2027)})
+	sub := mustCreate(t, svc, tree.CreateNodeRequest{ParentID: from.ID, Kind: model.KindBudget, Limit: cores(5)})
+	p := mustCreate(t, svc, tree.CreateNodeRequest{ParentID: sub.ID, Kind: model.KindProject, Limit: cores(1)})
 
 	if _, err := svc.ReparentNode(sub.ID, tree.ReparentNodeRequest{NewParentID: to.ID}, rootActor(), rootTokens); err != nil {
 		t.Fatalf("reparent: %v", err)

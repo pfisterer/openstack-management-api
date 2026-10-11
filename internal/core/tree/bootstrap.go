@@ -7,11 +7,12 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
 // Bootstrap prepares storage: optionally seeds mock data into an empty store,
 // then ensures the structural nodes exist. Safe to run on every startup.
-func (s *Service) Bootstrap(ctx context.Context, mockIdentities []common.Identity, mockNodes []Node) error {
+func (s *Service) Bootstrap(ctx context.Context, mockIdentities []common.Identity, mockNodes []model.Node) error {
 	if len(mockNodes) > 0 {
 		empty, err := s.store.IsEmpty(ctx)
 		if err != nil {
@@ -44,7 +45,7 @@ func (s *Service) canonicalizeStoredTokens(ctx context.Context) error {
 		if !canonicalizeNodeTokens(&n) {
 			continue
 		}
-		wrote, err := s.store.UpdateNode(ctx, n.ID, func(stored *Node) error {
+		wrote, err := s.store.UpdateNode(ctx, n.ID, func(stored *model.Node) error {
 			if !canonicalizeNodeTokens(stored) {
 				return ErrSkipUpdate
 			}
@@ -65,7 +66,7 @@ func (s *Service) canonicalizeStoredTokens(ctx context.Context) error {
 
 // canonicalizeNodeTokens puts every token on the node into canonical spelling
 // and reports whether anything changed.
-func canonicalizeNodeTokens(n *Node) bool {
+func canonicalizeNodeTokens(n *model.Node) bool {
 	changed := false
 	list := func(tokens common.TokenList) common.TokenList {
 		out := common.CanonicalTokens(tokens)
@@ -122,7 +123,7 @@ func (s *Service) ensureBootstrapNodes(ctx context.Context) error {
 
 	now := time.Now().UTC().Format(time.RFC3339)
 
-	root, err := s.store.GetNode(ctx, RootNodeID)
+	root, err := s.store.GetNode(ctx, model.RootNodeID)
 	if err != nil {
 		return fmt.Errorf("check root node: %w", err)
 	}
@@ -141,11 +142,11 @@ func (s *Service) ensureBootstrapNodes(ctx context.Context) error {
 			}
 			limit[r.ID] = common.UnlimitedQuota
 		}
-		rootNode := Node{
-			ID:         RootNodeID,
-			Kind:       KindBudget,
+		rootNode := model.Node{
+			ID:         model.RootNodeID,
+			Kind:       model.KindBudget,
 			ParentID:   nil,
-			Status:     StatusApproved,
+			Status:     model.StatusApproved,
 			Name:       "Organization Root",
 			Limit:      limit,
 			AdminScope: append(common.TokenList{}, s.rootAdminTokens...),
@@ -179,7 +180,7 @@ func (s *Service) ensureBootstrapNodes(ctx context.Context) error {
 		}
 	}
 
-	unassigned, err := s.store.GetNode(ctx, UnassignedNodeID)
+	unassigned, err := s.store.GetNode(ctx, model.UnassignedNodeID)
 	if err != nil {
 		return fmt.Errorf("check unassigned node: %w", err)
 	}
@@ -190,12 +191,12 @@ func (s *Service) ensureBootstrapNodes(ctx context.Context) error {
 		for _, r := range s.resources() {
 			zeroLimit[r.ID] = 0
 		}
-		parent := RootNodeID
-		unassignedNode := Node{
-			ID:       UnassignedNodeID,
-			Kind:     KindBudget,
+		parent := model.RootNodeID
+		unassignedNode := model.Node{
+			ID:       model.UnassignedNodeID,
+			Kind:     model.KindBudget,
 			ParentID: &parent,
-			Status:   StatusApproved,
+			Status:   model.StatusApproved,
 			Name:     "Unassigned OpenStack Imports",
 			Reason:   "Collection point for OpenStack projects discovered by the reconciler. Limit 0: nothing can be approved here — promote imports into a real budget.",
 			Limit:    zeroLimit,
@@ -226,7 +227,7 @@ func (s *Service) ensureBootstrapNodes(ctx context.Context) error {
 //
 // It only ADDS keys. An operator who capped the root at a hundred cores meant it,
 // and this is not the place to overrule them.
-func (s *Service) adoptNewCatalogueResources(root *Node) []string {
+func (s *Service) adoptNewCatalogueResources(root *model.Node) []string {
 	if root.Limit == nil {
 		root.Limit = common.ProjectQuota{}
 	}

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"go.uber.org/zap"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -110,7 +111,7 @@ func mustMarshalPG(v any) []byte {
 	return b
 }
 
-func toNodeRow(n Node) nodeRow {
+func toNodeRow(n model.Node) nodeRow {
 	// Usage is a response-only computed field — never persist it.
 	n.Usage = nil
 	return nodeRow{
@@ -125,13 +126,13 @@ func toNodeRow(n Node) nodeRow {
 	}
 }
 
-func fromNodeRow(r nodeRow) (Node, error) {
-	var n Node
+func fromNodeRow(r nodeRow) (model.Node, error) {
+	var n model.Node
 	return n, json.Unmarshal(r.DataJSON, &n)
 }
 
-func fromNodeRows(rows []nodeRow) ([]Node, error) {
-	out := make([]Node, 0, len(rows))
+func fromNodeRows(rows []nodeRow) ([]model.Node, error) {
+	out := make([]model.Node, 0, len(rows))
 	for _, r := range rows {
 		n, err := fromNodeRow(r)
 		if err != nil {
@@ -185,9 +186,9 @@ func jsonbContainsAnyCond(column string, tokens []string) (string, []any) {
 
 func (s *PostgresStore) IsEmpty(ctx context.Context) (bool, error) {
 	models := []any{&identityRow{}, &nodeRow{}}
-	for _, model := range models {
+	for _, m := range models {
 		var count int64
-		if err := s.db.WithContext(ctx).Model(model).Count(&count).Error; err != nil {
+		if err := s.db.WithContext(ctx).Model(m).Count(&count).Error; err != nil {
 			return false, err
 		}
 		if count > 0 {
@@ -197,7 +198,7 @@ func (s *PostgresStore) IsEmpty(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
-func (s *PostgresStore) Seed(ctx context.Context, identities []common.Identity, nodes []Node) error {
+func (s *PostgresStore) Seed(ctx context.Context, identities []common.Identity, nodes []model.Node) error {
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Exec("TRUNCATE TABLE identities, nodes").Error; err != nil {
 			return err
@@ -239,7 +240,7 @@ func (s *PostgresStore) ListIdentities(ctx context.Context) ([]common.Identity, 
 // tokens); at the current scale a full scan is fine.
 func (s *PostgresStore) ListParticipants(ctx context.Context) ([]string, error) {
 	var rows []nodeRow
-	if err := s.db.WithContext(ctx).Where("kind = ?", KindProject).Find(&rows).Error; err != nil {
+	if err := s.db.WithContext(ctx).Where("kind = ?", model.KindProject).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	nodes, err := fromNodeRows(rows)
@@ -249,7 +250,7 @@ func (s *PostgresStore) ListParticipants(ctx context.Context) ([]string, error) 
 	return ParticipantEmails(nodes), nil
 }
 
-func (s *PostgresStore) GetNode(ctx context.Context, id string) (*Node, error) {
+func (s *PostgresStore) GetNode(ctx context.Context, id string) (*model.Node, error) {
 	var row nodeRow
 	err := s.db.WithContext(ctx).First(&row, "id = ?", id).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -296,7 +297,7 @@ func applyNodeQuery(db *gorm.DB, q NodeQuery) *gorm.DB {
 	return db
 }
 
-func (s *PostgresStore) ListNodes(ctx context.Context, q NodeQuery, limit, offset int) ([]Node, error) {
+func (s *PostgresStore) ListNodes(ctx context.Context, q NodeQuery, limit, offset int) ([]model.Node, error) {
 	db := applyNodeQuery(s.db.WithContext(ctx), q)
 
 	var rows []nodeRow
@@ -317,7 +318,7 @@ func (s *PostgresStore) CountNodes(ctx context.Context, q NodeQuery) (int, error
 	return int(n), nil
 }
 
-func (s *PostgresStore) UpsertNode(ctx context.Context, n Node) error {
+func (s *PostgresStore) UpsertNode(ctx context.Context, n model.Node) error {
 	row := toNodeRow(n)
 	return s.db.WithContext(ctx).Clauses(clause.OnConflict{UpdateAll: true}).Create(&row).Error
 }
@@ -325,7 +326,7 @@ func (s *PostgresStore) UpsertNode(ctx context.Context, n Node) error {
 // UpdateNode reads the row under a row lock (SELECT … FOR UPDATE) and writes
 // fn's result in the same transaction, so nothing another writer committed in
 // between can be overwritten by a stale copy.
-func (s *PostgresStore) UpdateNode(ctx context.Context, id string, fn func(n *Node) error) (bool, error) {
+func (s *PostgresStore) UpdateNode(ctx context.Context, id string, fn func(n *model.Node) error) (bool, error) {
 	updated := false
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var row nodeRow
@@ -359,7 +360,7 @@ func (s *PostgresStore) UpdateNode(ctx context.Context, id string, fn func(n *No
 
 // DeleteNodeIf deletes under the same row lock, after checking pred against the
 // row as it is now.
-func (s *PostgresStore) DeleteNodeIf(ctx context.Context, id string, pred func(n Node) bool) (bool, error) {
+func (s *PostgresStore) DeleteNodeIf(ctx context.Context, id string, pred func(n model.Node) bool) (bool, error) {
 	deleted := false
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var row nodeRow

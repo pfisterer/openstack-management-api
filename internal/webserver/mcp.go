@@ -3,15 +3,17 @@ package webserver
 import (
 	"context"
 	"fmt"
-	"github.com/pfisterer/openstack-management-api/internal/identity"
 	"net/http"
 	"slices"
+
+	"github.com/pfisterer/openstack-management-api/internal/identity"
 
 	"github.com/gin-gonic/gin"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/pfisterer/cloud-self-service-golib/ginweb"
 	"github.com/pfisterer/cloud-self-service-golib/mcpserve"
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"go.uber.org/zap"
 )
@@ -60,8 +62,8 @@ type mcpCaller struct {
 // tool cannot forget it.
 //
 // actorEmail stays for OUR log lines, where the real caller is the useful one.
-func (c mcpCaller) serviceActor() tree.Actor {
-	return tree.Actor{Email: c.userEmail, Via: tree.ChannelMCP}
+func (c mcpCaller) serviceActor() model.Actor {
+	return model.Actor{Email: c.userEmail, Via: model.ChannelMCP}
 }
 
 // ReadOnly satisfies mcpserve.Caller: whether this request's credential may
@@ -116,7 +118,7 @@ func newMCPServer(cfg APIConfig, caller mcpCaller, log *zap.SugaredLogger) *mcp.
 }
 
 // ── Tool payloads ───────────────────────────────────────────────────────────
-// Deliberately not tree.Node: that carries history, participant lists and the
+// Deliberately not model.Node: that carries history, participant lists and the
 // policy fields, which would fill a model's context with things it did not ask
 // for and cannot use. These are the fields a person asks about.
 
@@ -162,7 +164,7 @@ type mcpAllocation struct {
 	Reason     string         `json:"reason,omitempty" jsonschema:"why it was granted"`
 }
 
-func toMCPProject(n tree.Node) mcpProject {
+func toMCPProject(n model.Node) mcpProject {
 	p := mcpProject{
 		ID:                 n.ID,
 		Kind:               n.Kind,
@@ -171,14 +173,14 @@ func toMCPProject(n tree.Node) mcpProject {
 		Reason:             n.Reason,
 		Owner:              n.Owner,
 		Admins:             n.AdminScope,
-		Shared:             n.Kind == tree.KindProject && len(n.AdminScope) > 0,
+		Shared:             n.Kind == model.KindProject && len(n.AdminScope) > 0,
 		PaidFromName:       n.ParentName,
 		Limit:              n.EffectiveLimit(),
 		InUse:              n.InUse,
 		AvailableResources: n.AvailableResources,
 		ExternalID:         n.ExternalID,
 		ExternalName:       n.ExternalName,
-		DeletionRequested:  slices.Contains(n.Flags, tree.FlagDeleteRequested),
+		DeletionRequested:  slices.Contains(n.Flags, model.FlagDeleteRequested),
 		InheritsLimit:      n.InheritsLimit,
 	}
 	if n.ParentID != nil {
@@ -489,7 +491,7 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 		}
 		req := tree.CreateNodeRequest{
 			ParentID: in.BudgetID,
-			Kind:     tree.KindProject,
+			Kind:     model.KindProject,
 			Name:     in.Name,
 			Reason:   in.Reason,
 			Limit:    common.ProjectQuota(in.Limit),
@@ -595,7 +597,7 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 		if current == nil {
 			return nil, mcpProject{}, fmt.Errorf("no project with id %q, or it is not visible to you", in.ID)
 		}
-		if current.Kind != tree.KindProject {
+		if current.Kind != model.KindProject {
 			return nil, mcpProject{}, fmt.Errorf("%q is a budget; who approves there is changed in the UI", in.ID)
 		}
 		admins := common.TokenList(in.Admins)
@@ -653,7 +655,7 @@ func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log 
 		}
 		req := tree.CreateNodeRequest{
 			ParentID:              in.ParentID,
-			Kind:                  tree.KindBudget,
+			Kind:                  model.KindBudget,
 			Name:                  in.Name,
 			Reason:                in.Reason,
 			Limit:                 common.ProjectQuota(in.Limit),
@@ -667,7 +669,7 @@ func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log 
 		}
 		// nil is "no auto-approve"; an empty map is the pool flavour.
 		if in.AutoApproveLimit != nil {
-			req.AutoApprove = &tree.AutoApprove{PerRequesterLimit: common.ProjectQuota(in.AutoApproveLimit)}
+			req.AutoApprove = &model.AutoApprove{PerRequesterLimit: common.ProjectQuota(in.AutoApproveLimit)}
 		}
 		log.Infow("MCP create_budget", "actor", caller.actorEmail, "parent_id", in.ParentID)
 		node, err := cfg.Service.CreateNode(req, caller.serviceActor(), caller.userEmail, caller.tokens)
@@ -744,7 +746,7 @@ func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log 
 // of the person whose client is asking them to approve the call.
 func registerDestructiveTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *zap.SugaredLogger) {
 	// confirmName fails unless the caller echoed the node's current name back.
-	confirmName := func(id, confirm string) (*tree.Node, error) {
+	confirmName := func(id, confirm string) (*model.Node, error) {
 		node, err := cfg.Service.GetNode(id, caller.tokens)
 		if err != nil {
 			return nil, fmt.Errorf("look up %q: %w", id, err)

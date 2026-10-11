@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
 // A group given access in OpenStack can be taken off a project by whoever looks
@@ -23,10 +23,10 @@ func TestRemoveExternalGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := f.svc.RemoveExternalGroup(f.project.ID, "g1", tree.UIActor("x@x"), common.TokenList{"user:other@x"}); !errors.Is(err, common.ErrForbidden) {
+	if _, err := f.svc.RemoveExternalGroup(f.project.ID, "g1", model.UIActor("x@x"), common.TokenList{"user:other@x"}); !errors.Is(err, common.ErrForbidden) {
 		t.Errorf("a stranger: want forbidden, got %v", err)
 	}
-	got, err := f.svc.RemoveExternalGroup(f.project.ID, "g1", tree.UIActor("stud@x"), ownerToken)
+	got, err := f.svc.RemoveExternalGroup(f.project.ID, "g1", model.UIActor("stud@x"), ownerToken)
 	if err != nil {
 		t.Fatalf("owner: %v", err)
 	}
@@ -36,10 +36,10 @@ func TestRemoveExternalGroup(t *testing.T) {
 	if last := got.History[len(got.History)-1]; last.Event != "external_group_removed" || last.Reason == nil || *last.Reason != "fakultaet-wi" {
 		t.Errorf("history %+v", last)
 	}
-	if _, err := f.svc.RemoveExternalGroup(f.project.ID, "g1", tree.UIActor("mgr@x"), studMgr); !errors.Is(err, common.ErrNotFound) {
+	if _, err := f.svc.RemoveExternalGroup(f.project.ID, "g1", model.UIActor("mgr@x"), studMgr); !errors.Is(err, common.ErrNotFound) {
 		t.Errorf("removing it again: want not found, got %v", err)
 	}
-	if _, err := f.svc.RemoveExternalGroup(f.project.ID, "g2", tree.UIActor("mgr@x"), studMgr); err != nil {
+	if _, err := f.svc.RemoveExternalGroup(f.project.ID, "g2", model.UIActor("mgr@x"), studMgr); err != nil {
 		t.Errorf("budget manager: %v", err)
 	}
 }

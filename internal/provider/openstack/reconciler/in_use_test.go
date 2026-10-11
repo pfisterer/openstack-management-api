@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 )
@@ -74,7 +75,7 @@ func TestMeasureImport(t *testing.T) {
 	}
 	limit := QuotaSetToProjectQuota(resources, detail.Limit)
 
-	var leaf tree.Node
+	var leaf model.Node
 	tree.ApplyObservation(&leaf, "os-1", measureImport(resources, limit, detail))
 
 	if leaf.InUse["cores"] != 80 || leaf.InUse["ram"] != 160 || leaf.InUse["storage"] != 0 {

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/gophercloud/gophercloud/openstack/identity/v3/projects"
-	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 	"go.uber.org/zap"
 )
@@ -52,7 +52,7 @@ type archiveResult struct {
 // tag off, so the next pass tries again.
 //
 // Reports whether the project is archived now.
-func (r *Reconciler) archiveReleasedProject(osProject osclient.ProjectInfo, leaf tree.Node, res *reconcileResult) bool {
+func (r *Reconciler) archiveReleasedProject(osProject osclient.ProjectInfo, leaf model.Node, res *reconcileResult) bool {
 	out := archiveProject(r.osClient, osProject, r.cfg.ArchivedTagPrefix, r.cfg.DryRun, time.Now(),
 		r.log.With("node_id", leaf.ID, "os_project_id", osProject.ID))
 	res.serversShelved += out.shelved

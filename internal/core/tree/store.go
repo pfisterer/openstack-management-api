@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
 // NodeQuery describes a filtered node listing. Zero-value fields are not applied;
@@ -47,7 +48,7 @@ type Store interface {
 	// IsEmpty reports whether no nodes exist yet (drives mock seeding).
 	IsEmpty(ctx context.Context) (bool, error)
 	// Seed replaces the full state with the given identities and nodes.
-	Seed(ctx context.Context, identities []common.Identity, nodes []Node) error
+	Seed(ctx context.Context, identities []common.Identity, nodes []model.Node) error
 
 	// ListIdentities returns the seeded identities (dev/mock data, used by the
 	// role-switch identity picker).
@@ -57,14 +58,14 @@ type Store interface {
 	// surface pattern-covered members).
 	ListParticipants(ctx context.Context) ([]string, error)
 
-	GetNode(ctx context.Context, id string) (*Node, error)
+	GetNode(ctx context.Context, id string) (*model.Node, error)
 	// ListNodes returns nodes matching the query, ordered by ID, paginated.
 	// limit <= 0 means no limit.
-	ListNodes(ctx context.Context, q NodeQuery, limit, offset int) ([]Node, error)
+	ListNodes(ctx context.Context, q NodeQuery, limit, offset int) ([]model.Node, error)
 	// CountNodes returns how many nodes match the query, ignoring pagination.
 	// Same filters as ListNodes, so a page can report how much it left out.
 	CountNodes(ctx context.Context, q NodeQuery) (int, error)
-	UpsertNode(ctx context.Context, n Node) error
+	UpsertNode(ctx context.Context, n model.Node) error
 	DeleteNodes(ctx context.Context, ids []string) error
 	// UpdateNode applies fn to the node's CURRENT stored state and writes the
 	// result back in one step. It exists for writers that decided what to change
@@ -73,10 +74,10 @@ type Store interface {
 	// copy that may predate a user's change. fn returning ErrSkipUpdate leaves the
 	// node as it is. Reports whether a write happened; a missing node is not an
 	// error.
-	UpdateNode(ctx context.Context, id string, fn func(n *Node) error) (bool, error)
+	UpdateNode(ctx context.Context, id string, fn func(n *model.Node) error) (bool, error)
 	// DeleteNodeIf deletes the node only if pred holds for its current state, for
 	// the same reason. Reports whether it deleted.
-	DeleteNodeIf(ctx context.Context, id string, pred func(n Node) bool) (bool, error)
+	DeleteNodeIf(ctx context.Context, id string, pred func(n model.Node) bool) (bool, error)
 	// CountChildren returns the number of direct children per parent ID, by
 	// kind, in one query for the whole set. Parents without children are absent
 	// from the map.
@@ -90,7 +91,7 @@ type ChildCounts struct {
 }
 
 func (c *ChildCounts) add(kind string, n int) {
-	if kind == KindBudget {
+	if kind == model.KindBudget {
 		c.Budgets += n
 	} else {
 		c.Projects += n
@@ -100,7 +101,7 @@ func (c *ChildCounts) add(kind string, n int) {
 // ParticipantEmails returns the distinct, sorted set of user emails appearing as
 // owner or authorized user across the given nodes. Group tokens are ignored.
 // Deduplication is case-insensitive; the first-seen spelling is preserved.
-func ParticipantEmails(nodes []Node) []string {
+func ParticipantEmails(nodes []model.Node) []string {
 	seen := map[string]string{} // lower-cased email -> first-seen spelling
 	addToken := func(token string) {
 		const prefix = "user:"
@@ -135,7 +136,7 @@ func ParticipantEmails(nodes []Node) []string {
 
 // matchesQuery reports whether a node satisfies the query. Shared by the
 // in-memory store; the Postgres store translates the same semantics to SQL.
-func matchesQuery(n Node, q NodeQuery) bool {
+func matchesQuery(n model.Node, q NodeQuery) bool {
 	if len(q.IDs) > 0 && !containsString(q.IDs, n.ID) {
 		return false
 	}

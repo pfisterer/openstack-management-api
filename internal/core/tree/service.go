@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
@@ -154,19 +155,8 @@ func (s *Service) newCtx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), s.requestTimeout)
 }
 
-// newHistoryEntry creates a HistoryEntry with the current timestamp.
-func newHistoryEntry(event string, actor Actor, statusTo string) HistoryEntry {
-	return HistoryEntry{
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		Event:     event,
-		Actor:     actor.Email,
-		Via:       actor.Channel(),
-		StatusTo:  statusTo,
-	}
-}
-
 // loadNode loads the node an operation acts on; a missing one is ErrNotFound.
-func (s *Service) loadNode(ctx context.Context, id string) (*Node, error) {
+func (s *Service) loadNode(ctx context.Context, id string) (*model.Node, error) {
 	n, err := s.store.GetNode(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("load node: %w", err)
@@ -182,22 +172,22 @@ func (s *Service) loadNode(ctx context.Context, id string) (*Node, error) {
 // changed here would be overwritten by the next reconcile, and promoting is
 // where it gets a budget, an owner and a limit — and a node that is retired or
 // rejected is past changing.
-func (s *Service) loadLive(ctx context.Context, id string) (*Node, error) {
+func (s *Service) loadLive(ctx context.Context, id string) (*model.Node, error) {
 	n, err := s.loadNode(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if n.Status == StatusImported {
+	if n.Status == model.StatusImported {
 		return nil, fmt.Errorf("imported nodes change only by being promoted: %w", common.ErrForbidden)
 	}
-	if IsTerminalStatus(n.Status) {
+	if model.IsTerminalStatus(n.Status) {
 		return nil, fmt.Errorf("%w: a node in status %q cannot be changed", common.ErrConflict, n.Status)
 	}
 	return n, nil
 }
 
 // parentChainNodes returns the node's ancestor budgets (parent upward, exclusive).
-func (s *Service) parentChainNodes(ctx context.Context, node *Node) ([]Node, error) {
+func (s *Service) parentChainNodes(ctx context.Context, node *model.Node) ([]model.Node, error) {
 	if node.ParentID == nil {
 		return nil, nil
 	}

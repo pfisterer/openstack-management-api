@@ -12,10 +12,11 @@
 //     pending. If N carries an AutoApprove policy and the requester's cumulative
 //     active usage under N stays within the per-requester limit, if it has one
 //     (and every ancestor has capacity), the request is approved immediately.
-package tree
+package model
 
 import (
 	"slices"
+	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 )
@@ -550,7 +551,7 @@ func MarkArchived(n *Node) bool {
 	if n.Status != StatusReleased {
 		return false
 	}
-	entry := newHistoryEntry("archived", Actor{Via: ChannelReconciler}, StatusArchived)
+	entry := NewHistoryEntry("archived", Actor{Via: ChannelReconciler}, StatusArchived)
 	entry.StatusFrom = new(StatusReleased)
 	n.Status = StatusArchived
 	n.History = append(slices.Clone(n.History), entry)
@@ -564,4 +565,15 @@ func IsRetiredStatus(status string) bool { return slices.Contains(RetiredStatuse
 // IsTerminalStatus reports whether a node in this status must not transition further.
 func IsTerminalStatus(status string) bool {
 	return status == StatusRejected || IsRetiredStatus(status)
+}
+
+// NewHistoryEntry creates a HistoryEntry with the current timestamp.
+func NewHistoryEntry(event string, actor Actor, statusTo string) HistoryEntry {
+	return HistoryEntry{
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Event:     event,
+		Actor:     actor.Email,
+		Via:       actor.Channel(),
+		StatusTo:  statusTo,
+	}
 }

@@ -7,7 +7,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
 // keystoneProjectNameMaxLen is Keystone's hard limit for project names: the API
@@ -45,7 +45,7 @@ const managedDescriptionSuffix = " (managed project)"
 //
 // Nothing parses the name back: a project is matched to its node via the
 // resource-id tag, so renaming a node is safe at any time.
-func buildProjectName(leaf tree.Node) string {
+func buildProjectName(leaf model.Node) string {
 	id := sanitizeProjectName(shortNodeID(leaf.ID))
 	name := sanitizeProjectName(cmp.Or(leaf.Name, leaf.Reason))
 	owner, _, _ := strings.Cut(leaf.OwnerEmail(), "@")
@@ -168,10 +168,10 @@ const descriptionPathSeparator = " -> "
 // without the root, e.g. ["DHBW Mannheim", "Fakultät Technik", "Prof-X"]. It is
 // what an operator in Horizon needs to tell where a project belongs. A budget
 // missing from budgetByID ends the walk, as does a cycle.
-func budgetPath(budgetByID map[string]tree.Node, leaf tree.Node) []string {
+func budgetPath(budgetByID map[string]model.Node, leaf model.Node) []string {
 	var path []string
 	seen := map[string]struct{}{}
-	for id := leaf.ParentID; id != nil && *id != tree.RootNodeID; {
+	for id := leaf.ParentID; id != nil && *id != model.RootNodeID; {
 		if _, dup := seen[*id]; dup {
 			break
 		}
@@ -194,7 +194,7 @@ func budgetPath(budgetByID map[string]tree.Node, leaf tree.Node) []string {
 // buildDescription constructs the OS project description for a leaf.
 // Format: "budget -> … -> email: reason (managed project)", where the budgets are
 // the leaf's path in the tree (see budgetPath) and email is the owner's address.
-func buildDescription(leaf tree.Node, path []string) string {
+func buildDescription(leaf model.Node, path []string) string {
 	prefix := path
 	if email := leaf.OwnerEmail(); email != "" {
 		prefix = append(slices.Clip(path), email)

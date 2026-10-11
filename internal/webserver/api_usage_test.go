@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"github.com/pfisterer/openstack-management-api/internal/core/usage"
 	"github.com/pfisterer/openstack-management-api/internal/dev"
@@ -32,8 +33,8 @@ func usageRouter(t *testing.T, prices *usage.Prices) http.Handler {
 	yesterday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -1)
 	rows := usage.NewMemoryStore()
 	_ = rows.ReplaceDay(context.Background(), yesterday, []usage.Day{
-		{NodeID: "p_001", VCPUHours: 10, BudgetPath: []usage.PathEntry{{ID: "b_cs_faculty"}, {ID: "b_dept_cs"}, {ID: tree.RootNodeID}}},
-		{NodeID: "p_004", VCPUHours: 5, BudgetPath: []usage.PathEntry{{ID: "b_dept_bio"}, {ID: tree.RootNodeID}}},
+		{NodeID: "p_001", VCPUHours: 10, BudgetPath: []usage.PathEntry{{ID: "b_cs_faculty"}, {ID: "b_dept_cs"}, {ID: model.RootNodeID}}},
+		{NodeID: "p_004", VCPUHours: 5, BudgetPath: []usage.PathEntry{{ID: "b_dept_bio"}, {ID: model.RootNodeID}}},
 	})
 	return webserver.SetupGinWebserver(webserver.SetupConfig{
 		DevMode: true,

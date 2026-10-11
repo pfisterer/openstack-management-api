@@ -5,13 +5,14 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 )
 
 // createOpenstackProjectForLeaf creates a new OpenStack project for an approved leaf
 // and applies the full initial quota (managed fields + network defaults).
-func (r *Reconciler) createOpenstackProjectForLeaf(_ context.Context, leaf tree.Node, description string) (osclient.ProjectInfo, error) {
+func (r *Reconciler) createOpenstackProjectForLeaf(_ context.Context, leaf model.Node, description string) (osclient.ProjectInfo, error) {
 	name := buildProjectName(leaf)
 
 	r.log.Infow("Creating OS project for leaf",
@@ -83,7 +84,7 @@ func (r *Reconciler) persistOSSyncState(ctx context.Context, leafID, osProjectID
 	}
 }
 
-func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo, description string) (*tree.Observation, error) {
+func (r *Reconciler) syncQuota(leaf model.Node, osProject osclient.ProjectInfo, description string) (*tree.Observation, error) {
 	osProjectID := osProject.ID
 	quotaSet := ProjectQuotaToQuotaSet(r.resources(), leaf.EffectiveLimit())
 

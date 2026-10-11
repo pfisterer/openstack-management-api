@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
 // Mock group tokens.
@@ -28,7 +28,7 @@ const (
 )
 
 // DefaultMockTreeState returns the seed data used for development/testing.
-func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
+func DefaultMockTreeState() ([]common.Identity, []model.Node) {
 	now := time.Now().UTC()
 	iso := func(t time.Time) string { return t.Format(time.RFC3339) }
 	plusDays := func(days int) *string {
@@ -69,28 +69,28 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 		},
 	}
 
-	rootID := tree.RootNodeID
-	unassignedID := tree.UnassignedNodeID
+	rootID := model.RootNodeID
+	unassignedID := model.UnassignedNodeID
 	deptCSID := "b_dept_cs"
 	facultyID := "b_cs_faculty"
 	studentsID := "b_cs_students"
 	bioID := "b_dept_bio"
 
-	created := func(actor string, limit common.ProjectQuota, statusTo string) []tree.HistoryEntry {
-		e := tree.HistoryEntry{
+	created := func(actor string, limit common.ProjectQuota, statusTo string) []model.HistoryEntry {
+		e := model.HistoryEntry{
 			Timestamp: "2026-01-01T00:00:00Z",
 			Event:     "created",
 			Actor:     actor,
 			StatusTo:  statusTo,
 			LimitTo:   &limit,
 		}
-		return []tree.HistoryEntry{e}
+		return []model.HistoryEntry{e}
 	}
 
-	nodes := []tree.Node{
+	nodes := []model.Node{
 		// ── Structural nodes (same IDs the bootstrap uses) ────────────────────
 		{
-			ID: rootID, Kind: tree.KindBudget, ParentID: nil, Status: tree.StatusApproved,
+			ID: rootID, Kind: model.KindBudget, ParentID: nil, Status: model.StatusApproved,
 			Name:       "University Root",
 			AdminScope: common.TokenList{RootGroup},
 			// No eligible requesters: the root hands resources down by delegation
@@ -101,7 +101,7 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			CreatedBy: "System", CreatedAt: "2025-01-01T00:00:00Z",
 		},
 		{
-			ID: unassignedID, Kind: tree.KindBudget, ParentID: &rootID, Status: tree.StatusApproved,
+			ID: unassignedID, Kind: model.KindBudget, ParentID: &rootID, Status: model.StatusApproved,
 			Name:      "Unassigned OpenStack Imports",
 			Limit:     common.ProjectQuota{"cores": 0, "ram": 0, "storage": 0},
 			CreatedBy: "System", CreatedAt: "2025-01-01T00:00:00Z",
@@ -109,7 +109,7 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 
 		// ── Budgets ───────────────────────────────────────────────────────────
 		{
-			ID: deptCSID, Kind: tree.KindBudget, ParentID: &rootID, Status: tree.StatusApproved,
+			ID: deptCSID, Kind: model.KindBudget, ParentID: &rootID, Status: model.StatusApproved,
 			Name:               "Computer Science Dept",
 			AdminScope:         common.TokenList{DeptCSAdmin},
 			EligibleRequesters: common.TokenList{DeptCSFaculty, "user:faculty@cs.example", "user:admin@cs.example"},
@@ -118,7 +118,7 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			TerminationDate: plusDays(365),
 		},
 		{
-			ID: facultyID, Kind: tree.KindBudget, ParentID: &deptCSID, Status: tree.StatusApproved,
+			ID: facultyID, Kind: model.KindBudget, ParentID: &deptCSID, Status: model.StatusApproved,
 			Name:               "CS Faculty Pool",
 			AdminScope:         common.TokenList{DeptCSFaculty},
 			EligibleRequesters: common.TokenList{CSStudentGroup, "user:cs-student@cs.com", "user:faculty@cs.example"},
@@ -130,16 +130,16 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			// Student auto-approve: managed by FACULTY (not by the students —
 			// consumers deliberately hold no admin scope), consumable by students
 			// up to 2 cores each, capped at 10 cores overall.
-			ID: studentsID, Kind: tree.KindBudget, ParentID: &facultyID, Status: tree.StatusApproved,
+			ID: studentsID, Kind: model.KindBudget, ParentID: &facultyID, Status: model.StatusApproved,
 			Name:               "CS Students (Small VM)",
 			AdminScope:         common.TokenList{DeptCSFaculty},
 			EligibleRequesters: common.TokenList{CSStudentGroup},
-			AutoApprove:        &tree.AutoApprove{PerRequesterLimit: common.ProjectQuota{"cores": 2, "ram": 4, "storage": 20}},
+			AutoApprove:        &model.AutoApprove{PerRequesterLimit: common.ProjectQuota{"cores": 2, "ram": 4, "storage": 20}},
 			Limit:              common.ProjectQuota{"cores": 10, "ram": 20, "storage": 100},
 			CreatedBy:          "faculty@cs.example", CreatedAt: "2025-09-01T09:00:00Z",
 		},
 		{
-			ID: bioID, Kind: tree.KindBudget, ParentID: &rootID, Status: tree.StatusApproved,
+			ID: bioID, Kind: model.KindBudget, ParentID: &rootID, Status: model.StatusApproved,
 			Name:               "Biology Dept",
 			AdminScope:         common.TokenList{DeptBioGroup},
 			EligibleRequesters: common.TokenList{DeptBioGroup, "user:faculty@bio.example"},
@@ -155,19 +155,19 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			// so this is a request that could actually have been made. The
 			// requester holds the admin scope of what they asked for, which is what
 			// the request dialog fills in.
-			ID: "b_cs_expansion", Kind: tree.KindBudget, ParentID: &deptCSID, Status: tree.StatusPending,
+			ID: "b_cs_expansion", Kind: model.KindBudget, ParentID: &deptCSID, Status: model.StatusPending,
 			Name:       "Robotics Lab WS26",
 			Reason:     "A dedicated budget for the robotics lab course next semester",
 			AdminScope: common.TokenList{"user:faculty@cs.example"},
 			Limit:      common.ProjectQuota{"cores": 8, "ram": 32, "storage": 200},
 			CreatedBy:  "faculty@cs.example", CreatedAt: "2026-03-01T10:00:00Z",
 			TerminationDate: plusDays(365),
-			History:         created("faculty@cs.example", common.ProjectQuota{"cores": 8, "ram": 32, "storage": 200}, tree.StatusPending),
+			History:         created("faculty@cs.example", common.ProjectQuota{"cores": 8, "ram": 32, "storage": 200}, model.StatusPending),
 		},
 
 		// ── Project leaves ────────────────────────────────────────────────────
 		{
-			ID: "p_001", Kind: tree.KindProject, ParentID: &facultyID, Status: tree.StatusApproved,
+			ID: "p_001", Kind: model.KindProject, ParentID: &facultyID, Status: model.StatusApproved,
 			Name:   "Faculty research sandbox",
 			Reason: "Faculty research sandbox",
 			Owner:  "user:faculty@cs.example",
@@ -181,12 +181,12 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			},
 			TerminationDate: plusDays(90),
 			CreatedBy:       "faculty@cs.example", CreatedAt: "2026-01-20T10:00:00Z",
-			History: created("faculty@cs.example", common.ProjectQuota{"cores": 4, "ram": 16, "storage": 100}, tree.StatusPending),
+			History: created("faculty@cs.example", common.ProjectQuota{"cores": 4, "ram": 16, "storage": 100}, model.StatusPending),
 		},
 		{
 			// Exceeds the student per-requester limit → stayed pending for a
 			// faculty decision.
-			ID: "p_002", Kind: tree.KindProject, ParentID: &facultyID, Status: tree.StatusPending,
+			ID: "p_002", Kind: model.KindProject, ParentID: &facultyID, Status: model.StatusPending,
 			Name:   "Student course project",
 			Reason: "Student course project needs compute (exceeds auto-approve limit)",
 			Owner:  "user:cs-student@cs.com",
@@ -196,15 +196,15 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			},
 			TerminationDate: plusDays(30),
 			CreatedBy:       "cs-student@cs.com", CreatedAt: "2026-01-23T08:00:00Z",
-			History: created("cs-student@cs.com", common.ProjectQuota{"cores": 2, "ram": 8, "storage": 50}, tree.StatusPending),
+			History: created("cs-student@cs.com", common.ProjectQuota{"cores": 2, "ram": 8, "storage": 50}, model.StatusPending),
 		},
 		{
-			ID: "p_003", Kind: tree.KindProject, ParentID: &facultyID, Status: tree.StatusChangePending,
+			ID: "p_003", Kind: model.KindProject, ParentID: &facultyID, Status: model.StatusChangePending,
 			Name:   "Faculty ML workload",
 			Reason: "Expanded faculty ML workload",
 			Owner:  "user:faculty@cs.example",
 			Limit:  common.ProjectQuota{"cores": 8, "ram": 32, "storage": 200},
-			Pending: &tree.PendingChanges{
+			Pending: &model.PendingChanges{
 				Limit:           &common.ProjectQuota{"cores": 12, "ram": 48, "storage": 300},
 				TerminationDate: plusDays(180),
 				AuthorizedUsers: &[]common.AuthorizedUser{
@@ -217,10 +217,10 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			},
 			TerminationDate: plusDays(60),
 			CreatedBy:       "faculty@cs.example", CreatedAt: "2026-01-15T10:00:00Z",
-			History: created("faculty@cs.example", common.ProjectQuota{"cores": 8, "ram": 32, "storage": 200}, tree.StatusPending),
+			History: created("faculty@cs.example", common.ProjectQuota{"cores": 8, "ram": 32, "storage": 200}, model.StatusPending),
 		},
 		{
-			ID: "p_004", Kind: tree.KindProject, ParentID: &bioID, Status: tree.StatusApproved,
+			ID: "p_004", Kind: model.KindProject, ParentID: &bioID, Status: model.StatusApproved,
 			Name:   "Genomics pipeline cluster",
 			Reason: "Genomics pipeline cluster",
 			Owner:  "user:faculty@bio.example",
@@ -230,12 +230,12 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			},
 			TerminationDate: plusDays(180),
 			CreatedBy:       "faculty@bio.example", CreatedAt: "2026-02-01T09:00:00Z",
-			History: created("faculty@bio.example", common.ProjectQuota{"cores": 16, "ram": 64, "storage": 800}, tree.StatusApproved),
+			History: created("faculty@bio.example", common.ProjectQuota{"cores": 16, "ram": 64, "storage": 800}, model.StatusApproved),
 		},
 		{
 			// Imported by the reconciler: an OpenStack project unknown to the
 			// system, parked under "unassigned" until a root admin promotes it.
-			ID: "p_imported_001", Kind: tree.KindProject, ParentID: &unassignedID, Status: tree.StatusImported,
+			ID: "p_imported_001", Kind: model.KindProject, ParentID: &unassignedID, Status: model.StatusImported,
 			Name:         "legacy-ml-workload",
 			Reason:       "OpenStack project: legacy-ml-workload (os-project-abc-123)",
 			ExternalID:   "os-project-abc-123",

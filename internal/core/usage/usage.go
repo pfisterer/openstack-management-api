@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
 // PathEntry is one budget on the way from a project up to the root.
@@ -66,7 +66,7 @@ type Day struct {
 	// Attributes are the attribute groups that applied to the project that
 	// day, its own and inherited — what billing reads. A snapshot like the
 	// budget path, so changing a cost centre changes the days from then on.
-	Attributes tree.Attributes
+	Attributes model.Attributes
 
 	Backfilled  bool
 	CollectedAt time.Time

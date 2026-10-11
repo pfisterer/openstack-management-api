@@ -9,6 +9,7 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/dev"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"go.uber.org/zap"
 )
@@ -47,14 +48,14 @@ func TestBootstrap_SyncsRootAdminScope(t *testing.T) {
 		t.Fatalf("bootstrap v1: %v", err)
 	}
 
-	root, err := store.GetNode(context.Background(), tree.RootNodeID)
+	root, err := store.GetNode(context.Background(), model.RootNodeID)
 	if err != nil || root == nil {
 		t.Fatalf("root node missing after bootstrap: %v", err)
 	}
 	if len(root.AdminScope) != 1 || root.AdminScope[0] != "group:admins-v1" {
 		t.Fatalf("root admin scope = %v, want [group:admins-v1]", root.AdminScope)
 	}
-	unassigned, err := store.GetNode(context.Background(), tree.UnassignedNodeID)
+	unassigned, err := store.GetNode(context.Background(), model.UnassignedNodeID)
 	if err != nil || unassigned == nil {
 		t.Fatalf("unassigned node missing after bootstrap: %v", err)
 	}
@@ -67,7 +68,7 @@ func TestBootstrap_SyncsRootAdminScope(t *testing.T) {
 	if err := svc2.Bootstrap(context.Background(), nil, nil); err != nil {
 		t.Fatalf("bootstrap v2: %v", err)
 	}
-	root, _ = store.GetNode(context.Background(), tree.RootNodeID)
+	root, _ = store.GetNode(context.Background(), model.RootNodeID)
 	if len(root.AdminScope) != 1 || root.AdminScope[0] != "group:admins-v2" {
 		t.Fatalf("root admin scope after restart = %v, want [group:admins-v2]", root.AdminScope)
 	}
@@ -82,15 +83,15 @@ func TestAutoApprove_CountsPerOwnerNotPerGroup(t *testing.T) {
 
 	// Root creates an auto-approve budget: total 10, 2 per requester.
 	budget, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID:           tree.RootNodeID,
-		Kind:               tree.KindBudget,
+		ParentID:           model.RootNodeID,
+		Kind:               model.KindBudget,
 		Name:               "Selfservice",
 		Reason:             "test",
 		Limit:              cores(10),
 		AdminScope:         common.TokenList{"group:root"},
 		EligibleRequesters: common.TokenList{"group:students"},
-		AutoApprove:        &tree.AutoApprove{PerRequesterLimit: cores(2)},
-	}, tree.UIActor("root@x"), "root@x", rootTokens)
+		AutoApprove:        &model.AutoApprove{PerRequesterLimit: cores(2)},
+	}, model.UIActor("root@x"), "root@x", rootTokens)
 	if err != nil {
 		t.Fatalf("create budget: %v", err)
 	}
@@ -99,41 +100,41 @@ func TestAutoApprove_CountsPerOwnerNotPerGroup(t *testing.T) {
 	annaTokens := common.TokenList{"user:anna@x", "group:students"}
 	benTokens := common.TokenList{"user:ben@x", "group:students"}
 
-	req := func(email string, tokens common.TokenList, n int) (tree.Node, error) {
+	req := func(email string, tokens common.TokenList, n int) (model.Node, error) {
 		return svc.CreateNode(tree.CreateNodeRequest{
 			ParentID: budget.ID,
-			Kind:     tree.KindProject,
+			Kind:     model.KindProject,
 			Name:     "vm",
 			Reason:   "vm",
 			Limit:    cores(n),
-		}, tree.UIActor(email), email, tokens)
+		}, model.UIActor(email), email, tokens)
 	}
 
 	// Anna exhausts her cap.
 	n1, err := req("anna@x", annaTokens, 2)
-	if err != nil || n1.Status != tree.StatusApproved {
+	if err != nil || n1.Status != model.StatusApproved {
 		t.Fatalf("anna's first request should auto-approve, got %v / %v", n1.Status, err)
 	}
 	// Anna's next request exceeds HER cumulative cap.
 	n2, err := req("anna@x", annaTokens, 1)
-	if err != nil || n2.Status != tree.StatusPending {
+	if err != nil || n2.Status != model.StatusPending {
 		t.Fatalf("anna's second request should stay pending, got %v / %v", n2.Status, err)
 	}
 	// Ben still gets his own full cap — Anna's usage must not count against him.
 	n3, err := req("ben@x", benTokens, 2)
-	if err != nil || n3.Status != tree.StatusApproved {
+	if err != nil || n3.Status != model.StatusApproved {
 		t.Fatalf("ben's request should auto-approve despite anna's usage, got %v / %v", n3.Status, err)
 	}
 
 	// And Ben cannot touch Anna's leaf: he is neither owner nor manager.
-	if _, err := svc.ReleaseNode(n1.ID, tree.ReleaseNodeRequest{}, tree.UIActor("ben@x"), benTokens); err == nil {
+	if _, err := svc.ReleaseNode(n1.ID, tree.ReleaseNodeRequest{}, model.UIActor("ben@x"), benTokens); err == nil {
 		t.Fatalf("ben releasing anna's leaf must fail")
 	}
-	if _, err := svc.RequestChange(n1.ID, tree.ChangeNodeRequest{Limit: ptrQuota(cores(1))}, tree.UIActor("ben@x"), benTokens); err == nil {
+	if _, err := svc.RequestChange(n1.ID, tree.ChangeNodeRequest{Limit: ptrQuota(cores(1))}, model.UIActor("ben@x"), benTokens); err == nil {
 		t.Fatalf("ben changing anna's leaf must fail")
 	}
 	// Anna herself can.
-	if _, err := svc.ReleaseNode(n1.ID, tree.ReleaseNodeRequest{}, tree.UIActor("anna@x"), annaTokens); err != nil {
+	if _, err := svc.ReleaseNode(n1.ID, tree.ReleaseNodeRequest{}, model.UIActor("anna@x"), annaTokens); err != nil {
 		t.Fatalf("anna releasing her own leaf: %v", err)
 	}
 }
@@ -146,39 +147,39 @@ func TestAutoApprove_BudgetTotalLimitCaps(t *testing.T) {
 	rootTokens := common.TokenList{"user:root@x", "group:root"}
 
 	budget, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID:           tree.RootNodeID,
-		Kind:               tree.KindBudget,
+		ParentID:           model.RootNodeID,
+		Kind:               model.KindBudget,
 		Name:               "Small selfservice",
 		Reason:             "test",
 		Limit:              cores(3), // total for everyone
 		AdminScope:         common.TokenList{"group:root"},
 		EligibleRequesters: common.TokenList{"group:students"},
-		AutoApprove:        &tree.AutoApprove{PerRequesterLimit: cores(2)},
-	}, tree.UIActor("root@x"), "root@x", rootTokens)
+		AutoApprove:        &model.AutoApprove{PerRequesterLimit: cores(2)},
+	}, model.UIActor("root@x"), "root@x", rootTokens)
 	if err != nil {
 		t.Fatalf("create budget: %v", err)
 	}
 
-	req := func(email string, n int) tree.Node {
+	req := func(email string, n int) model.Node {
 		t.Helper()
 		node, err := svc.CreateNode(tree.CreateNodeRequest{
-			ParentID: budget.ID, Kind: tree.KindProject, Name: "vm", Reason: "vm", Limit: cores(n),
-		}, tree.UIActor(email), email, common.TokenList{"user:" + email, "group:students"})
+			ParentID: budget.ID, Kind: model.KindProject, Name: "vm", Reason: "vm", Limit: cores(n),
+		}, model.UIActor(email), email, common.TokenList{"user:" + email, "group:students"})
 		if err != nil {
 			t.Fatalf("request by %s: %v", email, err)
 		}
 		return node
 	}
 
-	if n := req("a@x", 2); n.Status != tree.StatusApproved {
+	if n := req("a@x", 2); n.Status != model.StatusApproved {
 		t.Fatalf("first 2 cores should auto-approve, got %q", n.Status)
 	}
 	// b is within their personal cap (2), but the budget only has 1 core left.
-	if n := req("b@x", 2); n.Status != tree.StatusPending {
+	if n := req("b@x", 2); n.Status != model.StatusPending {
 		t.Fatalf("request beyond the budget total should stay pending, got %q", n.Status)
 	}
 	// A fitting request still auto-approves.
-	if n := req("c@x", 1); n.Status != tree.StatusApproved {
+	if n := req("c@x", 1); n.Status != model.StatusApproved {
 		t.Fatalf("1 core within the remaining total should auto-approve, got %q", n.Status)
 	}
 }
@@ -189,21 +190,21 @@ func TestReparent_CycleGuard(t *testing.T) {
 	rootTokens := common.TokenList{"user:root@x", "group:root"}
 
 	outer, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: tree.RootNodeID, Kind: tree.KindBudget, Name: "Outer", Reason: "t",
+		ParentID: model.RootNodeID, Kind: model.KindBudget, Name: "Outer", Reason: "t",
 		Limit: cores(10), AdminScope: common.TokenList{"group:root"},
-	}, tree.UIActor("root@x"), "root@x", rootTokens)
+	}, model.UIActor("root@x"), "root@x", rootTokens)
 	if err != nil {
 		t.Fatalf("create outer: %v", err)
 	}
 	inner, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: outer.ID, Kind: tree.KindBudget, Name: "Inner", Reason: "t",
+		ParentID: outer.ID, Kind: model.KindBudget, Name: "Inner", Reason: "t",
 		Limit: cores(5), AdminScope: common.TokenList{"group:root"},
-	}, tree.UIActor("root@x"), "root@x", rootTokens)
+	}, model.UIActor("root@x"), "root@x", rootTokens)
 	if err != nil {
 		t.Fatalf("create inner: %v", err)
 	}
 
-	if _, err := svc.ReparentNode(outer.ID, tree.ReparentNodeRequest{NewParentID: inner.ID}, tree.UIActor("root@x"), rootTokens); err == nil {
+	if _, err := svc.ReparentNode(outer.ID, tree.ReparentNodeRequest{NewParentID: inner.ID}, model.UIActor("root@x"), rootTokens); err == nil {
 		t.Fatalf("moving a budget into its own subtree must fail")
 	}
 }
@@ -218,12 +219,12 @@ func TestCreateBudget_RejectsEmptyAdminScope(t *testing.T) {
 	rootTokens := common.TokenList{"user:root@x", "group:root"}
 
 	_, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: tree.RootNodeID,
-		Kind:     tree.KindBudget,
+		ParentID: model.RootNodeID,
+		Kind:     model.KindBudget,
 		Name:     "Orphan",
 		Reason:   "test",
 		Limit:    cores(10),
-	}, tree.UIActor("root@x"), "root@x", rootTokens)
+	}, model.UIActor("root@x"), "root@x", rootTokens)
 	if err == nil {
 		t.Fatal("creating a budget without admin_scope should fail")
 	}
@@ -233,12 +234,12 @@ func TestCreateBudget_RejectsEmptyAdminScope(t *testing.T) {
 
 	// Projects are unaffected: they are owned by their requester, not managed.
 	if _, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: tree.RootNodeID,
-		Kind:     tree.KindProject,
+		ParentID: model.RootNodeID,
+		Kind:     model.KindProject,
 		Name:     "test",
 		Reason:   "test",
 		Limit:    cores(1),
-	}, tree.UIActor("root@x"), "root@x", rootTokens); err != nil {
+	}, model.UIActor("root@x"), "root@x", rootTokens); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
 }
@@ -252,56 +253,56 @@ func TestAllowSubBudgetRequests(t *testing.T) {
 	no := false
 
 	budget, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID:               tree.RootNodeID,
-		Kind:                   tree.KindBudget,
+		ParentID:               model.RootNodeID,
+		Kind:                   model.KindBudget,
 		Name:                   "Course",
 		Reason:                 "test",
 		Limit:                  cores(10),
 		AdminScope:             common.TokenList{"group:root"},
 		EligibleRequesters:     common.TokenList{"group:students"},
 		AllowSubBudgetRequests: &no,
-	}, tree.UIActor("root@x"), "root@x", rootTokens)
+	}, model.UIActor("root@x"), "root@x", rootTokens)
 	if err != nil {
 		t.Fatalf("create budget: %v", err)
 	}
 
 	// The requester may still ask for a project.
 	if _, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: budget.ID, Kind: tree.KindProject, Name: "vm", Reason: "vm", Limit: cores(1),
-	}, tree.UIActor("s1@x"), "s1@x", studentTokens); err != nil {
+		ParentID: budget.ID, Kind: model.KindProject, Name: "vm", Reason: "vm", Limit: cores(1),
+	}, model.UIActor("s1@x"), "s1@x", studentTokens); err != nil {
 		t.Fatalf("project request should be allowed: %v", err)
 	}
 
 	// ... but not for a sub-budget.
 	_, err = svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: budget.ID, Kind: tree.KindBudget, Name: "Mine", Reason: "test",
+		ParentID: budget.ID, Kind: model.KindBudget, Name: "Mine", Reason: "test",
 		Limit: cores(1), AdminScope: common.TokenList{"user:s1@x"},
-	}, tree.UIActor("s1@x"), "s1@x", studentTokens)
+	}, model.UIActor("s1@x"), "s1@x", studentTokens)
 	if err == nil {
 		t.Fatal("sub-budget request should be refused")
 	}
 
 	// A manager is not restricted by the flag — they shape the tree.
 	if _, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: budget.ID, Kind: tree.KindBudget, Name: "Manager's",
+		ParentID: budget.ID, Kind: model.KindBudget, Name: "Manager's",
 		Reason: "test", Limit: cores(1), AdminScope: common.TokenList{"group:root"},
-	}, tree.UIActor("root@x"), "root@x", rootTokens); err != nil {
+	}, model.UIActor("root@x"), "root@x", rootTokens); err != nil {
 		t.Fatalf("manager should still create sub-budgets: %v", err)
 	}
 
 	// Omitting the field keeps the old behaviour: requests are allowed.
 	open, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: tree.RootNodeID, Kind: tree.KindBudget, Name: "Open", Reason: "test",
+		ParentID: model.RootNodeID, Kind: model.KindBudget, Name: "Open", Reason: "test",
 		Limit: cores(10), AdminScope: common.TokenList{"group:root"},
 		EligibleRequesters: common.TokenList{"group:students"},
-	}, tree.UIActor("root@x"), "root@x", rootTokens)
+	}, model.UIActor("root@x"), "root@x", rootTokens)
 	if err != nil {
 		t.Fatalf("create open budget: %v", err)
 	}
 	if _, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: open.ID, Kind: tree.KindBudget, Name: "Sub", Reason: "test",
+		ParentID: open.ID, Kind: model.KindBudget, Name: "Sub", Reason: "test",
 		Limit: cores(1), AdminScope: common.TokenList{"user:s1@x"},
-	}, tree.UIActor("s1@x"), "s1@x", studentTokens); err != nil {
+	}, model.UIActor("s1@x"), "s1@x", studentTokens); err != nil {
 		t.Fatalf("sub-budget request should be allowed by default: %v", err)
 	}
 }
@@ -313,16 +314,16 @@ func TestChildCountIsAttached(t *testing.T) {
 	rootTokens := common.TokenList{"user:root@x", "group:root"}
 
 	parent, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: tree.RootNodeID, Kind: tree.KindBudget, Name: "Parent", Reason: "test",
+		ParentID: model.RootNodeID, Kind: model.KindBudget, Name: "Parent", Reason: "test",
 		Limit: cores(10), AdminScope: common.TokenList{"group:root"},
-	}, tree.UIActor("root@x"), "root@x", rootTokens)
+	}, model.UIActor("root@x"), "root@x", rootTokens)
 	if err != nil {
 		t.Fatalf("create parent: %v", err)
 	}
 	empty, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: parent.ID, Kind: tree.KindBudget, Name: "Empty", Reason: "test",
+		ParentID: parent.ID, Kind: model.KindBudget, Name: "Empty", Reason: "test",
 		Limit: cores(1), AdminScope: common.TokenList{"group:root"},
-	}, tree.UIActor("root@x"), "root@x", rootTokens)
+	}, model.UIActor("root@x"), "root@x", rootTokens)
 	if err != nil {
 		t.Fatalf("create empty child: %v", err)
 	}
@@ -341,8 +342,8 @@ func TestChildCountIsAttached(t *testing.T) {
 
 	// Give it a leaf and the count follows.
 	if _, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: empty.ID, Kind: tree.KindProject, Name: "vm", Reason: "vm", Limit: cores(1),
-	}, tree.UIActor("root@x"), "root@x", rootTokens); err != nil {
+		ParentID: empty.ID, Kind: model.KindProject, Name: "vm", Reason: "vm", Limit: cores(1),
+	}, model.UIActor("root@x"), "root@x", rootTokens); err != nil {
 		t.Fatalf("create leaf: %v", err)
 	}
 	page, err = svc.ListChildren(parent.ID, tree.ChildFilter{}, rootTokens, 0, 0)
@@ -361,16 +362,16 @@ func TestParentNameIsAttached(t *testing.T) {
 	rootTokens := common.TokenList{"user:root@x", "group:root"}
 
 	budget, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: tree.RootNodeID, Kind: tree.KindBudget, Name: "Course WI", Reason: "test",
+		ParentID: model.RootNodeID, Kind: model.KindBudget, Name: "Course WI", Reason: "test",
 		Limit: cores(10), AdminScope: common.TokenList{"group:root"},
 		EligibleRequesters: common.TokenList{"user:student@x"},
-	}, tree.UIActor("root@x"), "root@x", rootTokens)
+	}, model.UIActor("root@x"), "root@x", rootTokens)
 	if err != nil {
 		t.Fatalf("create budget: %v", err)
 	}
 	if _, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: budget.ID, Kind: tree.KindProject, Name: "vm", Reason: "vm", Limit: cores(1),
-	}, tree.UIActor("student@x"), "student@x", common.TokenList{"user:student@x"}); err != nil {
+		ParentID: budget.ID, Kind: model.KindProject, Name: "vm", Reason: "vm", Limit: cores(1),
+	}, model.UIActor("student@x"), "student@x", common.TokenList{"user:student@x"}); err != nil {
 		t.Fatalf("create leaf: %v", err)
 	}
 
@@ -386,7 +387,7 @@ func TestParentNameIsAttached(t *testing.T) {
 	}
 
 	// The root itself has no parent to name.
-	root, err := svc.GetNode(tree.RootNodeID, rootTokens)
+	root, err := svc.GetNode(model.RootNodeID, rootTokens)
 	if err != nil {
 		t.Fatalf("get root: %v", err)
 	}
@@ -404,14 +405,14 @@ func TestClearTerminationDate(t *testing.T) {
 	ends := "2027-01-01T00:00:00Z"
 
 	budget, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID:        tree.RootNodeID,
-		Kind:            tree.KindBudget,
+		ParentID:        model.RootNodeID,
+		Kind:            model.KindBudget,
 		Name:            "Course",
 		Reason:          "test",
 		Limit:           cores(10),
 		AdminScope:      common.TokenList{"group:root"},
 		TerminationDate: &ends,
-	}, tree.UIActor("root@x"), "root@x", rootTokens)
+	}, model.UIActor("root@x"), "root@x", rootTokens)
 	if err != nil {
 		t.Fatalf("create budget: %v", err)
 	}
@@ -420,7 +421,7 @@ func TestClearTerminationDate(t *testing.T) {
 	}
 
 	// Without the flag the date survives — that is what "leave as is" means.
-	untouched, err := svc.UpdateNode(budget.ID, tree.UpdateNodeRequest{}, tree.UIActor("root@x"), rootTokens)
+	untouched, err := svc.UpdateNode(budget.ID, tree.UpdateNodeRequest{}, model.UIActor("root@x"), rootTokens)
 	if err != nil {
 		t.Fatalf("update without changes: %v", err)
 	}
@@ -430,7 +431,7 @@ func TestClearTerminationDate(t *testing.T) {
 
 	cleared, err := svc.UpdateNode(budget.ID, tree.UpdateNodeRequest{
 		ClearTerminationDate: true,
-	}, tree.UIActor("root@x"), rootTokens)
+	}, model.UIActor("root@x"), rootTokens)
 	if err != nil {
 		t.Fatalf("clear termination date: %v", err)
 	}

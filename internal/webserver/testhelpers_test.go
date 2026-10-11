@@ -4,13 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/pfisterer/openstack-management-api/internal/identity"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/pfisterer/openstack-management-api/internal/identity"
+
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"github.com/pfisterer/openstack-management-api/internal/dev"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
@@ -113,7 +115,7 @@ func setupRouterWith(t *testing.T, rec webserver.ReconcilerAPI) http.Handler {
 // The accounting policy is a parameter because it changes what the same
 // lifecycle costs — see the scenario suite for why it does not just take the
 // production default.
-func setupRouterSeeded(t *testing.T, nodes []tree.Node, acc tree.Accounting) http.Handler {
+func setupRouterSeeded(t *testing.T, nodes []model.Node, acc tree.Accounting) http.Handler {
 	t.Helper()
 	store, sugar := newTestStore(t)
 	ids, _ := dev.DefaultMockTreeState()
@@ -218,7 +220,7 @@ func futureDate(days int) string {
 
 // decodePage decodes a paginated node listing and returns the page's items.
 // Tests that also care about the total decode tree.NodePage themselves.
-func decodePage(t *testing.T, rr *httptest.ResponseRecorder) []tree.Node {
+func decodePage(t *testing.T, rr *httptest.ResponseRecorder) []model.Node {
 	t.Helper()
 	var page tree.NodePage
 	mustDecode(t, rr, &page)
@@ -226,7 +228,7 @@ func decodePage(t *testing.T, rr *httptest.ResponseRecorder) []tree.Node {
 }
 
 // nodeIDs extracts IDs from a node slice for use in error messages.
-func nodeIDs(ns []tree.Node) []string {
+func nodeIDs(ns []model.Node) []string {
 	ids := make([]string, len(ns))
 	for i, n := range ns {
 		ids[i] = n.ID

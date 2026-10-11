@@ -5,10 +5,11 @@ import (
 	"fmt"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
-func (s *Service) nodeChain(ctx context.Context, startID string) ([]Node, error) {
-	var chain []Node
+func (s *Service) nodeChain(ctx context.Context, startID string) ([]model.Node, error) {
+	var chain []model.Node
 	seen := map[string]struct{}{}
 	id := &startID
 	for id != nil {
@@ -32,7 +33,7 @@ func (s *Service) nodeChain(ctx context.Context, startID string) ([]Node, error)
 // managesNode reports whether the caller holds a token in the AdminScope of the
 // node itself or ANY of its ancestors (inclusive walk). Root admins manage every
 // node simply because "root" is an ancestor of everything.
-func (s *Service) managesNode(ctx context.Context, userTokens common.TokenList, node *Node) (bool, error) {
+func (s *Service) managesNode(ctx context.Context, userTokens common.TokenList, node *model.Node) (bool, error) {
 	callerSet := common.NewTokenSet(userTokens)
 	if callerSet.ContainsAny(node.AdminScope) {
 		return true, nil
@@ -44,7 +45,7 @@ func (s *Service) managesNode(ctx context.Context, userTokens common.TokenList, 
 // the node's parent or any higher ancestor (EXCLUSIVE walk — the node's own scope
 // does not count). This is the approval authority: a budget's own managers must
 // not approve their own budget's requests for more capacity.
-func (s *Service) managesParentChain(ctx context.Context, userTokens common.TokenList, node *Node) (bool, error) {
+func (s *Service) managesParentChain(ctx context.Context, userTokens common.TokenList, node *model.Node) (bool, error) {
 	return s.managesChainFrom(ctx, common.NewTokenSet(userTokens), node.ParentID)
 }
 
@@ -65,17 +66,17 @@ func (s *Service) managesChainFrom(ctx context.Context, callerSet common.TokenSe
 }
 
 // isOwner reports whether the caller holds the leaf's owner token.
-func isOwner(userTokens common.TokenList, node *Node) bool {
+func isOwner(userTokens common.TokenList, node *model.Node) bool {
 	return node.Owner != "" && common.NewTokenSet(userTokens).Contains(node.Owner)
 }
 
 // isEligibleRequester reports whether the caller may request children under node.
-func isEligibleRequester(userTokens common.TokenList, node *Node) bool {
+func isEligibleRequester(userTokens common.TokenList, node *model.Node) bool {
 	return common.NewTokenSet(node.EligibleRequesters).ContainsAny(userTokens)
 }
 
 // isAuthorizedUser reports whether the caller appears in the leaf's authorized users.
-func isAuthorizedUser(userTokens common.TokenList, node *Node) bool {
+func isAuthorizedUser(userTokens common.TokenList, node *model.Node) bool {
 	set := common.NewTokenSet(userTokens)
 	for _, au := range node.AuthorizedUsers {
 		if set.Contains(au.Token) {
@@ -93,7 +94,7 @@ func isAuthorizedUser(userTokens common.TokenList, node *Node) bool {
 // just the roots, because a budget without an admin scope (the imports node, a
 // purely structural grouping) has no manager and its children still belong to
 // whoever manages the level above.
-func (s *Service) undelegatedBudgetIDs(ctx context.Context, roots []Node, userTokens common.TokenList) ([]string, error) {
+func (s *Service) undelegatedBudgetIDs(ctx context.Context, roots []model.Node, userTokens common.TokenList) ([]string, error) {
 	seen := make(map[string]bool, len(roots))
 	ids := make([]string, 0, len(roots))
 	queue := make([]string, 0, len(roots))
@@ -106,7 +107,7 @@ func (s *Service) undelegatedBudgetIDs(ctx context.Context, roots []Node, userTo
 	}
 
 	for len(queue) > 0 {
-		children, err := s.store.ListNodes(ctx, NodeQuery{ParentIDs: queue, Kinds: []string{KindBudget}}, 0, 0)
+		children, err := s.store.ListNodes(ctx, NodeQuery{ParentIDs: queue, Kinds: []string{model.KindBudget}}, 0, 0)
 		if err != nil {
 			return nil, fmt.Errorf("load child budgets: %w", err)
 		}

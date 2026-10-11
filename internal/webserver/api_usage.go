@@ -8,7 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/usage"
 	"go.uber.org/zap"
 )
@@ -89,7 +89,7 @@ func getNodeUsage(cfg APIConfig) gin.HandlerFunc {
 		var rows []usage.Day
 		if cfg.Usage != nil {
 			end := to.AddDate(0, 0, 1)
-			if node.Kind == tree.KindBudget {
+			if node.Kind == model.KindBudget {
 				rows, err = cfg.Usage.DaysUnder(c.Request.Context(), node.ID, from, end)
 			} else {
 				rows, err = cfg.Usage.Days(c.Request.Context(), []string{node.ID}, from, end)

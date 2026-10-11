@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 	"go.uber.org/zap"
 )
@@ -23,7 +23,7 @@ func TestReleasedLeafIsRemovedOnceItsProjectIsGone(t *testing.T) {
 
 	var res reconcileResult
 	r.removeReleasedLeavesWithoutProject(context.Background(),
-		map[string]tree.Node{
+		map[string]model.Node{
 			"p_1": {ID: "p_1", ExternalID: "os-1"},
 			"p_2": {ID: "p_2", ExternalID: "os-2"},
 		}, map[string]osclient.ProjectInfo{}, &res)
@@ -44,7 +44,7 @@ func TestReleasedLeafCleanupDoesNothingWhenAllProjectsAreInScope(t *testing.T) {
 
 	var res reconcileResult
 	r.removeReleasedLeavesWithoutProject(context.Background(),
-		map[string]tree.Node{}, map[string]osclient.ProjectInfo{}, &res)
+		map[string]model.Node{}, map[string]osclient.ProjectInfo{}, &res)
 
 	if len(store.deleted) != 0 || res.releasedLeavesRemoved != 0 {
 		t.Errorf("deleted %v / counted %d, want nothing", store.deleted, res.releasedLeavesRemoved)
@@ -73,7 +73,7 @@ func TestReleasedLeafRemovalRespectsTheSafetySwitches(t *testing.T) {
 
 			var res reconcileResult
 			r.removeReleasedLeavesWithoutProject(context.Background(),
-				map[string]tree.Node{"p_1": {ID: "p_1", ExternalID: "os-1"}},
+				map[string]model.Node{"p_1": {ID: "p_1", ExternalID: "os-1"}},
 				map[string]osclient.ProjectInfo{}, &res)
 
 			if len(store.deleted) != tc.wantDeleted {
@@ -95,7 +95,7 @@ func TestReleasedLeafWithAnUntaggedProjectInScopeIsKept(t *testing.T) {
 
 	var res reconcileResult
 	r.removeReleasedLeavesWithoutProject(context.Background(),
-		map[string]tree.Node{"p_1": {ID: "p_1", ExternalID: "os-1"}},
+		map[string]model.Node{"p_1": {ID: "p_1", ExternalID: "os-1"}},
 		map[string]osclient.ProjectInfo{"os-1": {ID: "os-1"}}, &res)
 
 	if len(store.deleted) != 0 || res.releasedLeavesRemoved != 0 {

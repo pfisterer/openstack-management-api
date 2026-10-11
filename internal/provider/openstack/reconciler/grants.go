@@ -2,7 +2,7 @@ package reconciler
 
 import (
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 	"go.uber.org/zap"
 )
@@ -45,7 +45,7 @@ type grantClient interface {
 	RemoveGrant(grant osclient.Grant, projectID string) (bool, error)
 }
 
-func (r *Reconciler) syncGrants(leaf tree.Node, osProjectID string) {
+func (r *Reconciler) syncGrants(leaf model.Node, osProjectID string) {
 	syncGrants(r.osClient, r.resources(), leaf, osProjectID, r.cfg.DryRun, r.log)
 }
 
@@ -62,7 +62,7 @@ func (r *Reconciler) syncGrants(leaf tree.Node, osProjectID string) {
 // Failures are logged per resource and do not abort the pass. One unreachable
 // service must not stop the other twenty projects from being reconciled, and the
 // next run tries again — the desired state is in the tree, not in this call.
-func syncGrants(c grantClient, defs []osclient.ManagedResource, leaf tree.Node, osProjectID string, dryRun bool, log *zap.SugaredLogger) {
+func syncGrants(c grantClient, defs []osclient.ManagedResource, leaf model.Node, osProjectID string, dryRun bool, log *zap.SugaredLogger) {
 	holds := leaf.EffectiveLimit()
 	for _, def := range defs {
 		if !def.IsBool() || def.Grant == nil {

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
 // AllocationRequest grants, changes or removes what a project draws from a
@@ -34,11 +35,11 @@ type AllocationRequest struct {
 // its managers already manage the project, and the project stays where it is
 // in the tree, with its own budget's rules — lifetime, auto-approve, a person's
 // share — applying as before, to its own limit only.
-func (s *Service) SetAllocation(id string, req AllocationRequest, actor Actor, userTokens common.TokenList) (Node, error) {
+func (s *Service) SetAllocation(id string, req AllocationRequest, actor model.Actor, userTokens common.TokenList) (model.Node, error) {
 	limit := maps.Clone(req.Limit)
 	maps.DeleteFunc(limit, func(_ string, v int) bool { return v == 0 })
 	if err := s.validateLeafLimit(limit); err != nil {
-		return Node{}, err
+		return model.Node{}, err
 	}
 
 	s.approvalMu.Lock()
@@ -48,22 +49,22 @@ func (s *Service) SetAllocation(id string, req AllocationRequest, actor Actor, u
 
 	current, err := s.loadLive(ctx, id)
 	if err != nil {
-		return Node{}, err
+		return model.Node{}, err
 	}
-	if current.Kind != KindProject {
-		return Node{}, fmt.Errorf("only a project draws from budgets above its own; a budget gets more from its parent")
+	if current.Kind != model.KindProject {
+		return model.Node{}, fmt.Errorf("only a project draws from budgets above its own; a budget gets more from its parent")
 	}
 
 	chain, err := s.parentChainNodes(ctx, current)
 	if err != nil {
-		return Node{}, err
+		return model.Node{}, err
 	}
-	at := slices.IndexFunc(chain, func(n Node) bool { return n.ID == req.BudgetID })
+	at := slices.IndexFunc(chain, func(n model.Node) bool { return n.ID == req.BudgetID })
 	if at < 0 {
-		return Node{}, fmt.Errorf("budget %q is not above this project — a project draws only from budgets above its own", req.BudgetID)
+		return model.Node{}, fmt.Errorf("budget %q is not above this project — a project draws only from budgets above its own", req.BudgetID)
 	}
 	if at == 0 {
-		return Node{}, fmt.Errorf("this is the project's own budget — change its resources with a change request instead")
+		return model.Node{}, fmt.Errorf("this is the project's own budget — change its resources with a change request instead")
 	}
 	source := chain[at]
 
@@ -74,7 +75,7 @@ func (s *Service) SetAllocation(id string, req AllocationRequest, actor Actor, u
 		}
 	}
 	if len(held) == 0 && len(limit) == 0 {
-		return Node{}, fmt.Errorf("the project draws nothing from budget %q", nodeLabel(source))
+		return model.Node{}, fmt.Errorf("the project draws nothing from budget %q", nodeLabel(source))
 	}
 
 	raises := false
@@ -96,26 +97,26 @@ func (s *Service) SetAllocation(id string, req AllocationRequest, actor Actor, u
 		// limit; anything else belongs to whoever holds what is handed out.
 		holder := isOwner(userTokens, current) || callerSet.ContainsAny(current.AdminScope)
 		if !holder || raises {
-			return Node{}, common.ErrForbidden
+			return model.Node{}, common.ErrForbidden
 		}
 	}
 
 	if raises {
 		if strings.TrimSpace(req.Reason) == "" {
-			return Node{}, fmt.Errorf("a reason is required: the managers of the budgets in between see this allocation and should know why it exists")
+			return model.Node{}, fmt.Errorf("a reason is required: the managers of the budgets in between see this allocation and should know why it exists")
 		}
-		if source.Status != StatusApproved {
-			return Node{}, fmt.Errorf("%w: budget %q is in status %q", common.ErrConflict, nodeLabel(source), source.Status)
+		if source.Status != model.StatusApproved {
+			return model.Node{}, fmt.Errorf("%w: budget %q is in status %q", common.ErrConflict, nodeLabel(source), source.Status)
 		}
 		if err := s.validateAllocationAvailabilities(*current, *bindingInChain(chain[at:]), limit); err != nil {
-			return Node{}, err
+			return model.Node{}, err
 		}
 		if err := s.checkCapacity(ctx, chain[at:], limit, held); err != nil {
-			return Node{}, err
+			return model.Node{}, err
 		}
 	}
 
-	entry := newHistoryEntry("allocation_set", actor, current.Status)
+	entry := model.NewHistoryEntry("allocation_set", actor, current.Status)
 	if len(limit) == 0 {
 		entry.Event = "allocation_removed"
 	}
@@ -127,9 +128,9 @@ func (s *Service) SetAllocation(id string, req AllocationRequest, actor Actor, u
 	}
 
 	updated := *current
-	updated.Allocations = slices.DeleteFunc(slices.Clone(current.Allocations), func(a Allocation) bool { return a.BudgetID == source.ID })
+	updated.Allocations = slices.DeleteFunc(slices.Clone(current.Allocations), func(a model.Allocation) bool { return a.BudgetID == source.ID })
 	if len(limit) > 0 {
-		updated.Allocations = append(updated.Allocations, Allocation{
+		updated.Allocations = append(updated.Allocations, model.Allocation{
 			BudgetID:  source.ID,
 			Limit:     limit,
 			Reason:    strings.TrimSpace(req.Reason),
@@ -142,9 +143,9 @@ func (s *Service) SetAllocation(id string, req AllocationRequest, actor Actor, u
 	}
 	updated.History = append(slices.Clone(current.History), entry)
 	if err := s.store.UpsertNode(ctx, updated); err != nil {
-		return Node{}, fmt.Errorf("persist node: %w", err)
+		return model.Node{}, fmt.Errorf("persist node: %w", err)
 	}
-	named, err := s.attachParentNames(ctx, []Node{updated}, userTokens)
+	named, err := s.attachParentNames(ctx, []model.Node{updated}, userTokens)
 	if err != nil {
 		return updated, nil
 	}
@@ -156,7 +157,7 @@ func (s *Service) SetAllocation(id string, req AllocationRequest, actor Actor, u
 // directly or from further up. Decorated with usage and available resources,
 // so a form can say what each still has room for. Empty for anyone else —
 // the project's own managers included, who change its own share instead.
-func (s *Service) AllocationSources(id string, userTokens common.TokenList) ([]Node, error) {
+func (s *Service) AllocationSources(id string, userTokens common.TokenList) ([]model.Node, error) {
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
@@ -164,7 +165,7 @@ func (s *Service) AllocationSources(id string, userTokens common.TokenList) ([]N
 	if err != nil {
 		return nil, err
 	}
-	if project.Kind != KindProject {
+	if project.Kind != model.KindProject {
 		return nil, fmt.Errorf("only a project draws from budgets above its own")
 	}
 	chain, err := s.parentChainNodes(ctx, project)
@@ -172,12 +173,12 @@ func (s *Service) AllocationSources(id string, userTokens common.TokenList) ([]N
 		return nil, err
 	}
 	callerSet := common.NewTokenSet(userTokens)
-	var out []Node
+	var out []model.Node
 	for i := len(chain) - 1; i >= 1; i-- {
 		// Walking down from the root: once the caller manages a budget, they
 		// manage every one below it as well.
 		if callerSet.ContainsAny(chain[i].AdminScope) || len(out) > 0 {
-			if chain[i].Status == StatusApproved {
+			if chain[i].Status == model.StatusApproved {
 				out = append(out, chain[i])
 			}
 		}
@@ -190,7 +191,7 @@ func (s *Service) AllocationSources(id string, userTokens common.TokenList) ([]N
 				return nil, common.ErrForbidden
 			}
 		}
-		return []Node{}, nil
+		return []model.Node{}, nil
 	}
 	// Nearest first: the budget closest to the project is the usual source.
 	slices.Reverse(out)
@@ -201,12 +202,12 @@ func (s *Service) AllocationSources(id string, userTokens common.TokenList) ([]N
 // the allocating budget holds each one, and the project does not already get
 // it elsewhere — an availability comes from one place, so that withdrawing it
 // has one answer to "who still depends on this".
-func (s *Service) validateAllocationAvailabilities(project, source Node, limit common.ProjectQuota) error {
+func (s *Service) validateAllocationAvailabilities(project, source model.Node, limit common.ProjectQuota) error {
 	for rid, v := range limit {
 		if !s.isBool(rid) || v != 1 {
 			continue
 		}
-		if held := source.Limit[rid]; source.ID != RootNodeID && held != 1 && held != common.UnlimitedQuota {
+		if held := source.Limit[rid]; source.ID != model.RootNodeID && held != 1 && held != common.UnlimitedQuota {
 			return fmt.Errorf("%q is not available in budget %q", rid, nodeLabel(source))
 		}
 		if from := availabilitySource(project, rid, source.ID); from != "" {
@@ -219,7 +220,7 @@ func (s *Service) validateAllocationAvailabilities(project, source Node, limit c
 // availabilitySource names where the project already gets an availability
 // from, apart from the allocation of budget except: its own limit (or a
 // waiting proposal for it), or another allocation. Empty when nowhere.
-func availabilitySource(project Node, rid, except string) string {
+func availabilitySource(project model.Node, rid, except string) string {
 	if project.Limit[rid] == 1 || (project.Pending != nil && project.Pending.Limit != nil && (*project.Pending.Limit)[rid] == 1) {
 		return "its own budget"
 	}
@@ -233,7 +234,7 @@ func availabilitySource(project Node, rid, except string) string {
 
 // checkOwnLimitAgainstAllocations refuses a project limit that grants an
 // availability one of its allocations already grants.
-func (s *Service) checkOwnLimitAgainstAllocations(project Node, limit common.ProjectQuota) error {
+func (s *Service) checkOwnLimitAgainstAllocations(project model.Node, limit common.ProjectQuota) error {
 	for rid, v := range limit {
 		if !s.isBool(rid) || v != 1 {
 			continue
@@ -252,15 +253,15 @@ func (s *Service) checkOwnLimitAgainstAllocations(project Node, limit common.Pro
 // something no budget above it is charged for. Checked for the moved node and,
 // when it is a budget, for every project below it. Nothing is dropped
 // silently — the allocation has to be removed first.
-func (s *Service) checkAllocationsAfterMove(ctx context.Context, moved Node, newParentChain []Node) error {
+func (s *Service) checkAllocationsAfterMove(ctx context.Context, moved model.Node, newParentChain []model.Node) error {
 	above := map[string]bool{}
 	for _, n := range newParentChain {
 		above[n.ID] = true
 	}
-	projects := []Node{moved}
+	projects := []model.Node{moved}
 	inside := map[string]bool{}
-	if moved.Kind == KindBudget {
-		parentMap, err := s.buildSubtreeParentMap(ctx, []Node{moved})
+	if moved.Kind == model.KindBudget {
+		parentMap, err := s.buildSubtreeParentMap(ctx, []model.Node{moved})
 		if err != nil {
 			return fmt.Errorf("walk subtree: %w", err)
 		}
@@ -269,18 +270,18 @@ func (s *Service) checkAllocationsAfterMove(ctx context.Context, moved Node, new
 			budgetIDs = append(budgetIDs, bid)
 			inside[bid] = true
 		}
-		if projects, err = s.store.ListNodes(ctx, NodeQuery{ParentIDs: budgetIDs, Kinds: []string{KindProject}}, 0, 0); err != nil {
+		if projects, err = s.store.ListNodes(ctx, NodeQuery{ParentIDs: budgetIDs, Kinds: []string{model.KindProject}}, 0, 0); err != nil {
 			return fmt.Errorf("load projects below: %w", err)
 		}
 	}
 	for _, p := range projects {
-		if IsTerminalStatus(p.Status) {
+		if model.IsTerminalStatus(p.Status) {
 			continue
 		}
 		for _, a := range p.Allocations {
 			// Above the new parent, or inside the moved subtree (it moves along).
 			if above[a.BudgetID] || inside[a.BudgetID] {
-				if moved.Kind == KindProject && len(newParentChain) > 0 && newParentChain[0].ID == a.BudgetID {
+				if moved.Kind == model.KindProject && len(newParentChain) > 0 && newParentChain[0].ID == a.BudgetID {
 					return fmt.Errorf("%s draws an allocation from budget %q, its new own budget — remove the allocation first", nodeLabel(p), nodeLabel(newParentChain[0]))
 				}
 				continue

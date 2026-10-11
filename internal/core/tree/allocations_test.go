@@ -10,6 +10,7 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/dev"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"go.uber.org/zap"
 )
@@ -31,8 +32,8 @@ var (
 type allocationFixture struct {
 	svc       *tree.Service
 	store     *tree.InMemoryStore
-	uni, stud tree.Node
-	project   tree.Node
+	uni, stud model.Node
+	project   model.Node
 }
 
 func newAllocationFixture(t *testing.T) allocationFixture {
@@ -44,36 +45,36 @@ func newAllocationFixture(t *testing.T) allocationFixture {
 	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
-	create := func(req tree.CreateNodeRequest, email string, tokens common.TokenList) tree.Node {
+	create := func(req tree.CreateNodeRequest, email string, tokens common.TokenList) model.Node {
 		t.Helper()
 		req.Reason = "t"
 		if req.Name == "" {
 			req.Name = "n"
 		}
-		n, err := svc.CreateNode(req, tree.UIActor(email), email, tokens)
+		n, err := svc.CreateNode(req, model.UIActor(email), email, tokens)
 		if err != nil {
 			t.Fatalf("create %s: %v", req.Name, err)
 		}
 		return n
 	}
-	uni := create(tree.CreateNodeRequest{ParentID: tree.RootNodeID, Kind: tree.KindBudget, Name: "Uni",
+	uni := create(tree.CreateNodeRequest{ParentID: model.RootNodeID, Kind: model.KindBudget, Name: "Uni",
 		Limit: common.ProjectQuota{"cores": 100, "gpu": 4, "ipv4": 1}, AdminScope: common.TokenList{"group:uni"}}, "root@x", rootTokens)
-	stud := create(tree.CreateNodeRequest{ParentID: uni.ID, Kind: tree.KindBudget, Name: "Students",
+	stud := create(tree.CreateNodeRequest{ParentID: uni.ID, Kind: model.KindBudget, Name: "Students",
 		Limit: common.ProjectQuota{"cores": 10}, AdminScope: common.TokenList{"group:stud"},
 		EligibleRequesters: common.TokenList{"user:stud@x"},
-		AutoApprove:        &tree.AutoApprove{PerRequesterLimit: common.ProjectQuota{"cores": 4}}}, "uni@x", uniTokens)
-	p := create(tree.CreateNodeRequest{ParentID: stud.ID, Kind: tree.KindProject, Name: "Thesis",
+		AutoApprove:        &model.AutoApprove{PerRequesterLimit: common.ProjectQuota{"cores": 4}}}, "uni@x", uniTokens)
+	p := create(tree.CreateNodeRequest{ParentID: stud.ID, Kind: model.KindProject, Name: "Thesis",
 		Limit: common.ProjectQuota{"cores": 4}}, "stud@x", ownerToken)
-	if p.Status != tree.StatusApproved {
+	if p.Status != model.StatusApproved {
 		t.Fatalf("setup: the project should be auto-approved, got %q", p.Status)
 	}
 	return allocationFixture{svc: svc, store: store, uni: uni, stud: stud, project: p}
 }
 
-func (f allocationFixture) allocate(t *testing.T, tokens common.TokenList, limit common.ProjectQuota, reason string) (tree.Node, error) {
+func (f allocationFixture) allocate(t *testing.T, tokens common.TokenList, limit common.ProjectQuota, reason string) (model.Node, error) {
 	t.Helper()
 	return f.svc.SetAllocation(f.project.ID, tree.AllocationRequest{BudgetID: f.uni.ID, Limit: limit, Reason: reason},
-		tree.UIActor("someone@x"), tokens)
+		model.UIActor("someone@x"), tokens)
 }
 
 func usageOf(t *testing.T, svc *tree.Service, id string) common.ProjectQuota {
@@ -153,10 +154,10 @@ func TestAllocation_SourceAndCapacity(t *testing.T) {
 	f := newAllocationFixture(t)
 
 	if _, err := f.svc.SetAllocation(f.project.ID, tree.AllocationRequest{BudgetID: f.stud.ID, Limit: cores(2), Reason: "x"},
-		tree.UIActor("mgr@x"), studMgr); err == nil {
+		model.UIActor("mgr@x"), studMgr); err == nil {
 		t.Error("the project's own budget must not allocate — that is a change request")
 	}
-	other := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: tree.RootNodeID, Kind: tree.KindBudget, Limit: common.ProjectQuota{"gpu": 8}})
+	other := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: model.RootNodeID, Kind: model.KindBudget, Limit: common.ProjectQuota{"gpu": 8}})
 	if _, err := f.svc.SetAllocation(f.project.ID, tree.AllocationRequest{BudgetID: other.ID, Limit: common.ProjectQuota{"gpu": 1}, Reason: "x"},
 		rootActor(), rootTokens); err == nil {
 		t.Error("a budget that is not above the project must not allocate to it")
@@ -186,14 +187,14 @@ func TestAllocation_AvailabilityFromOnePlace(t *testing.T) {
 
 	// The student budget gets ipv4 too; its own projects may not ask for it
 	// again through their own limit while the allocation grants it.
-	if _, err := f.svc.UpdateNode(f.stud.ID, tree.UpdateNodeRequest{Limit: &common.ProjectQuota{"cores": 10, "ipv4": 1}}, tree.UIActor("uni@x"), uniTokens); err != nil {
+	if _, err := f.svc.UpdateNode(f.stud.ID, tree.UpdateNodeRequest{Limit: &common.ProjectQuota{"cores": 10, "ipv4": 1}}, model.UIActor("uni@x"), uniTokens); err != nil {
 		t.Fatalf("give the student budget ipv4: %v", err)
 	}
-	if _, err := f.svc.RequestChange(f.project.ID, tree.ChangeNodeRequest{Limit: &common.ProjectQuota{"cores": 4, "ipv4": 1}}, tree.UIActor("stud@x"), ownerToken); err == nil {
+	if _, err := f.svc.RequestChange(f.project.ID, tree.ChangeNodeRequest{Limit: &common.ProjectQuota{"cores": 4, "ipv4": 1}}, model.UIActor("stud@x"), ownerToken); err == nil {
 		t.Error("asking for an availability the project already has by allocation must be refused")
 	}
 	// And the student budget may take it back: nothing of it depends on it.
-	if _, err := f.svc.UpdateNode(f.stud.ID, tree.UpdateNodeRequest{Limit: &common.ProjectQuota{"cores": 10}}, tree.UIActor("uni@x"), uniTokens); err != nil {
+	if _, err := f.svc.UpdateNode(f.stud.ID, tree.UpdateNodeRequest{Limit: &common.ProjectQuota{"cores": 10}}, model.UIActor("uni@x"), uniTokens); err != nil {
 		t.Errorf("the student budget's withdrawal must not be blocked by an allocation from above: %v", err)
 	}
 }
@@ -201,10 +202,10 @@ func TestAllocation_AvailabilityFromOnePlace(t *testing.T) {
 // The other way round: what the project holds itself is not allocated again.
 func TestAllocation_RefusesAnAvailabilityTheProjectHolds(t *testing.T) {
 	f := newAllocationFixture(t)
-	if _, err := f.svc.UpdateNode(f.stud.ID, tree.UpdateNodeRequest{Limit: &common.ProjectQuota{"cores": 10, "ipv4": 1}}, tree.UIActor("uni@x"), uniTokens); err != nil {
+	if _, err := f.svc.UpdateNode(f.stud.ID, tree.UpdateNodeRequest{Limit: &common.ProjectQuota{"cores": 10, "ipv4": 1}}, model.UIActor("uni@x"), uniTokens); err != nil {
 		t.Fatalf("give the student budget ipv4: %v", err)
 	}
-	if _, err := f.svc.RequestChange(f.project.ID, tree.ChangeNodeRequest{Limit: &common.ProjectQuota{"cores": 4, "ipv4": 1}}, tree.UIActor("mgr@x"), studMgr); err != nil {
+	if _, err := f.svc.RequestChange(f.project.ID, tree.ChangeNodeRequest{Limit: &common.ProjectQuota{"cores": 4, "ipv4": 1}}, model.UIActor("mgr@x"), studMgr); err != nil {
 		t.Fatalf("project asks its own budget for ipv4: %v", err)
 	}
 	if _, err := f.allocate(t, uniTokens, common.ProjectQuota{"ipv4": 1}, "x"); err == nil || !strings.Contains(err.Error(), "already") {
@@ -219,8 +220,8 @@ func TestAllocation_OwnShareUnaffected(t *testing.T) {
 	if _, err := f.allocate(t, uniTokens, cores(20), "x"); err != nil {
 		t.Fatalf("allocate: %v", err)
 	}
-	n, err := f.svc.RequestChange(f.project.ID, tree.ChangeNodeRequest{Limit: &common.ProjectQuota{"cores": 3}}, tree.UIActor("stud@x"), ownerToken)
-	if err != nil || n.Status != tree.StatusApproved {
+	n, err := f.svc.RequestChange(f.project.ID, tree.ChangeNodeRequest{Limit: &common.ProjectQuota{"cores": 3}}, model.UIActor("stud@x"), ownerToken)
+	if err != nil || n.Status != model.StatusApproved {
 		t.Fatalf("shrinking the own share should apply at once: %v %q", err, n.Status)
 	}
 	if n.EffectiveLimit()["cores"] != 23 || len(n.Allocations) != 1 {
@@ -234,8 +235,8 @@ func TestAllocation_Move(t *testing.T) {
 	if _, err := f.allocate(t, uniTokens, common.ProjectQuota{"gpu": 1}, "x"); err != nil {
 		t.Fatalf("allocate: %v", err)
 	}
-	sibling := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: f.uni.ID, Kind: tree.KindBudget, Limit: cores(10)})
-	outside := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: tree.RootNodeID, Kind: tree.KindBudget, Limit: cores(10)})
+	sibling := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: f.uni.ID, Kind: model.KindBudget, Limit: cores(10)})
+	outside := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: model.RootNodeID, Kind: model.KindBudget, Limit: cores(10)})
 
 	if _, err := f.svc.ReparentNode(f.project.ID, tree.ReparentNodeRequest{NewParentID: outside.ID}, rootActor(), rootTokens); err == nil {
 		t.Error("moving away from the allocating budget must be refused")
@@ -251,7 +252,7 @@ func TestAllocation_Move(t *testing.T) {
 // The allocating budget finds its exceptions however deep they lie.
 func TestAllocation_ListedAtTheAllocatingBudget(t *testing.T) {
 	f := newAllocationFixture(t)
-	other := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: f.stud.ID, Kind: tree.KindProject, Limit: cores(1)})
+	other := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: f.stud.ID, Kind: model.KindProject, Limit: cores(1)})
 	if _, err := f.allocate(t, uniTokens, common.ProjectQuota{"gpu": 1}, "x"); err != nil {
 		t.Fatalf("allocate: %v", err)
 	}

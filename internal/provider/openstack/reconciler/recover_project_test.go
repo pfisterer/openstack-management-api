@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 	"go.uber.org/zap"
 )
@@ -53,11 +53,11 @@ func project(id string, tags ...string) osclient.ProjectInfo {
 // leaf remembers, not treated as missing.
 func TestChooseRecoverableProject(t *testing.T) {
 	log := zap.NewNop().Sugar()
-	leaf := tree.Node{ID: "p_001", ExternalID: "os-1"}
+	leaf := model.Node{ID: "p_001", ExternalID: "os-1"}
 
 	tests := []struct {
 		name    string
-		leaf    tree.Node
+		leaf    model.Node
 		byOSID  map[string]osclient.ProjectInfo
 		claimed map[string]string
 		want    bool
@@ -76,7 +76,7 @@ func TestChooseRecoverableProject(t *testing.T) {
 		},
 		{
 			name:   "a leaf that never had a project gets none",
-			leaf:   tree.Node{ID: "p_001"},
+			leaf:   model.Node{ID: "p_001"},
 			byOSID: map[string]osclient.ProjectInfo{"os-1": project("os-1")},
 			want:   false,
 		},
@@ -135,12 +135,12 @@ func newRecoveryReconciler(nodes TreeSync, cfg Config) *Reconciler {
 func TestRecoverUntaggedProjectHidesItFromTheImportPhase(t *testing.T) {
 	store := &deletedStore{}
 	r := newRecoveryReconciler(store, Config{})
-	leaf := tree.Node{ID: "p_001", ExternalID: "os-1"}
+	leaf := model.Node{ID: "p_001", ExternalID: "os-1"}
 	byOSID := map[string]osclient.ProjectInfo{"os-1": project("os-1")}
 	res := reconcileResult{}
 
 	got, ok := r.recoverUntaggedProject(context.Background(), leaf, byOSID,
-		map[string]tree.Node{}, map[string]string{}, &res)
+		map[string]model.Node{}, map[string]string{}, &res)
 	if !ok || got.ID != "os-1" {
 		t.Fatalf("expected to recover os-1, got %q (ok=%v)", got.ID, ok)
 	}
@@ -158,8 +158,8 @@ func TestRecoverUntaggedProjectHidesItFromTheImportPhase(t *testing.T) {
 func TestRecoverUntaggedProjectRemovesTheShadowingImport(t *testing.T) {
 	store := &deletedStore{}
 	r := newRecoveryReconciler(store, Config{})
-	leaf := tree.Node{ID: "p_001", ExternalID: "os-1"}
-	imported := map[string]tree.Node{"os-1": {ID: "p_shadow", ExternalID: "os-1", Status: tree.StatusImported}}
+	leaf := model.Node{ID: "p_001", ExternalID: "os-1"}
+	imported := map[string]model.Node{"os-1": {ID: "p_shadow", ExternalID: "os-1", Status: model.StatusImported}}
 	res := reconcileResult{}
 
 	if _, ok := r.recoverUntaggedProject(context.Background(), leaf,

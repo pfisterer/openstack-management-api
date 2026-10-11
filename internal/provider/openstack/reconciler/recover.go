@@ -4,7 +4,7 @@ import (
 	"context"
 	"slices"
 
-	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 	"go.uber.org/zap"
 )
@@ -20,7 +20,7 @@ type tagReader interface {
 // can go wrong are testable without a cloud.
 func chooseRecoverableProject(
 	c tagReader,
-	leaf tree.Node,
+	leaf model.Node,
 	osProjectByOSID map[string]osclient.ProjectInfo,
 	claimed map[string]string,
 	log *zap.SugaredLogger,
@@ -63,9 +63,9 @@ func chooseRecoverableProject(
 // retries. Returns the project and whether the leaf may use it.
 func (r *Reconciler) recoverUntaggedProject(
 	ctx context.Context,
-	leaf tree.Node,
+	leaf model.Node,
 	osProjectByOSID map[string]osclient.ProjectInfo,
-	importedByOSProjectID map[string]tree.Node,
+	importedByOSProjectID map[string]model.Node,
 	claimed map[string]string,
 	res *reconcileResult,
 ) (osclient.ProjectInfo, bool) {

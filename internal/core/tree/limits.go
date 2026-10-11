@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
 // checkAvailabilityWithdrawal refuses to take an availability away from a budget
@@ -20,7 +21,7 @@ import (
 // a network or a GPU flavour across a whole subtree, in projects whose owners
 // never asked for the change; making the withdrawal fail puts the decision back
 // with the person who has to take it away one node at a time.
-func (s *Service) checkAvailabilityWithdrawal(ctx context.Context, node Node, newLimit common.ProjectQuota) error {
+func (s *Service) checkAvailabilityWithdrawal(ctx context.Context, node model.Node, newLimit common.ProjectQuota) error {
 	withdrawn := make([]string, 0, len(s.resources()))
 	for _, r := range s.resources() {
 		if !r.IsBool() {
@@ -49,8 +50,8 @@ func (s *Service) checkAvailabilityWithdrawal(ctx context.Context, node Node, ne
 
 // descendantsHolding reports, per resource id, the names of nodes in the subtree
 // that carry it. The node itself is excluded — it is the one being changed.
-func (s *Service) descendantsHolding(ctx context.Context, root Node, resourceIDs []string) (map[string][]string, error) {
-	parentMap, err := s.buildSubtreeParentMap(ctx, []Node{root})
+func (s *Service) descendantsHolding(ctx context.Context, root model.Node, resourceIDs []string) (map[string][]string, error) {
+	parentMap, err := s.buildSubtreeParentMap(ctx, []model.Node{root})
 	if err != nil {
 		return nil, fmt.Errorf("walk subtree: %w", err)
 	}
@@ -61,7 +62,7 @@ func (s *Service) descendantsHolding(ctx context.Context, root Node, resourceIDs
 	}
 	// Leaves are not in the parent map — it walks budgets only — so they are
 	// fetched in one go under every budget of the subtree.
-	leaves, err := s.store.ListNodes(ctx, NodeQuery{ParentIDs: budgetIDs, Kinds: []string{KindProject}}, 0, 0)
+	leaves, err := s.store.ListNodes(ctx, NodeQuery{ParentIDs: budgetIDs, Kinds: []string{model.KindProject}}, 0, 0)
 	if err != nil {
 		return nil, fmt.Errorf("load subtree leaves: %w", err)
 	}
@@ -73,7 +74,7 @@ func (s *Service) descendantsHolding(ctx context.Context, root Node, resourceIDs
 	// A project holds it from this subtree through its own limit — it lives
 	// here — or through an allocation from a budget of the subtree. One that
 	// has it from a budget further up does not depend on this one at all.
-	holds := func(n Node, id string) bool {
+	holds := func(n model.Node, id string) bool {
 		if n.Limit[id] == 1 {
 			return true
 		}
@@ -100,7 +101,7 @@ func (s *Service) descendantsHolding(ctx context.Context, root Node, resourceIDs
 
 // nodeLabel names a node for an error message: its name where it has one,
 // otherwise its id. Leaves often carry no name.
-func nodeLabel(n Node) string {
+func nodeLabel(n model.Node) string {
 	if n.Name != "" {
 		return n.Name
 	}
@@ -111,7 +112,7 @@ func nodeLabel(n Node) string {
 // each budget in ancestors stays within its limit. subtractLimit is removed from
 // the committed total first — used when a change_pending node's current resources
 // are already in the active set and must not be double-counted.
-func (s *Service) checkCapacity(ctx context.Context, ancestors []Node, addLimit, subtractLimit common.ProjectQuota) error {
+func (s *Service) checkCapacity(ctx context.Context, ancestors []model.Node, addLimit, subtractLimit common.ProjectQuota) error {
 	if len(ancestors) == 0 {
 		return nil
 	}
@@ -236,7 +237,7 @@ func (s *Service) validateKnownResources(q common.ProjectQuota) error {
 // with one of its own. A budget that inherits stores no limit, so reading its
 // own would read zero everywhere. The checks have the chain in hand and use
 // bindingInChain; this is for showing a single node.
-func (s *Service) bindingBudget(ctx context.Context, n *Node) (*Node, error) {
+func (s *Service) bindingBudget(ctx context.Context, n *model.Node) (*model.Node, error) {
 	if !n.InheritsLimit {
 		return n, nil
 	}
@@ -252,7 +253,7 @@ func (s *Service) bindingBudget(ctx context.Context, n *Node) (*Node, error) {
 
 // bindingInChain is bindingBudget on a chain already loaded, nearest first:
 // its first node with a limit of its own, nil for an empty chain.
-func bindingInChain(chain []Node) *Node {
+func bindingInChain(chain []model.Node) *model.Node {
 	for i := range chain {
 		if !chain[i].InheritsLimit {
 			return &chain[i]
@@ -265,7 +266,7 @@ func bindingInChain(chain []Node) *Node {
 // limit cannot exceed its direct parent's limit for any resource (and cannot be
 // unlimited under a limited parent). Enforced on every edge — create, approve,
 // direct limit edit and reparent — so it holds inductively across the tree.
-func (s *Service) validateChildBudgetLimit(parent *Node, childLimit common.ProjectQuota) error {
+func (s *Service) validateChildBudgetLimit(parent *model.Node, childLimit common.ProjectQuota) error {
 	for _, r := range s.resources() {
 		id := r.ID
 		parentCap := parent.Limit[id]
@@ -295,7 +296,7 @@ func (s *Service) validateChildBudgetLimit(parent *Node, childLimit common.Proje
 // presentation.
 //
 // The root holds the whole catalogue (see availableResourcesFor).
-func (s *Service) validateLeafAvailabilities(parent *Node, limit common.ProjectQuota) error {
+func (s *Service) validateLeafAvailabilities(parent *model.Node, limit common.ProjectQuota) error {
 	for _, r := range s.resources() {
 		if !s.isBool(r.ID) || limit[r.ID] != 1 {
 			continue
@@ -303,7 +304,7 @@ func (s *Service) validateLeafAvailabilities(parent *Node, limit common.ProjectQ
 		if parent == nil {
 			return fmt.Errorf("%q cannot be granted without a budget", r.ID)
 		}
-		if parent.ID == RootNodeID {
+		if parent.ID == model.RootNodeID {
 			continue
 		}
 		if held := parent.Limit[r.ID]; held == 1 || held == common.UnlimitedQuota {
@@ -320,7 +321,7 @@ func (s *Service) validateLeafAvailabilities(parent *Node, limit common.ProjectQ
 // and projects below already rely on — then it may neither withdraw an
 // availability somebody below still holds nor fall below what is in use.
 // Every path that sets a budget's limit comes through here.
-func (s *Service) checkBudgetLimit(ctx context.Context, n Node, chain []Node, limit common.ProjectQuota, inForce bool) error {
+func (s *Service) checkBudgetLimit(ctx context.Context, n model.Node, chain []model.Node, limit common.ProjectQuota, inForce bool) error {
 	if err := s.validateBudgetLimit(limit); err != nil {
 		return err
 	}
@@ -337,7 +338,7 @@ func (s *Service) checkBudgetLimit(ctx context.Context, n Node, chain []Node, li
 	}
 	probe := n
 	probe.Limit = limit
-	subtreeUsage, err := s.loadSubtreeUsage(ctx, []Node{probe})
+	subtreeUsage, err := s.loadSubtreeUsage(ctx, []model.Node{probe})
 	if err != nil {
 		return fmt.Errorf("compute subtree usage for limit check: %w", err)
 	}
@@ -358,7 +359,7 @@ func (s *Service) checkBudgetLimit(ctx context.Context, n Node, chain []Node, li
 // project holds there already. A request that only waits for a decision
 // commits nothing, so capacity is checked when it is decided. Every path that
 // sets a project's limit comes through here.
-func (s *Service) checkLeafLimit(ctx context.Context, project Node, chain []Node, limit, subtract common.ProjectQuota, commit bool) error {
+func (s *Service) checkLeafLimit(ctx context.Context, project model.Node, chain []model.Node, limit, subtract common.ProjectQuota, commit bool) error {
 	if err := s.validateLeafLimit(limit); err != nil {
 		return err
 	}
@@ -380,7 +381,7 @@ func (s *Service) checkLeafLimit(ctx context.Context, project Node, chain []Node
 // promotion of an import — and checks that the caller may take the node away
 // from where it is and put it there. Returns the target and its chain,
 // nearest first.
-func (s *Service) loadTarget(ctx context.Context, userTokens common.TokenList, current *Node, targetID string) (*Node, []Node, error) {
+func (s *Service) loadTarget(ctx context.Context, userTokens common.TokenList, current *model.Node, targetID string) (*model.Node, []model.Node, error) {
 	target, err := s.store.GetNode(ctx, targetID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load new parent: %w", err)
@@ -388,11 +389,11 @@ func (s *Service) loadTarget(ctx context.Context, userTokens common.TokenList, c
 	if target == nil {
 		return nil, nil, fmt.Errorf("new parent %w", common.ErrNotFound)
 	}
-	if target.Kind != KindBudget || target.Status != StatusApproved {
+	if target.Kind != model.KindBudget || target.Status != model.StatusApproved {
 		return nil, nil, fmt.Errorf("the new parent must be an approved budget")
 	}
 	// A wrong target is a wrong request, not a missing right.
-	if target.ID == UnassignedNodeID {
+	if target.ID == model.UnassignedNodeID {
 		return nil, nil, fmt.Errorf("nodes cannot be moved into the unassigned collection")
 	}
 	chain, err := s.nodeChain(ctx, target.ID)

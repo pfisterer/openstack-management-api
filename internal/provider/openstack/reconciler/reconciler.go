@@ -29,6 +29,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
@@ -42,16 +43,16 @@ import (
 // *tree.ProviderSync, which owns the rules for how a report lands on a node;
 // the reconciler only decides what it observed.
 type TreeSync interface {
-	Leaves(ctx context.Context, statuses []string) ([]tree.Node, error)
-	Budgets(ctx context.Context) ([]tree.Node, error)
+	Leaves(ctx context.Context, statuses []string) ([]model.Node, error)
+	Budgets(ctx context.Context) ([]model.Node, error)
 	RecordExternalID(ctx context.Context, leafID, externalID string) error
 	RecordObservation(ctx context.Context, leafID, externalID string, o *tree.Observation) error
 	MarkArchived(ctx context.Context, leafID string) error
 	RecordPurgeProgress(ctx context.Context, leafID string, r tree.PurgeReport) error
 	RemoveRetired(ctx context.Context, leafID string) (bool, error)
 	RemoveImport(ctx context.Context, leafID string) (bool, error)
-	AddImport(ctx context.Context, leaf tree.Node) error
-	RefreshImport(ctx context.Context, leaf tree.Node, o *tree.Observation) error
+	AddImport(ctx context.Context, leaf model.Node) error
+	RefreshImport(ctx context.Context, leaf model.Node, o *tree.Observation) error
 	Promote(ctx context.Context, leafID string, current []common.AuthorizedUser) (bool, error)
 }
 
@@ -384,7 +385,7 @@ type reconcileResult struct {
 }
 
 // listLeaves loads project leaves in the given statuses.
-func (r *Reconciler) listLeaves(ctx context.Context, statuses []string) ([]tree.Node, error) {
+func (r *Reconciler) listLeaves(ctx context.Context, statuses []string) ([]model.Node, error) {
 	return r.nodes.Leaves(ctx, statuses)
 }
 
@@ -395,7 +396,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 
 	// ── Phase 1: load state from both sides ──────────────────────────────────
 
-	activeLeaves, err := r.listLeaves(ctx, tree.ReconcilableStatuses)
+	activeLeaves, err := r.listLeaves(ctx, model.ReconcilableStatuses)
 	if err != nil {
 		return res, fmt.Errorf("load active leaves: %w", err)
 	}
@@ -404,7 +405,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 	// OS project is already tracked (in any state) before deciding to import it.
 	// This prevents projects from being re-imported when their leaf is e.g.
 	// pending, rejected, or released.
-	allKnownLeaves, err := r.listLeaves(ctx, tree.KnownStatuses)
+	allKnownLeaves, err := r.listLeaves(ctx, model.KnownStatuses)
 	if err != nil {
 		return res, fmt.Errorf("load all known leaves: %w", err)
 	}
@@ -412,14 +413,14 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 	// releasedLeafByID is a subset of allKnownLeaves used in Phase 5 to tag,
 	// archive or delete OS projects whose leaf has been released (or archived
 	// since).
-	releasedLeafByID := make(map[string]tree.Node, len(allKnownLeaves))
+	releasedLeafByID := make(map[string]model.Node, len(allKnownLeaves))
 	for _, leaf := range allKnownLeaves {
-		if tree.IsRetiredStatus(leaf.Status) {
+		if model.IsRetiredStatus(leaf.Status) {
 			releasedLeafByID[leaf.ID] = leaf
 		}
 	}
 
-	existingImported, err := r.listLeaves(ctx, []string{tree.StatusImported})
+	existingImported, err := r.listLeaves(ctx, []string{model.StatusImported})
 	if err != nil {
 		return res, fmt.Errorf("load imported leaves: %w", err)
 	}
@@ -429,7 +430,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 	if err != nil {
 		return res, fmt.Errorf("load budgets: %w", err)
 	}
-	budgetByID := make(map[string]tree.Node, len(budgets))
+	budgetByID := make(map[string]model.Node, len(budgets))
 	for _, b := range budgets {
 		budgetByID[b.ID] = b
 	}
@@ -461,7 +462,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 
 	// ── Phase 2: build lookup maps ────────────────────────────────────────────
 
-	leafByID := make(map[string]tree.Node, len(activeLeaves))
+	leafByID := make(map[string]model.Node, len(activeLeaves))
 	for _, leaf := range activeLeaves {
 		leafByID[leaf.ID] = leaf
 	}
@@ -485,7 +486,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 	}
 
 	// importedByOSProjectID: existing imported leaves keyed by their OSProjectID.
-	importedByOSProjectID := make(map[string]tree.Node, len(existingImported))
+	importedByOSProjectID := make(map[string]model.Node, len(existingImported))
 	for _, leaf := range existingImported {
 		if leaf.ExternalID != "" {
 			importedByOSProjectID[leaf.ExternalID] = leaf

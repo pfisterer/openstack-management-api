@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 )
 
@@ -18,10 +19,10 @@ func TestTokenListsIgnoreEmailCase(t *testing.T) {
 	userTokens := common.TokenList{"user:friedemann.schwenkreis@x"}
 
 	budget, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: tree.RootNodeID, Kind: tree.KindBudget, Name: "Prof", Reason: "test",
+		ParentID: model.RootNodeID, Kind: model.KindBudget, Name: "Prof", Reason: "test",
 		Limit: cores(10), AdminScope: common.TokenList{"group:root"},
 		EligibleRequesters: common.TokenList{" user:Friedemann.Schwenkreis@X ", "user:friedemann.schwenkreis@x"},
-	}, tree.UIActor("root@x"), "root@x", rootTokens)
+	}, model.UIActor("root@x"), "root@x", rootTokens)
 	if err != nil {
 		t.Fatalf("create budget: %v", err)
 	}
@@ -36,8 +37,8 @@ func TestTokenListsIgnoreEmailCase(t *testing.T) {
 
 	admins := common.TokenList{"user:Co.Admin@X"}
 	project, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: budget.ID, Kind: tree.KindProject, Name: "Lab", Reason: "lab", Limit: cores(2), AdminScope: admins,
-	}, tree.UIActor("friedemann.schwenkreis@x"), "friedemann.schwenkreis@x", userTokens)
+		ParentID: budget.ID, Kind: model.KindProject, Name: "Lab", Reason: "lab", Limit: cores(2), AdminScope: admins,
+	}, model.UIActor("friedemann.schwenkreis@x"), "friedemann.schwenkreis@x", userTokens)
 	if err != nil {
 		t.Fatalf("request project: %v", err)
 	}
@@ -47,7 +48,7 @@ func TestTokenListsIgnoreEmailCase(t *testing.T) {
 
 	renamed := common.TokenList{"user:Other@X"}
 	updated, err := svc.UpdateNode(project.ID, tree.UpdateNodeRequest{AdminScope: &renamed},
-		tree.UIActor("friedemann.schwenkreis@x"), userTokens)
+		model.UIActor("friedemann.schwenkreis@x"), userTokens)
 	if err != nil {
 		t.Fatalf("update admins: %v", err)
 	}
@@ -61,9 +62,9 @@ func TestTokenListsIgnoreEmailCase(t *testing.T) {
 func TestBootstrapCanonicalizesStoredTokens(t *testing.T) {
 	svc, store := newSvc(t, common.TokenList{"group:root"})
 	ctx := context.Background()
-	parent := tree.RootNodeID
-	if err := store.UpsertNode(ctx, tree.Node{
-		ID: "p_legacy", Kind: tree.KindProject, ParentID: &parent, Status: tree.StatusApproved, Name: "Legacy",
+	parent := model.RootNodeID
+	if err := store.UpsertNode(ctx, model.Node{
+		ID: "p_legacy", Kind: model.KindProject, ParentID: &parent, Status: model.StatusApproved, Name: "Legacy",
 		Owner:           "user:Old.Owner@X",
 		AdminScope:      common.TokenList{"group:Leiter-ZWR", "user:Co@X"},
 		AuthorizedUsers: []common.AuthorizedUser{{Token: "group:WWI23SEB", OpenstackRole: "member"}},

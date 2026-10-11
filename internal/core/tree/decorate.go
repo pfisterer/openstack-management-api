@@ -7,16 +7,17 @@ import (
 	"slices"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
 // attachUsage computes per-status subtree usage for the budget nodes in the list
 // and returns a new slice with usage attached (leaves are passed through).
 // attachChildCounts fills Node.ChildCount for every budget in the set. Leaves
 // never have children, so they are skipped rather than queried.
-func (s *Service) attachChildCounts(ctx context.Context, nodes []Node) ([]Node, error) {
+func (s *Service) attachChildCounts(ctx context.Context, nodes []model.Node) ([]model.Node, error) {
 	parentIDs := make([]string, 0, len(nodes))
 	for _, n := range nodes {
-		if n.Kind == KindBudget {
+		if n.Kind == model.KindBudget {
 			parentIDs = append(parentIDs, n.ID)
 		}
 	}
@@ -28,7 +29,7 @@ func (s *Service) attachChildCounts(ctx context.Context, nodes []Node) ([]Node, 
 		return nil, fmt.Errorf("count children: %w", err)
 	}
 	for i := range nodes {
-		if nodes[i].Kind == KindBudget {
+		if nodes[i].Kind == model.KindBudget {
 			c := counts[nodes[i].ID]
 			nodes[i].ChildCount = c.Budgets + c.Projects
 			nodes[i].ChildBudgetCount = c.Budgets
@@ -50,7 +51,7 @@ func (s *Service) attachChildCounts(ctx context.Context, nodes []Node) ([]Node, 
 //
 // viewer is who asks: attributes go only to those who look after the node
 // (see attributesVisible), everyone else gets the node without them.
-func (s *Service) attachParentNames(ctx context.Context, nodes []Node, viewer common.TokenList) ([]Node, error) {
+func (s *Service) attachParentNames(ctx context.Context, nodes []model.Node, viewer common.TokenList) ([]model.Node, error) {
 	var start []string
 	for _, n := range nodes {
 		if n.ParentID != nil {
@@ -99,7 +100,7 @@ const maxAncestorDepth = 64
 type ancestry struct {
 	parent map[string]string
 	name   map[string]string
-	attrs  map[string]Attributes
+	attrs  map[string]model.Attributes
 	admins map[string]common.TokenList
 	log    interface{ Warnw(string, ...any) }
 }
@@ -124,17 +125,17 @@ func (a ancestry) chain(id string) []string {
 // path names the budgets from below the root down to id itself, root-most
 // first. The root is left out — every path starts there, so it tells nobody
 // anything — and id being the root gives an empty path.
-func (a ancestry) path(id string) []PathEntry {
+func (a ancestry) path(id string) []model.PathEntry {
 	if _, ok := a.name[id]; !ok {
 		return nil
 	}
 	ids := append([]string{id}, a.chain(id)...)
-	out := make([]PathEntry, 0, len(ids))
+	out := make([]model.PathEntry, 0, len(ids))
 	for _, x := range ids {
 		if _, hasParent := a.parent[x]; !hasParent {
 			continue // the root
 		}
-		out = append(out, PathEntry{ID: x, Name: a.name[x]})
+		out = append(out, model.PathEntry{ID: x, Name: a.name[x]})
 	}
 	slices.Reverse(out)
 	return out
@@ -147,7 +148,7 @@ func (a ancestry) path(id string) []PathEntry {
 // each level of the tree costs one query no matter how many nodes are on it,
 // and the levels above the first are shared by nearly all of them anyway.
 func (s *Service) walkAncestors(ctx context.Context, start []string) (ancestry, error) {
-	a := ancestry{parent: map[string]string{}, name: map[string]string{}, attrs: map[string]Attributes{}, admins: map[string]common.TokenList{}, log: s.log}
+	a := ancestry{parent: map[string]string{}, name: map[string]string{}, attrs: map[string]model.Attributes{}, admins: map[string]common.TokenList{}, log: s.log}
 	var frontier []string
 	for _, id := range start {
 		if !slices.Contains(frontier, id) {
@@ -179,7 +180,7 @@ func (s *Service) walkAncestors(ctx context.Context, start []string) (ancestry, 
 
 // attachAncestorIDs fills Node.AncestorIDs, root-most first, for every node
 // given.
-func (s *Service) attachAncestorIDs(ctx context.Context, nodes []Node) ([]Node, error) {
+func (s *Service) attachAncestorIDs(ctx context.Context, nodes []model.Node) ([]model.Node, error) {
 	var start []string
 	for _, n := range nodes {
 		if n.ParentID != nil {
@@ -207,10 +208,10 @@ func (s *Service) attachAncestorIDs(ctx context.Context, nodes []Node) ([]Node, 
 // attachUsage adds the derived fields every view needs on top of the stored
 // node: the subtree usage rollup, the direct child count, the parent's name and
 // the resources in scope at that node.
-func (s *Service) attachUsage(ctx context.Context, nodes []Node, viewer common.TokenList) ([]Node, error) {
-	budgets := make([]Node, 0, len(nodes))
+func (s *Service) attachUsage(ctx context.Context, nodes []model.Node, viewer common.TokenList) ([]model.Node, error) {
+	budgets := make([]model.Node, 0, len(nodes))
 	for _, n := range nodes {
-		if n.Kind == KindBudget {
+		if n.Kind == model.KindBudget {
 			budgets = append(budgets, n)
 		}
 	}
@@ -218,9 +219,9 @@ func (s *Service) attachUsage(ctx context.Context, nodes []Node, viewer common.T
 	if err != nil {
 		return nil, fmt.Errorf("compute subtree usage: %w", err)
 	}
-	out := make([]Node, 0, len(nodes))
+	out := make([]model.Node, 0, len(nodes))
 	for _, n := range nodes {
-		if n.Kind == KindBudget {
+		if n.Kind == model.KindBudget {
 			n.Usage = usage[n.ID]
 			if a, ok := allocated[n.ID]; ok {
 				n.AllocatedOut = &a
@@ -253,14 +254,14 @@ func (s *Service) attachUsage(ctx context.Context, nodes []Node, viewer common.T
 // Zero means "not delegated" and therefore disappears. That is consistent rather
 // than harsh: the only place a resource can be handed down is the parent, and
 // there it is visible by this same rule, or the parent would not have it either.
-func (s *Service) availableResourcesFor(n Node) []string {
+func (s *Service) availableResourcesFor(n model.Node) []string {
 	out := make([]string, 0, len(s.resources()))
 	for _, r := range s.resources() {
 		if r.Withdrawn {
 			// Nobody may be granted it any more, so nobody is offered it.
 			continue
 		}
-		if n.ID == RootNodeID {
+		if n.ID == model.RootNodeID {
 			out = append(out, r.ID)
 			continue
 		}
@@ -278,8 +279,8 @@ func (s *Service) availableResourcesFor(n Node) []string {
 // attachAvailableResources fills the derived scope list on every node. Ordered
 // by the catalogue rather than by the node's map, so two nodes list the same
 // resources in the same order and the UI does not reshuffle between them.
-func (s *Service) attachAvailableResources(nodes []Node) []Node {
-	out := make([]Node, 0, len(nodes))
+func (s *Service) attachAvailableResources(nodes []model.Node) []model.Node {
+	out := make([]model.Node, 0, len(nodes))
 	for _, n := range nodes {
 		n.AvailableResources = s.availableResourcesFor(n)
 		out = append(out, n)
@@ -291,9 +292,9 @@ func (s *Service) attachAvailableResources(nodes []Node) []Node {
 // applies to it, for reading only: the API, the UI's bars and the resources a
 // request may name all want that one. Nothing written goes through here, and
 // nodes is a slice of copies (attachUsage), so the store's are untouched.
-func (s *Service) attachInheritedLimits(ctx context.Context, nodes []Node) ([]Node, error) {
+func (s *Service) attachInheritedLimits(ctx context.Context, nodes []model.Node) ([]model.Node, error) {
 	for i := range nodes {
-		if nodes[i].Kind != KindBudget || !nodes[i].InheritsLimit {
+		if nodes[i].Kind != model.KindBudget || !nodes[i].InheritsLimit {
 			continue
 		}
 		b, err := s.bindingBudget(ctx, &nodes[i])

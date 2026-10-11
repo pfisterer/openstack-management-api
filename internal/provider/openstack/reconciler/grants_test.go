@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 	"go.uber.org/zap"
 )
@@ -59,8 +59,8 @@ var (
 	}
 )
 
-func leafWithLimit(limit common.ProjectQuota) tree.Node {
-	return tree.Node{ID: "p_1", Limit: limit}
+func leafWithLimit(limit common.ProjectQuota) model.Node {
+	return model.Node{ID: "p_1", Limit: limit}
 }
 
 func TestSyncGrants_GrantsWhatTheLeafHoldsAndRevokesTheRest(t *testing.T) {
@@ -181,7 +181,7 @@ func TestSyncGrants_ReportsOnlyRealChanges(t *testing.T) {
 func TestSyncGrants_GrantsWhatAnAllocationHolds(t *testing.T) {
 	f := newFakeGrants()
 	leaf := leafWithLimit(common.ProjectQuota{"cores": 4})
-	leaf.Allocations = []tree.Allocation{{BudgetID: "b_uni", Limit: common.ProjectQuota{"gpu-rtx6000": 1}}}
+	leaf.Allocations = []model.Allocation{{BudgetID: "b_uni", Limit: common.ProjectQuota{"gpu-rtx6000": 1}}}
 
 	syncGrants(f, grantCatalogue, leaf, "os-project", false, zap.NewNop().Sugar())
 

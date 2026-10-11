@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 )
 
@@ -51,7 +51,7 @@ func DeletesOnRequest(mode string) bool {
 // this point, so "not in the list" can never mean "the list did not load".
 func (r *Reconciler) removeReleasedLeavesWithoutProject(
 	ctx context.Context,
-	released map[string]tree.Node,
+	released map[string]model.Node,
 	osProjectByOSID map[string]osclient.ProjectInfo,
 	res *reconcileResult,
 ) {
@@ -108,7 +108,7 @@ func (r *Reconciler) removeReleasedLeavesWithoutProject(
 //
 // Each step looks at the project first and does only what is still missing,
 // so a pass that failed halfway is finished by the next one.
-func (r *Reconciler) handleReleasedProject(ctx context.Context, osProject osclient.ProjectInfo, leaf tree.Node, scopeParentID string, res *reconcileResult) {
+func (r *Reconciler) handleReleasedProject(ctx context.Context, osProject osclient.ProjectInfo, leaf model.Node, scopeParentID string, res *reconcileResult) {
 	// Archiving rewrites the tags too, so it starts from what tagging left.
 	osProject.Tags = r.tagReleasedProject(osProject, leaf, res)
 	if deletionDue(r.cfg.ReleasedDelete, leaf, osProject.Tags, r.cfg.PendingDeletionTagPrefix, time.Now()) {
@@ -119,7 +119,7 @@ func (r *Reconciler) handleReleasedProject(ctx context.Context, osProject osclie
 	if r.cfg.ReleasedArchive && !archived {
 		archived = r.archiveReleasedProject(osProject, leaf, res)
 	}
-	if archived && leaf.Status == tree.StatusReleased {
+	if archived && leaf.Status == model.StatusReleased {
 		r.markLeafArchived(ctx, leaf)
 	}
 }
@@ -138,7 +138,7 @@ func (r *Reconciler) archivedTagPrefix() string {
 
 // markLeafArchived records in the tree what the project already shows: it is
 // archived. From then on the leaf costs what Accounting.ChargeArchived says.
-func (r *Reconciler) markLeafArchived(ctx context.Context, leaf tree.Node) {
+func (r *Reconciler) markLeafArchived(ctx context.Context, leaf model.Node) {
 	if r.cfg.DryRun {
 		r.log.Infow("Dry run: would mark leaf archived", "node_id", leaf.ID)
 		return
@@ -151,7 +151,7 @@ func (r *Reconciler) markLeafArchived(ctx context.Context, leaf tree.Node) {
 // tagReleasedProject writes the pending-deletion, contact and status tags.
 // Idempotent: the deletion day is set once and never moved — re-dating it on
 // every pass would push it out for ever.
-func (r *Reconciler) tagReleasedProject(osProject osclient.ProjectInfo, leaf tree.Node, res *reconcileResult) []string {
+func (r *Reconciler) tagReleasedProject(osProject osclient.ProjectInfo, leaf model.Node, res *reconcileResult) []string {
 	tagged := false
 	for _, tag := range osProject.Tags {
 		if strings.HasPrefix(tag, r.cfg.PendingDeletionTagPrefix) {

@@ -7,13 +7,14 @@ package identity
 import (
 	"context"
 	"fmt"
-	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 	"maps"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"go.uber.org/zap"

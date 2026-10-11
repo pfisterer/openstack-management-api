@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gophercloud/gophercloud/openstack/identity/v3/projects"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 	"go.uber.org/zap"
@@ -152,8 +153,8 @@ func PurgeSteps(skip []string) []string {
 }
 
 // deletionDue decides whether a retired leaf's project is deleted now.
-func deletionDue(mode string, leaf tree.Node, tags []string, pendingPrefix string, now time.Time) bool {
-	requested := slices.Contains(leaf.Flags, tree.FlagDeleteRequested)
+func deletionDue(mode string, leaf model.Node, tags []string, pendingPrefix string, now time.Time) bool {
+	requested := slices.Contains(leaf.Flags, model.FlagDeleteRequested)
 	switch mode {
 	case ReleasedDeleteOnRequest:
 		return requested
@@ -182,7 +183,7 @@ func deletionDue(mode string, leaf tree.Node, tags []string, pendingPrefix strin
 // next one, so a project takes a few passes, and one that cannot be emptied
 // (a protected image, a port somebody else put on its network) stays, named
 // in the log on every pass, instead of being deleted with things left in it.
-func (r *Reconciler) purgeRetiredProject(ctx context.Context, osProject osclient.ProjectInfo, leaf tree.Node, scopeParentID string, res *reconcileResult) {
+func (r *Reconciler) purgeRetiredProject(ctx context.Context, osProject osclient.ProjectInfo, leaf model.Node, scopeParentID string, res *reconcileResult) {
 	log := r.log.With("node_id", leaf.ID, "os_project_id", osProject.ID)
 	open := func(id string) (projectSession, error) { return r.osClient.OpenProjectSession(id) }
 	out := purgeProject(r.osClient, open, osProject, scopeParentID,

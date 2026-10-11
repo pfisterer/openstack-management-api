@@ -4,12 +4,13 @@ import (
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
 var chargedResources = []string{"cores", "ram"}
 
-func leafWith(limit, inUse common.ProjectQuota) Node {
-	return Node{ID: "leaf", Limit: limit, InUse: inUse}
+func leafWith(limit, inUse common.ProjectQuota) model.Node {
+	return model.Node{ID: "leaf", Limit: limit, InUse: inUse}
 }
 
 func TestChargedQuota_DisabledKeepsDeclaredLimit(t *testing.T) {
@@ -64,10 +65,10 @@ func TestChargedQuota_UnlimitedStaysUnlimited(t *testing.T) {
 // what applying the max to the aggregate would produce.
 func TestBuildRolledUpUsage_MaxAppliesPerLeafNotToTheSum(t *testing.T) {
 	budget := "budget"
-	leaves := []Node{
-		{ID: "a", ParentID: &budget, Status: StatusApproved,
+	leaves := []model.Node{
+		{ID: "a", ParentID: &budget, Status: model.StatusApproved,
 			Limit: common.ProjectQuota{"cores": 1}, InUse: common.ProjectQuota{"cores": 8}},
-		{ID: "b", ParentID: &budget, Status: StatusApproved,
+		{ID: "b", ParentID: &budget, Status: model.StatusApproved,
 			Limit: common.ProjectQuota{"cores": 8}, InUse: common.ProjectQuota{"cores": 2}},
 	}
 	parentMap := map[string]*string{budget: nil}

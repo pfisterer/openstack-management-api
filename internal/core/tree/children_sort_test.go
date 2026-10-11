@@ -5,9 +5,10 @@ import (
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
-func ids(nodes []Node) []string {
+func ids(nodes []model.Node) []string {
 	out := make([]string, 0, len(nodes))
 	for _, n := range nodes {
 		out = append(out, n.ID)
@@ -19,12 +20,12 @@ func ids(nodes []Node) []string {
 // a project not measured yet below every measured one, never among the idle.
 func TestSortChildren_ByResource(t *testing.T) {
 	one, three := 1, 3
-	nodes := []Node{
+	nodes := []model.Node{
 		{ID: "a", Limit: common.ProjectQuota{"cores": 10}, InUse: common.ProjectQuota{"cores": 0}, Servers: &one},
 		{ID: "b", Limit: common.ProjectQuota{"cores": 9}, InUse: common.ProjectQuota{"cores": 4}, Servers: &three},
 		{ID: "c", Limit: common.ProjectQuota{"cores": common.UnlimitedQuota}},
 		{ID: "d", Limit: common.ProjectQuota{"cores": 2},
-			Allocations: []Allocation{{BudgetID: "x", Limit: common.ProjectQuota{"cores": 16}}}},
+			Allocations: []model.Allocation{{BudgetID: "x", Limit: common.ProjectQuota{"cores": 16}}}},
 	}
 	cases := []struct {
 		key  string

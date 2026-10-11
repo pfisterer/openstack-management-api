@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"gorm.io/gorm"
 )
 
@@ -235,11 +235,11 @@ func (s *MemoryStore) filter(from, to time.Time, keep func(Day) bool) []Day {
 	return out
 }
 
-func cloneAttributes(a tree.Attributes) tree.Attributes {
+func cloneAttributes(a model.Attributes) model.Attributes {
 	if a == nil {
 		return nil
 	}
-	out := make(tree.Attributes, len(a))
+	out := make(model.Attributes, len(a))
 	for g, v := range a {
 		out[g] = maps.Clone(v)
 	}

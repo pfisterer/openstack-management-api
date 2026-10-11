@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 	"go.uber.org/zap"
@@ -26,14 +27,14 @@ import (
 // under its new parent budget. Non-fatal: failures are logged and skipped.
 func (r *Reconciler) promoteImportedLeaves(
 	ctx context.Context,
-	existingImported []tree.Node,
+	existingImported []model.Node,
 	osProjectByOSID map[string]osclient.ProjectInfo,
-	importedByOSProjectID map[string]tree.Node,
+	importedByOSProjectID map[string]model.Node,
 	osProjectByResourceID map[string]osclient.ProjectInfo,
 	res *reconcileResult,
 ) {
 	for _, leaf := range existingImported {
-		if !slices.Contains(leaf.Flags, tree.FlagPromoteOnReconcile) {
+		if !slices.Contains(leaf.Flags, model.FlagPromoteOnReconcile) {
 			continue
 		}
 
@@ -92,7 +93,7 @@ func (r *Reconciler) promoteImportedLeaves(
 
 // removeStaleImports deletes imported leaves whose OpenStack project is no longer
 // in scope — each only if it is still an import when the delete happens.
-func (r *Reconciler) removeStaleImports(ctx context.Context, importedByOSProjectID map[string]tree.Node, osProjectByOSID map[string]osclient.ProjectInfo, res *reconcileResult) {
+func (r *Reconciler) removeStaleImports(ctx context.Context, importedByOSProjectID map[string]model.Node, osProjectByOSID map[string]osclient.ProjectInfo, res *reconcileResult) {
 	for osID, staleLeaf := range importedByOSProjectID {
 		if _, stillInScope := osProjectByOSID[osID]; stillInScope {
 			continue
@@ -121,7 +122,7 @@ func (r *Reconciler) removeStaleImports(ctx context.Context, importedByOSProject
 func (r *Reconciler) upsertImported(
 	ctx context.Context,
 	osProject osclient.ProjectInfo,
-	existing map[string]tree.Node,
+	existing map[string]model.Node,
 	grantUse osclient.GrantUse,
 	res *reconcileResult,
 ) {
@@ -189,18 +190,18 @@ func (r *Reconciler) upsertImported(
 		externalGroups = external
 	}
 
-	parent := tree.UnassignedNodeID
-	leaf := tree.Node{
+	parent := model.UnassignedNodeID
+	leaf := model.Node{
 		ID:                       syntheticID,
-		Kind:                     tree.KindProject,
+		Kind:                     model.KindProject,
 		ParentID:                 &parent,
-		Status:                   tree.StatusImported,
+		Status:                   model.StatusImported,
 		Name:                     osProject.Name,
 		Reason:                   fmt.Sprintf("OpenStack project: %s (%s)", osProject.Name, osProject.ID),
 		Limit:                    osLimit,
 		AuthorizedUsers:          authorizedUsers,
 		ExternalGroupAssignments: externalGroups,
-		History:                  []tree.HistoryEntry{},
+		History:                  []model.HistoryEntry{},
 		CreatedBy:                "System",
 		ExternalID:               osProject.ID,
 		ExternalName:             osProject.Name,

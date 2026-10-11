@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 )
 
@@ -17,7 +18,7 @@ import (
 //	@Produce		json
 //	@Security		Bearer
 //	@Param			id	path		string	true	"Node ID"
-//	@Success		200	{object}	tree.Node	"The node."
+//	@Success		200	{object}	model.Node	"The node."
 //	@Failure		401	{object}	map[string]any	"Unauthorized."
 //	@Failure		403	{object}	map[string]any	"Forbidden."
 //	@Failure		404	{object}	map[string]any	"Not found."
@@ -352,7 +353,7 @@ func searchNodes(cfg APIConfig) gin.HandlerFunc {
 //	@Produce		json
 //	@Security		Bearer
 //	@Param			request	body		tree.CreateNodeRequest	true	"Node creation data"
-//	@Success		201		{object}	tree.Node	"Created node."
+//	@Success		201		{object}	model.Node	"Created node."
 //	@Failure		400		{object}	map[string]any	"Bad request."
 //	@Failure		401		{object}	map[string]any	"Unauthorized."
 //	@Failure		403		{object}	map[string]any	"Forbidden."
@@ -373,7 +374,7 @@ func createNode(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		node, err := svc.CreateNode(req, tree.UIActor(auth.UserEmail), auth.UserEmail, auth.EffectiveTokens)
+		node, err := svc.CreateNode(req, model.UIActor(auth.UserEmail), auth.UserEmail, auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -392,7 +393,7 @@ func createNode(cfg APIConfig) gin.HandlerFunc {
 //	@Security		Bearer
 //	@Param			id		path		string					true	"Node ID"
 //	@Param			request	body		tree.UpdateNodeRequest	true	"Update data"
-//	@Success		200		{object}	tree.Node	"Updated node."
+//	@Success		200		{object}	model.Node	"Updated node."
 //	@Failure		400		{object}	map[string]any	"Bad request."
 //	@Failure		401		{object}	map[string]any	"Unauthorized."
 //	@Failure		403		{object}	map[string]any	"Forbidden."
@@ -413,7 +414,7 @@ func updateNode(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		node, err := svc.UpdateNode(c.Param("id"), req, tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
+		node, err := svc.UpdateNode(c.Param("id"), req, model.UIActor(auth.UserEmail), auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -432,7 +433,7 @@ func updateNode(cfg APIConfig) gin.HandlerFunc {
 //	@Security		Bearer
 //	@Param			id		path		string					true	"Node ID"
 //	@Param			request	body		tree.ChangeNodeRequest	true	"Proposed changes"
-//	@Success		200		{object}	tree.Node	"Updated node."
+//	@Success		200		{object}	model.Node	"Updated node."
 //	@Failure		400		{object}	map[string]any	"Bad request."
 //	@Failure		401		{object}	map[string]any	"Unauthorized."
 //	@Failure		403		{object}	map[string]any	"Forbidden."
@@ -453,7 +454,7 @@ func requestNodeChange(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		node, err := svc.RequestChange(c.Param("id"), req, tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
+		node, err := svc.RequestChange(c.Param("id"), req, model.UIActor(auth.UserEmail), auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -472,7 +473,7 @@ func requestNodeChange(cfg APIConfig) gin.HandlerFunc {
 //	@Security		Bearer
 //	@Param			id		path		string					true	"Node ID"
 //	@Param			request	body		tree.ApproveNodeRequest	false	"Approval data"
-//	@Success		200		{object}	tree.Node	"Approved node."
+//	@Success		200		{object}	model.Node	"Approved node."
 //	@Failure		400		{object}	map[string]any	"Bad request or insufficient capacity."
 //	@Failure		401		{object}	map[string]any	"Unauthorized."
 //	@Failure		403		{object}	map[string]any	"Forbidden."
@@ -490,7 +491,7 @@ func approveNode(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		node, err := svc.ApproveNode(c.Param("id"), req, tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
+		node, err := svc.ApproveNode(c.Param("id"), req, model.UIActor(auth.UserEmail), auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -509,7 +510,7 @@ func approveNode(cfg APIConfig) gin.HandlerFunc {
 //	@Security		Bearer
 //	@Param			id		path		string					true	"Node ID"
 //	@Param			request	body		tree.RejectNodeRequest	false	"Rejection reason"
-//	@Success		200		{object}	tree.Node	"Updated node."
+//	@Success		200		{object}	model.Node	"Updated node."
 //	@Failure		400		{object}	map[string]any	"Bad request."
 //	@Failure		401		{object}	map[string]any	"Unauthorized."
 //	@Failure		403		{object}	map[string]any	"Forbidden."
@@ -527,7 +528,7 @@ func rejectNode(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		node, err := svc.RejectNode(c.Param("id"), req, tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
+		node, err := svc.RejectNode(c.Param("id"), req, model.UIActor(auth.UserEmail), auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -545,7 +546,7 @@ func rejectNode(cfg APIConfig) gin.HandlerFunc {
 //	@Security		Bearer
 //	@Param			id		path	string					true	"Node ID"
 //	@Param			request	body	tree.ReleaseNodeRequest	false	"Release options"
-//	@Success		200	{object}	tree.Node	"Released node."
+//	@Success		200	{object}	model.Node	"Released node."
 //	@Failure		400	{object}	map[string]any	"Invalid request body."
 //	@Failure		401	{object}	map[string]any	"Unauthorized."
 //	@Failure		403	{object}	map[string]any	"Forbidden."
@@ -569,7 +570,7 @@ func releaseNode(cfg APIConfig) gin.HandlerFunc {
 				return
 			}
 		}
-		node, err := svc.ReleaseNode(c.Param("id"), req, tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
+		node, err := svc.ReleaseNode(c.Param("id"), req, model.UIActor(auth.UserEmail), auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -585,7 +586,7 @@ func releaseNode(cfg APIConfig) gin.HandlerFunc {
 //	@Tags			nodes
 //	@Security		Bearer
 //	@Param			id	path	string	true	"Node ID"
-//	@Success		200	{object}	tree.Node	"Node marked for deletion."
+//	@Success		200	{object}	model.Node	"Node marked for deletion."
 //	@Failure		401	{object}	map[string]any	"Unauthorized."
 //	@Failure		403	{object}	map[string]any	"Forbidden."
 //	@Failure		404	{object}	map[string]any	"Not found."
@@ -600,7 +601,7 @@ func requestNodeDeletion(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		node, err := svc.RequestDeletion(c.Param("id"), tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
+		node, err := svc.RequestDeletion(c.Param("id"), model.UIActor(auth.UserEmail), auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -619,7 +620,7 @@ func requestNodeDeletion(cfg APIConfig) gin.HandlerFunc {
 //	@Security		Bearer
 //	@Param			id		path		string						true	"Node ID"
 //	@Param			request	body		tree.ReparentNodeRequest	true	"New parent"
-//	@Success		200		{object}	tree.Node	"Updated node."
+//	@Success		200		{object}	model.Node	"Updated node."
 //	@Failure		400		{object}	map[string]any	"Bad request or insufficient capacity."
 //	@Failure		401		{object}	map[string]any	"Unauthorized."
 //	@Failure		403		{object}	map[string]any	"Forbidden."
@@ -640,7 +641,7 @@ func reparentNode(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		node, err := svc.ReparentNode(c.Param("id"), req, tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
+		node, err := svc.ReparentNode(c.Param("id"), req, model.UIActor(auth.UserEmail), auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -659,7 +660,7 @@ func reparentNode(cfg APIConfig) gin.HandlerFunc {
 //	@Security		Bearer
 //	@Param			id		path		string						true	"Node ID"
 //	@Param			request	body		tree.TransferOwnerRequest	true	"New owner"
-//	@Success		200		{object}	tree.Node	"Updated node."
+//	@Success		200		{object}	model.Node	"Updated node."
 //	@Failure		400		{object}	map[string]any	"Bad request."
 //	@Failure		401		{object}	map[string]any	"Unauthorized."
 //	@Failure		403		{object}	map[string]any	"Forbidden."
@@ -680,7 +681,7 @@ func transferNodeOwner(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		node, err := svc.TransferOwner(c.Param("id"), req, tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
+		node, err := svc.TransferOwner(c.Param("id"), req, model.UIActor(auth.UserEmail), auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -699,7 +700,7 @@ func transferNodeOwner(cfg APIConfig) gin.HandlerFunc {
 //	@Security		Bearer
 //	@Param			id		path		string						true	"Node ID"
 //	@Param			request	body		tree.SetAttributesRequest	true	"The node's own attributes"
-//	@Success		200		{object}	tree.Node	"Updated node."
+//	@Success		200		{object}	model.Node	"Updated node."
 //	@Failure		400		{object}	map[string]any	"Bad request."
 //	@Failure		401		{object}	map[string]any	"Unauthorized."
 //	@Failure		403		{object}	map[string]any	"Forbidden."
@@ -719,7 +720,7 @@ func setNodeAttributes(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		node, err := svc.SetAttributes(c.Param("id"), req, tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
+		node, err := svc.SetAttributes(c.Param("id"), req, model.UIActor(auth.UserEmail), auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -737,7 +738,7 @@ func setNodeAttributes(cfg APIConfig) gin.HandlerFunc {
 //	@Security		Bearer
 //	@Param			id		path		string	true	"Node ID"
 //	@Param			groupId	path		string	true	"OpenStack group ID"
-//	@Success		200		{object}	tree.Node	"Updated node."
+//	@Success		200		{object}	model.Node	"Updated node."
 //	@Failure		400		{object}	map[string]any	"Bad request."
 //	@Failure		401		{object}	map[string]any	"Unauthorized."
 //	@Failure		403		{object}	map[string]any	"Forbidden."
@@ -752,7 +753,7 @@ func removeNodeExternalGroup(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		node, err := svc.RemoveExternalGroup(c.Param("id"), c.Param("groupId"), tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
+		node, err := svc.RemoveExternalGroup(c.Param("id"), c.Param("groupId"), model.UIActor(auth.UserEmail), auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -772,7 +773,7 @@ func removeNodeExternalGroup(cfg APIConfig) gin.HandlerFunc {
 //	@Security		Bearer
 //	@Param			id		path		string					true	"Project node ID"
 //	@Param			request	body		tree.AllocationRequest	true	"The whole allocation from that budget"
-//	@Success		200		{object}	tree.Node	"Updated project."
+//	@Success		200		{object}	model.Node	"Updated project."
 //	@Failure		400		{object}	map[string]any	"Bad request."
 //	@Failure		401		{object}	map[string]any	"Unauthorized."
 //	@Failure		403		{object}	map[string]any	"Forbidden."
@@ -793,7 +794,7 @@ func setNodeAllocation(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		node, err := svc.SetAllocation(c.Param("id"), req, tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
+		node, err := svc.SetAllocation(c.Param("id"), req, model.UIActor(auth.UserEmail), auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -810,7 +811,7 @@ func setNodeAllocation(cfg APIConfig) gin.HandlerFunc {
 //	@Produce		json
 //	@Security		Bearer
 //	@Param			id	path		string	true	"Project node ID"
-//	@Success		200	{array}		tree.Node	"Budgets, nearest first."
+//	@Success		200	{array}		model.Node	"Budgets, nearest first."
 //	@Failure		400	{object}	map[string]any	"Not a project."
 //	@Failure		401	{object}	map[string]any	"Unauthorized."
 //	@Failure		403	{object}	map[string]any	"Forbidden."
@@ -844,7 +845,7 @@ func listAllocationSources(cfg APIConfig) gin.HandlerFunc {
 //	@Security		Bearer
 //	@Param			id		path		string					true	"Node ID"
 //	@Param			request	body		tree.PromoteNodeRequest	true	"Promotion data"
-//	@Success		200		{object}	tree.Node	"Updated node (status still imported, promote flag set)."
+//	@Success		200		{object}	model.Node	"Updated node (status still imported, promote flag set)."
 //	@Failure		400		{object}	map[string]any	"Bad request or insufficient capacity."
 //	@Failure		401		{object}	map[string]any	"Unauthorized."
 //	@Failure		403		{object}	map[string]any	"Forbidden."
@@ -864,7 +865,7 @@ func promoteNode(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		node, err := svc.PromoteNode(c.Param("id"), req, tree.UIActor(auth.UserEmail), auth.EffectiveTokens)
+		node, err := svc.PromoteNode(c.Param("id"), req, model.UIActor(auth.UserEmail), auth.EffectiveTokens)
 		if err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
@@ -895,7 +896,7 @@ func deleteNode(cfg APIConfig) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 			return
 		}
-		if err := svc.DeleteNode(c.Param("id"), tree.UIActor(auth.UserEmail), auth.EffectiveTokens); err != nil {
+		if err := svc.DeleteNode(c.Param("id"), model.UIActor(auth.UserEmail), auth.EffectiveTokens); err != nil {
 			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
 			return
 		}

@@ -4,7 +4,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 )
 
@@ -29,7 +29,7 @@ import (
 // for a value that changes maybe twice in a project's life. Clearing the date in the
 // tree removes the tag on the next tick, and every other tag (managed, resource-id,
 // pending-deletion) is carried over untouched.
-func (r *Reconciler) syncManagedTags(leaf tree.Node, osProject osclient.ProjectInfo) {
+func (r *Reconciler) syncManagedTags(leaf model.Node, osProject osclient.ProjectInfo) {
 	termination := ""
 	if leaf.TerminationDate != nil {
 		termination = *leaf.TerminationDate

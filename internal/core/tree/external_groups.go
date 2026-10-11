@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
 // RemoveExternalGroup takes a group that was given access in OpenStack — not
@@ -13,37 +14,37 @@ import (
 // access; the next pass removes it in OpenStack. Whoever looks after the
 // project may do it, at once: it only takes access away. Adding external groups
 // is not offered — groups from the role provider are the way to grant access.
-func (s *Service) RemoveExternalGroup(id, groupID string, actor Actor, userTokens common.TokenList) (Node, error) {
+func (s *Service) RemoveExternalGroup(id, groupID string, actor model.Actor, userTokens common.TokenList) (model.Node, error) {
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
 	current, err := s.loadNode(ctx, id)
 	if err != nil {
-		return Node{}, err
+		return model.Node{}, err
 	}
 	if !current.IsLeaf() {
-		return Node{}, fmt.Errorf("only projects have external groups")
+		return model.Node{}, fmt.Errorf("only projects have external groups")
 	}
 	if !isOwner(userTokens, current) {
 		if manages, err := s.managesNode(ctx, userTokens, current); err != nil {
-			return Node{}, err
+			return model.Node{}, err
 		} else if !manages {
-			return Node{}, common.ErrForbidden
+			return model.Node{}, common.ErrForbidden
 		}
 	}
 	i := slices.IndexFunc(current.ExternalGroupAssignments, func(g common.ExternalGroupAssignment) bool { return g.GroupID == groupID })
 	if i < 0 {
-		return Node{}, fmt.Errorf("external group %w", common.ErrNotFound)
+		return model.Node{}, fmt.Errorf("external group %w", common.ErrNotFound)
 	}
 	name := current.ExternalGroupAssignments[i].GroupName
 	if name == "" {
 		name = groupID
 	}
-	entry := newHistoryEntry("external_group_removed", actor, current.Status)
+	entry := model.NewHistoryEntry("external_group_removed", actor, current.Status)
 	entry.Reason = new(name)
 
-	var updated Node
-	found, err := s.store.UpdateNode(ctx, id, func(n *Node) error {
+	var updated model.Node
+	found, err := s.store.UpdateNode(ctx, id, func(n *model.Node) error {
 		n.ExternalGroupAssignments = slices.DeleteFunc(slices.Clone(n.ExternalGroupAssignments),
 			func(g common.ExternalGroupAssignment) bool { return g.GroupID == groupID })
 		if len(n.ExternalGroupAssignments) == 0 {
@@ -54,12 +55,12 @@ func (s *Service) RemoveExternalGroup(id, groupID string, actor Actor, userToken
 		return nil
 	})
 	if err != nil {
-		return Node{}, fmt.Errorf("persist node: %w", err)
+		return model.Node{}, fmt.Errorf("persist node: %w", err)
 	}
 	if !found {
-		return Node{}, common.ErrNotFound
+		return model.Node{}, common.ErrNotFound
 	}
-	named, err := s.attachParentNames(ctx, []Node{updated}, userTokens)
+	named, err := s.attachParentNames(ctx, []model.Node{updated}, userTokens)
 	if err != nil {
 		return updated, nil
 	}

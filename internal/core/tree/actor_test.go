@@ -1,20 +1,24 @@
 package tree
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
+)
 
 // The channel has to survive into the history, or the whole distinction is
 // decoration. These pin the two ends of it: what an unset channel becomes, and
 // that a named one arrives intact.
 
 func TestActor_ChannelDefaultsToUI(t *testing.T) {
-	if got := (Actor{Email: "a@b.c"}).Channel(); got != ChannelUI {
-		t.Errorf("unset channel became %q, want %q", got, ChannelUI)
+	if got := (model.Actor{Email: "a@b.c"}).Channel(); got != model.ChannelUI {
+		t.Errorf("unset channel became %q, want %q", got, model.ChannelUI)
 	}
-	if got := UIActor("a@b.c").Channel(); got != ChannelUI {
-		t.Errorf("UIActor reports %q, want %q", got, ChannelUI)
+	if got := model.UIActor("a@b.c").Channel(); got != model.ChannelUI {
+		t.Errorf("UIActor reports %q, want %q", got, model.ChannelUI)
 	}
-	if got := (Actor{Email: "a@b.c", Via: ChannelMCP}).Channel(); got != ChannelMCP {
-		t.Errorf("named channel became %q, want %q", got, ChannelMCP)
+	if got := (model.Actor{Email: "a@b.c", Via: model.ChannelMCP}).Channel(); got != model.ChannelMCP {
+		t.Errorf("named channel became %q, want %q", got, model.ChannelMCP)
 	}
 }
 
@@ -22,12 +26,12 @@ func TestActor_ChannelDefaultsToUI(t *testing.T) {
 // "written before this field existed", and folding the two together would throw
 // away the distinction on the day someone needs it.
 func TestNewHistoryEntry_NeverLeavesTheChannelEmpty(t *testing.T) {
-	for _, actor := range []Actor{
+	for _, actor := range []model.Actor{
 		{Email: "a@b.c"},
-		UIActor("a@b.c"),
-		{Email: "a@b.c", Via: ChannelMCP},
+		model.UIActor("a@b.c"),
+		{Email: "a@b.c", Via: model.ChannelMCP},
 	} {
-		entry := newHistoryEntry("created", actor, StatusPending)
+		entry := model.NewHistoryEntry("created", actor, model.StatusPending)
 		if entry.Via == "" {
 			t.Errorf("actor %+v produced an entry with no channel", actor)
 		}
@@ -38,10 +42,10 @@ func TestNewHistoryEntry_NeverLeavesTheChannelEmpty(t *testing.T) {
 }
 
 func TestNewHistoryEntry_CarriesTheChannel(t *testing.T) {
-	if got := newHistoryEntry("created", UIActor("a@b.c"), StatusPending).Via; got != ChannelUI {
-		t.Errorf("UI change recorded as %q, want %q", got, ChannelUI)
+	if got := model.NewHistoryEntry("created", model.UIActor("a@b.c"), model.StatusPending).Via; got != model.ChannelUI {
+		t.Errorf("UI change recorded as %q, want %q", got, model.ChannelUI)
 	}
-	if got := newHistoryEntry("created", Actor{Email: "a@b.c", Via: ChannelMCP}, StatusPending).Via; got != ChannelMCP {
-		t.Errorf("agent change recorded as %q, want %q", got, ChannelMCP)
+	if got := model.NewHistoryEntry("created", model.Actor{Email: "a@b.c", Via: model.ChannelMCP}, model.StatusPending).Via; got != model.ChannelMCP {
+		t.Errorf("agent change recorded as %q, want %q", got, model.ChannelMCP)
 	}
 }

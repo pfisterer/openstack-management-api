@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"go.uber.org/zap"
 )
 
@@ -17,14 +18,14 @@ var _ Store = (*InMemoryStore)(nil)
 type InMemoryStore struct {
 	mu         sync.RWMutex
 	identities []common.Identity
-	nodes      []Node
+	nodes      []model.Node
 	log        *zap.SugaredLogger
 }
 
 func NewInMemoryStore(log *zap.SugaredLogger) *InMemoryStore {
 	return &InMemoryStore{
 		identities: []common.Identity{},
-		nodes:      []Node{},
+		nodes:      []model.Node{},
 		log:        log,
 	}
 }
@@ -35,7 +36,7 @@ func (s *InMemoryStore) IsEmpty(_ context.Context) (bool, error) {
 	return len(s.identities) == 0 && len(s.nodes) == 0, nil
 }
 
-func (s *InMemoryStore) Seed(_ context.Context, identities []common.Identity, nodes []Node) error {
+func (s *InMemoryStore) Seed(_ context.Context, identities []common.Identity, nodes []model.Node) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.identities = identities
@@ -57,7 +58,7 @@ func (s *InMemoryStore) ListParticipants(_ context.Context) ([]string, error) {
 	return ParticipantEmails(s.nodes), nil
 }
 
-func (s *InMemoryStore) GetNode(_ context.Context, id string) (*Node, error) {
+func (s *InMemoryStore) GetNode(_ context.Context, id string) (*model.Node, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	// Return a copy, not a pointer into the live slice, so callers cannot mutate
@@ -71,11 +72,11 @@ func (s *InMemoryStore) GetNode(_ context.Context, id string) (*Node, error) {
 	return nil, nil
 }
 
-func (s *InMemoryStore) ListNodes(_ context.Context, q NodeQuery, limit, offset int) ([]Node, error) {
+func (s *InMemoryStore) ListNodes(_ context.Context, q NodeQuery, limit, offset int) ([]model.Node, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var out []Node
+	var out []model.Node
 	for _, n := range s.nodes {
 		if matchesQuery(n, q) {
 			out = append(out, n)
@@ -98,7 +99,7 @@ func (s *InMemoryStore) CountNodes(_ context.Context, q NodeQuery) (int, error) 
 	return n, nil
 }
 
-func (s *InMemoryStore) UpsertNode(_ context.Context, n Node) error {
+func (s *InMemoryStore) UpsertNode(_ context.Context, n model.Node) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -112,7 +113,7 @@ func (s *InMemoryStore) UpsertNode(_ context.Context, n Node) error {
 	return nil
 }
 
-func (s *InMemoryStore) UpdateNode(_ context.Context, id string, fn func(n *Node) error) (bool, error) {
+func (s *InMemoryStore) UpdateNode(_ context.Context, id string, fn func(n *model.Node) error) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -134,7 +135,7 @@ func (s *InMemoryStore) UpdateNode(_ context.Context, id string, fn func(n *Node
 	return false, nil
 }
 
-func (s *InMemoryStore) DeleteNodeIf(_ context.Context, id string, pred func(n Node) bool) (bool, error) {
+func (s *InMemoryStore) DeleteNodeIf(_ context.Context, id string, pred func(n model.Node) bool) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -190,7 +191,7 @@ func (s *InMemoryStore) DeleteNodes(_ context.Context, ids []string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	filtered := make([]Node, 0, len(s.nodes))
+	filtered := make([]model.Node, 0, len(s.nodes))
 	for _, n := range s.nodes {
 		if _, ok := remove[n.ID]; !ok {
 			filtered = append(filtered, n)

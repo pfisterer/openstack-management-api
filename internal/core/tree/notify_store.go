@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
 // NotifyOnWrite wraps a store so that notify is called after every node write
@@ -25,7 +26,7 @@ type notifyingStore struct {
 	notify func()
 }
 
-func (s notifyingStore) UpsertNode(ctx context.Context, n Node) error {
+func (s notifyingStore) UpsertNode(ctx context.Context, n model.Node) error {
 	err := s.Store.UpsertNode(ctx, n)
 	if err == nil {
 		s.notify()
@@ -41,7 +42,7 @@ func (s notifyingStore) DeleteNodes(ctx context.Context, ids []string) error {
 	return err
 }
 
-func (s notifyingStore) UpdateNode(ctx context.Context, id string, fn func(n *Node) error) (bool, error) {
+func (s notifyingStore) UpdateNode(ctx context.Context, id string, fn func(n *model.Node) error) (bool, error) {
 	wrote, err := s.Store.UpdateNode(ctx, id, fn)
 	if err == nil && wrote {
 		s.notify()
@@ -49,7 +50,7 @@ func (s notifyingStore) UpdateNode(ctx context.Context, id string, fn func(n *No
 	return wrote, err
 }
 
-func (s notifyingStore) DeleteNodeIf(ctx context.Context, id string, pred func(n Node) bool) (bool, error) {
+func (s notifyingStore) DeleteNodeIf(ctx context.Context, id string, pred func(n model.Node) bool) (bool, error) {
 	deleted, err := s.Store.DeleteNodeIf(ctx, id, pred)
 	if err == nil && deleted {
 		s.notify()
@@ -57,7 +58,7 @@ func (s notifyingStore) DeleteNodeIf(ctx context.Context, id string, pred func(n
 	return deleted, err
 }
 
-func (s notifyingStore) Seed(ctx context.Context, identities []common.Identity, nodes []Node) error {
+func (s notifyingStore) Seed(ctx context.Context, identities []common.Identity, nodes []model.Node) error {
 	err := s.Store.Seed(ctx, identities, nodes)
 	if err == nil {
 		s.notify()

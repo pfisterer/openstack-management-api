@@ -6,22 +6,23 @@ import (
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"github.com/pfisterer/openstack-management-api/internal/dev"
 )
 
 // budgetForMembers creates a budget the caller may request projects under.
-func budgetForMembers(t *testing.T, svc *tree.Service, requester common.TokenList) tree.Node {
+func budgetForMembers(t *testing.T, svc *tree.Service, requester common.TokenList) model.Node {
 	t.Helper()
 	budget, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID:           tree.RootNodeID,
-		Kind:               tree.KindBudget,
+		ParentID:           model.RootNodeID,
+		Kind:               model.KindBudget,
 		Name:               "course",
 		Reason:             "course budget",
 		Limit:              cores(100),
 		AdminScope:         common.TokenList{"group:root"},
 		EligibleRequesters: requester,
-	}, tree.UIActor("root@x"), "root@x", common.TokenList{"group:root"})
+	}, model.UIActor("root@x"), "root@x", common.TokenList{"group:root"})
 	if err != nil {
 		t.Fatalf("create budget: %v", err)
 	}
@@ -101,12 +102,12 @@ func TestAuthorizedUsersAreValidated(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			node, err := svc.CreateNode(tree.CreateNodeRequest{
 				ParentID:        budget.ID,
-				Kind:            tree.KindProject,
+				Kind:            model.KindProject,
 				Name:            "project",
 				Reason:          "lab work",
 				Limit:           cores(1),
 				AuthorizedUsers: tc.users,
-			}, tree.UIActor("student@x"), "student@x", requester)
+			}, model.UIActor("student@x"), "student@x", requester)
 
 			if tc.wantErr == "" {
 				if err != nil {

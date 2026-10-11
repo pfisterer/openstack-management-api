@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 )
 
@@ -282,13 +283,13 @@ func TestValidation_LeafLimits(t *testing.T) {
 
 	// Negative limits and unknown resources are rejected on create.
 	rr := do(t, h, http.MethodPost, "/v1/nodes", userStudent, tree.CreateNodeRequest{
-		ParentID: "b_cs_students", Kind: tree.KindProject, Name: "x", Reason: "x",
+		ParentID: "b_cs_students", Kind: model.KindProject, Name: "x", Reason: "x",
 		Limit: common.ProjectQuota{"cores": -1},
 	})
 	assertStatus(t, rr, http.StatusBadRequest)
 
 	rr = do(t, h, http.MethodPost, "/v1/nodes", userStudent, tree.CreateNodeRequest{
-		ParentID: "b_cs_students", Kind: tree.KindProject, Name: "x", Reason: "x",
+		ParentID: "b_cs_students", Kind: model.KindProject, Name: "x", Reason: "x",
 		Limit: common.ProjectQuota{"warp_cores": 1},
 	})
 	assertStatus(t, rr, http.StatusBadRequest)
@@ -390,7 +391,7 @@ func TestPromote_Flow(t *testing.T) {
 
 	// Promotion into the unassigned node itself is nonsense.
 	bad := req
-	bad.NewParentID = tree.UnassignedNodeID
+	bad.NewParentID = model.UnassignedNodeID
 	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_imported_001/promote", userRoot, bad), http.StatusBadRequest)
 
 	// A promotion exceeding the target's capacity is rejected up front.
@@ -403,9 +404,9 @@ func TestPromote_Flow(t *testing.T) {
 	ok.Limit = common.ProjectQuota{"cores": 5, "ram": 16, "storage": 100}
 	rr := do(t, h, http.MethodPost, "/v1/nodes/p_imported_001/promote", userRoot, ok)
 	assertStatus(t, rr, http.StatusOK)
-	var n tree.Node
+	var n model.Node
 	mustDecode(t, rr, &n)
-	if n.Status != tree.StatusImported {
+	if n.Status != model.StatusImported {
 		t.Errorf("status should remain imported until the reconciler tags the OS project, got %q", n.Status)
 	}
 	if n.ParentID == nil || *n.ParentID != "b_cs_faculty" || n.Owner != "user:"+userFaculty {
@@ -413,7 +414,7 @@ func TestPromote_Flow(t *testing.T) {
 	}
 	found := false
 	for _, f := range n.Flags {
-		if f == tree.FlagPromoteOnReconcile {
+		if f == model.FlagPromoteOnReconcile {
 			found = true
 		}
 	}
@@ -441,7 +442,7 @@ func TestTransferOwner(t *testing.T) {
 	// The parent-chain manager can.
 	rr := do(t, h, http.MethodPost, "/v1/nodes/p_001/transfer-owner", userCSAdmin, req)
 	assertStatus(t, rr, http.StatusOK)
-	var n tree.Node
+	var n model.Node
 	mustDecode(t, rr, &n)
 	if n.Owner != "user:"+userStudent {
 		t.Errorf("owner should be the student, got %q", n.Owner)

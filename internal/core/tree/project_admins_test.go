@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 )
 
@@ -21,21 +22,21 @@ func TestProjectAdmins(t *testing.T) {
 	strangerTokens := common.TokenList{"user:stranger@x"}
 
 	budget, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: tree.RootNodeID, Kind: tree.KindBudget, Name: "Chair", Reason: "test",
+		ParentID: model.RootNodeID, Kind: model.KindBudget, Name: "Chair", Reason: "test",
 		Limit: cores(10), AdminScope: common.TokenList{"group:root"},
 		EligibleRequesters: common.TokenList{"user:owner@x"},
-	}, tree.UIActor("root@x"), "root@x", rootTokens)
+	}, model.UIActor("root@x"), "root@x", rootTokens)
 	if err != nil {
 		t.Fatalf("create budget: %v", err)
 	}
 	project, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: budget.ID, Kind: tree.KindProject, Name: "Lab", Reason: "lab", Limit: cores(2),
+		ParentID: budget.ID, Kind: model.KindProject, Name: "Lab", Reason: "lab", Limit: cores(2),
 		AdminScope: common.TokenList{"user:co@x", "group:chair"},
-	}, tree.UIActor("owner@x"), "owner@x", ownerTokens)
+	}, model.UIActor("owner@x"), "owner@x", ownerTokens)
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	if _, err := svc.ApproveNode(project.ID, tree.ApproveNodeRequest{}, tree.UIActor("root@x"), rootTokens); err != nil {
+	if _, err := svc.ApproveNode(project.ID, tree.ApproveNodeRequest{}, model.UIActor("root@x"), rootTokens); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
 
@@ -56,44 +57,44 @@ func TestProjectAdmins(t *testing.T) {
 	// Rename and the admin list are direct edits: no approval, status unchanged.
 	name := "Lab 2"
 	admins := common.TokenList{"user:co@x", "user:new@x"}
-	updated, err := svc.UpdateNode(project.ID, tree.UpdateNodeRequest{Name: &name, AdminScope: &admins}, tree.UIActor("co@x"), coTokens)
+	updated, err := svc.UpdateNode(project.ID, tree.UpdateNodeRequest{Name: &name, AdminScope: &admins}, model.UIActor("co@x"), coTokens)
 	if err != nil {
 		t.Fatalf("admin edits name and admins: %v", err)
 	}
-	if updated.Status != tree.StatusApproved || updated.Name != name || len(updated.AdminScope) != 2 {
+	if updated.Status != model.StatusApproved || updated.Name != name || len(updated.AdminScope) != 2 {
 		t.Errorf("unexpected result: status %s, name %q, admins %v", updated.Status, updated.Name, updated.AdminScope)
 	}
-	if _, err := svc.UpdateNode(project.ID, tree.UpdateNodeRequest{Name: &name}, tree.UIActor("stranger@x"), strangerTokens); !errors.Is(err, common.ErrForbidden) {
+	if _, err := svc.UpdateNode(project.ID, tree.UpdateNodeRequest{Name: &name}, model.UIActor("stranger@x"), strangerTokens); !errors.Is(err, common.ErrForbidden) {
 		t.Errorf("a stranger must not rename, got %v", err)
 	}
 
 	// Resources still go through a request, which an admin may file but not decide.
 	more := cores(3)
-	if _, err := svc.UpdateNode(project.ID, tree.UpdateNodeRequest{Limit: &more}, tree.UIActor("co@x"), coTokens); err == nil {
+	if _, err := svc.UpdateNode(project.ID, tree.UpdateNodeRequest{Limit: &more}, model.UIActor("co@x"), coTokens); err == nil {
 		t.Error("a limit must not be a direct edit on a project")
 	}
-	if _, err := svc.RequestChange(project.ID, tree.ChangeNodeRequest{Limit: &more}, tree.UIActor("co@x"), coTokens); err != nil {
+	if _, err := svc.RequestChange(project.ID, tree.ChangeNodeRequest{Limit: &more}, model.UIActor("co@x"), coTokens); err != nil {
 		t.Fatalf("admin requests a change: %v", err)
 	}
-	if _, err := svc.ApproveNode(project.ID, tree.ApproveNodeRequest{}, tree.UIActor("co@x"), coTokens); !errors.Is(err, common.ErrForbidden) {
+	if _, err := svc.ApproveNode(project.ID, tree.ApproveNodeRequest{}, model.UIActor("co@x"), coTokens); !errors.Is(err, common.ErrForbidden) {
 		t.Errorf("an admin must not approve the project's own request, got %v", err)
 	}
-	if _, err := svc.ApproveNode(project.ID, tree.ApproveNodeRequest{}, tree.UIActor("root@x"), rootTokens); err != nil {
+	if _, err := svc.ApproveNode(project.ID, tree.ApproveNodeRequest{}, model.UIActor("root@x"), rootTokens); err != nil {
 		t.Fatalf("approve change: %v", err)
 	}
 
-	if _, err := svc.TransferOwner(project.ID, tree.TransferOwnerRequest{NewOwner: "co@x"}, tree.UIActor("co@x"), coTokens); !errors.Is(err, common.ErrForbidden) {
+	if _, err := svc.TransferOwner(project.ID, tree.TransferOwnerRequest{NewOwner: "co@x"}, model.UIActor("co@x"), coTokens); !errors.Is(err, common.ErrForbidden) {
 		t.Errorf("an admin must not transfer the project, got %v", err)
 	}
 
-	if _, err := svc.ReleaseNode(project.ID, tree.ReleaseNodeRequest{}, tree.UIActor("stranger@x"), strangerTokens); !errors.Is(err, common.ErrForbidden) {
+	if _, err := svc.ReleaseNode(project.ID, tree.ReleaseNodeRequest{}, model.UIActor("stranger@x"), strangerTokens); !errors.Is(err, common.ErrForbidden) {
 		t.Errorf("a stranger must not release, got %v", err)
 	}
-	released, err := svc.ReleaseNode(project.ID, tree.ReleaseNodeRequest{}, tree.UIActor("co@x"), coTokens)
+	released, err := svc.ReleaseNode(project.ID, tree.ReleaseNodeRequest{}, model.UIActor("co@x"), coTokens)
 	if err != nil {
 		t.Fatalf("admin releases: %v", err)
 	}
-	if released.Status != tree.StatusReleased {
+	if released.Status != model.StatusReleased {
 		t.Errorf("expected released, got %s", released.Status)
 	}
 }

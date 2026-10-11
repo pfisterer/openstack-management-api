@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 )
 
@@ -93,13 +94,13 @@ func TestRoleSwitch_ImpersonationDropsRoot(t *testing.T) {
 
 	// But auto-approve works exactly as it would for the student.
 	rr = do(t, h, http.MethodPost, "/v1/nodes", userRoot, tree.CreateNodeRequest{
-		ParentID: "b_cs_students", Kind: tree.KindProject, Name: "impersonated request",
+		ParentID: "b_cs_students", Kind: model.KindProject, Name: "impersonated request",
 		Reason: "impersonated request", Limit: cores(1),
 	})
 	assertStatus(t, rr, http.StatusCreated)
-	var n tree.Node
+	var n model.Node
 	mustDecode(t, rr, &n)
-	if n.Status != tree.StatusApproved {
+	if n.Status != model.StatusApproved {
 		t.Errorf("impersonated request should auto-approve, got %q", n.Status)
 	}
 	if n.Owner != "user:"+userStudent {

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
 // What the daily rows add up to over a period: for one project, for a budget's
@@ -75,9 +75,9 @@ type ProjectTotals struct {
 	// Attributes are the attribute groups that applied over these days. A
 	// project whose attributes changed within the period is reported once per
 	// set of attributes, so each part can be billed to where it belongs.
-	Attributes tree.Attributes `json:"attributes,omitempty"`
-	People     int             `json:"people"`
-	Days       int             `json:"days"`
+	Attributes model.Attributes `json:"attributes,omitempty"`
+	People     int              `json:"people"`
+	Days       int              `json:"days"`
 	// LastActive is the last day a server ran in it, empty for none.
 	LastActive  string      `json:"last_active,omitempty"`
 	Utilization Utilization `json:"utilization"`
@@ -267,7 +267,7 @@ func projectKey(d Day) string {
 }
 
 // attributesKey is a canonical form: encoding/json sorts map keys.
-func attributesKey(a tree.Attributes) string {
+func attributesKey(a model.Attributes) string {
 	if len(a) == 0 {
 		return ""
 	}

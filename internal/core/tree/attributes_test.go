@@ -5,16 +5,17 @@ import (
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 )
 
 func TestResolveAttributes_NearestGroupWinsWhole(t *testing.T) {
-	chain := []tree.Node{
-		{ID: "p", Name: "Thesis", Attributes: tree.Attributes{"billing": {"wbs": "D-1"}}},
-		{ID: "stud", Name: "Students", Attributes: tree.Attributes{"contact": {"mail": "fin@x"}, "misc": {}}},
-		{ID: "uni", Name: "Uni", Attributes: tree.Attributes{"billing": {"cost_center": "4711"}, "misc": {"a": "b"}}},
+	chain := []model.Node{
+		{ID: "p", Name: "Thesis", Attributes: model.Attributes{"billing": {"wbs": "D-1"}}},
+		{ID: "stud", Name: "Students", Attributes: model.Attributes{"contact": {"mail": "fin@x"}, "misc": {}}},
+		{ID: "uni", Name: "Uni", Attributes: model.Attributes{"billing": {"cost_center": "4711"}, "misc": {"a": "b"}}},
 	}
-	got := tree.ResolveAttributes(chain)
+	got := model.ResolveAttributes(chain)
 
 	// Whole group from the nearest node: no cost centre from Uni next to the
 	// project's own WBS element.
@@ -32,20 +33,20 @@ func TestResolveAttributes_NearestGroupWinsWhole(t *testing.T) {
 
 func TestSetAttributes_RightsAndInheritance(t *testing.T) {
 	f := newAllocationFixture(t)
-	set := func(id string, tokens common.TokenList, a tree.Attributes) error {
-		_, err := f.svc.SetAttributes(id, tree.SetAttributesRequest{Attributes: a}, tree.UIActor("x@x"), tokens)
+	set := func(id string, tokens common.TokenList, a model.Attributes) error {
+		_, err := f.svc.SetAttributes(id, tree.SetAttributesRequest{Attributes: a}, model.UIActor("x@x"), tokens)
 		return err
 	}
 
 	// The project's owner says nothing about who pays.
-	if err := set(f.project.ID, ownerToken, tree.Attributes{"billing": {"cost_center": "1"}}); !errors.Is(err, common.ErrForbidden) {
+	if err := set(f.project.ID, ownerToken, model.Attributes{"billing": {"cost_center": "1"}}); !errors.Is(err, common.ErrForbidden) {
 		t.Errorf("owner: want forbidden, got %v", err)
 	}
 	// A budget's own managers may set its attributes; the university's too.
-	if err := set(f.stud.ID, studMgr, tree.Attributes{"billing": {"cost_center": "200"}}); err != nil {
+	if err := set(f.stud.ID, studMgr, model.Attributes{"billing": {"cost_center": "200"}}); err != nil {
 		t.Fatalf("students' manager on their budget: %v", err)
 	}
-	if err := set(f.uni.ID, uniTokens, tree.Attributes{"billing": {"cost_center": "100"}, "contact": {"mail": "fin@x"}}); err != nil {
+	if err := set(f.uni.ID, uniTokens, model.Attributes{"billing": {"cost_center": "100"}, "contact": {"mail": "fin@x"}}); err != nil {
 		t.Fatalf("uni manager: %v", err)
 	}
 
@@ -58,8 +59,8 @@ func TestSetAttributes_RightsAndInheritance(t *testing.T) {
 	}
 
 	// The students' manager overrides it on the project.
-	n, err := f.svc.SetAttributes(f.project.ID, tree.SetAttributesRequest{Attributes: tree.Attributes{"billing": {"wbs": "D-9"}}},
-		tree.UIActor("mgr@x"), studMgr)
+	n, err := f.svc.SetAttributes(f.project.ID, tree.SetAttributesRequest{Attributes: model.Attributes{"billing": {"wbs": "D-9"}}},
+		model.UIActor("mgr@x"), studMgr)
 	if err != nil {
 		t.Fatalf("students' manager on the project: %v", err)
 	}
@@ -81,12 +82,12 @@ func TestSetAttributes_RightsAndInheritance(t *testing.T) {
 
 func TestSetAttributes_Validation(t *testing.T) {
 	f := newAllocationFixture(t)
-	for name, a := range map[string]tree.Attributes{
+	for name, a := range map[string]model.Attributes{
 		"upper-case group": {"Billing": {"a": "1"}},
 		"space in key":     {"billing": {"cost center": "1"}},
 		"long value":       {"billing": {"a": string(make([]byte, 600))}},
 	} {
-		if _, err := f.svc.SetAttributes(f.uni.ID, tree.SetAttributesRequest{Attributes: a}, tree.UIActor("root@x"), rootTokens); err == nil {
+		if _, err := f.svc.SetAttributes(f.uni.ID, tree.SetAttributesRequest{Attributes: a}, model.UIActor("root@x"), rootTokens); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
@@ -96,15 +97,15 @@ func TestSetAttributes_Validation(t *testing.T) {
 // and on a project its owner and admins — not to members or requesters.
 func TestAttributes_VisibleToThoseWhoLookAfterTheNode(t *testing.T) {
 	f := newAllocationFixture(t)
-	if _, err := f.svc.SetAttributes(f.uni.ID, tree.SetAttributesRequest{Attributes: tree.Attributes{"billing": {"cost_center": "100"}}},
-		tree.UIActor("uni@x"), uniTokens); err != nil {
+	if _, err := f.svc.SetAttributes(f.uni.ID, tree.SetAttributesRequest{Attributes: model.Attributes{"billing": {"cost_center": "100"}}},
+		model.UIActor("uni@x"), uniTokens); err != nil {
 		t.Fatal(err)
 	}
 	member := common.TokenList{"user:member@x"}
-	p, err := f.svc.CreateNode(tree.CreateNodeRequest{ParentID: f.stud.ID, Kind: tree.KindProject, Name: "Shared", Reason: "t",
+	p, err := f.svc.CreateNode(tree.CreateNodeRequest{ParentID: f.stud.ID, Kind: model.KindProject, Name: "Shared", Reason: "t",
 		Limit:           common.ProjectQuota{"cores": 0},
 		AuthorizedUsers: []common.AuthorizedUser{{Token: "user:member@x", OpenstackRole: "member"}},
-	}, tree.UIActor("stud@x"), "stud@x", ownerToken)
+	}, model.UIActor("stud@x"), "stud@x", ownerToken)
 	if err != nil {
 		t.Fatalf("create shared project: %v", err)
 	}

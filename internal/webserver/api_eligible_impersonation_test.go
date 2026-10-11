@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 )
 
@@ -20,13 +21,13 @@ func TestEligibleForMe_UnderImpersonationOfUnknownUser(t *testing.T) {
 	const ghost = "ghost@uni.example"
 
 	rr := do(t, h, http.MethodPost, "/v1/nodes", userRoot, tree.CreateNodeRequest{
-		ParentID: tree.RootNodeID, Kind: tree.KindBudget, Name: "Spielbudget",
+		ParentID: model.RootNodeID, Kind: model.KindBudget, Name: "Spielbudget",
 		Reason: "repro", Limit: cores(4),
 		AdminScope:         []string{"user:" + userRoot},
 		EligibleRequesters: []string{"user:" + ghost},
 	})
 	assertStatus(t, rr, http.StatusCreated)
-	var budget tree.Node
+	var budget model.Node
 	mustDecode(t, rr, &budget)
 
 	assertStatus(t, do(t, h, http.MethodPut, "/v1/role-switch", userRoot,

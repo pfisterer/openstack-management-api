@@ -6,10 +6,10 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 )
 
@@ -62,7 +62,7 @@ func (r *Reconciler) pruneOrphanedUsers(res *reconcileResult) {
 // buildDesiredMembers extracts the intended OpenStack role assignments from a leaf.
 // Only user: tokens are processed — group: tokens have no direct Keystone equivalent.
 // The owner receives common.OwnerOpenstackRole; AuthorizedUsers their specified one.
-func buildDesiredMembers(leaf tree.Node) []osclient.DesiredMember {
+func buildDesiredMembers(leaf model.Node) []osclient.DesiredMember {
 	desired := make([]osclient.DesiredMember, 0, 1+len(leaf.AuthorizedUsers))
 	if email := leaf.OwnerEmail(); email != "" {
 		desired = append(desired, osclient.DesiredMember{
@@ -106,7 +106,7 @@ func allowedRole(role string) string {
 // syncMembers reconciles the OpenStack project's user role assignments to match the
 // leaf's owner and AuthorizedUsers. Non-fatal: errors are logged
 // but do not interrupt the reconciliation run.
-func (r *Reconciler) syncMembers(leaf tree.Node, osProjectID string) {
+func (r *Reconciler) syncMembers(leaf model.Node, osProjectID string) {
 	if r.cfg.DryRun {
 		r.log.Debugw("Dry run: skipping member sync",
 			"node_id", leaf.ID, "os_project_id", osProjectID)
@@ -172,7 +172,7 @@ func isRelationName(s string) bool {
 
 // collectGroupTokens returns the set of unique group: tokens referenced by any
 // AuthorizedUsers entry across the given leaves.
-func collectGroupTokens(leaves []tree.Node) map[string]struct{} {
+func collectGroupTokens(leaves []model.Node) map[string]struct{} {
 	tokens := make(map[string]struct{})
 	for _, leaf := range leaves {
 		for _, au := range leaf.AuthorizedUsers {
@@ -188,7 +188,7 @@ func collectGroupTokens(leaves []tree.Node) map[string]struct{} {
 // in active leaves, populates each group's membership from the role provider,
 // and returns a map of groupToken → Keystone group ID for use in project assignment.
 // Non-fatal: errors for individual groups are logged but do not abort the run.
-func (r *Reconciler) syncGroups(ctx context.Context, activeLeaves []tree.Node, res *reconcileResult) map[string]string {
+func (r *Reconciler) syncGroups(ctx context.Context, activeLeaves []model.Node, res *reconcileResult) map[string]string {
 	if r.osClient == nil {
 		return nil
 	}
@@ -320,7 +320,7 @@ func (r *Reconciler) syncGroupMembers(ctx context.Context, groupToken, groupName
 // syncGroupAssignments reconciles the Keystone group role assignments for a
 // single project based on the group: tokens in the leaf's AuthorizedUsers.
 // Non-fatal: errors are logged and skipped.
-func (r *Reconciler) syncGroupAssignments(leaf tree.Node, osProjectID string, groupTokenToOSID map[string]string) {
+func (r *Reconciler) syncGroupAssignments(leaf model.Node, osProjectID string, groupTokenToOSID map[string]string) {
 	if r.osClient == nil || r.cfg.DryRun {
 		if r.cfg.DryRun {
 			r.log.Debugw("Dry run: skipping group assignment sync",

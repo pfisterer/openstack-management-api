@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 )
 
@@ -12,19 +13,19 @@ import (
 // the given auto-approve policy (nil: none), ending on budgetEnd (nil: never).
 type changeFixture struct {
 	svc    *tree.Service
-	budget tree.Node
+	budget model.Node
 }
 
-func newChangeFixture(t *testing.T, policy *tree.AutoApprove, budgetEnd *string) changeFixture {
+func newChangeFixture(t *testing.T, policy *model.AutoApprove, budgetEnd *string) changeFixture {
 	t.Helper()
 	svc, _ := newSvc(t, common.TokenList{"group:root"})
 	budget, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: tree.RootNodeID, Kind: tree.KindBudget, Name: "Pool", Reason: "t",
+		ParentID: model.RootNodeID, Kind: model.KindBudget, Name: "Pool", Reason: "t",
 		Limit: cores(10), AdminScope: common.TokenList{"group:root"},
 		EligibleRequesters: common.TokenList{"user:stud@x"},
 		AutoApprove:        policy,
 		TerminationDate:    budgetEnd,
-	}, tree.UIActor("root@x"), "root@x", common.TokenList{"user:root@x", "group:root"})
+	}, model.UIActor("root@x"), "root@x", common.TokenList{"user:root@x", "group:root"})
 	if err != nil {
 		t.Fatalf("create budget: %v", err)
 	}
@@ -33,12 +34,12 @@ func newChangeFixture(t *testing.T, policy *tree.AutoApprove, budgetEnd *string)
 
 var studTokens = common.TokenList{"user:stud@x"}
 
-func (f changeFixture) request(t *testing.T, n int, end *string) tree.Node {
+func (f changeFixture) request(t *testing.T, n int, end *string) model.Node {
 	t.Helper()
 	node, err := f.svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: f.budget.ID, Kind: tree.KindProject, Name: "vm", Reason: "vm",
+		ParentID: f.budget.ID, Kind: model.KindProject, Name: "vm", Reason: "vm",
 		Limit: cores(n), TerminationDate: end,
-	}, tree.UIActor("stud@x"), "stud@x", studTokens)
+	}, model.UIActor("stud@x"), "stud@x", studTokens)
 	if err != nil {
 		t.Fatalf("request project: %v", err)
 	}
@@ -47,22 +48,22 @@ func (f changeFixture) request(t *testing.T, n int, end *string) tree.Node {
 
 // approved returns an active project of n cores — auto-approved where the
 // policy allows it, approved by the root admin otherwise.
-func (f changeFixture) approved(t *testing.T, n int, end *string) tree.Node {
+func (f changeFixture) approved(t *testing.T, n int, end *string) model.Node {
 	t.Helper()
 	node := f.request(t, n, end)
-	if node.Status == tree.StatusApproved {
+	if node.Status == model.StatusApproved {
 		return node
 	}
-	node, err := f.svc.ApproveNode(node.ID, tree.ApproveNodeRequest{}, tree.UIActor("root@x"), common.TokenList{"group:root"})
+	node, err := f.svc.ApproveNode(node.ID, tree.ApproveNodeRequest{}, model.UIActor("root@x"), common.TokenList{"group:root"})
 	if err != nil {
 		t.Fatalf("approve: %v", err)
 	}
 	return node
 }
 
-func (f changeFixture) change(t *testing.T, id string, req tree.ChangeNodeRequest) tree.Node {
+func (f changeFixture) change(t *testing.T, id string, req tree.ChangeNodeRequest) model.Node {
 	t.Helper()
-	node, err := f.svc.RequestChange(id, req, tree.UIActor("stud@x"), studTokens)
+	node, err := f.svc.RequestChange(id, req, model.UIActor("stud@x"), studTokens)
 	if err != nil {
 		t.Fatalf("request change: %v", err)
 	}
@@ -74,15 +75,15 @@ func quota(q common.ProjectQuota) *common.ProjectQuota { return &q }
 // A pool policy — no per-person limit — grants whatever the budget has room
 // for, and nothing beyond it.
 func TestAutoApprove_PoolGrantsUpToTheBudget(t *testing.T) {
-	f := newChangeFixture(t, &tree.AutoApprove{}, nil)
+	f := newChangeFixture(t, &model.AutoApprove{}, nil)
 
-	if n := f.request(t, 8, nil); n.Status != tree.StatusApproved {
+	if n := f.request(t, 8, nil); n.Status != model.StatusApproved {
 		t.Fatalf("8 of 10 cores from a pool should be granted at once, got %q", n.Status)
 	}
-	if n := f.request(t, 2, nil); n.Status != tree.StatusApproved {
+	if n := f.request(t, 2, nil); n.Status != model.StatusApproved {
 		t.Fatalf("the last 2 cores should be granted at once, got %q", n.Status)
 	}
-	if n := f.request(t, 1, nil); n.Status != tree.StatusPending {
+	if n := f.request(t, 1, nil); n.Status != model.StatusPending {
 		t.Fatalf("a request beyond the budget should wait for a manager, got %q", n.Status)
 	}
 }
@@ -94,23 +95,23 @@ func TestChange_WithoutPolicy(t *testing.T) {
 	f := newChangeFixture(t, nil, nil)
 	p := f.approved(t, 4, &end)
 
-	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(2))}); n.Status != tree.StatusApproved || n.Limit["cores"] != 2 {
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(2))}); n.Status != model.StatusApproved || n.Limit["cores"] != 2 {
 		t.Fatalf("a shrink should apply at once, got %q with %v", n.Status, n.Limit)
 	}
 	sooner := "2027-03-31T00:00:00Z"
-	if n := f.change(t, p.ID, tree.ChangeNodeRequest{TerminationDate: &sooner}); n.Status != tree.StatusApproved || *n.TerminationDate != sooner {
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{TerminationDate: &sooner}); n.Status != model.StatusApproved || *n.TerminationDate != sooner {
 		t.Fatalf("an earlier end should apply at once, got %q", n.Status)
 	}
 	members := []common.AuthorizedUser{{Token: "user:friend@x", OpenstackRole: "member"}}
-	if n := f.change(t, p.ID, tree.ChangeNodeRequest{AuthorizedUsers: &members}); n.Status != tree.StatusApproved || len(n.AuthorizedUsers) != 1 {
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{AuthorizedUsers: &members}); n.Status != model.StatusApproved || len(n.AuthorizedUsers) != 1 {
 		t.Fatalf("a member change should apply at once, got %q with %v", n.Status, n.AuthorizedUsers)
 	}
 
-	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(3))}); n.Status != tree.StatusChangePending || n.Limit["cores"] != 2 {
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(3))}); n.Status != model.StatusChangePending || n.Limit["cores"] != 2 {
 		t.Fatalf("growth without a policy should wait and keep the old limit, got %q with %v", n.Status, n.Limit)
 	}
 	later := "2027-12-31T00:00:00Z"
-	if n := f.change(t, p.ID, tree.ChangeNodeRequest{TerminationDate: &later}); n.Status != tree.StatusChangePending {
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{TerminationDate: &later}); n.Status != model.StatusChangePending {
 		t.Fatalf("an extension without a policy should wait, got %q", n.Status)
 	}
 }
@@ -123,7 +124,7 @@ func TestChange_MixedProposalWaitsAsAWhole(t *testing.T) {
 
 	members := []common.AuthorizedUser{{Token: "user:friend@x", OpenstackRole: "member"}}
 	n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(6)), AuthorizedUsers: &members})
-	if n.Status != tree.StatusChangePending || len(n.AuthorizedUsers) != 0 {
+	if n.Status != model.StatusChangePending || len(n.AuthorizedUsers) != 0 {
 		t.Fatalf("growth plus members should wait as one, got %q with members %v", n.Status, n.AuthorizedUsers)
 	}
 }
@@ -131,27 +132,27 @@ func TestChange_MixedProposalWaitsAsAWhole(t *testing.T) {
 // Under an individual limit, growth is granted while the person's total stays
 // within it — the project's own current size counts once, not twice.
 func TestChange_GrowthWithinIndividualLimit(t *testing.T) {
-	f := newChangeFixture(t, &tree.AutoApprove{PerRequesterLimit: cores(4)}, nil)
+	f := newChangeFixture(t, &model.AutoApprove{PerRequesterLimit: cores(4)}, nil)
 	p := f.approved(t, 2, nil)
 
-	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(4))}); n.Status != tree.StatusApproved || n.Limit["cores"] != 4 {
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(4))}); n.Status != model.StatusApproved || n.Limit["cores"] != 4 {
 		t.Fatalf("growing to the personal limit should apply at once, got %q with %v", n.Status, n.Limit)
 	}
-	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(5))}); n.Status != tree.StatusChangePending || n.Limit["cores"] != 4 {
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(5))}); n.Status != model.StatusChangePending || n.Limit["cores"] != 4 {
 		t.Fatalf("growing past the personal limit should wait, got %q with %v", n.Status, n.Limit)
 	}
 }
 
 // Under a pool, growth is bounded by the budget's free capacity only.
 func TestChange_GrowthInPool(t *testing.T) {
-	f := newChangeFixture(t, &tree.AutoApprove{}, nil)
+	f := newChangeFixture(t, &model.AutoApprove{}, nil)
 	p := f.approved(t, 2, nil)
 	f.approved(t, 5, nil)
 
-	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(5))}); n.Status != tree.StatusApproved {
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(5))}); n.Status != model.StatusApproved {
 		t.Fatalf("growing into the pool's free room should apply at once, got %q", n.Status)
 	}
-	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(6))}); n.Status != tree.StatusChangePending {
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(6))}); n.Status != model.StatusChangePending {
 		t.Fatalf("growing past the pool should wait, got %q", n.Status)
 	}
 }
@@ -161,14 +162,14 @@ func TestChange_GrowthInPool(t *testing.T) {
 func TestChange_ExtensionWithinBudgetEnd(t *testing.T) {
 	budgetEnd := "2027-09-30T00:00:00Z"
 	end := "2027-03-31T00:00:00Z"
-	f := newChangeFixture(t, &tree.AutoApprove{}, &budgetEnd)
+	f := newChangeFixture(t, &model.AutoApprove{}, &budgetEnd)
 	p := f.approved(t, 1, &end)
 
-	if n := f.change(t, p.ID, tree.ChangeNodeRequest{TerminationDate: &budgetEnd}); n.Status != tree.StatusApproved {
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{TerminationDate: &budgetEnd}); n.Status != model.StatusApproved {
 		t.Fatalf("extending to the budget's end should apply at once, got %q", n.Status)
 	}
 	beyond := "2027-10-31T00:00:00Z"
-	if _, err := f.svc.RequestChange(p.ID, tree.ChangeNodeRequest{TerminationDate: &beyond}, tree.UIActor("stud@x"), studTokens); err == nil {
+	if _, err := f.svc.RequestChange(p.ID, tree.ChangeNodeRequest{TerminationDate: &beyond}, model.UIActor("stud@x"), studTokens); err == nil {
 		t.Fatal("extending past the budget's end should be refused — nothing outlives its budget")
 	}
 }
@@ -179,23 +180,23 @@ func TestChange_DirectChangeReplacesWaitingProposal(t *testing.T) {
 	f := newChangeFixture(t, nil, nil)
 	p := f.approved(t, 4, nil)
 
-	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(8))}); n.Status != tree.StatusChangePending {
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(8))}); n.Status != model.StatusChangePending {
 		t.Fatalf("setup: growth should wait, got %q", n.Status)
 	}
 	n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(1))})
-	if n.Status != tree.StatusApproved || n.Pending != nil || n.Limit["cores"] != 1 {
+	if n.Status != model.StatusApproved || n.Pending != nil || n.Limit["cores"] != 1 {
 		t.Fatalf("a shrink should replace the waiting proposal, got %q, pending %v, limit %v", n.Status, n.Pending, n.Limit)
 	}
 }
 
 // newHardLimitFixture is newChangeFixture with requests beyond the policy
 // switched off: the policy is then a hard limit for the requesters.
-func newHardLimitFixture(t *testing.T, policy *tree.AutoApprove) changeFixture {
+func newHardLimitFixture(t *testing.T, policy *model.AutoApprove) changeFixture {
 	t.Helper()
 	f := newChangeFixture(t, policy, nil)
 	no := false
 	budget, err := f.svc.UpdateNode(f.budget.ID, tree.UpdateNodeRequest{AllowRequestsBeyondAutoApprove: &no},
-		tree.UIActor("root@x"), common.TokenList{"user:root@x", "group:root"})
+		model.UIActor("root@x"), common.TokenList{"user:root@x", "group:root"})
 	if err != nil {
 		t.Fatalf("switch off requests beyond auto-approve: %v", err)
 	}
@@ -206,14 +207,14 @@ func newHardLimitFixture(t *testing.T, policy *tree.AutoApprove) changeFixture {
 // With the hard limit, a new project beyond the policy is refused outright
 // instead of waiting for a manager.
 func TestHardLimit_RefusesNewProjectBeyondPolicy(t *testing.T) {
-	f := newHardLimitFixture(t, &tree.AutoApprove{PerRequesterLimit: cores(4)})
+	f := newHardLimitFixture(t, &model.AutoApprove{PerRequesterLimit: cores(4)})
 
-	if n := f.request(t, 4, nil); n.Status != tree.StatusApproved {
+	if n := f.request(t, 4, nil); n.Status != model.StatusApproved {
 		t.Fatalf("a request within the share should still be granted, got %q", n.Status)
 	}
 	_, err := f.svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: f.budget.ID, Kind: tree.KindProject, Name: "vm", Reason: "vm", Limit: cores(1),
-	}, tree.UIActor("stud@x"), "stud@x", studTokens)
+		ParentID: f.budget.ID, Kind: model.KindProject, Name: "vm", Reason: "vm", Limit: cores(1),
+	}, model.UIActor("stud@x"), "stud@x", studTokens)
 	if err == nil || !errors.Is(err, common.ErrForbidden) {
 		t.Fatalf("a request beyond the share should be refused as forbidden, got %v", err)
 	}
@@ -222,17 +223,17 @@ func TestHardLimit_RefusesNewProjectBeyondPolicy(t *testing.T) {
 // Growth beyond the policy is refused too; giving back still works, and the
 // budget's managers are not bound by the limit.
 func TestHardLimit_Changes(t *testing.T) {
-	f := newHardLimitFixture(t, &tree.AutoApprove{})
+	f := newHardLimitFixture(t, &model.AutoApprove{})
 	p := f.approved(t, 8, nil)
 
-	if _, err := f.svc.RequestChange(p.ID, tree.ChangeNodeRequest{Limit: quota(cores(11))}, tree.UIActor("stud@x"), studTokens); !errors.Is(err, common.ErrForbidden) {
+	if _, err := f.svc.RequestChange(p.ID, tree.ChangeNodeRequest{Limit: quota(cores(11))}, model.UIActor("stud@x"), studTokens); !errors.Is(err, common.ErrForbidden) {
 		t.Fatalf("growth past the pool should be refused, got %v", err)
 	}
-	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(6))}); n.Status != tree.StatusApproved {
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(6))}); n.Status != model.StatusApproved {
 		t.Fatalf("a shrink should still apply at once, got %q", n.Status)
 	}
-	n, err := f.svc.RequestChange(p.ID, tree.ChangeNodeRequest{Limit: quota(cores(11))}, tree.UIActor("root@x"), common.TokenList{"user:root@x", "group:root"})
-	if err != nil || n.Status != tree.StatusChangePending {
+	n, err := f.svc.RequestChange(p.ID, tree.ChangeNodeRequest{Limit: quota(cores(11))}, model.UIActor("root@x"), common.TokenList{"user:root@x", "group:root"})
+	if err != nil || n.Status != model.StatusChangePending {
 		t.Fatalf("a manager may still propose beyond the policy, got %v / %q", err, n.Status)
 	}
 }
@@ -241,7 +242,7 @@ func TestHardLimit_Changes(t *testing.T) {
 // keep waiting for a manager.
 func TestHardLimit_NoEffectWithoutPolicy(t *testing.T) {
 	f := newHardLimitFixture(t, nil)
-	if n := f.request(t, 1, nil); n.Status != tree.StatusPending {
+	if n := f.request(t, 1, nil); n.Status != model.StatusPending {
 		t.Fatalf("without a policy a request should wait for a manager, got %q", n.Status)
 	}
 }

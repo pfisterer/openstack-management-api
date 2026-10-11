@@ -6,83 +6,83 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
 func TestBuildProjectName(t *testing.T) {
 	tests := []struct {
 		name string
-		leaf tree.Node
+		leaf model.Node
 		want string
 	}{
 		{
 			name: "name and id",
-			leaf: tree.Node{ID: "p_001", Name: "Cloud Computing WS26/27"},
+			leaf: model.Node{ID: "p_001", Name: "Cloud Computing WS26/27"},
 			want: "Cloud Computing WS26/27 [p_001]",
 		},
 		{
 			name: "umlauts and punctuation survive",
-			leaf: tree.Node{ID: "p_002", Name: "Prüfung Ökonomie & Recht (2026)"},
+			leaf: model.Node{ID: "p_002", Name: "Prüfung Ökonomie & Recht (2026)"},
 			want: "Prüfung Ökonomie & Recht (2026) [p_002]",
 		},
 		{
 			name: "leaf without a name falls back to the id",
-			leaf: tree.Node{ID: "p_003"},
+			leaf: model.Node{ID: "p_003"},
 			want: "p_003",
 		},
 		{
 			name: "whitespace-only name falls back to the id",
-			leaf: tree.Node{ID: "p_004", Name: "   \t "},
+			leaf: model.Node{ID: "p_004", Name: "   \t "},
 			want: "p_004",
 		},
 		{
 			name: "whitespace is collapsed and trimmed",
-			leaf: tree.Node{ID: "p_005", Name: "  Data   Science\nLab  "},
+			leaf: model.Node{ID: "p_005", Name: "  Data   Science\nLab  "},
 			want: "Data Science Lab [p_005]",
 		},
 		{
 			name: "emoji and control characters are dropped",
-			leaf: tree.Node{ID: "p_006", Name: "Rocket 🚀 Lab\x07"},
+			leaf: model.Node{ID: "p_006", Name: "Rocket 🚀 Lab\x07"},
 			want: "Rocket Lab [p_006]",
 		},
 		{
 			name: "long name is truncated so the id suffix still fits",
-			leaf: tree.Node{ID: "p_007", Name: strings.Repeat("a", 80)},
+			leaf: model.Node{ID: "p_007", Name: strings.Repeat("a", 80)},
 			want: strings.Repeat("a", 64-len(" [p_007]")) + " [p_007]",
 		},
 		{
 			// A real node ID is a UUID; all of it would bury the purpose the
 			// name exists to convey.
 			name: "a uuid node id is shortened to six hex digits",
-			leaf: tree.Node{ID: "p_7ad31c42-21e7-4fbd-aa3e-15a4660449be", Reason: "asfasf"},
+			leaf: model.Node{ID: "p_7ad31c42-21e7-4fbd-aa3e-15a4660449be", Reason: "asfasf"},
 			want: "asfasf [p_7ad31c]",
 		},
 		{
 			name: "a uuid node id without a name still identifies the project",
-			leaf: tree.Node{ID: "p_7ad31c42-21e7-4fbd-aa3e-15a4660449be"},
+			leaf: model.Node{ID: "p_7ad31c42-21e7-4fbd-aa3e-15a4660449be"},
 			want: "p_7ad31c",
 		},
 		{
 			name: "the owner is named by the part of the address before the @",
-			leaf: tree.Node{ID: "p_010", Name: "test", Owner: "user:s190000@student.dhbw-mannheim.de"},
+			leaf: model.Node{ID: "p_010", Name: "test", Owner: "user:s190000@student.dhbw-mannheim.de"},
 			want: "test @ s190000 [p_010]",
 		},
 		{
 			// Name and owner each get half of what is left; a short owner
 			// leaves the rest to the name.
 			name: "a short owner leaves its room to a long name",
-			leaf: tree.Node{ID: "p_011", Name: strings.Repeat("n", 80), Owner: "user:ab@x.de"},
+			leaf: model.Node{ID: "p_011", Name: strings.Repeat("n", 80), Owner: "user:ab@x.de"},
 			want: strings.Repeat("n", 64-len(" @ ab [p_011]")) + " @ ab [p_011]",
 		},
 		{
 			name: "a long name and a long owner are cut to the same length",
-			leaf: tree.Node{ID: "p_012", Name: strings.Repeat("n", 80), Owner: "user:" + strings.Repeat("o", 80) + "@x.de"},
+			leaf: model.Node{ID: "p_012", Name: strings.Repeat("n", 80), Owner: "user:" + strings.Repeat("o", 80) + "@x.de"},
 			want: strings.Repeat("n", 26) + " @ " + strings.Repeat("o", 26) + " [p_012]",
 		},
 		{
 			// With a real ID the suffix is 11 characters, which leaves 25 each.
 			name: "a real id leaves 25 characters each to name and owner",
-			leaf: tree.Node{ID: "p_7ad31c42-21e7-4fbd-aa3e-15a4660449be", Name: strings.Repeat("n", 80), Owner: "user:" + strings.Repeat("o", 80) + "@x.de"},
+			leaf: model.Node{ID: "p_7ad31c42-21e7-4fbd-aa3e-15a4660449be", Name: strings.Repeat("n", 80), Owner: "user:" + strings.Repeat("o", 80) + "@x.de"},
 			want: strings.Repeat("n", 25) + " @ " + strings.Repeat("o", 25) + " [p_7ad31c]",
 		},
 	}
@@ -103,7 +103,7 @@ func TestBuildProjectName(t *testing.T) {
 // Keystone counts characters, not bytes: a multi-byte name must be truncated by
 // rune count or a 64-character name is rejected as too long.
 func TestBuildProjectNameTruncatesByRunes(t *testing.T) {
-	leaf := tree.Node{ID: "p_008", Name: strings.Repeat("ä", 80)}
+	leaf := model.Node{ID: "p_008", Name: strings.Repeat("ä", 80)}
 	got := buildProjectName(leaf)
 	if n := utf8.RuneCountInString(got); n != keystoneProjectNameMaxLen {
 		t.Errorf("rune count = %d, want %d (%q)", n, keystoneProjectNameMaxLen, got)
@@ -115,7 +115,7 @@ func TestBuildProjectNameTruncatesByRunes(t *testing.T) {
 
 // A cut must not leave a dangling space in front of the id suffix.
 func TestBuildProjectNameTrimsAtCut(t *testing.T) {
-	leaf := tree.Node{ID: "p_009", Name: strings.Repeat("a", 55) + " tail"}
+	leaf := model.Node{ID: "p_009", Name: strings.Repeat("a", 55) + " tail"}
 	got := buildProjectName(leaf)
 	if strings.Contains(got, "  [") {
 		t.Errorf("dangling space before the id suffix: %q", got)
@@ -123,7 +123,7 @@ func TestBuildProjectNameTrimsAtCut(t *testing.T) {
 }
 
 func TestBuildDescription(t *testing.T) {
-	leaf := tree.Node{
+	leaf := model.Node{
 		ID:     "p_001",
 		Reason: "Praktikum Cloud",
 		Owner:  "user:max.muster@dhbw.de",
@@ -140,7 +140,7 @@ func TestBuildDescription(t *testing.T) {
 	}
 
 	// No owner, no reason: the fallback is still marked.
-	bare := buildDescription(tree.Node{ID: "p_002"}, nil)
+	bare := buildDescription(model.Node{ID: "p_002"}, nil)
 	if !strings.HasSuffix(bare, managedDescriptionSuffix) {
 		t.Errorf("fallback description not marked as managed: %q", bare)
 	}
@@ -150,13 +150,13 @@ func TestBuildDescription(t *testing.T) {
 // operator in Horizon can tell where the project belongs.
 func TestBuildDescriptionWithBudgetPath(t *testing.T) {
 	ptr := func(s string) *string { return &s }
-	budgetByID := map[string]tree.Node{
-		tree.RootNodeID: {ID: tree.RootNodeID, Name: "Organization Root"},
-		"b_ma":          {ID: "b_ma", Name: "DHBW Mannheim", ParentID: ptr(tree.RootNodeID)},
-		"b_tech":        {ID: "b_tech", Name: "Fakultät Technik", ParentID: ptr("b_ma")},
-		"b_prof":        {ID: "b_prof", Name: "Prof-X", ParentID: ptr("b_tech")},
+	budgetByID := map[string]model.Node{
+		model.RootNodeID: {ID: model.RootNodeID, Name: "Organization Root"},
+		"b_ma":           {ID: "b_ma", Name: "DHBW Mannheim", ParentID: ptr(model.RootNodeID)},
+		"b_tech":         {ID: "b_tech", Name: "Fakultät Technik", ParentID: ptr("b_ma")},
+		"b_prof":         {ID: "b_prof", Name: "Prof-X", ParentID: ptr("b_tech")},
 	}
-	leaf := tree.Node{
+	leaf := model.Node{
 		ID:       "p_001",
 		ParentID: ptr("b_prof"),
 		Reason:   "Linux-Übungen",
@@ -186,7 +186,7 @@ func TestBuildDescriptionWithBudgetPath(t *testing.T) {
 // A requested project has no name — only a purpose. Naming it after its bare
 // node ID is what a user then sees in Horizon, so the purpose has to carry it.
 func TestBuildProjectNameFallsBackToReason(t *testing.T) {
-	leaf := tree.Node{ID: "p_7ad31c42", Reason: "Lab exercises for Distributed Systems"}
+	leaf := model.Node{ID: "p_7ad31c42", Reason: "Lab exercises for Distributed Systems"}
 	got := buildProjectName(leaf)
 	want := "Lab exercises for Distributed Systems [p_7ad31c]"
 	if got != want {
@@ -194,7 +194,7 @@ func TestBuildProjectNameFallsBackToReason(t *testing.T) {
 	}
 
 	// A real name still wins over the purpose.
-	both := tree.Node{ID: "p_1", Name: "Cloud Computing", Reason: "some purpose"}
+	both := model.Node{ID: "p_1", Name: "Cloud Computing", Reason: "some purpose"}
 	if got := buildProjectName(both); got != "Cloud Computing [p_1]" {
 		t.Errorf("name should win over reason, got %q", got)
 	}

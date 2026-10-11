@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 )
 
@@ -16,11 +17,11 @@ func TestLeafCannotTakeAvailabilityItsBudgetLacks(t *testing.T) {
 	h := setupRouter(t)
 
 	rr := do(t, h, http.MethodPost, "/v1/nodes", userStudent, tree.CreateNodeRequest{
-		ParentID: "b_cs_students", Kind: tree.KindProject, Name: "sneaky",
+		ParentID: "b_cs_students", Kind: model.KindProject, Name: "sneaky",
 		Reason: "wants public ipv4", Limit: common.ProjectQuota{"cores": 1, "ram": 1, "storage": 1, "dhbw-ipv4": 1},
 	})
 	if rr.Code < 400 {
-		var n tree.Node
+		var n model.Node
 		mustDecode(t, rr, &n)
 		t.Fatalf("expected a 4xx for an availability the budget does not hold, got %d with status %q", rr.Code, n.Status)
 	}
@@ -32,17 +33,17 @@ func TestLeafMayTakeAvailabilityItsBudgetHolds(t *testing.T) {
 	h := setupRouter(t)
 
 	rr := do(t, h, http.MethodPost, "/v1/nodes", userRoot, tree.CreateNodeRequest{
-		ParentID: tree.RootNodeID, Kind: tree.KindBudget, Name: "Networked lab",
+		ParentID: model.RootNodeID, Kind: model.KindBudget, Name: "Networked lab",
 		Reason: "lab with public ipv4", Limit: common.ProjectQuota{"cores": 4, "ram": 8, "storage": 20, "dhbw-ipv4": 1},
 		AdminScope:         common.TokenList{"user:" + userRoot},
 		EligibleRequesters: common.TokenList{"user:" + userStudent},
 	})
 	assertStatus(t, rr, http.StatusCreated)
-	var budget tree.Node
+	var budget model.Node
 	mustDecode(t, rr, &budget)
 
 	rr = do(t, h, http.MethodPost, "/v1/nodes", userStudent, tree.CreateNodeRequest{
-		ParentID: budget.ID, Kind: tree.KindProject, Name: "with ipv4",
+		ParentID: budget.ID, Kind: model.KindProject, Name: "with ipv4",
 		Reason: "needs public ipv4", Limit: common.ProjectQuota{"cores": 1, "ram": 1, "storage": 1, "dhbw-ipv4": 1},
 	})
 	assertStatus(t, rr, http.StatusCreated)

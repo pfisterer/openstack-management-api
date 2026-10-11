@@ -2,6 +2,7 @@ package tree
 
 import (
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
 // NodePage is the envelope every node listing returns.
@@ -11,17 +12,17 @@ import (
 // tree silently dropped everything past the page size — a course budget with
 // 600 projects showed 500 and said nothing about the rest.
 type NodePage struct {
-	Items  []Node `json:"items"`
-	Total  int    `json:"total"`
-	Limit  int    `json:"limit"`
-	Offset int    `json:"offset"`
+	Items  []model.Node `json:"items"`
+	Total  int          `json:"total"`
+	Limit  int          `json:"limit"`
+	Offset int          `json:"offset"`
 }
 
 // newNodePage wraps a page of results together with the query bounds that
 // produced it.
-func newNodePage(items []Node, total, limit, offset int) NodePage {
+func newNodePage(items []model.Node, total, limit, offset int) NodePage {
 	if items == nil {
-		items = []Node{}
+		items = []model.Node{}
 	}
 	return NodePage{Items: items, Total: total, Limit: limit, Offset: offset}
 }
@@ -42,9 +43,9 @@ type CreateNodeRequest struct {
 	// Leaf fields.
 	AuthorizedUsers []common.AuthorizedUser `json:"authorized_users"`
 	// Budget fields.
-	AdminScope         common.TokenList `json:"admin_scope"`
-	EligibleRequesters common.TokenList `json:"eligible_requesters"`
-	AutoApprove        *AutoApprove     `json:"auto_approve"`
+	AdminScope         common.TokenList   `json:"admin_scope"`
+	EligibleRequesters common.TokenList   `json:"eligible_requesters"`
+	AutoApprove        *model.AutoApprove `json:"auto_approve"`
 	// AllowSubBudgetRequests defaults to true when omitted.
 	AllowSubBudgetRequests *bool `json:"allow_sub_budget_requests"`
 	// AllowRequestsBeyondAutoApprove defaults to true when omitted.
@@ -63,14 +64,14 @@ type CreateNodeRequest struct {
 // cycle). Policy fields require a manager of the node or its ancestors; Limit
 // requires a manager of the parent chain (you cannot raise your own budget).
 type UpdateNodeRequest struct {
-	Name                           *string           `json:"name"`
-	AdminScope                     *common.TokenList `json:"admin_scope"`
-	EligibleRequesters             *common.TokenList `json:"eligible_requesters"`
-	AutoApprove                    *AutoApprove      `json:"auto_approve"`
-	ClearAutoApprove               bool              `json:"clear_auto_approve"`
-	AllowSubBudgetRequests         *bool             `json:"allow_sub_budget_requests"`
-	AllowRequestsBeyondAutoApprove *bool             `json:"allow_requests_beyond_auto_approve"`
-	AutoApproveExtensions          *bool             `json:"auto_approve_extensions"`
+	Name                           *string            `json:"name"`
+	AdminScope                     *common.TokenList  `json:"admin_scope"`
+	EligibleRequesters             *common.TokenList  `json:"eligible_requesters"`
+	AutoApprove                    *model.AutoApprove `json:"auto_approve"`
+	ClearAutoApprove               bool               `json:"clear_auto_approve"`
+	AllowSubBudgetRequests         *bool              `json:"allow_sub_budget_requests"`
+	AllowRequestsBeyondAutoApprove *bool              `json:"allow_requests_beyond_auto_approve"`
+	AutoApproveExtensions          *bool              `json:"auto_approve_extensions"`
 	// MaxProjectTermDays may not exceed the cap of a budget above. Lowering it
 	// is carried down: sub-budgets with a longer cap take the new one, and
 	// projects ending later than that many days from today are shortened.

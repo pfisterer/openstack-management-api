@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
 // The owner's Keystone role used to be a hardcoded "admin". OpenStack's default
@@ -12,7 +12,7 @@ import (
 // project owner the operator's view of the entire cloud — the full hypervisor
 // list included. This test exists so the role cannot drift back there unnoticed.
 func TestBuildDesiredMembers_OwnerIsNotCloudAdmin(t *testing.T) {
-	leaf := tree.Node{Owner: "user:student@example.edu"}
+	leaf := model.Node{Owner: "user:student@example.edu"}
 
 	members := buildDesiredMembers(leaf)
 
@@ -32,7 +32,7 @@ func TestBuildDesiredMembers_OwnerIsNotCloudAdmin(t *testing.T) {
 
 // An authorized user keeps whichever currently-offered role the project chose.
 func TestBuildDesiredMembers_AuthorizedUsersKeepTheirRole(t *testing.T) {
-	leaf := tree.Node{
+	leaf := model.Node{
 		Owner: "user:owner@example.edu",
 		AuthorizedUsers: []common.AuthorizedUser{
 			{Token: "user:reader@example.edu", OpenstackRole: "reader"},
@@ -65,7 +65,7 @@ func TestBuildDesiredMembers_AuthorizedUsersKeepTheirRole(t *testing.T) {
 // Rows written while "admin" was still selectable must not keep granting it on
 // every reconcile pass. Validation only guards new writes; this guards old rows.
 func TestBuildDesiredMembers_StoredAdminIsClampedDown(t *testing.T) {
-	leaf := tree.Node{
+	leaf := model.Node{
 		Owner: "user:owner@example.edu",
 		AuthorizedUsers: []common.AuthorizedUser{
 			{Token: "user:legacy@example.edu", OpenstackRole: "admin"},

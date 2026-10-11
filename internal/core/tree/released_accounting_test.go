@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
@@ -42,16 +43,16 @@ func accountingSvc(t *testing.T, acc Accounting, leafStatus string) (*Service, s
 	}
 
 	budgetID := "b_accounting"
-	rootID := RootNodeID
-	if err := store.UpsertNode(ctx, Node{
-		ID: budgetID, Kind: KindBudget, ParentID: &rootID,
-		Status: StatusApproved, Name: "Accounting", Limit: common.ProjectQuota{"cores": 100},
+	rootID := model.RootNodeID
+	if err := store.UpsertNode(ctx, model.Node{
+		ID: budgetID, Kind: model.KindBudget, ParentID: &rootID,
+		Status: model.StatusApproved, Name: "Accounting", Limit: common.ProjectQuota{"cores": 100},
 		AdminScope: common.TokenList{"group:admins"},
 	}); err != nil {
 		t.Fatalf("write budget: %v", err)
 	}
-	if err := store.UpsertNode(ctx, Node{
-		ID: "p_accounting", Kind: KindProject, ParentID: &budgetID,
+	if err := store.UpsertNode(ctx, model.Node{
+		ID: "p_accounting", Kind: model.KindProject, ParentID: &budgetID,
 		Status: leafStatus, Name: "Leaf", Limit: common.ProjectQuota{"cores": 7},
 		Owner: "user:someone@example.edu",
 	}); err != nil {
@@ -66,7 +67,7 @@ func budgetCores(t *testing.T, svc *Service, budgetID string) int {
 	if err != nil || budget == nil {
 		t.Fatalf("load budget: %v", err)
 	}
-	usage, err := svc.loadSubtreeUsage(context.Background(), []Node{*budget})
+	usage, err := svc.loadSubtreeUsage(context.Background(), []model.Node{*budget})
 	if err != nil {
 		t.Fatalf("usage rollup: %v", err)
 	}
@@ -77,7 +78,7 @@ func budgetCores(t *testing.T, svc *Service, budgetID string) int {
 // its cores stay occupied and stay booked. Without this a budget could be
 // re-spent on capacity that is still running.
 func TestReleasedLeafAccounting_ChargedWhenOn(t *testing.T) {
-	svc, budgetID := accountingSvc(t, Accounting{ChargeInUse: true, ChargeReleased: true}, StatusReleased)
+	svc, budgetID := accountingSvc(t, Accounting{ChargeInUse: true, ChargeReleased: true}, model.StatusReleased)
 	if got := budgetCores(t, svc, budgetID); got != 7 {
 		t.Errorf("released leaf must still cost its 7 cores, got %d", got)
 	}
@@ -86,7 +87,7 @@ func TestReleasedLeafAccounting_ChargedWhenOn(t *testing.T) {
 // Off is the pre-2026-08 behaviour: the budget frees up the moment the project
 // is released, and over-booking is accepted for as long as the deletion takes.
 func TestReleasedLeafAccounting_FreeWhenOff(t *testing.T) {
-	svc, budgetID := accountingSvc(t, Accounting{ChargeInUse: true}, StatusReleased)
+	svc, budgetID := accountingSvc(t, Accounting{ChargeInUse: true}, model.StatusReleased)
 	if got := budgetCores(t, svc, budgetID); got != 0 {
 		t.Errorf("with the switch off a released leaf costs nothing, got %d", got)
 	}
@@ -99,10 +100,10 @@ func TestReleasedLeafAccounting_LeavesOtherStatusesAlone(t *testing.T) {
 		status string
 		want   int
 	}{
-		{StatusApproved, 7},
-		{StatusChangePending, 7},
-		{StatusPending, 0},
-		{StatusRejected, 0},
+		{model.StatusApproved, 7},
+		{model.StatusChangePending, 7},
+		{model.StatusPending, 0},
+		{model.StatusRejected, 0},
 	} {
 		t.Run(tc.status, func(t *testing.T) {
 			for _, charge := range []bool{false, true} {

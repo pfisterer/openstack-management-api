@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 )
 
@@ -28,7 +29,7 @@ func cores(n int) common.ProjectQuota { return common.ProjectQuota{"cores": n} }
 
 func postBudget(t *testing.T, h http.Handler, actor string, req tree.CreateNodeRequest) *httptest.ResponseRecorder {
 	t.Helper()
-	req.Kind = tree.KindBudget
+	req.Kind = model.KindBudget
 	if req.Reason == "" {
 		req.Reason = "scenario"
 	}
@@ -42,9 +43,9 @@ func mkBudget(t *testing.T, h http.Handler, actor string, req tree.CreateNodeReq
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create budget %q as %s: want 201, got %d: %s", req.Name, actor, rr.Code, rr.Body.String())
 	}
-	var n tree.Node
+	var n model.Node
 	mustDecode(t, rr, &n)
-	if n.Status != tree.StatusApproved {
+	if n.Status != model.StatusApproved {
 		t.Fatalf("budget %q created by manager should be approved, got %q", req.Name, n.Status)
 	}
 	return n.ID
@@ -55,7 +56,7 @@ func mkLeaf(t *testing.T, h http.Handler, actor, parentID string, c int) (id, st
 	t.Helper()
 	rr := do(t, h, http.MethodPost, "/v1/nodes", actor, tree.CreateNodeRequest{
 		ParentID:        parentID,
-		Kind:            tree.KindProject,
+		Kind:            model.KindProject,
 		Name:            "scenario leaf",
 		Reason:          "scenario",
 		Limit:           cores(c),
@@ -64,7 +65,7 @@ func mkLeaf(t *testing.T, h http.Handler, actor, parentID string, c int) (id, st
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create leaf (%d cores) as %s under %s: want 201, got %d: %s", c, actor, parentID, rr.Code, rr.Body.String())
 	}
-	var n tree.Node
+	var n model.Node
 	mustDecode(t, rr, &n)
 	return n.ID, n.Status
 }
@@ -123,7 +124,7 @@ func TestScenario_DHBWTreeLifecycle(t *testing.T) {
 	// Root carves the university budget from the (unlimited) root node and keeps
 	// it root-managed; departments may request budgets under it.
 	dhbw := mkBudget(t, h, userRoot, tree.CreateNodeRequest{
-		ParentID:           tree.RootNodeID,
+		ParentID:           model.RootNodeID,
 		Name:               "DHBW",
 		Limit:              cores(100),
 		AdminScope:         common.TokenList{"group:root_uni"},
@@ -178,7 +179,7 @@ func TestScenario_DHBWTreeLifecycle(t *testing.T) {
 		Limit:              cores(10),
 		AdminScope:         common.TokenList{"group:dept_cs_faculty"},
 		EligibleRequesters: common.TokenList{"group:cs-student"},
-		AutoApprove:        &tree.AutoApprove{PerRequesterLimit: cores(2)},
+		AutoApprove:        &model.AutoApprove{PerRequesterLimit: cores(2)},
 	})
 
 	// checkAll asserts the rolled-up cores usage reported at EVERY level of the
@@ -195,14 +196,14 @@ func TestScenario_DHBWTreeLifecycle(t *testing.T) {
 
 	// ── Phase 2: auto-approve + cumulative per-requester cap + rollup ─────────
 	_, st := mkLeaf(t, h, userStudent, studBudget, 2)
-	if st != tree.StatusApproved {
+	if st != model.StatusApproved {
 		t.Fatalf("P1 (2 cores, within per-requester cap) should auto-approve, got %q", st)
 	}
 	checkAll(2, 2, 2, 0, 2) // rollup up the whole chain
 
 	// a second request by the same owner exceeds the cumulative cap (2+1 > 2) → pending
 	p2, st := mkLeaf(t, h, userStudent, studBudget, 1)
-	if st != tree.StatusPending {
+	if st != model.StatusPending {
 		t.Fatalf("P2 over cumulative per-requester cap should stay pending, got %q", st)
 	}
 	checkAll(2, 2, 2, 0, 2) // pending consumes nothing
@@ -234,11 +235,11 @@ func TestScenario_DHBWTreeLifecycle(t *testing.T) {
 		ParentID: poolB, Name: "Selfservice B", Limit: cores(3),
 		AdminScope:         common.TokenList{"group:dept_cs_admin"},
 		EligibleRequesters: common.TokenList{"group:cs-student"},
-		AutoApprove:        &tree.AutoApprove{PerRequesterLimit: cores(3)},
+		AutoApprove:        &model.AutoApprove{PerRequesterLimit: cores(3)},
 	})
 	fill, _ := mkLeaf(t, h, userFaculty, poolB, 2)
 	approveNode(t, h, userCSAdmin, fill) // poolB now uses 2 of 3
-	if _, st = mkLeaf(t, h, userStudent, allowB, 2); st != tree.StatusPending {
+	if _, st = mkLeaf(t, h, userStudent, allowB, 2); st != model.StatusPending {
 		t.Fatalf("student request (cap ok, ancestor full) should stay pending, got %q", st)
 	}
 	if rr := do(t, h, http.MethodPost, "/v1/nodes/"+fill+"/release", userFaculty, nil); rr.Code != http.StatusOK {
@@ -248,7 +249,7 @@ func TestScenario_DHBWTreeLifecycle(t *testing.T) {
 
 	// ── Phase 3: pool request + approve / capacity-reject / release ───────────
 	p3, st := mkLeaf(t, h, userFaculty, csPool, 10)
-	if st != tree.StatusPending {
+	if st != model.StatusPending {
 		t.Fatalf("pool leaf P3 should be pending (manual approval), got %q", st)
 	}
 	approveNode(t, h, userCSAdmin, p3)
@@ -288,11 +289,11 @@ func TestScenario_DHBWTreeLifecycle(t *testing.T) {
 	if rr := do(t, h, http.MethodPost, "/v1/nodes/"+p5+"/reject", userCSAdmin, nil); rr.Code != http.StatusOK {
 		t.Fatalf("reject change on P5: want 200, got %d: %s", rr.Code, rr.Body.String())
 	}
-	var p5Node tree.Node
+	var p5Node model.Node
 	rr := do(t, h, http.MethodGet, "/v1/nodes/"+p5, userFaculty, nil)
 	assertStatus(t, rr, http.StatusOK)
 	mustDecode(t, rr, &p5Node)
-	if p5Node.Status != tree.StatusApproved || p5Node.Limit["cores"] != 5 {
+	if p5Node.Status != model.StatusApproved || p5Node.Limit["cores"] != 5 {
 		t.Fatalf("after change-reject P5 should be approved with 5 cores, got %q / %d", p5Node.Status, p5Node.Limit["cores"])
 	}
 	checkAll(3, 3, 8, 0, 8)
@@ -318,9 +319,9 @@ func TestScenario_DHBWTreeLifecycle(t *testing.T) {
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("budget request as CS admin: want 201, got %d: %s", rr.Code, rr.Body.String())
 	}
-	var expansion tree.Node
+	var expansion model.Node
 	mustDecode(t, rr, &expansion)
-	if expansion.Status != tree.StatusPending {
+	if expansion.Status != model.StatusPending {
 		t.Fatalf("budget request by an eligible non-manager should be pending, got %q", expansion.Status)
 	}
 	// The requesting admin cannot approve their own budget request (parent-chain rule).
@@ -336,11 +337,11 @@ func TestScenario_DHBWTreeLifecycle(t *testing.T) {
 	checkAll(3, 3, 11, 0, 11)
 	// … and the CS admin can now create under the new budget.
 	leafX, _ := mkLeaf(t, h, userCSAdmin, expansion.ID, 4)
-	var leafXNode tree.Node
+	var leafXNode model.Node
 	rr = do(t, h, http.MethodGet, "/v1/nodes/"+leafX, userCSAdmin, nil)
 	assertStatus(t, rr, http.StatusOK)
 	mustDecode(t, rr, &leafXNode)
-	if leafXNode.Status != tree.StatusApproved {
+	if leafXNode.Status != model.StatusApproved {
 		t.Fatalf("leaf by budget manager should be approved directly, got %q", leafXNode.Status)
 	}
 	assertUsage(t, h, userRoot, dhbw, 15) // 11 + 4

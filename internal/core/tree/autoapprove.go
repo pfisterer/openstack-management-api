@@ -5,11 +5,12 @@ import (
 	"fmt"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
 // validateAutoApprove checks the per-requester limit of an auto-approve policy.
 // An empty limit is valid: it is the pool flavour, bounded by the budget alone.
-func (s *Service) validateAutoApprove(a *AutoApprove) error {
+func (s *Service) validateAutoApprove(a *model.AutoApprove) error {
 	if a == nil || a.IsPool() {
 		return nil
 	}
@@ -20,8 +21,8 @@ func (s *Service) validateAutoApprove(a *AutoApprove) error {
 // owner going from subtractLimit (what it holds now; nil for a new leaf) to
 // addLimit: within the per-requester limit, if the policy has one, and within
 // the capacity of every budget up the chain.
-func (s *Service) autoApprovable(ctx context.Context, budget *Node, owner string, addLimit, subtractLimit common.ProjectQuota) (bool, error) {
-	if budget == nil || budget.AutoApprove == nil || budget.Status != StatusApproved {
+func (s *Service) autoApprovable(ctx context.Context, budget *model.Node, owner string, addLimit, subtractLimit common.ProjectQuota) (bool, error) {
+	if budget == nil || budget.AutoApprove == nil || budget.Status != model.StatusApproved {
 		return false, nil
 	}
 	if !budget.AutoApprove.IsPool() {
@@ -44,7 +45,7 @@ func (s *Service) autoApprovable(ctx context.Context, budget *Node, owner string
 }
 
 // autoApproveReason is the history note of a grant made by budget's policy.
-func autoApproveReason(budget *Node) string {
+func autoApproveReason(budget *model.Node) string {
 	if budget.AutoApprove.IsPool() {
 		return "Auto-approved (the budget has room)"
 	}
@@ -52,8 +53,8 @@ func autoApproveReason(budget *Node) string {
 }
 
 // autoApprovedEntry records an approval nobody had to give.
-func autoApprovedEntry(actor Actor, statusFrom, reason string) HistoryEntry {
-	entry := newHistoryEntry("approved", Actor{Email: "system:auto-approval", Via: actor.Channel()}, StatusApproved)
+func autoApprovedEntry(actor model.Actor, statusFrom, reason string) model.HistoryEntry {
+	entry := model.NewHistoryEntry("approved", model.Actor{Email: "system:auto-approval", Via: actor.Channel()}, model.StatusApproved)
 	entry.StatusFrom = new(statusFrom)
 	entry.Reason = new(reason)
 	return entry

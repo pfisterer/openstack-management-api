@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
 
 // ProviderSync is everything the system that carries the tree out — today the
@@ -29,20 +30,20 @@ func NewProviderSync(store Store) *ProviderSync {
 }
 
 // Leaves returns the projects in the given statuses.
-func (p *ProviderSync) Leaves(ctx context.Context, statuses []string) ([]Node, error) {
-	return p.store.ListNodes(ctx, NodeQuery{Kinds: []string{KindProject}, Statuses: statuses}, 0, 0)
+func (p *ProviderSync) Leaves(ctx context.Context, statuses []string) ([]model.Node, error) {
+	return p.store.ListNodes(ctx, NodeQuery{Kinds: []string{model.KindProject}, Statuses: statuses}, 0, 0)
 }
 
 // Budgets returns every budget, for naming a project's path in the tree.
-func (p *ProviderSync) Budgets(ctx context.Context) ([]Node, error) {
-	return p.store.ListNodes(ctx, NodeQuery{Kinds: []string{KindBudget}}, 0, 0)
+func (p *ProviderSync) Budgets(ctx context.Context) ([]model.Node, error) {
+	return p.store.ListNodes(ctx, NodeQuery{Kinds: []string{model.KindBudget}}, 0, 0)
 }
 
 // RecordExternalID records the project created for a leaf, whatever the leaf's
 // status: one released meanwhile still needs the ID, or its project could never
 // be cleaned up.
 func (p *ProviderSync) RecordExternalID(ctx context.Context, leafID, externalID string) error {
-	_, err := p.store.UpdateNode(ctx, leafID, func(n *Node) error {
+	_, err := p.store.UpdateNode(ctx, leafID, func(n *model.Node) error {
 		if n.ExternalID == externalID {
 			return ErrSkipUpdate
 		}
@@ -55,7 +56,7 @@ func (p *ProviderSync) RecordExternalID(ctx context.Context, leafID, externalID 
 // RecordObservation writes what a pass found in OpenStack, touching only those
 // fields and only when something changed (see ApplyObservation).
 func (p *ProviderSync) RecordObservation(ctx context.Context, leafID, externalID string, o *Observation) error {
-	_, err := p.store.UpdateNode(ctx, leafID, func(n *Node) error {
+	_, err := p.store.UpdateNode(ctx, leafID, func(n *model.Node) error {
 		if !ApplyObservation(n, externalID, o) {
 			return ErrSkipUpdate
 		}
@@ -67,8 +68,8 @@ func (p *ProviderSync) RecordObservation(ctx context.Context, leafID, externalID
 // MarkArchived records that a released project was archived. A leaf in any
 // other status is left alone.
 func (p *ProviderSync) MarkArchived(ctx context.Context, leafID string) error {
-	_, err := p.store.UpdateNode(ctx, leafID, func(n *Node) error {
-		if !MarkArchived(n) {
+	_, err := p.store.UpdateNode(ctx, leafID, func(n *model.Node) error {
+		if !model.MarkArchived(n) {
 			return ErrSkipUpdate
 		}
 		return nil
@@ -91,7 +92,7 @@ type PurgeReport struct {
 // change: a pass every 30 s that rewrites the same state would be a write
 // every 30 s for nothing.
 func (p *ProviderSync) RecordPurgeProgress(ctx context.Context, leafID string, r PurgeReport) error {
-	_, err := p.store.UpdateNode(ctx, leafID, func(n *Node) error {
+	_, err := p.store.UpdateNode(ctx, leafID, func(n *model.Node) error {
 		prev := n.Purge
 		removed := r.Removed
 		if prev != nil {
@@ -100,7 +101,7 @@ func (p *ProviderSync) RecordPurgeProgress(ctx context.Context, leafID string, r
 		if prev != nil && prev.Step == r.Step && prev.Blocked == r.Blocked && prev.Detail == r.Detail && r.Removed == 0 {
 			return ErrSkipUpdate
 		}
-		n.Purge = &PurgeProgress{
+		n.Purge = &model.PurgeProgress{
 			Step: r.Step, Index: r.Index, Steps: r.Steps,
 			Blocked: r.Blocked, Detail: r.Detail,
 			Removed: removed, UpdatedAt: time.Now().UTC().Format(time.RFC3339),
@@ -113,7 +114,7 @@ func (p *ProviderSync) RecordPurgeProgress(ctx context.Context, leafID string, r
 // RemoveRetired deletes a released or archived leaf whose project is gone.
 // Reports false when the leaf is no longer retired — then it is not deleted.
 func (p *ProviderSync) RemoveRetired(ctx context.Context, leafID string) (bool, error) {
-	return p.store.DeleteNodeIf(ctx, leafID, func(n Node) bool { return IsRetiredStatus(n.Status) })
+	return p.store.DeleteNodeIf(ctx, leafID, func(n model.Node) bool { return model.IsRetiredStatus(n.Status) })
 }
 
 // RemoveImport deletes an imported leaf: its project left the scope, or it
@@ -124,16 +125,16 @@ func (p *ProviderSync) RemoveImport(ctx context.Context, leafID string) (bool, e
 }
 
 // AddImport stores a project found in OpenStack as a new imported leaf.
-func (p *ProviderSync) AddImport(ctx context.Context, leaf Node) error {
+func (p *ProviderSync) AddImport(ctx context.Context, leaf model.Node) error {
 	return p.store.UpsertNode(ctx, leaf)
 }
 
 // RefreshImport updates an imported leaf with what OpenStack says about its
 // project now, on the node as it is: history, parent, owner and flags belong to
 // the tree, and a promotion requested during the pass must survive it.
-func (p *ProviderSync) RefreshImport(ctx context.Context, leaf Node, o *Observation) error {
-	_, err := p.store.UpdateNode(ctx, leaf.ID, func(n *Node) error {
-		if !IsStillImported(*n) || slices.Contains(n.Flags, FlagPromoteOnReconcile) {
+func (p *ProviderSync) RefreshImport(ctx context.Context, leaf model.Node, o *Observation) error {
+	_, err := p.store.UpdateNode(ctx, leaf.ID, func(n *model.Node) error {
+		if !IsStillImported(*n) || slices.Contains(n.Flags, model.FlagPromoteOnReconcile) {
 			return ErrSkipUpdate
 		}
 		n.Name = leaf.Name
@@ -155,13 +156,13 @@ func (p *ProviderSync) RefreshImport(ctx context.Context, leaf Node, o *Observat
 // everyone the leaf does not name. Reports false when the promotion was
 // withdrawn meanwhile.
 func (p *ProviderSync) Promote(ctx context.Context, leafID string, current []common.AuthorizedUser) (bool, error) {
-	return p.store.UpdateNode(ctx, leafID, func(n *Node) error {
-		if n.Status != StatusImported || !slices.Contains(n.Flags, FlagPromoteOnReconcile) {
+	return p.store.UpdateNode(ctx, leafID, func(n *model.Node) error {
+		if n.Status != model.StatusImported || !slices.Contains(n.Flags, model.FlagPromoteOnReconcile) {
 			return ErrSkipUpdate
 		}
 		n.AuthorizedUsers = MergeMembers(n.AuthorizedUsers, current, n.Owner)
-		n.Status = StatusPending
-		n.Flags = slices.DeleteFunc(slices.Clone(n.Flags), func(f string) bool { return f == FlagPromoteOnReconcile })
+		n.Status = model.StatusPending
+		n.Flags = slices.DeleteFunc(slices.Clone(n.Flags), func(f string) bool { return f == model.FlagPromoteOnReconcile })
 		return nil
 	})
 }
@@ -169,8 +170,8 @@ func (p *ProviderSync) Promote(ctx context.Context, leafID string, current []com
 // IsStillImported is the guard for deleting or refreshing an imported leaf:
 // once promoted it belongs to the managed tree and the import logic must leave
 // it be.
-func IsStillImported(n Node) bool {
-	return n.Status == StatusImported
+func IsStillImported(n model.Node) bool {
+	return n.Status == model.StatusImported
 }
 
 // MergeMembers adds to a leaf's members those of current it does not name yet,
@@ -216,7 +217,7 @@ type Observation struct {
 // back to the declared limit until the next successful pass — the
 // shrink-after-filling loophole, reopened by a transient API error, and
 // Overcommitted cleared along with it so the UI stopped warning too.
-func ApplyObservation(n *Node, externalID string, o *Observation) bool {
+func ApplyObservation(n *model.Node, externalID string, o *Observation) bool {
 	changed := n.ExternalID != externalID
 	if o != nil {
 		changed = changed || n.Overcommitted != o.Overcommitted || !quotaEqual(n.InUse, o.InUse) ||

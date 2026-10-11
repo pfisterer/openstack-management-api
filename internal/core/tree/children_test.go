@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
@@ -40,10 +41,10 @@ func TestListChildrenFilters(t *testing.T) {
 	rootTokens := common.TokenList{"user:root@x", "group:root"}
 
 	budget, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: tree.RootNodeID, Kind: tree.KindBudget, Name: "Studierende", Reason: "test",
+		ParentID: model.RootNodeID, Kind: model.KindBudget, Name: "Studierende", Reason: "test",
 		Limit: cores(100), AdminScope: common.TokenList{"group:root"},
 		EligibleRequesters: common.TokenList{"user:anna@x", "user:ben@x", "user:carla@x"},
-	}, tree.UIActor("root@x"), "root@x", rootTokens)
+	}, model.UIActor("root@x"), "root@x", rootTokens)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,9 +55,9 @@ func TestListChildrenFilters(t *testing.T) {
 			users = append(users, common.AuthorizedUser{Token: m, OpenstackRole: "member"})
 		}
 		if _, err := svc.CreateNode(tree.CreateNodeRequest{
-			ParentID: budget.ID, Kind: tree.KindProject, Name: name, Reason: "a project", Limit: cores(1),
+			ParentID: budget.ID, Kind: model.KindProject, Name: name, Reason: "a project", Limit: cores(1),
 			AuthorizedUsers: users,
-		}, tree.UIActor(owner), owner, common.TokenList{"user:" + owner}); err != nil {
+		}, model.UIActor(owner), owner, common.TokenList{"user:" + owner}); err != nil {
 			t.Fatalf("create %s: %v", name, err)
 		}
 	}
@@ -90,8 +91,8 @@ func TestListChildrenFilters(t *testing.T) {
 		{"access: owner or member", tree.ChildFilter{Group: "user:Anna@x", GroupMode: tree.GroupAccess, Sort: tree.ChildSortName}, []string{"Datenbanken", "Web Engineering"}},
 		{"owner holds a relation", tree.ChildFilter{Group: "group:standort-ma#studierende", GroupMode: tree.GroupOwner}, []string{"Web Engineering"}},
 		{"owner in a group", tree.ChildFilter{Group: "group:standort-ka", GroupMode: tree.GroupOwner}, []string{"Datenbanken"}},
-		{"status", tree.ChildFilter{Statuses: []string{tree.StatusPending}, Sort: tree.ChildSortName}, []string{"Datenbanken", "Web Engineering", "Web Projekt"}},
-		{"status that nobody has", tree.ChildFilter{Statuses: []string{tree.StatusReleased}}, nil},
+		{"status", tree.ChildFilter{Statuses: []string{model.StatusPending}, Sort: tree.ChildSortName}, []string{"Datenbanken", "Web Engineering", "Web Projekt"}},
+		{"status that nobody has", tree.ChildFilter{Statuses: []string{model.StatusReleased}}, nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

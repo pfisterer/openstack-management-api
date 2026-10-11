@@ -5,14 +5,15 @@ import (
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 )
 
 // newGroup creates a budget for structure only under parent.
-func (f changeFixture) newGroup(t *testing.T, parent, name string) tree.Node {
+func (f changeFixture) newGroup(t *testing.T, parent, name string) model.Node {
 	t.Helper()
 	n, err := f.svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: parent, Kind: tree.KindBudget, Name: name, Reason: "t",
+		ParentID: parent, Kind: model.KindBudget, Name: name, Reason: "t",
 		Limit: common.ProjectQuota{}, AdminScope: common.TokenList{"group:root"},
 		EligibleRequesters: common.TokenList{"user:stud@x"}, InheritsLimit: true,
 	}, rootActor(), "root@x", rootTokens)
@@ -22,7 +23,7 @@ func (f changeFixture) newGroup(t *testing.T, parent, name string) tree.Node {
 	return n
 }
 
-func (f changeFixture) get(t *testing.T, id string) tree.Node {
+func (f changeFixture) get(t *testing.T, id string) model.Node {
 	t.Helper()
 	n, err := f.svc.GetNode(id, rootTokens)
 	if err != nil || n == nil {
@@ -59,12 +60,12 @@ func TestInheritsLimit_SharesTheParentsCapacity(t *testing.T) {
 	f := newChangeFixture(t, nil, nil)
 	group := f.newGroup(t, f.budget.ID, "Group")
 	if _, err := f.svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: group.ID, Kind: tree.KindProject, Name: "a", Reason: "t", Limit: cores(8),
+		ParentID: group.ID, Kind: model.KindProject, Name: "a", Reason: "t", Limit: cores(8),
 	}, rootActor(), "root@x", rootTokens); err != nil {
 		t.Fatalf("project below the group: %v", err)
 	}
 	if _, err := f.svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: f.budget.ID, Kind: tree.KindProject, Name: "b", Reason: "t", Limit: cores(3),
+		ParentID: f.budget.ID, Kind: model.KindProject, Name: "b", Reason: "t", Limit: cores(3),
 	}, rootActor(), "root@x", rootTokens); err == nil {
 		t.Fatal("8 + 3 cores fit into a pool of 10")
 	}
@@ -74,14 +75,14 @@ func TestInheritsLimit_SharesTheParentsCapacity(t *testing.T) {
 func TestInheritsLimit_ManagersOnly(t *testing.T) {
 	f := newChangeFixture(t, nil, nil)
 	_, err := f.svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: f.budget.ID, Kind: tree.KindBudget, Name: "g", Reason: "t",
+		ParentID: f.budget.ID, Kind: model.KindBudget, Name: "g", Reason: "t",
 		Limit: common.ProjectQuota{}, AdminScope: common.TokenList{"user:stud@x"}, InheritsLimit: true,
-	}, tree.UIActor("stud@x"), "stud@x", studTokens)
+	}, model.UIActor("stud@x"), "stud@x", studTokens)
 	if !errors.Is(err, common.ErrForbidden) {
 		t.Fatalf("a requester created an inheriting budget: %v", err)
 	}
 	if _, err := f.svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: f.budget.ID, Kind: tree.KindProject, Name: "p", Reason: "t", Limit: cores(1), InheritsLimit: true,
+		ParentID: f.budget.ID, Kind: model.KindProject, Name: "p", Reason: "t", Limit: cores(1), InheritsLimit: true,
 	}, rootActor(), "root@x", rootTokens); err == nil {
 		t.Fatal("a project inherits its limit")
 	}
@@ -121,7 +122,7 @@ func TestInheritsLimit_Move(t *testing.T) {
 	f := newChangeFixture(t, nil, nil)
 	group := f.newGroup(t, f.budget.ID, "Group")
 	small, err := f.svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: tree.RootNodeID, Kind: tree.KindBudget, Name: "Small", Reason: "t",
+		ParentID: model.RootNodeID, Kind: model.KindBudget, Name: "Small", Reason: "t",
 		Limit: cores(4), AdminScope: common.TokenList{"group:root"},
 	}, rootActor(), "root@x", rootTokens)
 	if err != nil {
@@ -134,12 +135,12 @@ func TestInheritsLimit_Move(t *testing.T) {
 		t.Fatalf("moved, it reads with %d cores, want the new parent's 4", got)
 	}
 	if _, err := f.svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: group.ID, Kind: tree.KindProject, Name: "a", Reason: "t", Limit: cores(3),
+		ParentID: group.ID, Kind: model.KindProject, Name: "a", Reason: "t", Limit: cores(3),
 	}, rootActor(), "root@x", rootTokens); err != nil {
 		t.Fatalf("project: %v", err)
 	}
 	other, err := f.svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: tree.RootNodeID, Kind: tree.KindBudget, Name: "Tiny", Reason: "t",
+		ParentID: model.RootNodeID, Kind: model.KindBudget, Name: "Tiny", Reason: "t",
 		Limit: cores(2), AdminScope: common.TokenList{"group:root"},
 	}, rootActor(), "root@x", rootTokens)
 	if err != nil {
@@ -156,19 +157,19 @@ func TestInheritsLimit_ChecksUseTheLimitAbove(t *testing.T) {
 	f := newChangeFixture(t, nil, nil)
 	group := f.newGroup(t, f.budget.ID, "Group")
 	if _, err := f.svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: group.ID, Kind: tree.KindBudget, Name: "Course", Reason: "t",
+		ParentID: group.ID, Kind: model.KindBudget, Name: "Course", Reason: "t",
 		Limit: cores(10), AdminScope: common.TokenList{"group:root"},
 	}, rootActor(), "root@x", rootTokens); err != nil {
 		t.Fatalf("a sub-budget as large as the pool: %v", err)
 	}
 	if _, err := f.svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: group.ID, Kind: tree.KindBudget, Name: "Too big", Reason: "t",
+		ParentID: group.ID, Kind: model.KindBudget, Name: "Too big", Reason: "t",
 		Limit: cores(11), AdminScope: common.TokenList{"group:root"},
 	}, rootActor(), "root@x", rootTokens); err == nil {
 		t.Fatal("a sub-budget larger than the pool above the group")
 	}
 	if _, err := f.svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: group.ID, Kind: tree.KindProject, Name: "p", Reason: "t", Limit: cores(2),
+		ParentID: group.ID, Kind: model.KindProject, Name: "p", Reason: "t", Limit: cores(2),
 	}, rootActor(), "root@x", rootTokens); err != nil {
 		t.Fatalf("a project directly below the group: %v", err)
 	}

@@ -3,11 +3,13 @@ package catalog_test
 import (
 	"context"
 	"errors"
-	"github.com/pfisterer/openstack-management-api/internal/dev"
 	"testing"
 	"time"
 
+	"github.com/pfisterer/openstack-management-api/internal/dev"
+
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/catalog"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
@@ -53,16 +55,16 @@ func setup(t *testing.T) fixture {
 	if err := svc.Bootstrap(ctx, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	root := tree.RootNodeID
+	root := model.RootNodeID
 	budget := "b1"
-	for _, n := range []tree.Node{
-		{ID: budget, Kind: tree.KindBudget, ParentID: &root, Status: tree.StatusApproved, Name: "Budget",
+	for _, n := range []model.Node{
+		{ID: budget, Kind: model.KindBudget, ParentID: &root, Status: model.StatusApproved, Name: "Budget",
 			Limit: common.ProjectQuota{"cores": 10, "net": 1}},
-		{ID: "p1", Kind: tree.KindProject, ParentID: &budget, Status: tree.StatusApproved, Name: "P1", ExternalID: "os-p1",
+		{ID: "p1", Kind: model.KindProject, ParentID: &budget, Status: model.StatusApproved, Name: "P1", ExternalID: "os-p1",
 			Limit: common.ProjectQuota{"cores": 2, "net": 1}},
-		{ID: "p2", Kind: tree.KindProject, ParentID: &budget, Status: tree.StatusApproved, Name: "P2", ExternalID: "os-p2",
+		{ID: "p2", Kind: model.KindProject, ParentID: &budget, Status: model.StatusApproved, Name: "P2", ExternalID: "os-p2",
 			Limit:       common.ProjectQuota{"cores": 1, "net": 0},
-			Allocations: []tree.Allocation{{BudgetID: root, Limit: common.ProjectQuota{"net": 1}, Reason: "lab"}}},
+			Allocations: []model.Allocation{{BudgetID: root, Limit: common.ProjectQuota{"net": 1}, Reason: "lab"}}},
 	} {
 		if err := store.UpsertNode(ctx, n); err != nil {
 			t.Fatal(err)
@@ -73,7 +75,7 @@ func setup(t *testing.T) fixture {
 		admin: &catalog.Admin{Catalog: cat, Tree: svc, OpenStack: os}}
 }
 
-func (f fixture) node(t *testing.T, id string) tree.Node {
+func (f fixture) node(t *testing.T, id string) model.Node {
 	t.Helper()
 	n, err := f.store.GetNode(f.ctx, id)
 	if err != nil || n == nil {
@@ -142,7 +144,7 @@ func TestWithdrawThenRemove(t *testing.T) {
 	if r, _ := resource(f.cat, "net"); !r.Withdrawn {
 		t.Error("withdrawn availability must stay known, marked withdrawn")
 	}
-	if got := f.node(t, tree.RootNodeID).Limit["net"]; got != 0 {
+	if got := f.node(t, model.RootNodeID).Limit["net"]; got != 0 {
 		t.Errorf("root net = %d, want 0", got)
 	}
 	if a := f.node(t, "p2").Allocations; len(a) != 0 {
@@ -164,7 +166,7 @@ func TestWithdrawThenRemove(t *testing.T) {
 	if _, ok := resource(f.cat, "net"); ok {
 		t.Error("removed availability still in the catalogue")
 	}
-	for _, id := range []string{tree.RootNodeID, "b1", "p1", "p2"} {
+	for _, id := range []string{model.RootNodeID, "b1", "p1", "p2"} {
 		if _, ok := f.node(t, id).Limit["net"]; ok {
 			t.Errorf("%s still stores net", id)
 		}
@@ -174,7 +176,7 @@ func TestWithdrawThenRemove(t *testing.T) {
 	if _, err := f.admin.Add(f.ctx, catalog.NewEntry{ID: "net", Name: "Net", Grant: osclient.Grant{Type: osclient.GrantNetwork, Target: "net-uuid"}}, "admin@x"); err != nil {
 		t.Fatalf("re-add: %v", err)
 	}
-	if got := f.node(t, tree.RootNodeID).Limit["net"]; got != 1 {
+	if got := f.node(t, model.RootNodeID).Limit["net"]; got != 1 {
 		t.Errorf("root net after re-add = %d, want 1", got)
 	}
 	if _, ok := f.node(t, "p1").Limit["net"]; ok {
@@ -193,7 +195,7 @@ func TestRestore(t *testing.T) {
 	if r, _ := resource(f.cat, "net"); r.Withdrawn {
 		t.Error("restored availability still withdrawn")
 	}
-	if f.node(t, tree.RootNodeID).Limit["net"] != 1 || f.node(t, "p1").Limit["net"] != 0 {
+	if f.node(t, model.RootNodeID).Limit["net"] != 1 || f.node(t, "p1").Limit["net"] != 0 {
 		t.Error("restore gives the root the availability and nobody else")
 	}
 	if _, err := f.admin.Restore(f.ctx, "net", "a"); err != nil {

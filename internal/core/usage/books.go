@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"go.uber.org/zap"
 )
@@ -33,7 +34,7 @@ type DayReport struct {
 
 // Nodes is the tree, read-only.
 type Nodes interface {
-	ListNodes(ctx context.Context, q tree.NodeQuery, limit, offset int) ([]tree.Node, error)
+	ListNodes(ctx context.Context, q tree.NodeQuery, limit, offset int) ([]model.Node, error)
 }
 
 // Books writes one row per project and finished UTC day, from what the
@@ -97,9 +98,9 @@ func (c *Books) RecordDay(ctx context.Context, day time.Time, report DayReport) 
 	if err != nil {
 		return fmt.Errorf("load tree: %w", err)
 	}
-	budgets := map[string]tree.Node{}
+	budgets := map[string]model.Node{}
 	for _, n := range all {
-		if n.Kind == tree.KindBudget {
+		if n.Kind == model.KindBudget {
 			budgets[n.ID] = n
 		}
 	}
@@ -118,7 +119,7 @@ func (c *Books) RecordDay(ctx context.Context, day time.Time, report DayReport) 
 
 	var rows []Day
 	for _, n := range all {
-		if n.Kind != tree.KindProject || n.ExternalID == "" {
+		if n.Kind != model.KindProject || n.ExternalID == "" {
 			continue
 		}
 		u, used := byProject[n.ExternalID]
@@ -163,7 +164,7 @@ func (c *Books) RecordDay(ctx context.Context, day time.Time, report DayReport) 
 // they are deleted. Recorded whatever the budget is charged for them.
 func holdsResources(status string) bool {
 	switch status {
-	case tree.StatusApproved, tree.StatusChangePending, tree.StatusImported, tree.StatusReleased, tree.StatusArchived:
+	case model.StatusApproved, model.StatusChangePending, model.StatusImported, model.StatusReleased, model.StatusArchived:
 		return true
 	}
 	return false
@@ -181,9 +182,9 @@ func (c *Books) resourceFor(accounts string) string {
 
 // reserved is what the project holds back for itself: its limit, allocations
 // included — and once archived only the storage, the rest is frozen at zero.
-func (c *Books) reserved(n tree.Node) common.ProjectQuota {
+func (c *Books) reserved(n model.Node) common.ProjectQuota {
 	q := c.quantities(n.EffectiveLimit())
-	if n.Status != tree.StatusArchived {
+	if n.Status != model.StatusArchived {
 		return q
 	}
 	out := common.ProjectQuota{}
@@ -211,7 +212,7 @@ func (c *Books) quantities(limit common.ProjectQuota) common.ProjectQuota {
 }
 
 // pathOf lists the budgets from start up to the root.
-func pathOf(start string, budgets map[string]tree.Node) []PathEntry {
+func pathOf(start string, budgets map[string]model.Node) []PathEntry {
 	var path []PathEntry
 	seen := map[string]bool{}
 	for id := start; id != "" && !seen[id]; {
@@ -231,8 +232,8 @@ func pathOf(start string, budgets map[string]tree.Node) []PathEntry {
 
 // attributesOf is what applies to the project: its own attribute groups and
 // those inherited from its budgets, values only.
-func attributesOf(n tree.Node, budgets map[string]tree.Node) tree.Attributes {
-	chain := []tree.Node{n}
+func attributesOf(n model.Node, budgets map[string]model.Node) model.Attributes {
+	chain := []model.Node{n}
 	seen := map[string]bool{n.ID: true}
 	for p := n.ParentID; p != nil && !seen[*p]; {
 		seen[*p] = true
@@ -243,11 +244,11 @@ func attributesOf(n tree.Node, budgets map[string]tree.Node) tree.Attributes {
 		chain = append(chain, b)
 		p = b.ParentID
 	}
-	groups := tree.ResolveAttributes(chain)
+	groups := model.ResolveAttributes(chain)
 	if len(groups) == 0 {
 		return nil
 	}
-	out := make(tree.Attributes, len(groups))
+	out := make(model.Attributes, len(groups))
 	for name, g := range groups {
 		out[name] = g.Values
 	}
@@ -256,7 +257,7 @@ func attributesOf(n tree.Node, budgets map[string]tree.Node) tree.Attributes {
 
 // peopleOf counts the distinct persons named on a project and the groups among
 // its members.
-func peopleOf(n tree.Node) (people, groups int) {
+func peopleOf(n model.Node) (people, groups int) {
 	persons := map[string]bool{}
 	if e := n.OwnerEmail(); e != "" {
 		persons[e] = true

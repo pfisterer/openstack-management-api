@@ -12,7 +12,7 @@ import (
 // a project shrunk below what it actually runs must still report the real
 // figure, or the platform books the difference as free capacity.
 func TestProjectInUse_ReportsRealConsumption(t *testing.T) {
-	resources := []common.ManagedProject{
+	resources := []osclient.ManagedResource{
 		{ID: "cores", OSQuotaField: "cores", OSOvercommitCheck: true},
 		// RAM is counted in GB here and in MB in OpenStack.
 		{ID: "ram", OSQuotaField: "ram", OSOvercommitCheck: true, OSMultiplier: 1024},
@@ -43,7 +43,7 @@ func TestProjectInUse_ReportsRealConsumption(t *testing.T) {
 // Without quota detail there is nothing to claim — nil, not an empty map that
 // would later be indistinguishable from "measured everything as zero".
 func TestProjectInUse_NilDetail(t *testing.T) {
-	if got := ProjectInUse([]common.ManagedProject{{ID: "cores", OSQuotaField: "cores", OSOvercommitCheck: true}}, nil); got != nil {
+	if got := ProjectInUse([]osclient.ManagedResource{{ID: "cores", OSQuotaField: "cores", OSOvercommitCheck: true}}, nil); got != nil {
 		t.Errorf("got %v, want nil", got)
 	}
 }
@@ -63,7 +63,7 @@ func TestQuotaEqual_DistinguishesMissingFromZero(t *testing.T) {
 // response that gives its limit — the table showed a dash for everything in
 // use, next to a quota that was real.
 func TestMeasureImport(t *testing.T) {
-	resources := []common.ManagedProject{
+	resources := []osclient.ManagedResource{
 		{ID: "cores", OSQuotaField: "cores", OSOvercommitCheck: true},
 		{ID: "ram", OSQuotaField: "ram", OSOvercommitCheck: true, OSMultiplier: 1024},
 		{ID: "storage", OSQuotaField: "gigabytes", OSOvercommitCheck: true},

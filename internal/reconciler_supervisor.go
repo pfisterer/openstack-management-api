@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/core/catalog"
+	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/catalog"
+	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/reconciler"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 	"go.uber.org/zap"
@@ -63,14 +63,14 @@ func (s *reconcilerSupervisor) GetStatus() reconciler.Status {
 
 // CheckGrantTarget and GrantedProjects let root admins ask the cloud about an
 // availability (package catalog); until connected there is nobody to ask.
-func (s *reconcilerSupervisor) CheckGrantTarget(g common.Grant) error {
+func (s *reconcilerSupervisor) CheckGrantTarget(g osclient.Grant) error {
 	if rec := s.inner.Load(); rec != nil {
 		return rec.CheckGrantTarget(g)
 	}
 	return catalog.ErrUnavailable
 }
 
-func (s *reconcilerSupervisor) GrantedProjects(g common.Grant) ([]string, error) {
+func (s *reconcilerSupervisor) GrantedProjects(g osclient.Grant) ([]string, error) {
 	if rec := s.inner.Load(); rec != nil {
 		return rec.GrantedProjects(g)
 	}

@@ -16,22 +16,22 @@ import (
 
 type fakeGrants struct {
 	held    map[string]bool // "type/target/project" -> granted
-	added   []common.Grant
-	removed []common.Grant
-	reads   []common.Grant
+	added   []osclient.Grant
+	removed []osclient.Grant
+	reads   []osclient.Grant
 	failAdd bool
 }
 
 func newFakeGrants() *fakeGrants { return &fakeGrants{held: map[string]bool{}} }
 
-func key(g common.Grant, project string) string { return g.Type + "/" + g.Target + "/" + project }
+func key(g osclient.Grant, project string) string { return g.Type + "/" + g.Target + "/" + project }
 
-func (f *fakeGrants) HasGrant(g common.Grant, project string) (bool, error) {
+func (f *fakeGrants) HasGrant(g osclient.Grant, project string) (bool, error) {
 	f.reads = append(f.reads, g)
 	return f.held[key(g, project)], nil
 }
 
-func (f *fakeGrants) AddGrant(g common.Grant, project string) (bool, error) {
+func (f *fakeGrants) AddGrant(g osclient.Grant, project string) (bool, error) {
 	if f.failAdd {
 		return false, errors.New("nope")
 	}
@@ -41,7 +41,7 @@ func (f *fakeGrants) AddGrant(g common.Grant, project string) (bool, error) {
 	return !already, nil
 }
 
-func (f *fakeGrants) RemoveGrant(g common.Grant, project string) (bool, error) {
+func (f *fakeGrants) RemoveGrant(g osclient.Grant, project string) (bool, error) {
 	f.removed = append(f.removed, g)
 	had := f.held[key(g, project)]
 	delete(f.held, key(g, project))
@@ -49,10 +49,10 @@ func (f *fakeGrants) RemoveGrant(g common.Grant, project string) (bool, error) {
 }
 
 var (
-	netGrant    = common.Grant{Type: common.GrantNetwork, Target: "net-1"}
-	flavorGrant = common.Grant{Type: common.GrantFlavor, Target: "flavor-1"}
+	netGrant    = osclient.Grant{Type: osclient.GrantNetwork, Target: "net-1"}
+	flavorGrant = osclient.Grant{Type: osclient.GrantFlavor, Target: "flavor-1"}
 
-	grantCatalogue = []common.ManagedProject{
+	grantCatalogue = []osclient.ManagedResource{
 		{ID: "cores", Name: "Cores"},
 		{ID: "dhbw-ipv4", Name: "IPv4", Kind: common.KindBool, Grant: &netGrant},
 		{ID: "gpu-rtx6000", Name: "RTX 6000", Kind: common.KindBool, Grant: &flavorGrant},
@@ -87,7 +87,7 @@ func TestSyncGrants_NeverTouchesATargetOutsideTheCatalogue(t *testing.T) {
 
 	syncGrants(f, grantCatalogue, leaf, "os-project", false, zap.NewNop().Sugar())
 
-	for _, g := range append(append([]common.Grant{}, f.added...), f.removed...) {
+	for _, g := range append(append([]osclient.Grant{}, f.added...), f.removed...) {
 		if g != netGrant && g != flavorGrant {
 			t.Fatalf("touched %v, which the catalogue does not name", g)
 		}
@@ -216,7 +216,7 @@ func TestImportGrants(t *testing.T) {
 
 type failingGrants struct{ fakeGrants }
 
-func (f *failingGrants) HasGrant(common.Grant, string) (bool, error) {
+func (f *failingGrants) HasGrant(osclient.Grant, string) (bool, error) {
 	return false, errors.New("unreachable")
 }
 

@@ -12,9 +12,9 @@ import (
 	"github.com/pfisterer/cloud-self-service-golib/ginweb"
 	"github.com/pfisterer/cloud-self-service-golib/logging"
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/core/catalog"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"github.com/pfisterer/openstack-management-api/internal/core/usage"
+	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/catalog"
 	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/reconciler"
 	"go.uber.org/zap"
 )
@@ -245,7 +245,7 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 }
 
 // resources is the current catalogue; none where no catalogue is configured.
-func (cfg APIConfig) resources() []common.ManagedProject {
+func (cfg APIConfig) resources() []common.Resource {
 	if cfg.Catalog == nil {
 		return nil
 	}
@@ -323,23 +323,20 @@ type uiResource struct {
 	GrantType string `json:"grant_type,omitempty"`
 }
 
-func uiResourceFrom(r common.ManagedProject) uiResource {
-	out := uiResource{
-		ID:       r.ID,
-		Name:     r.Name,
-		Default:  r.Default,
-		Min:      r.Min,
-		Max:      r.Max,
-		Unit:     r.Unit,
-		Message:  r.Message,
-		Kind:     r.Kind,
-		Group:    r.Group,
-		ShowOnUI: r.ShowOnUI,
+func uiResourceFrom(r common.Resource) uiResource {
+	return uiResource{
+		ID:        r.ID,
+		Name:      r.Name,
+		Default:   r.Default,
+		Min:       r.Min,
+		Max:       r.Max,
+		Unit:      r.Unit,
+		Message:   r.Message,
+		Kind:      r.Kind,
+		Group:     r.Group,
+		ShowOnUI:  r.ShowOnUI,
+		GrantType: r.GrantType,
 	}
-	if r.Grant != nil {
-		out.GrantType = r.Grant.Type
-	}
-	return out
 }
 
 // getConfig returns the system-wide resource configuration.

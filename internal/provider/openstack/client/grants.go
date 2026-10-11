@@ -8,8 +8,6 @@ import (
 	"github.com/gophercloud/gophercloud/openstack/imageservice/v2/members"
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/extensions/rbacpolicies"
 	"github.com/gophercloud/gophercloud/pagination"
-
-	"github.com/pfisterer/openstack-management-api/internal/common"
 )
 
 // Availabilities, granted and revoked in OpenStack.
@@ -25,14 +23,14 @@ import (
 // does not grow a switch per call site.
 
 // HasGrant reports whether a project already holds one availability.
-func (c *OpenStackClient) HasGrant(grant common.Grant, projectID string) (bool, error) {
+func (c *OpenStackClient) HasGrant(grant Grant, projectID string) (bool, error) {
 	switch grant.Type {
-	case common.GrantNetwork:
+	case GrantNetwork:
 		id, err := c.findNetworkRBAC(grant.Target, projectID)
 		return id != "", err
-	case common.GrantImage:
+	case GrantImage:
 		return c.hasImageMember(grant.Target, projectID)
-	case common.GrantFlavor:
+	case GrantFlavor:
 		return c.hasFlavorAccess(grant.Target, projectID)
 	default:
 		return false, fmt.Errorf("unknown grant type %q", grant.Type)
@@ -48,9 +46,9 @@ func (c *OpenStackClient) HasGrant(grant common.Grant, projectID string) (bool, 
 // every pass, so logging each call would be noise, and logging nothing leaves a
 // change to who may reach a network with no trace at all. Every branch below
 // already knows the answer — it was being thrown away.
-func (c *OpenStackClient) AddGrant(grant common.Grant, projectID string) (bool, error) {
+func (c *OpenStackClient) AddGrant(grant Grant, projectID string) (bool, error) {
 	switch grant.Type {
-	case common.GrantNetwork:
+	case GrantNetwork:
 		existing, err := c.findNetworkRBAC(grant.Target, projectID)
 		if err != nil {
 			return false, err
@@ -66,7 +64,7 @@ func (c *OpenStackClient) AddGrant(grant common.Grant, projectID string) (bool, 
 		}).Extract()
 		return err == nil, wrapGrant("share network", grant, projectID, err)
 
-	case common.GrantImage:
+	case GrantImage:
 		err := members.Create(c.imageSvc(), grant.Target, projectID).Err
 		fresh := err == nil
 		if err != nil && !isConflict(err) {
@@ -80,7 +78,7 @@ func (c *OpenStackClient) AddGrant(grant common.Grant, projectID string) (bool, 
 			members.UpdateOpts{Status: "accepted"}).Err
 		return fresh && err == nil, wrapGrant("accept image member", grant, projectID, err)
 
-	case common.GrantFlavor:
+	case GrantFlavor:
 		err := flavors.AddAccess(c.computeSvc(), grant.Target,
 			flavors.AddAccessOpts{Tenant: projectID}).Err
 		if isConflict(err) {
@@ -96,9 +94,9 @@ func (c *OpenStackClient) AddGrant(grant common.Grant, projectID string) (bool, 
 // RemoveGrant takes one availability away again and reports whether anything
 // changed. Removing what is not there is not an error, for the same reason
 // adding twice is not.
-func (c *OpenStackClient) RemoveGrant(grant common.Grant, projectID string) (bool, error) {
+func (c *OpenStackClient) RemoveGrant(grant Grant, projectID string) (bool, error) {
 	switch grant.Type {
-	case common.GrantNetwork:
+	case GrantNetwork:
 		id, err := c.findNetworkRBAC(grant.Target, projectID)
 		if err != nil {
 			return false, err
@@ -109,11 +107,11 @@ func (c *OpenStackClient) RemoveGrant(grant common.Grant, projectID string) (boo
 		err = rbacpolicies.Delete(c.networkSvc(), id).Err
 		return err == nil, wrapGrant("unshare network", grant, projectID, ignoreNotFound(err))
 
-	case common.GrantImage:
+	case GrantImage:
 		err := members.Delete(c.imageSvc(), grant.Target, projectID).Err
 		return err == nil, wrapGrant("remove image member", grant, projectID, ignoreNotFound(err))
 
-	case common.GrantFlavor:
+	case GrantFlavor:
 		err := flavors.RemoveAccess(c.computeSvc(), grant.Target,
 			flavors.RemoveAccessOpts{Tenant: projectID}).Err
 		return err == nil, wrapGrant("remove flavor access", grant, projectID, ignoreNotFound(err))
@@ -191,7 +189,7 @@ func (c *OpenStackClient) hasFlavorAccess(flavorID, projectID string) (bool, err
 
 // wrapGrant names the grant in the error. Without it the message says "409" and
 // leaves the reader to work out which of forty availabilities it was about.
-func wrapGrant(what string, grant common.Grant, projectID string, err error) error {
+func wrapGrant(what string, grant Grant, projectID string, err error) error {
 	if err == nil {
 		return nil
 	}

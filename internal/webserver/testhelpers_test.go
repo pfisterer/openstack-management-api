@@ -12,6 +12,7 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"github.com/pfisterer/openstack-management-api/internal/mockdata"
+	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 	"github.com/pfisterer/openstack-management-api/internal/roleprovider"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 	"go.uber.org/zap"
@@ -30,22 +31,25 @@ const (
 // ids for the places that sum (UsageByStatus.Total takes the arithmetic set).
 var quotaResourceIDs = []string{"cores", "ram", "storage"}
 
-// quotaResources is the same set as a catalogue, for constructing the service.
-var quotaResources = func() []common.ManagedProject {
-	defs := make([]common.ManagedProject, 0, len(quotaResourceIDs)+1)
+// managedResources is the same set as the deployment configures it, with the
+// OpenStack side; quotaResources is what the tree sees of it.
+var managedResources = func() []osclient.ManagedResource {
+	defs := make([]osclient.ManagedResource, 0, len(quotaResourceIDs)+1)
 	for _, id := range quotaResourceIDs {
-		defs = append(defs, common.ManagedProject{ID: id, Name: id, Group: "Compute", ShowOnUI: true})
+		defs = append(defs, osclient.ManagedResource{ID: id, Name: id, Group: "Compute", ShowOnUI: true})
 	}
 	// One availability, so the catalogue the handlers see is the mixed kind the
 	// deployment actually carries — a fixture of quantities alone would let a
 	// bug in the availability path pass every test here.
-	defs = append(defs, common.ManagedProject{
+	defs = append(defs, osclient.ManagedResource{
 		ID: "dhbw-ipv4", Name: "DHBW IPv4", Kind: common.KindBool, Group: "Networks",
 		ShowOnUI: true,
-		Grant:    &common.Grant{Type: common.GrantNetwork, Target: "net-uuid-not-for-browsers"},
+		Grant:    &osclient.Grant{Type: osclient.GrantNetwork, Target: "net-uuid-not-for-browsers"},
 	})
 	return defs
 }()
+
+var quotaResources = osclient.CoreResources(managedResources)
 
 // testAccounting mirrors the production defaults, so a test that passes here
 // says something about the deployment rather than about a lenient fixture.

@@ -101,29 +101,27 @@ type Report struct {
 	Totals
 }
 
-// Mapping names the catalogue resources that reserve what Nova and Cinder
-// measure, and the factor from the catalogue's unit to GB for RAM.
+// Mapping names the catalogue resources that reserve what the books count as
+// cores, RAM and storage, and the factor from the catalogue's unit to GB for
+// RAM.
 type Mapping struct {
 	Cores, RAM, Storage string
 	RAMToGB             float64
 }
 
-// MappingFrom finds them by the OpenStack quota field they map to.
-func MappingFrom(catalog []common.ManagedProject) Mapping {
+// MappingFrom finds them by what they account as (common.Accounts*).
+func MappingFrom(catalog []common.Resource) Mapping {
 	m := Mapping{RAMToGB: 1.0 / 1024}
 	for _, r := range catalog {
-		switch r.OSQuotaField {
-		case "cores":
+		switch r.Accounts {
+		case common.AccountsCores:
 			m.Cores = r.ID
-		case "ram":
+		case common.AccountsRAM:
 			m.RAM = r.ID
-			// Nova counts RAM in MB; a catalogue in GB carries a multiplier.
-			mult := r.OSMultiplier
-			if mult <= 0 {
-				mult = 1
+			if r.AccountsPerGB > 0 {
+				m.RAMToGB = r.AccountsPerGB
 			}
-			m.RAMToGB = float64(mult) / 1024
-		case "gigabytes":
+		case common.AccountsStorage:
 			m.Storage = r.ID
 		}
 	}

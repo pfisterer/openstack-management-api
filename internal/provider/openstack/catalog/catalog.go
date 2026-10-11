@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 	"go.uber.org/zap"
 )
 
@@ -43,12 +44,12 @@ const (
 
 // Entry is one availability.
 type Entry struct {
-	ID      string       `json:"id"`
-	Name    string       `json:"name"`
-	Group   string       `json:"group,omitempty"`
-	Message string       `json:"message,omitempty"`
-	Grant   common.Grant `json:"grant"`
-	State   string       `json:"state"`
+	ID      string         `json:"id"`
+	Name    string         `json:"name"`
+	Group   string         `json:"group,omitempty"`
+	Message string         `json:"message,omitempty"`
+	Grant   osclient.Grant `json:"grant"`
+	State   string         `json:"state"`
 
 	CreatedAt time.Time `json:"created_at"`
 	CreatedBy string    `json:"created_by"`
@@ -57,9 +58,9 @@ type Entry struct {
 }
 
 // resource is the entry as the rest of the service sees it.
-func (e Entry) resource() common.ManagedProject {
+func (e Entry) resource() osclient.ManagedResource {
 	g := e.Grant
-	return common.ManagedProject{
+	return osclient.ManagedResource{
 		ID:        e.ID,
 		Name:      e.Name,
 		Group:     e.Group,
@@ -87,24 +88,29 @@ var (
 // availabilities. Reads are a lock-free snapshot, because the tree validates
 // against it on every request; writes are serialised.
 type Catalog struct {
-	quantities []common.ManagedProject
+	quantities []osclient.ManagedResource
 	store      Store
 	log        *zap.SugaredLogger
 
 	mu      sync.Mutex
 	entries atomic.Pointer[[]Entry]
-	current atomic.Pointer[[]common.ManagedProject]
+	current atomic.Pointer[[]osclient.ManagedResource]
+	// core is current as the tree sees it, without the OpenStack side.
+	core atomic.Pointer[[]common.Resource]
 }
 
-var _ common.ResourceCatalog = (*Catalog)(nil)
+var (
+	_ common.ResourceCatalog  = (*Catalog)(nil)
+	_ osclient.ManagedCatalog = (*Catalog)(nil)
+)
 
 // Load builds the catalogue from configuration and store. The configured
 // availabilities seed an empty store once; after that the store is the only
 // source, and configured ones it does not know are reported and ignored —
 // otherwise one removed in the portal would come back with the next restart.
-func Load(ctx context.Context, configured []common.ManagedProject, store Store, log *zap.SugaredLogger) (*Catalog, error) {
+func Load(ctx context.Context, configured []osclient.ManagedResource, store Store, log *zap.SugaredLogger) (*Catalog, error) {
 	c := &Catalog{store: store, log: log}
-	var seed []common.ManagedProject
+	var seed []osclient.ManagedResource
 	for _, r := range configured {
 		if r.IsBool() {
 			seed = append(seed, r)
@@ -153,7 +159,7 @@ func (c *Catalog) publish(entries []Entry) error {
 			resources = append(resources, e.resource())
 		}
 	}
-	if err := common.ValidateManagedProjects(resources); err != nil {
+	if err := osclient.ValidateManagedResources(resources); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
 	sorted := slices.Clone(entries)
@@ -164,7 +170,9 @@ func (c *Catalog) publish(entries []Entry) error {
 		return compareStrings(a.Name, b.Name)
 	})
 	c.entries.Store(&sorted)
+	core := osclient.CoreResources(resources)
 	c.current.Store(&resources)
+	c.core.Store(&core)
 	return nil
 }
 
@@ -178,9 +186,12 @@ func compareStrings(a, b string) int {
 	return 0
 }
 
-// Resources is the current catalogue: quantities, then the active and
-// withdrawn availabilities.
-func (c *Catalog) Resources() []common.ManagedProject { return *c.current.Load() }
+// Resources is the current catalogue as the tree sees it: quantities, then the
+// active and withdrawn availabilities.
+func (c *Catalog) Resources() []common.Resource { return *c.core.Load() }
+
+// Managed is the same with the OpenStack side, for the reconciler.
+func (c *Catalog) Managed() []osclient.ManagedResource { return *c.current.Load() }
 
 // Entries lists the availabilities that are not removed.
 func (c *Catalog) Entries() []Entry {
@@ -209,11 +220,11 @@ var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}$`)
 
 // NewEntry is what an admin gives for an availability.
 type NewEntry struct {
-	ID      string       `json:"id"`
-	Name    string       `json:"name"`
-	Group   string       `json:"group,omitempty"`
-	Message string       `json:"message,omitempty"`
-	Grant   common.Grant `json:"grant"`
+	ID      string         `json:"id"`
+	Name    string         `json:"name"`
+	Group   string         `json:"group,omitempty"`
+	Message string         `json:"message,omitempty"`
+	Grant   osclient.Grant `json:"grant"`
 }
 
 // add stores a new availability, or brings back a removed one under the same

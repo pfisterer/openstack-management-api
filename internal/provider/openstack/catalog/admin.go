@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 )
 
 // Tree is what the admin steps change in the tree (tree.Service).
@@ -23,8 +23,8 @@ type Tree interface {
 // before it is forgotten. ErrUnavailable says the cloud cannot be asked right
 // now (still connecting).
 type OpenStack interface {
-	CheckGrantTarget(g common.Grant) error
-	GrantedProjects(g common.Grant) ([]string, error)
+	CheckGrantTarget(g osclient.Grant) error
+	GrantedProjects(g osclient.Grant) ([]string, error)
 }
 
 var ErrUnavailable = errors.New("OpenStack is not connected yet")
@@ -95,7 +95,7 @@ func (a *Admin) Status(ctx context.Context, id string) (Status, error) {
 	return st, nil
 }
 
-func (a *Admin) grantState(ctx context.Context, g common.Grant) (*GrantState, error) {
+func (a *Admin) grantState(ctx context.Context, g osclient.Grant) (*GrantState, error) {
 	projects, err := a.OpenStack.GrantedProjects(g)
 	if err != nil {
 		return nil, err

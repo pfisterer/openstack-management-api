@@ -13,6 +13,7 @@ import (
 	"github.com/pfisterer/cloud-self-service-golib/redact"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/usage"
+	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 	"go.uber.org/zap"
 )
 
@@ -232,9 +233,9 @@ type AppConfiguration struct {
 	// RootAdminTokens (from ROOT_ADMIN_TOKENS) are the system-wide admin tokens.
 	// They gate three surfaces: the service's root-admin checks, the reconciler
 	// admin endpoints, and the role-switch allowlist.
-	RootAdminTokens       common.TokenList        `json:"root_admin_tokens"`
-	ProjectDefinitions    []common.ManagedProject `json:"resource_definitions" validate:"required,min=1,dive"`
-	ServiceTimeoutSeconds int                     `json:"service_timeout_seconds"`
+	RootAdminTokens       common.TokenList           `json:"root_admin_tokens"`
+	ProjectDefinitions    []osclient.ManagedResource `json:"resource_definitions" validate:"required,min=1,dive"`
+	ServiceTimeoutSeconds int                        `json:"service_timeout_seconds"`
 	// MaxAuthorizedUsers caps the participants one project may list. Each entry
 	// costs the reconciler Keystone work on every run (a group plus an account
 	// per member), so the ceiling bounds what a single request can trigger.
@@ -398,35 +399,35 @@ const resourceCatalogueEnv = "RESOURCE_DEFINITIONS"
 // and fall back to the defaults — would replace the operator's catalogue with a
 // different one while reporting success, and the difference would only show when
 // somebody's resource had quietly stopped existing.
-func loadResourceCatalogue() ([]common.ManagedProject, error) {
+func loadResourceCatalogue() ([]osclient.ManagedResource, error) {
 	raw := strings.TrimSpace(envconf.String(resourceCatalogueEnv, ""))
 	if raw == "" {
 		// Validated too, and not as ceremony: the defaults are edited by hand in
 		// this file, and the same mistakes are available there.
 		defs := defaultResourceCatalogue()
-		if err := common.ValidateManagedProjects(defs); err != nil {
+		if err := osclient.ValidateManagedResources(defs); err != nil {
 			return nil, fmt.Errorf("built-in resource catalogue is invalid: %w", err)
 		}
 		return defs, nil
 	}
 
-	var defs []common.ManagedProject
+	var defs []osclient.ManagedResource
 	if err := json.Unmarshal([]byte(raw), &defs); err != nil {
 		return nil, fmt.Errorf("%s is not a valid JSON array of resource definitions: %w", resourceCatalogueEnv, err)
 	}
-	if err := common.ValidateManagedProjects(defs); err != nil {
+	if err := osclient.ValidateManagedResources(defs); err != nil {
 		return nil, fmt.Errorf("%s: %w", resourceCatalogueEnv, err)
 	}
 
 	return defs, nil
 }
 
-func defaultResourceCatalogue() []common.ManagedProject {
+func defaultResourceCatalogue() []osclient.ManagedResource {
 
 	// Default set — single source of truth for UI display AND OpenStack quota mapping.
 	// ShowOnUI: true  → returned to the frontend via /v1/config (user-configurable).
 	// Static: true    → quota is fixed at Default; applied once at project creation.
-	return []common.ManagedProject{
+	return []osclient.ManagedResource{
 		// ── User-configurable resources (shown on UI) ────────────
 		{
 			ID: "cores", Name: "Cores", Default: 4, Min: 1, Max: 100000,

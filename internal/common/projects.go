@@ -7,7 +7,7 @@ import "fmt"
 //
 // Deliberately strings rather than a Go enum: the catalogue is deployment
 // configuration now, so a kind has to survive a round trip through JSON. Unknown
-// kinds are REJECTED when the catalogue loads (see ValidateManagedProjects); a
+// kinds are REJECTED when the catalogue loads (see ValidateResources); a
 // typo must not produce a resource that quietly takes part in nothing.
 const (
 	// KindCount is a quantity that sums across siblings and is capped by its
@@ -22,23 +22,23 @@ const (
 	KindBool = "bool"
 )
 
-// Grant types: what an availability means in OpenStack.
+// What a resource means in the usage books and in the charge of an archived
+// project — told to the tree by the system that carries it out, so the tree
+// does not have to know that "storage" is Cinder's gigabytes.
 const (
-	GrantNetwork = "network" // Neutron RBAC policy, access_as_shared
-	GrantImage   = "image"   // Glance image member
-	GrantFlavor  = "flavor"  // Nova flavour access
+	AccountsCores   = "cores"
+	AccountsRAM     = "ram"
+	AccountsStorage = "storage"
 )
 
-// ManagedProject is the single source of truth for a managed resource type.
-// It combines the UI-facing definition with the OpenStack mapping, so adding a
-// resource is a catalogue entry and not a code change.
-//
-// OS mapping fields are optional: leave OSQuotaField empty when the resource has
-// no standard OpenStack quota (e.g. GPU without custom quota support).
-type ManagedProject struct {
+// Resource is a resource type as the tree knows it: how it is entered,
+// validated, summed and shown. How it is carried out — which OpenStack quota
+// field, which network — is the executing system's business and not here
+// (for OpenStack: osclient.ManagedResource).
+type Resource struct {
 	// ── UI definition (returned to the frontend via /v1/config) ──────────────
-	ID      string `json:"id"      validate:"required"`
-	Name    string `json:"name"    validate:"required"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
 	Default int    `json:"default"`
 	Min     int    `json:"min"`
 	Max     int    `json:"max"`
@@ -55,102 +55,64 @@ type ManagedProject struct {
 	// fifty entries can still be read at the root of the tree.
 	Group string `json:"group,omitempty"`
 
-	// Grant says what granting this availability DOES in OpenStack. Required for
-	// KindBool and rejected for every other kind: a quantity has a quota field,
-	// not a grant.
-	Grant *Grant `json:"grant,omitempty"`
-
 	// ShowOnUI controls whether this resource is returned to the frontend via
 	// /v1/config. Set to true for user-configurable resources; leave false for
 	// static infrastructure quotas that should not be exposed in the UI.
 	ShowOnUI bool `json:"show_on_ui,omitempty"`
 
 	// Static marks a resource whose quota is fixed at Default and is not
-	// user-configurable per-project. Static resources are applied once at OS
-	// project creation using their Default value; the reconciler never asks the
-	// user to provide a value for them.
+	// user-configurable per-project. Static resources are applied once at
+	// project creation using their Default value; nobody is asked for a value.
 	Static bool `json:"static,omitempty"`
 
-	// ── OpenStack quota mapping ──────────────────────────────────────────────
-	//
-	// These carry json tags because the catalogue is CONFIGURATION now, and a
-	// catalogue replaces the built-in set rather than extending it. Without them
-	// a configured deployment would define "cores" with no quota field at all —
-	// the portal would grant it, the reconciler would map it to nothing, and
-	// every managed project would come up with no quota in OpenStack.
-	//
-	// They are not sent to the browser: the config endpoint builds its response
-	// from an explicit list of display fields (see webserver.uiResource), so
-	// adding a field here does not leak it by default.
-
-	// OSQuotaField is the QuotaSet field this resource maps to.
-	// Known values: "cores", "ram", "gigabytes", "volumes", "snapshots",
-	// "networks", "subnets", "ports", "routers", "floating_ips", "security_groups".
-	// Leave empty when the resource has no OpenStack quota equivalent.
-	OSQuotaField string `json:"os_quota_field,omitempty"`
-
-	// OSMultiplier converts the stored value to OS units. 0 is treated as 1.
-	// Set to 1024 when the resource is stored in GB but OpenStack expects MB (RAM).
-	OSMultiplier int `json:"os_multiplier,omitempty"`
-
-	// OSLinkedField, when set, receives the same converted value as OSQuotaField.
-	// Used so "instances" in Nova mirrors "cores" (1 instance per core upper bound).
-	OSLinkedField string `json:"os_linked_field,omitempty"`
-
-	// OSOvercommitCheck marks this resource for overcommit detection.
-	// When true, the reconciler compares OS in-use against OS limit and sets
-	// OSOvercommitted on the project if in-use exceeds the configured quota.
-	OSOvercommitCheck bool `json:"os_overcommit_check,omitempty"`
-
-	// Withdrawn marks an availability on its way out of the catalogue (see
-	// package catalog): still known, so stored zeros validate and the
-	// reconciler revokes it everywhere, but no longer offered and never
-	// grantable. Never read from configuration.
+	// Withdrawn marks an availability on its way out of the catalogue: still
+	// known, so stored zeros validate and the executing system revokes it
+	// everywhere, but no longer offered and never grantable.
 	Withdrawn bool `json:"-"`
+
+	// Accounts is what the resource reserves in the usage books (Accounts*
+	// constants), empty for everything else; AccountsPerGB converts its value
+	// to GB where the books count GB (RAM). 0 means 1.
+	Accounts      string  `json:"-"`
+	AccountsPerGB float64 `json:"-"`
+
+	// GrantType is the kind of an availability (a network, a flavour, an
+	// image), for showing how its use is counted. The target is not here.
+	GrantType string `json:"-"`
 }
 
 // ResourceCatalog is where the current catalogue is read. Root admins add and
 // remove availabilities while the service runs, so anything that outlives a
 // request asks it each time instead of keeping a copy.
 type ResourceCatalog interface {
-	Resources() []ManagedProject
+	Resources() []Resource
 }
 
 // StaticCatalog is a catalogue that never changes — configuration without
 // runtime additions, and tests.
-type StaticCatalog []ManagedProject
+type StaticCatalog []Resource
 
-func (c StaticCatalog) Resources() []ManagedProject { return c }
-
-// Grant is the OpenStack side of an availability: which object, granted how.
-//
-// Target is an ID rather than a name on purpose. Names are not unique across
-// projects in Glance and are editable in Neutron, so a rename elsewhere would
-// silently redirect a grant — an ID cannot.
-type Grant struct {
-	Type   string `json:"type"   validate:"required"`
-	Target string `json:"target" validate:"required"`
-}
+func (c StaticCatalog) Resources() []Resource { return c }
 
 // IsBool reports whether this resource is an availability rather than a
 // quantity. Everything that sums, caps or charges asks this first.
-func (m ManagedProject) IsBool() bool { return m.Kind == KindBool }
+func (m Resource) IsBool() bool { return m.Kind == KindBool }
 
 // IsCount reports whether this resource takes part in the arithmetic — summing
 // across siblings, capacity checks, usage roll-ups.
 //
 // An empty kind counts, which is what keeps a catalogue written before kinds
 // existed behaving exactly as it did.
-func (m ManagedProject) IsCount() bool { return m.Kind == "" || m.Kind == KindCount }
+func (m Resource) IsCount() bool { return m.Kind == "" || m.Kind == KindCount }
 
-// ValidateManagedProjects checks a catalogue before anything is built on it.
+// ValidateResources checks what the tree needs of a catalogue: unique ids and
+// known kinds. What an entry means in the executing system is checked there
+// (for OpenStack: osclient.ValidateManagedResources).
 //
-// It runs at startup and returns an error rather than dropping bad entries,
-// because every silent alternative is worse: a resource with a misspelled kind
-// would take part in no arithmetic and no grant while still being requestable,
-// and an availability without a grant would be handed out in the portal and mean
-// nothing in OpenStack. Both look like the feature working.
-func ValidateManagedProjects(defs []ManagedProject) error {
+// It runs at startup and returns an error rather than dropping bad entries: a
+// resource with a misspelled kind would take part in no arithmetic while still
+// being requestable, which looks like the feature working.
+func ValidateResources(defs []Resource) error {
 	if len(defs) == 0 {
 		return fmt.Errorf("resource catalogue is empty")
 	}
@@ -173,72 +135,6 @@ func ValidateManagedProjects(defs []ManagedProject) error {
 		default:
 			return fmt.Errorf("resource %q: unknown kind %q", d.ID, d.Kind)
 		}
-
-		if err := validateGrant(d); err != nil {
-			return err
-		}
-		if err := validateQuotaMapping(d); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// validateQuotaMapping rejects a mapping that cannot mean anything.
-//
-// Both cases describe a resource whose OpenStack side is half-written, which is
-// what a hand-authored catalogue produces: a multiplier converts a value for a
-// quota field, and measuring in-use reads one back. Neither does anything
-// without the field, and neither fails loudly — the resource is simply never
-// written to OpenStack, and with the overcommit flag ignored the accounting goes
-// back to billing the declared limit.
-//
-// What this does NOT catch is the whole mapping being absent: a resource may
-// legitimately have none (GPUs have no quota field at all), so "cores without a
-// quota field" is indistinguishable from a deliberate choice. That one is caught
-// by reading the startup log, where the effective catalogue is printed.
-func validateQuotaMapping(d ManagedProject) error {
-	if d.OSQuotaField != "" {
-		return nil
-	}
-	if d.OSMultiplier != 0 {
-		return fmt.Errorf("resource %q: os_multiplier converts a value for a quota field, but none is set", d.ID)
-	}
-	if d.OSOvercommitCheck {
-		return fmt.Errorf("resource %q: os_overcommit_check measures a quota field, but none is set", d.ID)
-	}
-	if d.OSLinkedField != "" {
-		return fmt.Errorf("resource %q: os_linked_field mirrors a quota field, but none is set", d.ID)
-	}
-	return nil
-}
-
-// validateGrant enforces that a grant and an availability imply each other.
-func validateGrant(d ManagedProject) error {
-	if !d.IsBool() {
-		if d.Grant != nil {
-			return fmt.Errorf("resource %q: grant is only valid for kind %q", d.ID, KindBool)
-		}
-		return nil
-	}
-
-	if d.Grant == nil {
-		return fmt.Errorf("resource %q: kind %q requires a grant", d.ID, KindBool)
-	}
-	switch d.Grant.Type {
-	case GrantNetwork, GrantImage, GrantFlavor:
-	default:
-		return fmt.Errorf("resource %q: unknown grant type %q", d.ID, d.Grant.Type)
-	}
-	if d.Grant.Target == "" {
-		return fmt.Errorf("resource %q: grant needs a target", d.ID)
-	}
-
-	// A quota field on an availability would be applied as a number by the
-	// reconciler — 1 core, 1 gigabyte — which is not what "available" means.
-	if d.OSQuotaField != "" || d.OSLinkedField != "" {
-		return fmt.Errorf("resource %q: an availability maps to a grant, not to a quota field", d.ID)
 	}
 
 	return nil

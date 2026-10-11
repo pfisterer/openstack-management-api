@@ -41,7 +41,7 @@ type Service struct {
 	// a plain `resourceIDs` was what let an availability slip into a sum, since
 	// nothing at the call site said which set it was.
 	countIDs []string
-	// storageIDs are the count resources mapped to volume gigabytes — what an
+	// storageIDs are the count resources that account as storage — what an
 	// archived leaf still holds (see Accounting.ChargeArchived).
 	storageIDs []string
 
@@ -109,7 +109,7 @@ type Accounting struct {
 // NewService constructs the tree service.
 // rootAdminTokens is synchronized into the root node's AdminScope on every
 // Bootstrap — the configuration is the source of truth for that one scope.
-func NewService(store Store, roles common.RoleProvider, resources []common.ManagedProject, rootAdminTokens common.TokenList, requestTimeout time.Duration, maxAuthorizedUsers int, accounting Accounting, log *zap.SugaredLogger) *Service {
+func NewService(store Store, roles common.RoleProvider, resources []common.Resource, rootAdminTokens common.TokenList, requestTimeout time.Duration, maxAuthorizedUsers int, accounting Accounting, log *zap.SugaredLogger) *Service {
 	if store == nil {
 		panic("tree.NewService requires a non-nil store")
 	}
@@ -121,7 +121,7 @@ func NewService(store Store, roles common.RoleProvider, resources []common.Manag
 	for _, r := range resources {
 		if r.IsCount() {
 			countIDs = append(countIDs, r.ID)
-			if r.OSQuotaField == "gigabytes" {
+			if r.Accounts == common.AccountsStorage {
 				storageIDs = append(storageIDs, r.ID)
 			}
 		}
@@ -361,7 +361,7 @@ func (s *Service) ensureBootstrapNodes(ctx context.Context) error {
 func (s *Service) UseCatalog(c common.ResourceCatalog) { s.catalog = c }
 
 // resources is the current catalogue.
-func (s *Service) resources() []common.ManagedProject { return s.catalog.Resources() }
+func (s *Service) resources() []common.Resource { return s.catalog.Resources() }
 
 // nodeChain returns the chain of nodes starting at startID (inclusive) walking up
 // to the root. Guards against cycles.
@@ -1165,7 +1165,7 @@ func (s *Service) isBool(id string) bool {
 // but zero for an availability that is being withdrawn: it stays known so the
 // zeros the withdrawal wrote validate, but it cannot be granted again.
 func (s *Service) validateKnownResources(q common.ProjectQuota) error {
-	known := make(map[string]common.ManagedProject, len(s.resources()))
+	known := make(map[string]common.Resource, len(s.resources()))
 	for _, r := range s.resources() {
 		known[r.ID] = r
 	}

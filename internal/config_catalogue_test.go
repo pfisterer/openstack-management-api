@@ -3,7 +3,7 @@ package app
 import (
 	"testing"
 
-	"github.com/pfisterer/openstack-management-api/internal/common"
+	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 )
 
 // The catalogue is deployment configuration, so these tests stand in for the
@@ -18,7 +18,7 @@ func TestLoadResourceCatalogue_FallsBackToTheBuiltInSet(t *testing.T) {
 		t.Fatalf("empty env should yield the defaults: %v", err)
 	}
 
-	byID := map[string]common.ManagedProject{}
+	byID := map[string]osclient.ManagedResource{}
 	for _, d := range defs {
 		byID[d.ID] = d
 	}
@@ -173,7 +173,7 @@ func TestLoadResourceCatalogue_CarriesTheOpenStackMapping(t *testing.T) {
 		t.Fatalf("catalogue rejected: %v", err)
 	}
 
-	byID := map[string]common.ManagedProject{}
+	byID := map[string]osclient.ManagedResource{}
 	for _, d := range defs {
 		byID[d.ID] = d
 	}

@@ -10,7 +10,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
-	"github.com/pfisterer/openstack-management-api/internal/common"
+	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 )
 
 // ── Postgres ──────────────────────────────────────────────────────────────────
@@ -89,4 +89,4 @@ func (s *MemoryStore) Upsert(_ context.Context, e Entry) error {
 	return nil
 }
 
-func grant(typ, target string) common.Grant { return common.Grant{Type: typ, Target: target} }
+func grant(typ, target string) osclient.Grant { return osclient.Grant{Type: typ, Target: target} }

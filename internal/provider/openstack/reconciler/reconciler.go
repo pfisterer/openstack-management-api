@@ -187,7 +187,7 @@ type Reconciler struct {
 	cfg      Config
 	// catalog is read through resources(): root admins add and withdraw
 	// availabilities while the reconciler runs (package catalog).
-	catalog      common.ResourceCatalog
+	catalog      osclient.ManagedCatalog
 	roleProvider common.RoleProvider
 	log          *zap.SugaredLogger
 
@@ -257,7 +257,7 @@ func New(
 	nodes TreeSync,
 	osClient *osclient.OpenStackClient,
 	cfg Config,
-	managedProjects []common.ManagedProject,
+	managedProjects []osclient.ManagedResource,
 	roleProvider common.RoleProvider,
 	log *zap.SugaredLogger,
 ) *Reconciler {
@@ -272,7 +272,7 @@ func New(
 		nodes:        nodes,
 		osClient:     osClient,
 		cfg:          cfg,
-		catalog:      common.StaticCatalog(managedProjects),
+		catalog:      osclient.StaticManaged(managedProjects),
 		roleProvider: roleProvider,
 		log:          withRecorder(log, problems),
 		trigger:      make(chan struct{}, 1),
@@ -1256,13 +1256,13 @@ func (r *Reconciler) ensureScopeParent() (string, error) {
 
 // UseCatalog replaces the catalogue given to New with one that changes at
 // runtime. Called before Start.
-func (r *Reconciler) UseCatalog(c common.ResourceCatalog) { r.catalog = c }
+func (r *Reconciler) UseCatalog(c osclient.ManagedCatalog) { r.catalog = c }
 
-func (r *Reconciler) resources() []common.ManagedProject { return r.catalog.Resources() }
+func (r *Reconciler) resources() []osclient.ManagedResource { return r.catalog.Managed() }
 
 // CheckGrantTarget asks OpenStack whether g can be granted per project (for
 // root admins adding an availability).
-func (r *Reconciler) CheckGrantTarget(g common.Grant) error {
+func (r *Reconciler) CheckGrantTarget(g osclient.Grant) error {
 	parent := ""
 	if p := r.scopeParentSeen.Load(); p != nil {
 		parent = *p
@@ -1271,7 +1271,7 @@ func (r *Reconciler) CheckGrantTarget(g common.Grant) error {
 }
 
 // GrantedProjects lists the projects OpenStack grants g to.
-func (r *Reconciler) GrantedProjects(g common.Grant) ([]string, error) {
+func (r *Reconciler) GrantedProjects(g osclient.Grant) ([]string, error) {
 	return r.osClient.GrantedProjects(g)
 }
 
@@ -1589,11 +1589,11 @@ func (r *Reconciler) persistOSSyncState(ctx context.Context, leafID, osProjectID
 // Narrow and declared here, like scopeParentClient above, so the decision — grant
 // or revoke, and say so in a dry run — can be tested without a cloud.
 type grantClient interface {
-	HasGrant(grant common.Grant, projectID string) (bool, error)
+	HasGrant(grant osclient.Grant, projectID string) (bool, error)
 	// Both report whether they CHANGED anything, so a pass that alters access in
 	// OpenStack leaves a line in the log and the twenty that do not stay quiet.
-	AddGrant(grant common.Grant, projectID string) (bool, error)
-	RemoveGrant(grant common.Grant, projectID string) (bool, error)
+	AddGrant(grant osclient.Grant, projectID string) (bool, error)
+	RemoveGrant(grant osclient.Grant, projectID string) (bool, error)
 }
 
 func (r *Reconciler) syncGrants(leaf tree.Node, osProjectID string) {
@@ -1613,7 +1613,7 @@ func (r *Reconciler) syncGrants(leaf tree.Node, osProjectID string) {
 // Failures are logged per resource and do not abort the pass. One unreachable
 // service must not stop the other twenty projects from being reconciled, and the
 // next run tries again — the desired state is in the tree, not in this call.
-func syncGrants(c grantClient, defs []common.ManagedProject, leaf tree.Node, osProjectID string, dryRun bool, log *zap.SugaredLogger) {
+func syncGrants(c grantClient, defs []osclient.ManagedResource, leaf tree.Node, osProjectID string, dryRun bool, log *zap.SugaredLogger) {
 	holds := leaf.EffectiveLimit()
 	for _, def := range defs {
 		if !def.IsBool() || def.Grant == nil {
@@ -1924,7 +1924,7 @@ func (r *Reconciler) upsertImported(
 // accepting it asked the reconciler to take, say, the IPv4 network away from
 // servers still attached to it. A grant that cannot be read keeps the value of
 // the last pass, so a passing error does not read as "not granted".
-func importGrants(c grantClient, defs []common.ManagedProject, osProjectID string, limit, prev common.ProjectQuota, log *zap.SugaredLogger) {
+func importGrants(c grantClient, defs []osclient.ManagedResource, osProjectID string, limit, prev common.ProjectQuota, log *zap.SugaredLogger) {
 	for _, def := range defs {
 		if !def.IsBool() || def.Grant == nil {
 			continue
@@ -1956,11 +1956,11 @@ func (r *Reconciler) readGrantUse() osclient.GrantUse {
 			continue
 		}
 		switch def.Grant.Type {
-		case common.GrantFlavor:
+		case osclient.GrantFlavor:
 			flavors = append(flavors, def.Grant.Target)
-		case common.GrantImage:
+		case osclient.GrantImage:
 			images = append(images, def.Grant.Target)
-		case common.GrantNetwork:
+		case osclient.GrantNetwork:
 			networks = append(networks, def.Grant.Target)
 		}
 	}
@@ -1978,7 +1978,7 @@ func (r *Reconciler) readGrantUse() osclient.GrantUse {
 // projectGrantUse is one project's share of use, keyed by catalogue resource:
 // every availability appears, with 0 for one nothing uses. nil when use could
 // not be read at all.
-func projectGrantUse(defs []common.ManagedProject, use osclient.GrantUse, osProjectID string) common.ProjectQuota {
+func projectGrantUse(defs []osclient.ManagedResource, use osclient.GrantUse, osProjectID string) common.ProjectQuota {
 	if use == nil {
 		return nil
 	}
@@ -1994,7 +1994,7 @@ func projectGrantUse(defs []common.ManagedProject, use osclient.GrantUse, osProj
 // measureImport is what an imported project uses, read like a managed one's.
 // Its limit is its OpenStack quota, so overcommitted means OpenStack already
 // holds more than the quota allows.
-func measureImport(resources []common.ManagedProject, limit common.ProjectQuota, detail *osclient.ProjectQuotaDetail) *tree.Observation {
+func measureImport(resources []osclient.ManagedResource, limit common.ProjectQuota, detail *osclient.ProjectQuotaDetail) *tree.Observation {
 	return &tree.Observation{
 		Overcommitted: IsProjectOvercommitted(resources, limit, detail),
 		InUse:         ProjectInUse(resources, detail),

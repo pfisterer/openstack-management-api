@@ -15,10 +15,10 @@ import (
 	"github.com/pfisterer/cloud-self-service-golib/token"
 	"github.com/pfisterer/cloud-self-service-golib/tokengorm"
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/core/catalog"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"github.com/pfisterer/openstack-management-api/internal/core/usage"
 	"github.com/pfisterer/openstack-management-api/internal/mockdata"
+	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/catalog"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/reconciler"
 	"github.com/pfisterer/openstack-management-api/internal/roleprovider"
@@ -234,7 +234,7 @@ func RunApplication() {
 	}
 
 	requestTimeout := time.Duration(config.ServiceTimeoutSeconds) * time.Second
-	treeSvc := tree.NewService(tree.NotifyOnWrite(nodeStore, triggerReconcile), roleProvider, config.ProjectDefinitions, config.RootAdminTokens, requestTimeout, config.MaxAuthorizedUsers, tree.Accounting{
+	treeSvc := tree.NewService(tree.NotifyOnWrite(nodeStore, triggerReconcile), roleProvider, osclient.CoreResources(config.ProjectDefinitions), config.RootAdminTokens, requestTimeout, config.MaxAuthorizedUsers, tree.Accounting{
 		ChargeOSInUse:  config.ChargeOSInUse,
 		ChargeReleased: config.ChargeReleased,
 		ChargeArchived: config.ChargeArchived,
@@ -322,7 +322,7 @@ func RunApplication() {
 			rec.UseCatalog(resourceCatalog)
 			if config.Reconciler.UsageEnabled {
 				source := reconciler.NewUsageSource(osClient, config.Reconciler.UsagePublicNetworks)
-				collector := usage.NewCollector(usageStore, nodeStore, source, config.ProjectDefinitions, logger)
+				collector := usage.NewCollector(usageStore, nodeStore, source, osclient.CoreResources(config.ProjectDefinitions), logger)
 				collector.BackfillDays = config.Reconciler.UsageBackfillDays
 				rec.SetUsageCollector(collector)
 			}

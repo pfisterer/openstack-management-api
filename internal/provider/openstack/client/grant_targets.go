@@ -10,8 +10,6 @@ import (
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/extensions/rbacpolicies"
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/networks"
 	"github.com/gophercloud/gophercloud/pagination"
-
-	"github.com/pfisterer/openstack-management-api/internal/common"
 )
 
 // CheckGrantTarget reports why a target cannot carry the availability, before
@@ -19,15 +17,15 @@ import (
 // checked: the object has to exist, a flavour has to be private (Nova keeps an
 // access list only for those), and an image has to be shared and owned by the
 // scope parent (Glance takes members only from the owner).
-func (c *OpenStackClient) CheckGrantTarget(g common.Grant, scopeParentID string) error {
+func (c *OpenStackClient) CheckGrantTarget(g Grant, scopeParentID string) error {
 	switch g.Type {
-	case common.GrantNetwork:
+	case GrantNetwork:
 		if _, err := networks.Get(c.networkSvc(), g.Target).Extract(); err != nil {
 			return describeLookup("network", g.Target, err)
 		}
 		return nil
 
-	case common.GrantFlavor:
+	case GrantFlavor:
 		f, err := flavors.Get(c.computeSvc(), g.Target).Extract()
 		if err != nil {
 			return describeLookup("flavor", g.Target, err)
@@ -37,7 +35,7 @@ func (c *OpenStackClient) CheckGrantTarget(g common.Grant, scopeParentID string)
 		}
 		return nil
 
-	case common.GrantImage:
+	case GrantImage:
 		img, err := images.Get(c.imageSvc(), g.Target).Extract()
 		if err != nil {
 			return describeLookup("image", g.Target, err)
@@ -62,10 +60,10 @@ func describeLookup(kind, id string, err error) error {
 
 // GrantedProjects lists the projects the target is granted to, by whoever.
 // A network shared with everyone shows as "*".
-func (c *OpenStackClient) GrantedProjects(g common.Grant) ([]string, error) {
+func (c *OpenStackClient) GrantedProjects(g Grant) ([]string, error) {
 	var out []string
 	switch g.Type {
-	case common.GrantNetwork:
+	case GrantNetwork:
 		err := rbacpolicies.List(c.networkSvc(), rbacpolicies.ListOpts{ObjectType: "network", ObjectID: g.Target}).
 			EachPage(func(page pagination.Page) (bool, error) {
 				ps, err := rbacpolicies.ExtractRBACPolicies(page)
@@ -81,7 +79,7 @@ func (c *OpenStackClient) GrantedProjects(g common.Grant) ([]string, error) {
 			})
 		return out, wrapList("network rbac policies", g.Target, err)
 
-	case common.GrantFlavor:
+	case GrantFlavor:
 		err := flavors.ListAccesses(c.computeSvc(), g.Target).EachPage(func(page pagination.Page) (bool, error) {
 			as, err := flavors.ExtractAccesses(page)
 			if err != nil {
@@ -94,7 +92,7 @@ func (c *OpenStackClient) GrantedProjects(g common.Grant) ([]string, error) {
 		})
 		return out, wrapList("flavor access", g.Target, err)
 
-	case common.GrantImage:
+	case GrantImage:
 		err := members.List(c.imageSvc(), g.Target).EachPage(func(page pagination.Page) (bool, error) {
 			ms, err := members.ExtractMembers(page)
 			if err != nil {

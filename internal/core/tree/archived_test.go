@@ -15,9 +15,9 @@ func archivedSvc(t *testing.T, acc Accounting) (*Service, Node, Node) {
 	t.Helper()
 	log := zap.NewNop().Sugar()
 	store := NewInMemoryStore(log)
-	svc := NewService(store, noRoles{}, []common.ManagedProject{
-		{ID: "cores", Name: "Cores", OSQuotaField: "cores"},
-		{ID: "storage", Name: "Storage", OSQuotaField: "gigabytes"},
+	svc := NewService(store, noRoles{}, []common.Resource{
+		{ID: "cores", Name: "Cores", Accounts: common.AccountsCores},
+		{ID: "storage", Name: "Storage", Accounts: common.AccountsStorage},
 	}, common.TokenList{"group:admins"}, 5*time.Second, common.DefaultMaxAuthorizedUsers, acc, log)
 	ctx := context.Background()
 	if err := svc.Bootstrap(ctx, nil, nil); err != nil {

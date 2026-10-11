@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/core/catalog"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/catalog"
 	"github.com/pfisterer/openstack-management-api/internal/roleprovider"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 )
@@ -18,7 +18,7 @@ import (
 func catalogRouter(t *testing.T) http.Handler {
 	t.Helper()
 	store, sugar := newTestStore(t)
-	cat, err := catalog.Load(context.Background(), quotaResources, &catalog.MemoryStore{}, sugar)
+	cat, err := catalog.Load(context.Background(), managedResources, &catalog.MemoryStore{}, sugar)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,11 +11,11 @@ import (
 	"go.uber.org/zap"
 )
 
-var catalog = []common.ManagedProject{
-	{ID: "cores", Name: "Cores", OSQuotaField: "cores"},
-	{ID: "storage", Name: "Storage", OSQuotaField: "gigabytes"},
+var catalog = []common.Resource{
+	{ID: "cores", Name: "Cores", Accounts: common.AccountsCores},
+	{ID: "storage", Name: "Storage", Accounts: common.AccountsStorage},
 	{ID: "ipv4", Name: "IPv4", Kind: common.KindBool},
-	{ID: "ports", Name: "Ports", Static: true, OSQuotaField: "ports"},
+	{ID: "ports", Name: "Ports", Static: true},
 }
 
 type fakeSource struct {

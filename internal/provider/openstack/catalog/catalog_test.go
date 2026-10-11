@@ -7,15 +7,16 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/core/catalog"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/catalog"
+	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 	"github.com/pfisterer/openstack-management-api/internal/roleprovider"
 	"go.uber.org/zap"
 )
 
-var configured = []common.ManagedProject{
+var configured = []osclient.ManagedResource{
 	{ID: "cores", Name: "Cores", ShowOnUI: true},
-	{ID: "net", Name: "Net", Kind: common.KindBool, ShowOnUI: true, Grant: &common.Grant{Type: common.GrantNetwork, Target: "net-uuid"}},
+	{ID: "net", Name: "Net", Kind: common.KindBool, ShowOnUI: true, Grant: &osclient.Grant{Type: osclient.GrantNetwork, Target: "net-uuid"}},
 }
 
 type fakeOpenStack struct {
@@ -23,8 +24,8 @@ type fakeOpenStack struct {
 	targetErr error
 }
 
-func (f *fakeOpenStack) CheckGrantTarget(common.Grant) error { return f.targetErr }
-func (f *fakeOpenStack) GrantedProjects(g common.Grant) ([]string, error) {
+func (f *fakeOpenStack) CheckGrantTarget(osclient.Grant) error { return f.targetErr }
+func (f *fakeOpenStack) GrantedProjects(g osclient.Grant) ([]string, error) {
 	return f.granted[g.Target], nil
 }
 
@@ -46,7 +47,7 @@ func setup(t *testing.T) fixture {
 		t.Fatal(err)
 	}
 	store := tree.NewInMemoryStore(log)
-	svc := tree.NewService(store, roleprovider.NewMockRoleProvider(), configured, common.TokenList{"group:root"},
+	svc := tree.NewService(store, roleprovider.NewMockRoleProvider(), osclient.CoreResources(configured), common.TokenList{"group:root"},
 		5*time.Second, common.DefaultMaxAuthorizedUsers, tree.Accounting{}, log)
 	svc.UseCatalog(cat)
 	if err := svc.Bootstrap(ctx, nil, nil); err != nil {
@@ -81,13 +82,13 @@ func (f fixture) node(t *testing.T, id string) tree.Node {
 	return *n
 }
 
-func resource(cat *catalog.Catalog, id string) (common.ManagedProject, bool) {
-	for _, r := range cat.Resources() {
+func resource(cat *catalog.Catalog, id string) (osclient.ManagedResource, bool) {
+	for _, r := range cat.Managed() {
 		if r.ID == id {
 			return r, true
 		}
 	}
-	return common.ManagedProject{}, false
+	return osclient.ManagedResource{}, false
 }
 
 func TestLoad_SeedsOnceFromConfiguration(t *testing.T) {
@@ -103,8 +104,8 @@ func TestLoad_SeedsOnceFromConfiguration(t *testing.T) {
 	}
 
 	// Configured again with another availability: the store is the source now.
-	more := append(configured, common.ManagedProject{ID: "gpu", Name: "GPU", Kind: common.KindBool,
-		Grant: &common.Grant{Type: common.GrantFlavor, Target: "f"}})
+	more := append(configured, osclient.ManagedResource{ID: "gpu", Name: "GPU", Kind: common.KindBool,
+		Grant: &osclient.Grant{Type: osclient.GrantFlavor, Target: "f"}})
 	cat, err = catalog.Load(ctx, more, store, log)
 	if err != nil {
 		t.Fatal(err)
@@ -170,7 +171,7 @@ func TestWithdrawThenRemove(t *testing.T) {
 	}
 
 	// Added again under the same id: a clean start, held by the root only.
-	if _, err := f.admin.Add(f.ctx, catalog.NewEntry{ID: "net", Name: "Net", Grant: common.Grant{Type: common.GrantNetwork, Target: "net-uuid"}}, "admin@x"); err != nil {
+	if _, err := f.admin.Add(f.ctx, catalog.NewEntry{ID: "net", Name: "Net", Grant: osclient.Grant{Type: osclient.GrantNetwork, Target: "net-uuid"}}, "admin@x"); err != nil {
 		t.Fatalf("re-add: %v", err)
 	}
 	if got := f.node(t, tree.RootNodeID).Limit["net"]; got != 1 {
@@ -202,7 +203,7 @@ func TestRestore(t *testing.T) {
 
 func TestAdd_Refusals(t *testing.T) {
 	f := setup(t)
-	g := common.Grant{Type: common.GrantFlavor, Target: "f"}
+	g := osclient.Grant{Type: osclient.GrantFlavor, Target: "f"}
 	cases := map[string]struct {
 		in   catalog.NewEntry
 		want error
@@ -211,7 +212,7 @@ func TestAdd_Refusals(t *testing.T) {
 		"no name":      {catalog.NewEntry{ID: "gpu", Grant: g}, catalog.ErrInvalid},
 		"quantity id":  {catalog.NewEntry{ID: "cores", Name: "x", Grant: g}, catalog.ErrConflict},
 		"existing id":  {catalog.NewEntry{ID: "net", Name: "x", Grant: g}, catalog.ErrConflict},
-		"unknown kind": {catalog.NewEntry{ID: "gpu", Name: "x", Grant: common.Grant{Type: "volume", Target: "v"}}, catalog.ErrInvalid},
+		"unknown kind": {catalog.NewEntry{ID: "gpu", Name: "x", Grant: osclient.Grant{Type: "volume", Target: "v"}}, catalog.ErrInvalid},
 	}
 	for name, tc := range cases {
 		if _, err := f.admin.Add(f.ctx, tc.in, "a"); !errors.Is(err, tc.want) {

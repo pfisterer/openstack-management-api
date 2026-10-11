@@ -36,7 +36,7 @@ var quotaFields = map[string]quotaField{
 
 // multiplierOf returns the effective OS unit multiplier for a resource.
 // A stored OSMultiplier of 0 is treated as 1 (identity).
-func multiplierOf(r common.ManagedProject) int {
+func multiplierOf(r osclient.ManagedResource) int {
 	if r.OSMultiplier == 0 {
 		return 1
 	}
@@ -48,7 +48,7 @@ func multiplierOf(r common.ManagedProject) int {
 // ReconcilerConfiguration.DefaultNetworkQuotas struct: to change a static quota
 // default, update the Default field in the ManagedProject definition; no other
 // file needs to change.
-func StaticProjectQuotaDefaults(resources []common.ManagedProject) osclient.QuotaSet {
+func StaticProjectQuotaDefaults(resources []osclient.ManagedResource) osclient.QuotaSet {
 	var qs osclient.QuotaSet
 	for _, res := range resources {
 		if !res.Static || res.OSQuotaField == "" {
@@ -83,7 +83,7 @@ func mergeStaticIntoQuotaSet(dst *osclient.QuotaSet, src osclient.QuotaSet) {
 //
 // Resources without an OSQuotaField (e.g. GPU without custom quota support) are
 // silently skipped.
-func ProjectQuotaToQuotaSet(resources []common.ManagedProject, rq common.ProjectQuota) osclient.QuotaSet {
+func ProjectQuotaToQuotaSet(resources []osclient.ManagedResource, rq common.ProjectQuota) osclient.QuotaSet {
 	var qs osclient.QuotaSet
 	for _, res := range resources {
 		if res.OSQuotaField == "" {
@@ -110,7 +110,7 @@ func ProjectQuotaToQuotaSet(resources []common.ManagedProject, rq common.Project
 //
 // Each resource's OS value is divided by OSMultiplier (default 1) to recover the
 // domain unit (e.g. MB → GB for RAM).
-func QuotaSetToProjectQuota(resources []common.ManagedProject, qs osclient.QuotaSet) common.ProjectQuota {
+func QuotaSetToProjectQuota(resources []osclient.ManagedResource, qs osclient.QuotaSet) common.ProjectQuota {
 	rq := make(common.ProjectQuota, len(resources))
 	for _, res := range resources {
 		if res.OSQuotaField == "" {
@@ -139,7 +139,7 @@ func QuotaSetToProjectQuota(resources []common.ManagedProject, qs osclient.Quota
 // back as a hard-coded 0, which is exactly the confusion this comment warns
 // about, and it went unnoticed because 0 is also what an empty project reports.
 // See the note in quotas.go for what it actually took.
-func ProjectInUse(resources []common.ManagedProject, detail *osclient.ProjectQuotaDetail) common.ProjectQuota {
+func ProjectInUse(resources []osclient.ManagedResource, detail *osclient.ProjectQuotaDetail) common.ProjectQuota {
 	if detail == nil {
 		return nil
 	}
@@ -157,7 +157,7 @@ func ProjectInUse(resources []common.ManagedProject, detail *osclient.ProjectQuo
 	return inUse
 }
 
-func IsProjectOvercommitted(resources []common.ManagedProject, approvedRQ common.ProjectQuota, detail *osclient.ProjectQuotaDetail) bool {
+func IsProjectOvercommitted(resources []osclient.ManagedResource, approvedRQ common.ProjectQuota, detail *osclient.ProjectQuotaDetail) bool {
 	if detail == nil {
 		return false
 	}

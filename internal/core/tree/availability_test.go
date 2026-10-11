@@ -14,10 +14,9 @@ import (
 // two could be confused. Held in the same map[string]int as everything else, so
 // the arithmetic has to be told the difference — nothing about the value says it.
 
-var availabilityCatalogue = []common.ManagedProject{
+var availabilityCatalogue = []common.Resource{
 	{ID: "cores", Name: "Cores"},
-	{ID: "dhbw-ipv4", Name: "DHBW IPv4", Kind: common.KindBool,
-		Grant: &common.Grant{Type: common.GrantNetwork, Target: "net-uuid"}},
+	{ID: "dhbw-ipv4", Name: "DHBW IPv4", Kind: common.KindBool},
 }
 
 func availabilityService(t *testing.T) *Service {
@@ -262,7 +261,7 @@ func TestBootstrap_RootAdoptsResourcesNewToTheCatalogue(t *testing.T) {
 	store := NewInMemoryStore(zap.NewNop().Sugar())
 
 	// A tree that predates the availability: the root exists with the old set.
-	before := NewService(store, noRoles{}, []common.ManagedProject{{ID: "cores", Name: "Cores"}},
+	before := NewService(store, noRoles{}, []common.Resource{{ID: "cores", Name: "Cores"}},
 		common.TokenList{"group:root-admin"}, 5*time.Second,
 		common.DefaultMaxAuthorizedUsers,
 		Accounting{}, zap.NewNop().Sugar())

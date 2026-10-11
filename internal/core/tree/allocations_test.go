@@ -13,7 +13,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var allocationResources = []common.ManagedProject{
+var allocationResources = []common.Resource{
 	{ID: "cores", Name: "Cores"},
 	{ID: "gpu", Name: "GPUs"},
 	{ID: "ipv4", Name: "IPv4", Kind: common.KindBool},

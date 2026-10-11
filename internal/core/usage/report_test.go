@@ -105,17 +105,18 @@ func TestBuildReport_Value(t *testing.T) {
 	}
 }
 
-// A catalogue in GB says so with a multiplier; RAM is reserved in its unit.
+// The books find cores, RAM and storage by what they account as; RAM is
+// reserved in its unit and converted with the factor it brings.
 func TestMappingFrom(t *testing.T) {
-	m := MappingFrom([]common.ManagedProject{
-		{ID: "c", OSQuotaField: "cores"},
-		{ID: "r", OSQuotaField: "ram", OSMultiplier: 1024},
-		{ID: "s", OSQuotaField: "gigabytes"},
+	m := MappingFrom([]common.Resource{
+		{ID: "c", Accounts: common.AccountsCores},
+		{ID: "r", Accounts: common.AccountsRAM, AccountsPerGB: 1},
+		{ID: "s", Accounts: common.AccountsStorage},
 	})
 	if m.Cores != "c" || m.RAM != "r" || m.Storage != "s" || m.RAMToGB != 1 {
 		t.Fatalf("%+v", m)
 	}
-	if m := MappingFrom([]common.ManagedProject{{ID: "r", OSQuotaField: "ram"}}); m.RAMToGB != 1.0/1024 {
+	if m := MappingFrom([]common.Resource{{ID: "r", Accounts: common.AccountsRAM, AccountsPerGB: 1.0 / 1024}}); m.RAMToGB != 1.0/1024 {
 		t.Errorf("RAM in MB converts with %v", m.RAMToGB)
 	}
 }

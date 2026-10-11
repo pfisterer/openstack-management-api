@@ -41,7 +41,7 @@ type Collector struct {
 	store   Store
 	nodes   Nodes
 	source  Source
-	catalog []common.ManagedProject
+	catalog []common.Resource
 	log     *zap.SugaredLogger
 
 	// BackfillDays is how far back the first run reaches. Nova's records go
@@ -54,7 +54,7 @@ type Collector struct {
 	now           func() time.Time
 }
 
-func NewCollector(store Store, nodes Nodes, source Source, catalog []common.ManagedProject, log *zap.SugaredLogger) *Collector {
+func NewCollector(store Store, nodes Nodes, source Source, catalog []common.Resource, log *zap.SugaredLogger) *Collector {
 	return &Collector{store: store, nodes: nodes, source: source, catalog: catalog, log: log,
 		BackfillDays: 365, MaxDaysPerRun: 31, now: time.Now}
 }
@@ -104,7 +104,7 @@ func (c *Collector) CollectDay(ctx context.Context, day time.Time) error {
 	// The snapshot is the tree as it is now; only for yesterday is that what
 	// it was on the day.
 	backfilled := day.Before(dayOf(now).AddDate(0, 0, -1))
-	storageID := c.resourceFor("gigabytes")
+	storageID := c.resourceFor(common.AccountsStorage)
 	// Addresses are a sample of now, like storage: only for yesterday is that
 	// the day being collected. A failed count leaves the day unmeasured rather
 	// than failing it.
@@ -169,10 +169,10 @@ func holdsResources(status string) bool {
 	return false
 }
 
-// resourceFor names the catalogue resource mapped to an OpenStack quota field.
-func (c *Collector) resourceFor(field string) string {
+// resourceFor names the catalogue resource that accounts as what (common.Accounts*).
+func (c *Collector) resourceFor(accounts string) string {
 	for _, r := range c.catalog {
-		if r.OSQuotaField == field {
+		if r.Accounts == accounts {
 			return r.ID
 		}
 	}
@@ -188,7 +188,7 @@ func (c *Collector) reserved(n tree.Node) common.ProjectQuota {
 	}
 	out := common.ProjectQuota{}
 	for _, r := range c.catalog {
-		if r.OSQuotaField == "gigabytes" && q[r.ID] != 0 {
+		if r.Accounts == common.AccountsStorage && q[r.ID] != 0 {
 			out[r.ID] = q[r.ID]
 		}
 	}

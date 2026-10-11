@@ -67,6 +67,10 @@ type ConfigResponse struct {
 	// does an approved project eventually get an OpenStack project — without it
 	// the UI would show every project as "waiting for OpenStack" forever.
 	ProvisioningEnabled bool `json:"provisioningEnabled"`
+	// Providers are the providers besides OpenStack that carry projects out
+	// here (e.g. aiaas): a project holding their resources gets its side there
+	// on their next pass, and until then it is being set up.
+	Providers []string `json:"providers"`
 	// OpenstackDashboardURL is where a project can be opened in OpenStack;
 	// empty when none is configured.
 	OpenstackDashboardURL string `json:"openstackDashboardUrl,omitempty"`
@@ -152,6 +156,8 @@ type APIConfig struct {
 	// server starts, and a value frozen at startup would tell every client for
 	// the rest of the pod's life that provisioning does not exist.
 	ProvisioningEnabled func() bool
+	// Providers besides OpenStack that carry projects out (see ConfigResponse).
+	Providers []string
 	// OpenstackDashboardURL is passed through to the UI (see ConfigResponse).
 	OpenstackDashboardURL string
 	// Retirement is passed through to the UI (see ConfigResponse).
@@ -381,6 +387,7 @@ func getConfig(cfg APIConfig) gin.HandlerFunc {
 			Resources:             resources,
 			OpenstackRoles:        openstackRoles,
 			ProvisioningEnabled:   cfg.ProvisioningEnabled != nil && cfg.ProvisioningEnabled(),
+			Providers:             append([]string{}, cfg.Providers...),
 			OpenstackDashboardURL: cfg.OpenstackDashboardURL,
 			Retirement:            cfg.Retirement,
 		}

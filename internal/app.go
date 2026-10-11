@@ -336,6 +336,7 @@ func RunApplication() {
 			DummyDevUsers:    dummyDevUsers,
 			// Asked per request: the reconciler may still be connecting.
 			ProvisioningEnabled:   func() bool { return reconcilerAPI != nil && reconcilerAPI.Ready() },
+			Providers:             activeProviders(config),
 			OpenstackDashboardURL: config.WebServer.OpenstackDashboardURL,
 			Retirement:            retirementConfig(config),
 			Usage:                 usageStore,
@@ -361,4 +362,12 @@ func RunApplication() {
 	}
 
 	logger.Info("Application completed successfully")
+}
+
+// activeProviders are the providers besides OpenStack configured here.
+func activeProviders(config AppConfiguration) []string {
+	if config.AIaaS.URL != "" {
+		return []string{aiaas.Provider}
+	}
+	return nil
 }

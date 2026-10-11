@@ -19,8 +19,11 @@ import (
 // Who a caller is and acts as (role switch, impersonation) is not decided here
 // but in package identity; the tree is handed the effective tokens.
 type Service struct {
-	store nodestore.Store
-	roles roles.Provider
+	// store signals every write on changes; plain is the same store without, for ProviderSync (see service_changes.go).
+	store   nodestore.Store
+	plain   nodestore.Store
+	changes chan struct{}
+	roles   roles.Provider
 	// ownerTokens caches people's tokens for the "owner in group" filter.
 	ownerTokens *tokenCache
 
@@ -129,8 +132,9 @@ func NewService(store nodestore.Store, roles roles.Provider, resources []common.
 	if maxAuthorizedUsers <= 0 {
 		maxAuthorizedUsers = common.DefaultMaxAuthorizedUsers
 	}
-	return &Service{
-		store:              store,
+	s := &Service{
+		plain:              store,
+		changes:            make(chan struct{}, 1),
 		roles:              roles,
 		ownerTokens:        newTokenCache(2 * time.Minute),
 		catalog:            common.StaticCatalog(resources),
@@ -142,6 +146,8 @@ func NewService(store nodestore.Store, roles roles.Provider, resources []common.
 		accounting:         accounting,
 		log:                log,
 	}
+	s.store = signallingStore{Store: store, changed: s.signalChange}
+	return s
 }
 
 // UseCatalog replaces the catalogue given to NewService with one that changes

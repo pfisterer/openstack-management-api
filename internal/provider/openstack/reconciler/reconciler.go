@@ -54,6 +54,8 @@ type TreeSync interface {
 	AddImport(ctx context.Context, leaf model.Node) error
 	RefreshImport(ctx context.Context, leaf model.Node, o *tree.Observation) error
 	Promote(ctx context.Context, leafID string, current []common.AuthorizedUser) (bool, error)
+	// Changes receives when what is wanted changed; a run then starts right away instead of at the next interval.
+	Changes() <-chan struct{}
 }
 
 // Config holds all tunables for the reconciler.
@@ -248,7 +250,11 @@ func (r *Reconciler) Start(ctx context.Context) {
 	ticker := time.NewTicker(r.cfg.Interval)
 	defer ticker.Stop()
 
-	// Run once immediately on startup so the state is consistent from the first request.
+	// Run once immediately on startup so the state is consistent from the first request. It covers whatever changed before, bootstrap included.
+	select {
+	case <-r.nodes.Changes():
+	default:
+	}
 	r.runOnce(ctx)
 
 	for {
@@ -260,6 +266,8 @@ func (r *Reconciler) Start(ctx context.Context) {
 			r.runOnce(ctx)
 		case <-r.trigger:
 			r.runOnce(ctx)
+		case <-r.nodes.Changes():
+			r.runOnce(ctx)
 		}
 	}
 }
@@ -269,8 +277,7 @@ func (r *Reconciler) Start(ctx context.Context) {
 // starts the next run once this one ends, so a change made mid-run is not lost:
 // the queued run has not read the state yet.
 //
-// Every API write triggers (nodestore.NotifyOnWrite). That holds per process — with
-// more than one replica, only the one that served the request would run.
+// Changes made through the API start a run the same way, through TreeSync.Changes. That holds per process — with more than one replica, only the one that served the request would run.
 func (r *Reconciler) Trigger() {
 	select {
 	case r.trigger <- struct{}{}:

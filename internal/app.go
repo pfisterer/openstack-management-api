@@ -183,22 +183,10 @@ func RunApplication() {
 		logger.Fatalw("invalid ROLE_PROVIDER: must be 'http' or 'mock'", "value", config.RoleProvider.Type)
 	}
 
-	// A local ReconcilerAPI variable avoids passing a typed nil as the interface,
-	// which would make cfg.Reconciler != nil even when no reconciler exists.
-	// Declared this early for the service's store: a change made through the API
-	// starts a reconciler run right away (see nodestore.NotifyOnWrite). It is only
-	// read on writes, and the ones during bootstrap below find it still nil.
-	var reconcilerAPI webserver.ReconcilerAPI
-	triggerReconcile := func() {
-		if reconcilerAPI != nil {
-			reconcilerAPI.Trigger()
-		}
-	}
-
 	requestTimeout := time.Duration(config.ServiceTimeoutSeconds) * time.Second
 	// Who a caller is and acts as (role switch, impersonation, principal search).
 	identitySvc := identity.NewService(nodeStore, roleProvider, requestTimeout, logger)
-	treeSvc := tree.NewService(nodestore.NotifyOnWrite(nodeStore, triggerReconcile), roleProvider, osclient.CoreResources(config.ProjectDefinitions), config.RootAdminTokens, requestTimeout, config.MaxAuthorizedUsers, tree.Accounting{
+	treeSvc := tree.NewService(nodeStore, roleProvider, osclient.CoreResources(config.ProjectDefinitions), config.RootAdminTokens, requestTimeout, config.MaxAuthorizedUsers, tree.Accounting{
 		ChargeInUse:    config.ChargeOSInUse,
 		ChargeReleased: config.ChargeReleased,
 		ChargeArchived: config.ChargeArchived,
@@ -242,6 +230,9 @@ func RunApplication() {
 	// granted there either.
 	catalogAdmin := &catalog.Admin{Catalog: resourceCatalog, Tree: treeSvc}
 
+	// A local ReconcilerAPI variable avoids passing a typed nil as the interface,
+	// which would make cfg.Reconciler != nil even when no reconciler exists.
+	var reconcilerAPI webserver.ReconcilerAPI
 	if config.Reconciler.Enabled {
 		if err := reconciler.ValidateReleasedDelete(config.Reconciler.ReleasedDelete); err != nil {
 			logger.Fatalw("Invalid reconciler configuration", "error", err)
@@ -282,7 +273,7 @@ func RunApplication() {
 				ManagedProjectTag:        config.Reconciler.ManagedProjectTag,
 				StatusTagPrefix:          config.Reconciler.StatusTagPrefix,
 			}
-			rec := reconciler.New(tree.NewProviderSync(nodeStore), osClient, reconcilerCfg, config.ProjectDefinitions, roleProvider, logger)
+			rec := reconciler.New(treeSvc.ProviderSync(), osClient, reconcilerCfg, config.ProjectDefinitions, roleProvider, logger)
 			rec.UseCatalog(resourceCatalog)
 			if config.Reconciler.UsageEnabled {
 				books := usage.NewBooks(usageStore, nodeStore, osclient.CoreResources(config.ProjectDefinitions), logger)

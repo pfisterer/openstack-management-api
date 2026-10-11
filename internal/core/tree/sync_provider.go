@@ -22,13 +22,17 @@ import (
 // per leaf in OpenStack, and a user may have filed a change, been approved or
 // released the project meanwhile.
 type ProviderSync struct {
-	store nodestore.Store
+	store   nodestore.Store
+	changes <-chan struct{}
 }
 
-// NewProviderSync gives the reconciler its view of the tree.
+// NewProviderSync is a view of the tree straight from its store, without a service that announces changes; Service.ProviderSync is the one with them.
 func NewProviderSync(store nodestore.Store) *ProviderSync {
 	return &ProviderSync{store: store}
 }
+
+// Changes receives when the service changed what is wanted since the last receive. Nil — never ready — for a view made by NewProviderSync.
+func (p *ProviderSync) Changes() <-chan struct{} { return p.changes }
 
 // Leaves returns the projects in the given statuses.
 func (p *ProviderSync) Leaves(ctx context.Context, statuses []string) ([]model.Node, error) {

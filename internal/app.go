@@ -32,7 +32,7 @@ import (
 // middleware routes on.
 const apiTokenPrefix = "os_mgt_"
 
-func configureStores(cfg *common.StorageConfiguration, log *zap.SugaredLogger) (tree.Store, *token.Service, usage.Store, catalog.Store, error) {
+func configureStores(cfg *StorageConfiguration, log *zap.SugaredLogger) (tree.Store, *token.Service, usage.Store, catalog.Store, error) {
 	storageType := strings.ToLower(strings.TrimSpace(cfg.Type))
 
 	switch storageType {

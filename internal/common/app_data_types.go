@@ -20,13 +20,6 @@ var (
 	ErrConflict = errors.New("conflict")
 )
 
-// StorageConfiguration holds configuration for the storage backend.
-type StorageConfiguration struct {
-	Type             string // e.g., "memory" or "postgres"
-	ConnectionString string // e.g., Postgres DSN or empty for memory
-	AddMockData      bool   // Whether to add mock data on startup
-}
-
 // DefaultPageLimit and MaxPageLimit are shared pagination bounds used by both
 // the webserver (parsePagination) and the service layer (normalizePagination).
 const (

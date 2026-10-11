@@ -19,6 +19,13 @@ import (
 	"go.uber.org/zap"
 )
 
+// StorageConfiguration holds configuration for the storage backend.
+type StorageConfiguration struct {
+	Type             string // e.g., "memory" or "postgres"
+	ConnectionString string // e.g., Postgres DSN or empty for memory
+	AddMockData      bool   // Whether to add mock data on startup
+}
+
 // ReconcilerConfiguration controls the two-way sync with OpenStack.
 type ReconcilerConfiguration struct {
 	// Enabled activates the reconciler. When false the reconciler goroutine is not started.
@@ -158,12 +165,12 @@ type RoleProviderConfig struct {
 
 // AppConfiguration is the top-level application configuration.
 type AppConfiguration struct {
-	Storage      common.StorageConfiguration `json:"storage" validate:"required"`
-	Openstack    osclient.Config             `json:"openstack" validate:"required"`
-	Reconciler   ReconcilerConfiguration     `json:"reconciler"`
-	WebServer    WebServerConfig             `json:"web_server" validate:"required"`
-	RoleProvider RoleProviderConfig          `json:"role_provider"`
-	DevMode      bool                        `json:"dev_mode"`
+	Storage      StorageConfiguration    `json:"storage" validate:"required"`
+	Openstack    osclient.Config         `json:"openstack" validate:"required"`
+	Reconciler   ReconcilerConfiguration `json:"reconciler"`
+	WebServer    WebServerConfig         `json:"web_server" validate:"required"`
+	RoleProvider RoleProviderConfig      `json:"role_provider"`
+	DevMode      bool                    `json:"dev_mode"`
 	// RootAdminTokens (from ROOT_ADMIN_TOKENS) are the system-wide admin tokens.
 	// They gate three surfaces: the service's root-admin checks, the reconciler
 	// admin endpoints, and the role-switch allowlist.
@@ -225,7 +232,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 	}
 
 	cfg := AppConfiguration{
-		Storage: common.StorageConfiguration{
+		Storage: StorageConfiguration{
 			Type:             strings.ToLower(strings.TrimSpace(envconf.String("DB_TYPE", "memory"))),
 			ConnectionString: envconf.String("DB_CONNECTION_STRING", "host=localhost user=postgres password=postgres dbname=openstack_management_api port=5432 sslmode=disable TimeZone=UTC"),
 			AddMockData:      envconf.Bool("DB_ADD_MOCK_DATA", false),

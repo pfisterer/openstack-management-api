@@ -174,9 +174,9 @@ func grantsNothing(q common.ProjectQuota) bool {
 	return true
 }
 
-// ProjectsByOSID maps the OpenStack project ID of every project that has one
+// ProjectsByExternalID maps the external (OpenStack) project ID of every project that has one
 // to the project, so a grant found in OpenStack can be named.
-func (s *Service) ProjectsByOSID(ctx context.Context) (map[string]Holder, error) {
+func (s *Service) ProjectsByExternalID(ctx context.Context) (map[string]Holder, error) {
 	nodes, err := s.store.ListNodes(ctx, NodeQuery{Kinds: []string{KindProject}}, 0, 0)
 	if err != nil {
 		return nil, fmt.Errorf("list projects: %w", err)

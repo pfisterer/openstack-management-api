@@ -16,7 +16,7 @@ type Tree interface {
 	WithdrawAvailability(ctx context.Context, id string) (int, error)
 	ForgetResource(ctx context.Context, id string) (int, error)
 	AdoptAvailability(ctx context.Context, id string) error
-	ProjectsByOSID(ctx context.Context) (map[string]tree.Holder, error)
+	ProjectsByExternalID(ctx context.Context) (map[string]tree.Holder, error)
 }
 
 // OpenStack checks a target before it is offered and reads who holds a grant
@@ -100,7 +100,7 @@ func (a *Admin) grantState(ctx context.Context, g osclient.Grant) (*GrantState, 
 	if err != nil {
 		return nil, err
 	}
-	byOS, err := a.Tree.ProjectsByOSID(ctx)
+	byOS, err := a.Tree.ProjectsByExternalID(ctx)
 	if err != nil {
 		return nil, err
 	}

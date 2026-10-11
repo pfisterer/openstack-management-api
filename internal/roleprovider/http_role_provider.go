@@ -122,7 +122,7 @@ func (h *HttpRoleProvider) SearchUsers(ctx context.Context, query string, limit 
 // relation parameter: "#" has no place in a URL path.
 func (h *HttpRoleProvider) GetGroupUsers(ctx context.Context, groupToken string) ([]string, error) {
 	recursive := true
-	group, relation := common.SplitGroupToken(groupToken)
+	group, relation := roles.SplitGroupToken(groupToken)
 	params := &roleclient.ListGroupMembersParams{Recursive: &recursive, Relation: &relation}
 
 	resp, err := h.client.ListGroupMembersWithResponse(ctx, group, params)

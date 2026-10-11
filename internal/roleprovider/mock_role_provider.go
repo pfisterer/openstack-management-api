@@ -129,5 +129,5 @@ func (m *MockRoleProvider) SearchGroups(_ context.Context, query string, limit i
 // ListRelations mirrors the role-provider-service mock setup
 // (GROUP_RELATIONS=dozent,studierende).
 func (m *MockRoleProvider) ListRelations(context.Context) ([]string, error) {
-	return []string{common.RelationMember, "dozent", "studierende"}, nil
+	return []string{roles.RelationMember, "dozent", "studierende"}, nil
 }

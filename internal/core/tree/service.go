@@ -1917,7 +1917,7 @@ func (s *Service) normalizeAuthorizedUsers(ctx context.Context, users []common.A
 		case strings.HasPrefix(token, common.GroupPrefix):
 			// "group:x#member" is spelled "group:x", so the same grant cannot
 			// appear under two names.
-			token = common.JoinGroupToken(common.SplitGroupToken(token))
+			token = roles.JoinGroupToken(roles.SplitGroupToken(token))
 			if !seenGroups[token] {
 				exists, err := s.groupTokenExists(ctx, token)
 				if err != nil {
@@ -1950,8 +1950,8 @@ func (s *Service) groupTokenExists(ctx context.Context, token string) (bool, err
 	if s.roles == nil {
 		return false, fmt.Errorf("no role provider configured")
 	}
-	token, relation := common.SplitGroupToken(token)
-	if relation != common.RelationMember {
+	token, relation := roles.SplitGroupToken(token)
+	if relation != roles.RelationMember {
 		relations, err := s.roles.ListRelations(ctx)
 		if err != nil {
 			return false, err

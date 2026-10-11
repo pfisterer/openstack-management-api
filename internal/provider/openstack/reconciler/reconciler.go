@@ -2135,9 +2135,9 @@ const relationSeparator = "--"
 // keystoneGroupName is the Keystone group a group token is provisioned as.
 // Plain groups keep the name they always had, so no existing group is renamed.
 func keystoneGroupName(prefix, token string) string {
-	group, relation := common.SplitGroupToken(token)
+	group, relation := roles.SplitGroupToken(token)
 	name := prefix + strings.TrimPrefix(group, common.GroupPrefix)
-	if relation != common.RelationMember {
+	if relation != roles.RelationMember {
 		name += relationSeparator + relation
 	}
 	return name
@@ -2154,7 +2154,7 @@ func groupTokenForKeystoneName(prefix, name string) string {
 	if i := strings.LastIndex(base, relationSeparator); i > 0 {
 		relation := base[i+len(relationSeparator):]
 		if isRelationName(relation) {
-			return common.JoinGroupToken(common.GroupPrefix+base[:i], relation)
+			return roles.JoinGroupToken(common.GroupPrefix+base[:i], relation)
 		}
 	}
 	return common.GroupPrefix + base

@@ -85,7 +85,7 @@ func NewFromConfig(cfg Config, log *zap.Logger, logger *zap.SugaredLogger) (*Ope
 	switch cfg.AuthMethod() {
 	case AuthAppCredential:
 		logger.Infow("OpenStack auth: application credential", "auth_url", cfg.AuthURL)
-		return NewOSAdminWithAppCredential(
+		return newWithAppCredential(
 			cfg.AuthURL,
 			cfg.ApplicationCredentialID,
 			cfg.ApplicationCredentialSecret,
@@ -111,7 +111,7 @@ func NewFromConfig(cfg Config, log *zap.Logger, logger *zap.SugaredLogger) (*Ope
 			"auth_url", cfg.AuthURL, "user", cfg.Username,
 			"system_scope", cfg.SystemScope, "domain", cfg.DomainName,
 			"project", cmp.Or(cfg.ProjectName, cfg.ProjectID))
-		return NewOSAdminWithPassword(cfg.AuthURL, opts, cfg.Region, cfg.Insecure, log, logger)
+		return newWithPassword(cfg.AuthURL, opts, cfg.Region, cfg.Insecure, log, logger)
 
 	default:
 		return nil, fmt.Errorf("no OpenStack credentials configured: set OS_APPLICATION_CREDENTIAL_ID/_SECRET or OS_USERNAME/OS_PASSWORD")

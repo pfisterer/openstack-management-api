@@ -205,62 +205,6 @@ func (c *OpenStackClient) SetFederationConfig(enabled bool, idpID, protocolID, d
 	c.federatedDomainID = cmp.Or(domainID, "default")
 }
 
-// NewOSAdmin creates a new OpenStack administrative client with default region.
-func NewOSAdmin(authURL, token, projectID string, logger *zap.Logger, sugaredLogger *zap.SugaredLogger) (*OpenStackClient, error) {
-	return NewOSAdminWithRegion(authURL, token, projectID, "RegionOne", false, logger, sugaredLogger)
-}
-
-// NewOSAdminWithRegion creates a new OpenStack administrative client with custom region.
-func NewOSAdminWithRegion(authURL, token, projectID, region string, insecure bool, logger *zap.Logger, sugaredLogger *zap.SugaredLogger) (*OpenStackClient, error) {
-	if region == "" {
-		region = "RegionOne"
-	}
-
-	logger, sugaredLogger = normalizeLoggers(logger, sugaredLogger)
-
-	provider, err := openstack.NewClient(authURL)
-	if err != nil {
-		return nil, fmt.Errorf("create provider client: %w", err)
-	}
-	provider.TokenID = token
-
-	if insecure {
-		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-		provider.HTTPClient = http.Client{Transport: transport}
-		sugaredLogger.Warn("TLS certificate verification disabled")
-	}
-
-	authOpts := gophercloud.AuthOptions{
-		IdentityEndpoint: authURL,
-		TokenID:          token,
-	}
-	if projectID != "" {
-		authOpts.Scope = &gophercloud.AuthScope{
-			ProjectID: projectID,
-		}
-	}
-	if err := openstack.Authenticate(provider, authOpts); err != nil {
-		return nil, fmt.Errorf("authenticate provider: %w", err)
-	}
-
-	endpointOpts := gophercloud.EndpointOpts{
-		Availability: gophercloud.AvailabilityPublic,
-		Region:       region,
-	}
-
-	client, err := buildServiceClients(provider, endpointOpts)
-	if err != nil {
-		return nil, err
-	}
-	client.region = region
-	client.logger = logger
-	client.log = sugaredLogger
-	client.authURL = authURL
-	client.insecure = insecure
-	return client, nil
-}
-
 // buildServiceClients resolves every OpenStack service this package talks to.
 //
 // One place, because there are two ways in — an application credential and a
@@ -308,8 +252,8 @@ func buildServiceClients(provider *gophercloud.ProviderClient, eo gophercloud.En
 	}, nil
 }
 
-// NewOSAdminWithAppCredential creates a new OpenStack admin client using application credentials.
-func NewOSAdminWithAppCredential(
+// newWithAppCredential creates a new OpenStack admin client using application credentials.
+func newWithAppCredential(
 	authURL, appCredID, appCredSecret, projectID, region string,
 	insecure bool,
 	logger *zap.Logger,
@@ -343,11 +287,11 @@ type PasswordAuthOpts struct {
 	ProjectDomainName string
 }
 
-// NewOSAdminWithPassword creates a client authenticating a service user with a
+// newWithPassword creates a client authenticating a service user with a
 // password. Unlike an application credential this can request system or domain
 // scope, which is what clouds enforcing the modern RBAC defaults require for
 // project creation and cross-project role assignments.
-func NewOSAdminWithPassword(
+func newWithPassword(
 	authURL string,
 	opts PasswordAuthOpts,
 	region string,

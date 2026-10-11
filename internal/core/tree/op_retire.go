@@ -28,7 +28,7 @@ func (s *Service) ReleaseNode(id string, req ReleaseNodeRequest, actor model.Act
 	if current.Status != model.StatusApproved {
 		return model.Node{}, fmt.Errorf("%w: cannot release node in status %q", common.ErrConflict, current.Status)
 	}
-	if req.Delete && !s.deletionAllowed {
+	if req.Delete && !s.deletable(*current) {
 		return model.Node{}, fmt.Errorf("%w: projects cannot be deleted here", common.ErrConflict)
 	}
 	if err := s.authorizeRetirement(ctx, current, userTokens); err != nil {
@@ -61,15 +61,15 @@ func (s *Service) ReleaseNode(id string, req ReleaseNodeRequest, actor model.Act
 // reconciler is configured to act on it (SetDeletionAllowed), and to whoever may
 // release: the owner, the project's admins and the managers above it.
 func (s *Service) RequestDeletion(id string, actor model.Actor, userTokens common.TokenList) (model.Node, error) {
-	if !s.deletionAllowed {
-		return model.Node{}, fmt.Errorf("%w: projects cannot be deleted here", common.ErrConflict)
-	}
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
 	current, err := s.loadNode(ctx, id)
 	if err != nil {
 		return model.Node{}, err
+	}
+	if !s.deletable(*current) {
+		return model.Node{}, fmt.Errorf("%w: projects cannot be deleted here", common.ErrConflict)
 	}
 	if !current.IsLeaf() || !slices.Contains(model.RetiredStatuses, current.Status) {
 		return model.Node{}, fmt.Errorf("%w: only released or archived projects can be deleted", common.ErrConflict)
@@ -115,10 +115,35 @@ func (s *Service) authorizeRetirement(ctx context.Context, current *model.Node, 
 	return nil
 }
 
-// SetDeletionAllowed says whether released and archived projects may be marked
-// for deletion. Set at startup from the reconciler's configuration: a mark
-// nobody acts on would leave a project "being deleted" for ever.
-func (s *Service) SetDeletionAllowed(allowed bool) { s.deletionAllowed = allowed }
+// SetDeletingProviders names the providers that act on a deletion request,
+// set at startup from their configuration: a mark nobody acts on would leave a
+// project "being deleted" for ever.
+func (s *Service) SetDeletingProviders(providers ...string) { s.deleting = providers }
+
+// deletable: every provider that carries the leaf out — or would, by its
+// resources — deletes on request. A leaf no provider carries out may be marked
+// wherever any provider deletes.
+func (s *Service) deletable(n model.Node) bool {
+	concerned := map[string]bool{}
+	for p := range n.Bindings {
+		concerned[p] = true
+	}
+	limit := n.EffectiveLimit()
+	for _, r := range s.resources() {
+		if r.Provider != "" && (limit[r.ID] > 0 || limit[r.ID] == common.UnlimitedQuota) {
+			concerned[r.Provider] = true
+		}
+	}
+	if len(concerned) == 0 {
+		return len(s.deleting) > 0
+	}
+	for p := range concerned {
+		if !slices.Contains(s.deleting, p) {
+			return false
+		}
+	}
+	return true
+}
 
 // DeleteNode removes a budget subtree. Refused while any node in the subtree is
 // still pending, awaiting a change decision, active, or an unpromoted import —

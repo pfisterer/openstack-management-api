@@ -197,7 +197,14 @@ func RunApplication() {
 	}, logger)
 	// A deletion request is only accepted where a reconciler will act on it.
 	treeSvc.UseCatalog(allResources)
-	treeSvc.SetDeletionAllowed(config.Reconciler.Enabled && reconciler.DeletesOnRequest(config.Reconciler.ReleasedDelete))
+	var deleting []string
+	if config.Reconciler.Enabled && reconciler.DeletesOnRequest(config.Reconciler.ReleasedDelete) {
+		deleting = append(deleting, osclient.Provider)
+	}
+	if config.AIaaS.URL != "" {
+		deleting = append(deleting, aiaas.Provider)
+	}
+	treeSvc.SetDeletingProviders(deleting...)
 
 	// Bootstrap: optional mock seed into an empty store, then ensure the
 	// structural root/unassigned nodes (root admin scope is synced from config).

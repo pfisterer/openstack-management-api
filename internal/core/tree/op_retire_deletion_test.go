@@ -44,7 +44,7 @@ func TestRequestDeletion(t *testing.T) {
 	if _, err := svc.ReleaseNode(p.ID, tree.ReleaseNodeRequest{Delete: true}, model.UIActor("owner@x"), ownerTokens); !errors.Is(err, common.ErrConflict) {
 		t.Fatalf("release with delete while switched off: %v, want a conflict", err)
 	}
-	svc.SetDeletionAllowed(true)
+	svc.SetDeletingProviders("openstack")
 
 	// Not released yet.
 	if _, err := svc.RequestDeletion(p.ID, model.UIActor("owner@x"), ownerTokens); !errors.Is(err, common.ErrConflict) {

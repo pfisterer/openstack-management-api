@@ -93,3 +93,26 @@ func TestChanges_EveryProviderHears(t *testing.T) {
 		}
 	}
 }
+
+// A deletion request is accepted only where every provider that carries the project out acts on it.
+func TestDeletable_PerProvider(t *testing.T) {
+	log := zap.NewNop().Sugar()
+	svc := NewService(nodestore.NewInMemoryStore(log), nil, []common.Resource{
+		{ID: "cores", Provider: "openstack"}, {ID: "llm-mtokens", Provider: "aiaas", Kind: common.KindWindow, Window: "30d"},
+	}, nil, time.Second, 0, Accounting{}, log)
+	svc.SetDeletingProviders("aiaas")
+	ai := model.Node{Limit: common.ProjectQuota{"llm-mtokens": 10}}
+	both := model.Node{Limit: common.ProjectQuota{"cores": 2, "llm-mtokens": 10}}
+	boundOS := model.Node{Bindings: map[string]model.Binding{"openstack": {ExternalID: "os-1"}}}
+	if !svc.deletable(ai) || svc.deletable(both) || svc.deletable(boundOS) {
+		t.Errorf("only aiaas deletes: ai %v, both %v, bound to openstack %v", svc.deletable(ai), svc.deletable(both), svc.deletable(boundOS))
+	}
+	svc.SetDeletingProviders("aiaas", "openstack")
+	if !svc.deletable(both) || !svc.deletable(model.Node{}) {
+		t.Error("with both deleting, both kinds and an empty project may be deleted")
+	}
+	svc.SetDeletingProviders()
+	if svc.deletable(model.Node{}) {
+		t.Error("nobody deletes: nothing may be marked")
+	}
+}

@@ -60,7 +60,10 @@ type Service struct {
 	// deletionAllowed says whether a released or archived leaf may be marked
 	// for deletion — only where a reconciler is configured to act on it (see
 	// SetDeletionAllowed).
-	deletionAllowed bool
+	// deleting are the providers that act on a deletion request; a leaf may be
+	// marked only when every provider carrying it out is among them (see
+	// SetDeletingProviders).
+	deleting []string
 
 	// approvalMu serializes the capacity check-then-write critical sections
 	// (create with direct/auto approval, approve, reparent, promote) so concurrent

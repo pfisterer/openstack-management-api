@@ -3,6 +3,7 @@ package catalog_test
 import (
 	"context"
 	"errors"
+	"github.com/pfisterer/openstack-management-api/internal/dev"
 	"testing"
 	"time"
 
@@ -10,7 +11,6 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/catalog"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
-	"github.com/pfisterer/openstack-management-api/internal/roleprovider"
 	"go.uber.org/zap"
 )
 
@@ -47,7 +47,7 @@ func setup(t *testing.T) fixture {
 		t.Fatal(err)
 	}
 	store := tree.NewInMemoryStore(log)
-	svc := tree.NewService(store, roleprovider.NewMockRoleProvider(), osclient.CoreResources(configured), common.TokenList{"group:root"},
+	svc := tree.NewService(store, dev.NewMockRoleProvider(), osclient.CoreResources(configured), common.TokenList{"group:root"},
 		5*time.Second, common.DefaultMaxAuthorizedUsers, tree.Accounting{}, log)
 	svc.UseCatalog(cat)
 	if err := svc.Bootstrap(ctx, nil, nil); err != nil {

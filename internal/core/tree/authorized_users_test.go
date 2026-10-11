@@ -7,7 +7,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
-	"github.com/pfisterer/openstack-management-api/internal/mockdata"
+	"github.com/pfisterer/openstack-management-api/internal/dev"
 )
 
 // budgetForMembers creates a budget the caller may request projects under.
@@ -50,7 +50,7 @@ func TestAuthorizedUsersAreValidated(t *testing.T) {
 	}{
 		{
 			name:  "a known group is accepted",
-			users: []common.AuthorizedUser{{Token: mockdata.DeptCSFaculty, OpenstackRole: "member"}},
+			users: []common.AuthorizedUser{{Token: dev.DeptCSFaculty, OpenstackRole: "member"}},
 		},
 		{
 			name:  "a plain user is accepted and lower-cased",
@@ -58,11 +58,11 @@ func TestAuthorizedUsersAreValidated(t *testing.T) {
 		},
 		{
 			name:  "a relation on a known group is accepted",
-			users: []common.AuthorizedUser{{Token: mockdata.CourseDozentGroup, OpenstackRole: "member"}},
+			users: []common.AuthorizedUser{{Token: dev.CourseDozentGroup, OpenstackRole: "member"}},
 		},
 		{
 			name:    "an unknown relation on a known group is refused",
-			users:   []common.AuthorizedUser{{Token: mockdata.CourseGroup + "#tutor", OpenstackRole: "member"}},
+			users:   []common.AuthorizedUser{{Token: dev.CourseGroup + "#tutor", OpenstackRole: "member"}},
 			wantErr: "unknown group",
 		},
 		{

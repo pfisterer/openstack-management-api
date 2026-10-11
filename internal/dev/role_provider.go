@@ -1,4 +1,4 @@
-package roleprovider
+package dev
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/mockdata"
 )
 
 type MockRoleProvider struct{}
@@ -19,7 +18,7 @@ func NewMockRoleProvider() *MockRoleProvider {
 	return &MockRoleProvider{}
 }
 
-// GetUserTokens returns mock tokens for a user based on mockdata identities.
+// GetUserTokens returns mock tokens for a user based on the seed's identities.
 func (m *MockRoleProvider) GetUserTokens(ctx context.Context, claims *common.UserClaims) (common.TokenList, error) {
 	_ = ctx
 	if claims == nil {
@@ -29,8 +28,8 @@ func (m *MockRoleProvider) GetUserTokens(ctx context.Context, claims *common.Use
 	if userEmail == "" {
 		return common.TokenList{}, nil
 	}
-	// Use mockdata identities for token lookup
-	identities, _ := mockdata.DefaultMockTreeState()
+	// Use the seed's identities for token lookup
+	identities, _ := DefaultMockTreeState()
 	for _, ident := range identities {
 		if strings.EqualFold(ident.Email, userEmail) {
 			return ident.Tokens, nil
@@ -42,7 +41,7 @@ func (m *MockRoleProvider) GetUserTokens(ctx context.Context, claims *common.Use
 // SearchUsers matches mock identities on their email address only, like the real
 // provider — never on the label, so dev behaves the same way as production.
 func (m *MockRoleProvider) SearchUsers(_ context.Context, query string, limit int) ([]string, error) {
-	identities, _ := mockdata.DefaultMockTreeState()
+	identities, _ := DefaultMockTreeState()
 	needle := strings.ToLower(strings.TrimSpace(query))
 	out := []string{}
 	for _, ident := range identities {
@@ -63,7 +62,7 @@ func (m *MockRoleProvider) SearchUsers(_ context.Context, query string, limit in
 
 // GetGroupUsers returns the emails of all mock identities that carry the given group token.
 func (m *MockRoleProvider) GetGroupUsers(_ context.Context, groupToken string) ([]string, error) {
-	identities, _ := mockdata.DefaultMockTreeState()
+	identities, _ := DefaultMockTreeState()
 	var emails []string
 	for _, ident := range identities {
 		for _, token := range ident.Tokens {
@@ -80,25 +79,25 @@ func (m *MockRoleProvider) GetGroupUsers(_ context.Context, groupToken string) (
 // display names the role-provider-service seeds, so label search behaves the
 // same in mock mode as against the real provider.
 var mockGroupLabels = map[string]string{
-	mockdata.RootGroup:      "University Root",
-	mockdata.DeptCSAdmin:    "Computer Science Dept",
-	mockdata.DeptCSFaculty:  "CS Faculty Pool",
-	mockdata.DeptBioGroup:   "Biology Dept",
-	mockdata.CSStudentGroup: "CS Students",
-	mockdata.CourseGroup:    "WWI23SEB",
+	RootGroup:      "University Root",
+	DeptCSAdmin:    "Computer Science Dept",
+	DeptCSFaculty:  "CS Faculty Pool",
+	DeptBioGroup:   "Biology Dept",
+	CSStudentGroup: "CS Students",
+	CourseGroup:    "WWI23SEB",
 }
 
-// SearchGroups returns mock groups from mockdata identities, matching the query
+// SearchGroups returns mock groups from the seed's identities, matching the query
 // against the token and the label, like the real provider does against group ID,
 // display name and description.
 func (m *MockRoleProvider) SearchGroups(_ context.Context, query string, limit int) ([]roles.GroupSummary, error) {
-	identities, _ := mockdata.DefaultMockTreeState()
+	identities, _ := DefaultMockTreeState()
 	groupSet := map[string]struct{}{}
 	for _, ident := range identities {
 		for _, token := range ident.Tokens {
 			// Relation tokens name a role in a group, not a group of their own —
 			// the real provider's search returns groups only.
-			if strings.HasPrefix(token, groupPrefix) && !strings.Contains(token, "#") {
+			if strings.HasPrefix(token, common.GroupPrefix) && !strings.Contains(token, "#") {
 				groupSet[token] = struct{}{}
 			}
 		}

@@ -12,9 +12,8 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
-	"github.com/pfisterer/openstack-management-api/internal/mockdata"
+	"github.com/pfisterer/openstack-management-api/internal/dev"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
-	"github.com/pfisterer/openstack-management-api/internal/roleprovider"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 	"go.uber.org/zap"
 )
@@ -78,7 +77,7 @@ func setupRouterCORS(t *testing.T, corsOrigins ...string) http.Handler {
 func corsRouter(t *testing.T, devMode bool, corsOrigins ...string) http.Handler {
 	t.Helper()
 	store, sugar := newTestStore(t)
-	svc := tree.NewService(store, roleprovider.NewMockRoleProvider(), quotaResources,
+	svc := tree.NewService(store, dev.NewMockRoleProvider(), quotaResources,
 		rootAdminTokens, 10*time.Second, common.DefaultMaxAuthorizedUsers, testAccounting, sugar)
 	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
 		t.Fatalf("bootstrap tree: %v", err)
@@ -88,7 +87,7 @@ func corsRouter(t *testing.T, devMode bool, corsOrigins ...string) http.Handler 
 		Log:                sugar,
 		API:                webserver.APIConfig{Service: svc, Identity: testIdentity(store, sugar), RoleSwitchGroups: rootAdminTokens},
 		RootAdminTokens:    rootAdminTokens,
-		AuthMiddleware:     identity.DummyAuthMiddleware(),
+		AuthMiddleware:     dev.DummyAuthMiddleware(),
 		CORSAllowedOrigins: corsOrigins,
 	})
 }
@@ -98,7 +97,7 @@ func corsRouter(t *testing.T, devMode bool, corsOrigins ...string) http.Handler 
 func setupRouterWith(t *testing.T, rec webserver.ReconcilerAPI) http.Handler {
 	t.Helper()
 	store, sugar := newTestStore(t)
-	ids, nodes := mockdata.DefaultMockTreeState()
+	ids, nodes := dev.DefaultMockTreeState()
 	if err := store.Seed(context.Background(), ids, nodes); err != nil {
 		t.Fatalf("seed mock state: %v", err)
 	}
@@ -117,7 +116,7 @@ func setupRouterWith(t *testing.T, rec webserver.ReconcilerAPI) http.Handler {
 func setupRouterSeeded(t *testing.T, nodes []tree.Node, acc tree.Accounting) http.Handler {
 	t.Helper()
 	store, sugar := newTestStore(t)
-	ids, _ := mockdata.DefaultMockTreeState()
+	ids, _ := dev.DefaultMockTreeState()
 	if err := store.Seed(context.Background(), ids, nodes); err != nil {
 		t.Fatalf("seed scenario state: %v", err)
 	}
@@ -138,7 +137,7 @@ func routerFromStore(t *testing.T, sugar *zap.SugaredLogger, store tree.Store, r
 	t.Helper()
 	svc := tree.NewService(
 		store,
-		roleprovider.NewMockRoleProvider(),
+		dev.NewMockRoleProvider(),
 		quotaResources,
 		rootAdminTokens,
 		10*time.Second,
@@ -165,7 +164,7 @@ func routerFromStore(t *testing.T, sugar *zap.SugaredLogger, store tree.Store, r
 		},
 		Reconciler:         rec,
 		RootAdminTokens:    rootAdminTokens,
-		AuthMiddleware:     identity.DummyAuthMiddleware(),
+		AuthMiddleware:     dev.DummyAuthMiddleware(),
 		CORSAllowedOrigins: corsOrigins,
 	})
 }
@@ -238,5 +237,5 @@ func nodeIDs(ns []tree.Node) []string {
 // testIdentity is who callers are, over the same store and mock role provider
 // as the tree in these tests.
 func testIdentity(store tree.Store, sugar *zap.SugaredLogger) *identity.Service {
-	return identity.NewService(store, roleprovider.NewMockRoleProvider(), 10*time.Second, sugar)
+	return identity.NewService(store, dev.NewMockRoleProvider(), 10*time.Second, sugar)
 }

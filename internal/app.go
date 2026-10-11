@@ -19,7 +19,7 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"github.com/pfisterer/openstack-management-api/internal/core/usage"
-	"github.com/pfisterer/openstack-management-api/internal/mockdata"
+	"github.com/pfisterer/openstack-management-api/internal/dev"
 	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/catalog"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/reconciler"
@@ -99,7 +99,7 @@ func configureAuthMiddleware(cfg *WebServerConfig, tokenLookup identity.TokenLoo
 
 	if cfg.DummyAuth {
 		log.Warn("DummyAuth enabled: using DummyAuthMiddleware (no SSO, user=group:uni_root)")
-		authMiddleware = identity.DummyAuthMiddleware()
+		authMiddleware = dev.DummyAuthMiddleware()
 	} else {
 
 		// Create OIDC Auth Verifier. With OIDC_JWKS_URL configured this makes no
@@ -216,7 +216,7 @@ func RunApplication() {
 		// NOT for production: it silently grants fake group memberships. Warn so an
 		// accidental selection is visible in the logs (production sets ROLE_PROVIDER=http).
 		logger.Warn("Using MockRoleProvider (built-in demo identities) — do not use in production")
-		roleProvider = roleprovider.NewMockRoleProvider()
+		roleProvider = dev.NewMockRoleProvider()
 	default:
 		// Fail loud on a typo (e.g. "htpp") instead of silently falling back to the
 		// mock, which in production would run with wrong authorization data.
@@ -252,7 +252,7 @@ func RunApplication() {
 	var mockIdentities []common.Identity
 	var mockNodes []tree.Node
 	if config.Storage.AddMockData {
-		mockIdentities, mockNodes = mockdata.DefaultMockTreeState()
+		mockIdentities, mockNodes = dev.DefaultMockTreeState()
 	}
 	if err := treeSvc.Bootstrap(context.Background(), mockIdentities, mockNodes); err != nil {
 		logger.Fatal("Failed to bootstrap resource tree", zap.Error(err))
@@ -267,7 +267,7 @@ func RunApplication() {
 	// Add dummy dev users from mock data if dummy auth is enabled
 	dummyDevUsers := []string{}
 	if config.WebServer.DummyAuth {
-		identities, _ := mockdata.DefaultMockTreeState()
+		identities, _ := dev.DefaultMockTreeState()
 		for _, ident := range identities {
 			dummyDevUsers = append(dummyDevUsers, ident.Email)
 		}

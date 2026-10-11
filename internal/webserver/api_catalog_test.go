@@ -3,7 +3,7 @@ package webserver_test
 import (
 	"context"
 	"encoding/json"
-	"github.com/pfisterer/openstack-management-api/internal/identity"
+	"github.com/pfisterer/openstack-management-api/internal/dev"
 	"net/http"
 	"slices"
 	"testing"
@@ -12,7 +12,6 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/catalog"
-	"github.com/pfisterer/openstack-management-api/internal/roleprovider"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 )
 
@@ -23,7 +22,7 @@ func catalogRouter(t *testing.T) http.Handler {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := tree.NewService(store, roleprovider.NewMockRoleProvider(), quotaResources,
+	svc := tree.NewService(store, dev.NewMockRoleProvider(), quotaResources,
 		rootAdminTokens, 10*time.Second, common.DefaultMaxAuthorizedUsers, testAccounting, sugar)
 	svc.UseCatalog(cat)
 	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
@@ -37,7 +36,7 @@ func catalogRouter(t *testing.T) http.Handler {
 			RoleSwitchGroups: rootAdminTokens,
 		},
 		RootAdminTokens: rootAdminTokens,
-		AuthMiddleware:  identity.DummyAuthMiddleware(),
+		AuthMiddleware:  dev.DummyAuthMiddleware(),
 	})
 }
 

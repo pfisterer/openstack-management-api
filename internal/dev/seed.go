@@ -1,7 +1,10 @@
-// Package mockdata provides the development/testing seed for the tree model:
-// a small university with a root budget, department budgets, a student
-// auto-approve budget and example leaves in every lifecycle state.
-package mockdata
+// Package dev is everything that exists only for development and tests: the
+// seed of the tree (a small university with a root budget, department budgets,
+// a student auto-approve budget and example leaves in every lifecycle state),
+// a role provider answering from that seed, and the dummy authentication that
+// trusts a header. Nothing here may run in production; the dummy auth is
+// refused at startup outside API_MODE=development.
+package dev
 
 import (
 	"time"

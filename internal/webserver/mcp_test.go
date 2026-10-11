@@ -14,8 +14,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
-	"github.com/pfisterer/openstack-management-api/internal/mockdata"
-	"github.com/pfisterer/openstack-management-api/internal/roleprovider"
+	"github.com/pfisterer/openstack-management-api/internal/dev"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 )
 
@@ -31,11 +30,11 @@ func mcpTestServer(t *testing.T) *httptest.Server {
 func mcpTestServerWithService(t *testing.T) (*httptest.Server, *tree.Service) {
 	t.Helper()
 	store, sugar := newTestStore(t)
-	ids, nodes := mockdata.DefaultMockTreeState()
+	ids, nodes := dev.DefaultMockTreeState()
 	if err := store.Seed(context.Background(), ids, nodes); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	svc := tree.NewService(store, roleprovider.NewMockRoleProvider(), quotaResources,
+	svc := tree.NewService(store, dev.NewMockRoleProvider(), quotaResources,
 		rootAdminTokens, 10*time.Second, common.DefaultMaxAuthorizedUsers, testAccounting, sugar)
 	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
 		t.Fatalf("bootstrap: %v", err)

@@ -3,13 +3,13 @@ package tree_test
 import (
 	"context"
 	"errors"
+	"github.com/pfisterer/openstack-management-api/internal/dev"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
-	"github.com/pfisterer/openstack-management-api/internal/roleprovider"
 	"go.uber.org/zap"
 )
 
@@ -38,7 +38,7 @@ func newAllocationFixture(t *testing.T) allocationFixture {
 	t.Helper()
 	log := zap.NewNop().Sugar()
 	store := tree.NewInMemoryStore(log)
-	svc := tree.NewService(store, roleprovider.NewMockRoleProvider(), allocationResources,
+	svc := tree.NewService(store, dev.NewMockRoleProvider(), allocationResources,
 		common.TokenList{"group:root"}, 5*time.Second, common.DefaultMaxAuthorizedUsers, testAccounting, log)
 	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
 		t.Fatalf("bootstrap: %v", err)

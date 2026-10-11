@@ -24,20 +24,19 @@ func (f fakeTagReader) ExtractResourceIDFromTags(tags []string) string {
 }
 
 // deletedStore records what the recovery removed, so a test can tell "kept" from
-// "deleted" without a database.
+// "deleted" without a database. It has no nodes to check the guards against, so
+// every guarded delete counts as allowed.
 type deletedStore struct {
-	ReconcilerStore
+	TreeSync
 	deleted []string
 }
 
-func (s *deletedStore) DeleteNodes(_ context.Context, ids []string) error {
-	s.deleted = append(s.deleted, ids...)
-	return nil
+func (s *deletedStore) RemoveImport(_ context.Context, id string) (bool, error) {
+	s.deleted = append(s.deleted, id)
+	return true, nil
 }
 
-// DeleteNodeIf records like DeleteNodes: this fake has no nodes to check the
-// predicate against, so every guarded delete counts as allowed.
-func (s *deletedStore) DeleteNodeIf(_ context.Context, id string, _ func(n tree.Node) bool) (bool, error) {
+func (s *deletedStore) RemoveRetired(_ context.Context, id string) (bool, error) {
 	s.deleted = append(s.deleted, id)
 	return true, nil
 }
@@ -124,11 +123,11 @@ func TestChooseRecoverableProject(t *testing.T) {
 // newRecoveryReconciler builds a reconciler whose OpenStack side is never
 // touched: dry-run skips the tag write, which is the only call that would need a
 // live client.
-func newRecoveryReconciler(store ReconcilerStore, cfg Config) *Reconciler {
+func newRecoveryReconciler(nodes TreeSync, cfg Config) *Reconciler {
 	cfg.DryRun = true
 	client := &osclient.OpenStackClient{}
 	client.SetTagConfig("managed", testTagPrefix)
-	return &Reconciler{store: store, osClient: client, cfg: cfg, log: zap.NewNop().Sugar()}
+	return &Reconciler{nodes: nodes, osClient: client, cfg: cfg, log: zap.NewNop().Sugar()}
 }
 
 // The recovered project must disappear from the import phase's view, or the same

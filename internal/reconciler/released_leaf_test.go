@@ -9,9 +9,9 @@ import (
 	"go.uber.org/zap"
 )
 
-func releasedTestReconciler(t *testing.T, store ReconcilerStore, cfg Config) *Reconciler {
+func releasedTestReconciler(t *testing.T, nodes TreeSync, cfg Config) *Reconciler {
 	t.Helper()
-	return &Reconciler{store: store, cfg: cfg, log: zap.NewNop().Sugar()}
+	return &Reconciler{nodes: nodes, cfg: cfg, log: zap.NewNop().Sugar()}
 }
 
 // The case the change exists for: the project is no longer in the reconciler's

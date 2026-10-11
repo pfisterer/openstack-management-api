@@ -318,7 +318,7 @@ func RunApplication() {
 				ManagedProjectTag:        config.Reconciler.ManagedProjectTag,
 				StatusTagPrefix:          config.Reconciler.StatusTagPrefix,
 			}
-			rec := reconciler.New(nodeStore, osClient, reconcilerCfg, config.ProjectDefinitions, roleProvider, logger)
+			rec := reconciler.New(tree.NewProviderSync(nodeStore), osClient, reconcilerCfg, config.ProjectDefinitions, roleProvider, logger)
 			rec.UseCatalog(resourceCatalog)
 			if config.Reconciler.UsageEnabled {
 				collector := usage.NewCollector(usageStore, nodeStore, osClient, config.ProjectDefinitions, logger)

@@ -18,7 +18,7 @@ func staleWriteReconciler(t *testing.T) (*Reconciler, *tree.InMemoryStore) {
 	t.Helper()
 	log := zap.NewNop().Sugar()
 	store := tree.NewInMemoryStore(log)
-	return &Reconciler{store: store, log: log}, store
+	return &Reconciler{nodes: tree.NewProviderSync(store), log: log}, store
 }
 
 func TestOSSyncStateDoesNotRevertAChangeMadeDuringThePass(t *testing.T) {
@@ -37,7 +37,7 @@ func TestOSSyncStateDoesNotRevertAChangeMadeDuringThePass(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r.persistOSSyncState(ctx, loaded.ID, "os-1", &osMeasurement{overcommitted: true, inUse: common.ProjectQuota{"cores": 3}})
+	r.persistOSSyncState(ctx, loaded.ID, "os-1", &tree.Observation{Overcommitted: true, InUse: common.ProjectQuota{"cores": 3}})
 
 	got, _ := store.GetNode(ctx, "p_1")
 	if got.Status != tree.StatusChangePending || got.Pending == nil || got.Pending.Limit == nil || (*got.Pending.Limit)["cores"] != 8 {

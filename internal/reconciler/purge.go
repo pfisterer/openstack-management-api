@@ -198,35 +198,22 @@ func (r *Reconciler) purgeRetiredProject(ctx context.Context, osProject osclient
 	res.projectsDeleted++
 	// The project is gone; the leaf goes with it. Should this fail, the next
 	// pass finds the project missing and removes the leaf there.
-	if _, err := r.store.DeleteNodeIf(ctx, leaf.ID, func(n tree.Node) bool { return tree.IsRetiredStatus(n.Status) }); err != nil {
+	if _, err := r.nodes.RemoveRetired(ctx, leaf.ID); err != nil {
 		log.Warnw("Purge: project deleted, but the leaf could not be removed", "error", err)
 		return
 	}
 	res.releasedLeavesRemoved++
 }
 
-// recordPurgeProgress writes where emptying the project stands onto its leaf.
-// Only on a change — a pass every 30 s that rewrites the same state would be
-// a write every 30 s for nothing.
+// recordPurgeProgress reports where emptying the project stands; the tree
+// keeps the running total and skips a report that changes nothing.
 func (r *Reconciler) recordPurgeProgress(ctx context.Context, leafID string, out purgeResult, log *zap.SugaredLogger) {
 	steps := PurgeSteps(r.cfg.PurgeSkipStages)
-	index := slices.Index(steps, out.stage) + 1
-	if _, err := r.store.UpdateNode(ctx, leafID, func(n *tree.Node) error {
-		prev := n.Purge
-		removed := out.removed
-		if prev != nil {
-			removed += prev.Removed
-		}
-		if prev != nil && prev.Step == out.stage && prev.Blocked == out.blocked && prev.Detail == out.detail && out.removed == 0 {
-			return tree.ErrSkipUpdate
-		}
-		n.Purge = &tree.PurgeProgress{
-			Step: out.stage, Index: index, Steps: len(steps),
-			Blocked: out.blocked, Detail: out.detail,
-			Removed: removed, UpdatedAt: time.Now().UTC().Format(time.RFC3339),
-		}
-		return nil
-	}); err != nil {
+	report := tree.PurgeReport{
+		Step: out.stage, Index: slices.Index(steps, out.stage) + 1, Steps: len(steps),
+		Blocked: out.blocked, Detail: out.detail, Removed: out.removed,
+	}
+	if err := r.nodes.RecordPurgeProgress(ctx, leafID, report); err != nil {
 		log.Warnw("Purge: could not record the progress", "error", err)
 	}
 }

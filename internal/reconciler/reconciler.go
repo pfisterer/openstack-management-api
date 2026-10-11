@@ -44,18 +44,22 @@ import (
 	"go.uber.org/zap"
 )
 
-// ReconcilerStore is the minimal storage interface the reconciler requires.
-// It is a structural subset of tree.Store, so any tree store satisfies it.
-type ReconcilerStore interface {
-	ListNodes(ctx context.Context, q tree.NodeQuery, limit, offset int) ([]tree.Node, error)
-	UpsertNode(ctx context.Context, n tree.Node) error
-	DeleteNodes(ctx context.Context, ids []string) error
-	// Every write to a node that existed when the pass started goes through
-	// these two: the pass loads its nodes once and then spends seconds per leaf
-	// in OpenStack, and writing that early copy back would undo whatever a user
-	// changed meanwhile — a change request, an approval, a release.
-	UpdateNode(ctx context.Context, id string, fn func(n *tree.Node) error) (bool, error)
-	DeleteNodeIf(ctx context.Context, id string, pred func(n tree.Node) bool) (bool, error)
+// TreeSync is what the reconciler may do with the tree: read what is wanted,
+// and report what it found in OpenStack. It is the method set of
+// *tree.ProviderSync, which owns the rules for how a report lands on a node;
+// the reconciler only decides what it observed.
+type TreeSync interface {
+	Leaves(ctx context.Context, statuses []string) ([]tree.Node, error)
+	Budgets(ctx context.Context) ([]tree.Node, error)
+	RecordExternalID(ctx context.Context, leafID, externalID string) error
+	RecordObservation(ctx context.Context, leafID, externalID string, o *tree.Observation) error
+	MarkArchived(ctx context.Context, leafID string) error
+	RecordPurgeProgress(ctx context.Context, leafID string, r tree.PurgeReport) error
+	RemoveRetired(ctx context.Context, leafID string) (bool, error)
+	RemoveImport(ctx context.Context, leafID string) (bool, error)
+	AddImport(ctx context.Context, leaf tree.Node) error
+	RefreshImport(ctx context.Context, leaf tree.Node, o *tree.Observation) error
+	Promote(ctx context.Context, leafID string, current []common.AuthorizedUser) (bool, error)
 }
 
 // Config holds all tunables for the reconciler.
@@ -178,7 +182,7 @@ type Status struct {
 
 // Reconciler orchestrates the two-way sync.
 type Reconciler struct {
-	store    ReconcilerStore
+	nodes    TreeSync
 	osClient *osclient.OpenStackClient
 	cfg      Config
 	// catalog is read through resources(): root admins add and withdraw
@@ -250,7 +254,7 @@ func DeletesOnRequest(mode string) bool {
 // roleProvider is optional (may be nil); when set it is used to resolve group memberships
 // so Keystone groups can be populated during reconciliation.
 func New(
-	store ReconcilerStore,
+	nodes TreeSync,
 	osClient *osclient.OpenStackClient,
 	cfg Config,
 	managedProjects []common.ManagedProject,
@@ -265,7 +269,7 @@ func New(
 	}
 	problems := &problemRecorder{}
 	return &Reconciler{
-		store:        store,
+		nodes:        nodes,
 		osClient:     osClient,
 		cfg:          cfg,
 		catalog:      common.StaticCatalog(managedProjects),
@@ -421,10 +425,7 @@ type reconcileResult struct {
 
 // listLeaves loads project leaves in the given statuses.
 func (r *Reconciler) listLeaves(ctx context.Context, statuses []string) ([]tree.Node, error) {
-	return r.store.ListNodes(ctx, tree.NodeQuery{
-		Kinds:    []string{tree.KindProject},
-		Statuses: statuses,
-	}, 0, 0)
+	return r.nodes.Leaves(ctx, statuses)
 }
 
 // Reconcile performs one full two-way sync and returns a summary.
@@ -464,7 +465,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 	}
 
 	// Every budget, so a project's description can name its path in the tree.
-	budgets, err := r.store.ListNodes(ctx, tree.NodeQuery{Kinds: []string{tree.KindBudget}}, 0, 0)
+	budgets, err := r.nodes.Budgets(ctx)
 	if err != nil {
 		return res, fmt.Errorf("load budgets: %w", err)
 	}
@@ -592,9 +593,9 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 				continue
 			}
 			if m != nil {
-				m.grantUse = projectGrantUse(r.resources(), grantUse, osProject.ID)
+				m.GrantUse = projectGrantUse(r.resources(), grantUse, osProject.ID)
 			}
-			if applyOSSyncState(&leaf, osProject.ID, m) && !r.cfg.DryRun {
+			if tree.ApplyObservation(&leaf, osProject.ID, m) && !r.cfg.DryRun {
 				r.persistOSSyncState(ctx, leaf.ID, osProject.ID, m)
 			}
 			r.syncMembers(leaf, osProject.ID)
@@ -711,7 +712,7 @@ func (r *Reconciler) removeReleasedLeavesWithoutProject(
 			"node_id", leaf.ID, "name", leaf.Name, "os_project_id", leaf.OSProjectID,
 			"dry_run", r.cfg.DryRun)
 		if !r.cfg.DryRun {
-			deleted, err := r.store.DeleteNodeIf(ctx, leaf.ID, func(n tree.Node) bool { return tree.IsRetiredStatus(n.Status) })
+			deleted, err := r.nodes.RemoveRetired(ctx, leaf.ID)
 			if err != nil {
 				r.log.Warnw("Failed to remove released leaf",
 					"node_id", leaf.ID, "error", err)
@@ -813,7 +814,7 @@ func (r *Reconciler) recoverUntaggedProject(
 		r.log.Infow("Removing the imported leaf that shadowed a managed project",
 			"node_id", leaf.ID, "shadow_node_id", shadow.ID, "os_project_id", osProject.ID)
 		if !r.cfg.DryRun {
-			deleted, err := r.store.DeleteNodeIf(ctx, shadow.ID, isStillImported)
+			deleted, err := r.nodes.RemoveImport(ctx, shadow.ID)
 			if err != nil {
 				r.log.Warnw("Failed to delete the shadowing imported leaf",
 					"shadow_node_id", shadow.ID, "error", err)
@@ -826,17 +827,6 @@ func (r *Reconciler) recoverUntaggedProject(
 	}
 
 	return osProject, true
-}
-
-// removeFlag returns a new slice with all occurrences of flag removed.
-func removeFlag(flags []string, flag string) []string {
-	out := make([]string, 0, len(flags))
-	for _, f := range flags {
-		if f != flag {
-			out = append(out, f)
-		}
-	}
-	return out
 }
 
 // promoteImportedLeaves processes imported leaves that carry the
@@ -892,17 +882,9 @@ func (r *Reconciler) promoteImportedLeaves(
 				continue
 			}
 			current := importMembers(members)
-			promoted, err := r.store.UpdateNode(ctx, leaf.ID, func(n *tree.Node) error {
-				// The promotion may have been withdrawn while this pass talked to
-				// OpenStack; then there is nothing to promote any more.
-				if n.Status != tree.StatusImported || !slices.Contains(n.Flags, tree.FlagPromoteOnReconcile) {
-					return tree.ErrSkipUpdate
-				}
-				n.AuthorizedUsers = mergeMembers(n.AuthorizedUsers, current, n.Owner)
-				n.Status = tree.StatusPending
-				n.Flags = removeFlag(n.Flags, tree.FlagPromoteOnReconcile)
-				return nil
-			})
+			// The promotion may have been withdrawn while this pass talked to
+			// OpenStack; then there is nothing to promote any more.
+			promoted, err := r.nodes.Promote(ctx, leaf.ID, current)
 			if err != nil {
 				r.log.Warnw("Failed to persist promoted leaf",
 					"node_id", leaf.ID, "error", err)
@@ -1017,12 +999,7 @@ func (r *Reconciler) markLeafArchived(ctx context.Context, leaf tree.Node) {
 		r.log.Infow("Dry run: would mark leaf archived", "node_id", leaf.ID)
 		return
 	}
-	if _, err := r.store.UpdateNode(ctx, leaf.ID, func(n *tree.Node) error {
-		if !tree.MarkArchived(n) {
-			return tree.ErrSkipUpdate
-		}
-		return nil
-	}); err != nil {
+	if err := r.nodes.MarkArchived(ctx, leaf.ID); err != nil {
 		r.log.Warnw("Failed to mark leaf archived", "node_id", leaf.ID, "error", err)
 	}
 }
@@ -1554,59 +1531,6 @@ func (r *Reconciler) createOpenstackProjectForLeaf(_ context.Context, leaf tree.
 	return osclient.ProjectInfo{ID: project.ID, Name: project.Name, Tags: project.Tags}, nil
 }
 
-// applyOSSyncState writes the result of one sync pass onto a leaf and reports
-// whether anything changed (i.e. whether the node needs persisting).
-//
-// The rule that matters: the measurement is only written when there WAS one.
-// A failed quota-detail call used to arrive here as an empty in-use map, which
-// differs from whatever was stored and therefore overwrote it with nothing.
-// Since the accounting bills max(limit, in-use), the charge then silently fell
-// back to the declared limit until the next successful pass — the
-// shrink-after-filling loophole, reopened by a transient API error, and
-// OSOvercommitted cleared along with it so the UI stopped warning too.
-//
-// "Not measured" is not "nothing in use". The rest of this package is careful
-// about that distinction (see ProjectInUse and quotaEqual); this is the place
-// where it used to be lost.
-func applyOSSyncState(leaf *tree.Node, osProjectID string, m *osMeasurement) bool {
-	changed := leaf.OSProjectID != osProjectID
-	if m != nil {
-		changed = changed || leaf.OSOvercommitted != m.overcommitted || !quotaEqual(leaf.OSInUse, m.inUse) ||
-			leaf.OSServers == nil || *leaf.OSServers != m.servers ||
-			leaf.OSServerLimit == nil || *leaf.OSServerLimit != m.serverLimit ||
-			(m.grantUse != nil && !quotaEqual(leaf.OSGrantUse, m.grantUse))
-	}
-	if !changed {
-		return false
-	}
-	leaf.OSProjectID = osProjectID
-	if m != nil {
-		leaf.OSOvercommitted = m.overcommitted
-		leaf.OSInUse = m.inUse
-		servers, serverLimit := m.servers, m.serverLimit
-		leaf.OSServers = &servers
-		leaf.OSServerLimit = &serverLimit
-		if m.grantUse != nil {
-			leaf.OSGrantUse = m.grantUse
-		}
-	}
-	return true
-}
-
-// osMeasurement is what one pass read from OpenStack about a project. nil
-// means it could not be read — "not measured", never "nothing in use".
-type osMeasurement struct {
-	overcommitted bool
-	inUse         common.ProjectQuota
-	// servers counts the project's servers, whatever their state, and
-	// serverLimit is how many OpenStack allows.
-	servers     int
-	serverLimit int
-	// grantUse is what uses each availability; nil when it could not be read,
-	// and then the last known values stay.
-	grantUse common.ProjectQuota
-}
-
 // removeStaleImports deletes imported leaves whose OpenStack project is no longer
 // in scope — each only if it is still an import when the delete happens.
 func (r *Reconciler) removeStaleImports(ctx context.Context, importedByOSProjectID map[string]tree.Node, osProjectByOSID map[string]osclient.ProjectInfo, res *reconcileResult) {
@@ -1617,7 +1541,7 @@ func (r *Reconciler) removeStaleImports(ctx context.Context, importedByOSProject
 		r.log.Infow("Removing stale imported leaf (OS project gone from scope)",
 			"node_id", staleLeaf.ID, "os_project_id", osID)
 		if !r.cfg.DryRun {
-			deleted, err := r.store.DeleteNodeIf(ctx, staleLeaf.ID, isStillImported)
+			deleted, err := r.nodes.RemoveImport(ctx, staleLeaf.ID)
 			if err != nil {
 				r.log.Warnw("Failed to delete stale imported leaf",
 					"id", staleLeaf.ID, "error", err)
@@ -1636,31 +1560,17 @@ func (r *Reconciler) removeStaleImports(ctx context.Context, importedByOSProject
 // node as it is now and regardless of its status: a leaf released meanwhile
 // still needs the ID, or its project could never be cleaned up.
 func (r *Reconciler) persistOSProjectID(ctx context.Context, leafID, osProjectID string) {
-	if _, err := r.store.UpdateNode(ctx, leafID, func(n *tree.Node) error {
-		n.OSProjectID = osProjectID
-		return nil
-	}); err != nil {
+	if err := r.nodes.RecordExternalID(ctx, leafID, osProjectID); err != nil {
 		r.log.Warnw("Failed to persist OSProjectID on leaf", "node_id", leafID, "error", err)
 	}
 }
 
 // persistOSSyncState writes what the pass measured in OpenStack onto the node as
 // it is now, touching only those fields.
-func (r *Reconciler) persistOSSyncState(ctx context.Context, leafID, osProjectID string, m *osMeasurement) {
-	if _, err := r.store.UpdateNode(ctx, leafID, func(n *tree.Node) error {
-		if !applyOSSyncState(n, osProjectID, m) {
-			return tree.ErrSkipUpdate
-		}
-		return nil
-	}); err != nil {
+func (r *Reconciler) persistOSSyncState(ctx context.Context, leafID, osProjectID string, m *tree.Observation) {
+	if err := r.nodes.RecordObservation(ctx, leafID, osProjectID, m); err != nil {
 		r.log.Warnw("Failed to persist OS sync state on leaf", "node_id", leafID, "error", err)
 	}
-}
-
-// isStillImported is the guard for deleting or refreshing an imported leaf: once
-// promoted it belongs to the managed tree and the import logic must leave it be.
-func isStillImported(n tree.Node) bool {
-	return n.Status == tree.StatusImported
 }
 
 // syncQuota pushes the current approved limit to an existing OS project and returns
@@ -1761,7 +1671,7 @@ func syncGrants(c grantClient, defs []common.ManagedProject, leaf tree.Node, osP
 	}
 }
 
-func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo, description string) (*osMeasurement, error) {
+func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo, description string) (*tree.Observation, error) {
 	osProjectID := osProject.ID
 	quotaSet := ProjectQuotaToQuotaSet(r.resources(), leaf.EffectiveLimit())
 
@@ -1811,11 +1721,11 @@ func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo, d
 		return nil, nil
 	}
 
-	return &osMeasurement{
-		overcommitted: IsProjectOvercommitted(r.resources(), leaf.EffectiveLimit(), detail),
-		inUse:         ProjectInUse(r.resources(), detail),
-		servers:       detail.InUse.Instances,
-		serverLimit:   detail.Limit.Instances,
+	return &tree.Observation{
+		Overcommitted: IsProjectOvercommitted(r.resources(), leaf.EffectiveLimit(), detail),
+		InUse:         ProjectInUse(r.resources(), detail),
+		Servers:       detail.InUse.Instances,
+		ServerLimit:   detail.Limit.Instances,
 	}, nil
 }
 
@@ -1901,7 +1811,7 @@ func (r *Reconciler) upsertImported(
 	var osLimit common.ProjectQuota
 	// What the import uses, from the same response as its limit; nil when that
 	// could not be read, and then the last known values stay.
-	var measured *osMeasurement
+	var measured *tree.Observation
 	detail, err := r.osClient.GetProjectQuotaDetail(osProject.ID)
 	if err != nil {
 		r.log.Warnw("Could not fetch quota for import",
@@ -1910,7 +1820,7 @@ func (r *Reconciler) upsertImported(
 	} else {
 		osLimit = QuotaSetToProjectQuota(r.resources(), detail.Limit)
 		measured = measureImport(r.resources(), osLimit, detail)
-		measured.grantUse = projectGrantUse(r.resources(), grantUse, osProject.ID)
+		measured.GrantUse = projectGrantUse(r.resources(), grantUse, osProject.ID)
 	}
 	var prevLimit common.ProjectQuota
 	if prev, ok := existing[osProject.ID]; ok {
@@ -1973,7 +1883,7 @@ func (r *Reconciler) upsertImported(
 		OSProjectID:              osProject.ID,
 		OSProjectName:            osProject.Name,
 	}
-	applyOSSyncState(&leaf, osProject.ID, measured)
+	tree.ApplyObservation(&leaf, osProject.ID, measured)
 
 	r.log.Infow("Upserting imported leaf",
 		"node_id", syntheticID, "os_project_id", osProject.ID,
@@ -1986,29 +1896,14 @@ func (r *Reconciler) upsertImported(
 
 	if !r.cfg.DryRun {
 		if known {
-			// Refresh only what OpenStack says about the project, on the node as it
-			// is now: history, parent, owner and flags belong to the tree, and a
-			// promotion requested during this pass must survive it.
-			_, err := r.store.UpdateNode(ctx, syntheticID, func(n *tree.Node) error {
-				if !isStillImported(*n) || slices.Contains(n.Flags, tree.FlagPromoteOnReconcile) {
-					return tree.ErrSkipUpdate
-				}
-				n.Name = leaf.Name
-				n.Reason = leaf.Reason
-				n.Limit = leaf.Limit
-				n.AuthorizedUsers = leaf.AuthorizedUsers
-				n.ExternalGroupAssignments = leaf.ExternalGroupAssignments
-				n.OSProjectID = leaf.OSProjectID
-				n.OSProjectName = leaf.OSProjectName
-				applyOSSyncState(n, leaf.OSProjectID, measured)
-				return nil
-			})
-			if err != nil {
+			// Only what OpenStack says about the project; the rest of the node
+			// belongs to the tree (see tree.ProviderSync.RefreshImport).
+			if err := r.nodes.RefreshImport(ctx, leaf, measured); err != nil {
 				r.log.Warnw("Failed to update imported leaf",
 					"id", syntheticID, "error", err)
 				return
 			}
-		} else if err := r.store.UpsertNode(ctx, leaf); err != nil {
+		} else if err := r.nodes.AddImport(ctx, leaf); err != nil {
 			r.log.Warnw("Failed to upsert imported leaf",
 				"id", syntheticID, "error", err)
 			return
@@ -2099,12 +1994,12 @@ func projectGrantUse(defs []common.ManagedProject, use osclient.GrantUse, osProj
 // measureImport is what an imported project uses, read like a managed one's.
 // Its limit is its OpenStack quota, so overcommitted means OpenStack already
 // holds more than the quota allows.
-func measureImport(resources []common.ManagedProject, limit common.ProjectQuota, detail *osclient.ProjectQuotaDetail) *osMeasurement {
-	return &osMeasurement{
-		overcommitted: IsProjectOvercommitted(resources, limit, detail),
-		inUse:         ProjectInUse(resources, detail),
-		servers:       detail.InUse.Instances,
-		serverLimit:   detail.Limit.Instances,
+func measureImport(resources []common.ManagedProject, limit common.ProjectQuota, detail *osclient.ProjectQuotaDetail) *tree.Observation {
+	return &tree.Observation{
+		Overcommitted: IsProjectOvercommitted(resources, limit, detail),
+		InUse:         ProjectInUse(resources, detail),
+		Servers:       detail.InUse.Instances,
+		ServerLimit:   detail.Limit.Instances,
 	}
 }
 
@@ -2186,24 +2081,6 @@ func treeRole(name string) string {
 		return "reader"
 	}
 	return "member"
-}
-
-// mergeMembers adds to a promoted leaf's authorized users everyone OpenStack
-// has in the project that the leaf does not name yet, except its owner, who
-// gets access as the owner. What the leaf already names is kept as it is.
-func mergeMembers(leafUsers, current []common.AuthorizedUser, owner string) []common.AuthorizedUser {
-	out := slices.Clone(leafUsers)
-	known := map[string]bool{strings.ToLower(owner): true}
-	for _, u := range leafUsers {
-		known[strings.ToLower(u.Token)] = true
-	}
-	for _, u := range current {
-		if !known[strings.ToLower(u.Token)] {
-			known[strings.ToLower(u.Token)] = true
-			out = append(out, u)
-		}
-	}
-	return out
 }
 
 // relationSeparator stands in for "#" in Keystone group names:

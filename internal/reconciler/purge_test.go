@@ -530,7 +530,7 @@ func TestRecordPurgeProgress(t *testing.T) {
 	if err := store.UpsertNode(ctx, tree.Node{ID: "p", Kind: tree.KindProject, Status: tree.StatusArchived}); err != nil {
 		t.Fatal(err)
 	}
-	r := &Reconciler{store: store, cfg: Config{PurgeSkipStages: []string{"stacks"}}}
+	r := &Reconciler{nodes: tree.NewProviderSync(store), cfg: Config{PurgeSkipStages: []string{"stacks"}}}
 	get := func() *tree.PurgeProgress {
 		n, _ := store.GetNode(ctx, "p")
 		return n.Purge

@@ -236,14 +236,3 @@ func TestProjectGrantUse(t *testing.T) {
 		t.Error("unread use must stay nil")
 	}
 }
-
-// An unread use keeps the stored one; a read one replaces it and counts as a change.
-func TestApplyOSSyncState_GrantUse(t *testing.T) {
-	leaf := tree.Node{OSProjectID: "os-1", OSGrantUse: common.ProjectQuota{"dhbw-ipv4": 1}}
-	if applyOSSyncState(&leaf, "os-1", &osMeasurement{}) && leaf.OSGrantUse["dhbw-ipv4"] != 1 {
-		t.Errorf("unread use overwrote the stored one: %v", leaf.OSGrantUse)
-	}
-	if !applyOSSyncState(&leaf, "os-1", &osMeasurement{grantUse: common.ProjectQuota{"dhbw-ipv4": 0}}) || leaf.OSGrantUse["dhbw-ipv4"] != 0 {
-		t.Errorf("fresh use not applied: %v", leaf.OSGrantUse)
-	}
-}

@@ -59,94 +59,6 @@ func TestQuotaEqual_DistinguishesMissingFromZero(t *testing.T) {
 	}
 }
 
-// A pass that could not read the quota detail must leave the last known usage
-// alone. Writing an empty map there is not a cosmetic bug: the accounting bills
-// max(limit, in-use), so an erased measurement drops the charge back to the
-// declared limit — which is exactly the shrink-after-filling loophole that
-// billing the maximum exists to close, reopened by a transient API error.
-func TestApplyOSSyncState_UnmeasuredPassKeepsTheLastKnownUsage(t *testing.T) {
-	leaf := tree.Node{
-		OSProjectID:     "os-1",
-		OSOvercommitted: true,
-		OSInUse:         common.ProjectQuota{"cores": 8, "ram": 5},
-	}
-
-	changed := applyOSSyncState(&leaf, "os-1", nil)
-
-	if changed {
-		t.Error("nothing was measured and the project id is unchanged; there is nothing to persist")
-	}
-	if !quotaEqual(leaf.OSInUse, common.ProjectQuota{"cores": 8, "ram": 5}) {
-		t.Errorf("OSInUse = %v, want the stored measurement untouched", leaf.OSInUse)
-	}
-	if !leaf.OSOvercommitted {
-		t.Error("OSOvercommitted was cleared by a pass that did not measure anything")
-	}
-}
-
-// The project id is tracked even when the quota detail was unreadable — it does
-// not come from the measurement, so there is no reason to lose it.
-func TestApplyOSSyncState_UnmeasuredPassStillAdoptsTheProjectID(t *testing.T) {
-	leaf := tree.Node{OSInUse: common.ProjectQuota{"cores": 8}}
-
-	if !applyOSSyncState(&leaf, "os-new", nil) {
-		t.Fatal("a new OS project id has to be persisted")
-	}
-	if leaf.OSProjectID != "os-new" {
-		t.Errorf("OSProjectID = %q, want %q", leaf.OSProjectID, "os-new")
-	}
-	if !quotaEqual(leaf.OSInUse, common.ProjectQuota{"cores": 8}) {
-		t.Errorf("OSInUse = %v, want it untouched", leaf.OSInUse)
-	}
-}
-
-// A real measurement overwrites, including back down to zero: a project that
-// genuinely released its servers must stop being billed for them.
-func TestApplyOSSyncState_MeasuredPassOverwrites(t *testing.T) {
-	leaf := tree.Node{
-		OSProjectID:     "os-1",
-		OSOvercommitted: true,
-		OSInUse:         common.ProjectQuota{"cores": 8, "ram": 5},
-	}
-
-	if !applyOSSyncState(&leaf, "os-1", &osMeasurement{inUse: common.ProjectQuota{"cores": 0, "ram": 0}}) {
-		t.Fatal("the measurement changed, so the node needs persisting")
-	}
-	if !quotaEqual(leaf.OSInUse, common.ProjectQuota{"cores": 0, "ram": 0}) {
-		t.Errorf("OSInUse = %v, want the fresh measurement", leaf.OSInUse)
-	}
-	if leaf.OSOvercommitted {
-		t.Error("OSOvercommitted should follow the fresh measurement")
-	}
-}
-
-// An unchanged measurement must not report a change, or the reconciler rewrites
-// every leaf on every tick.
-func TestApplyOSSyncState_IdenticalMeasurementIsNotAChange(t *testing.T) {
-	servers, serverLimit := 1, 2
-	leaf := tree.Node{OSProjectID: "os-1", OSInUse: common.ProjectQuota{"cores": 2}, OSServers: &servers, OSServerLimit: &serverLimit}
-
-	if applyOSSyncState(&leaf, "os-1", &osMeasurement{inUse: common.ProjectQuota{"cores": 2}, servers: 1, serverLimit: 2}) {
-		t.Error("nothing changed, but the node was marked for persisting")
-	}
-}
-
-// The server count is part of the measurement: written with it, and a change
-// in it alone is worth persisting.
-func TestApplyOSSyncState_ServerCount(t *testing.T) {
-	leaf := tree.Node{OSProjectID: "os-1", OSInUse: common.ProjectQuota{"cores": 2}}
-
-	if !applyOSSyncState(&leaf, "os-1", &osMeasurement{inUse: common.ProjectQuota{"cores": 2}, servers: 3}) {
-		t.Fatal("a first server count has to be persisted")
-	}
-	if leaf.OSServers == nil || *leaf.OSServers != 3 {
-		t.Fatalf("OSServers = %v, want 3", leaf.OSServers)
-	}
-	if applyOSSyncState(&leaf, "os-1", nil) || *leaf.OSServers != 3 {
-		t.Error("an unmeasured pass must keep the last count")
-	}
-}
-
 // An imported project is measured like a managed one, from the same quota
 // response that gives its limit — the table showed a dash for everything in
 // use, next to a quota that was real.
@@ -163,7 +75,7 @@ func TestMeasureImport(t *testing.T) {
 	limit := QuotaSetToProjectQuota(resources, detail.Limit)
 
 	var leaf tree.Node
-	applyOSSyncState(&leaf, "os-1", measureImport(resources, limit, detail))
+	tree.ApplyObservation(&leaf, "os-1", measureImport(resources, limit, detail))
 
 	if leaf.OSInUse["cores"] != 80 || leaf.OSInUse["ram"] != 160 || leaf.OSInUse["storage"] != 0 {
 		t.Errorf("in use = %v, want 80 cores, 160 GB RAM, 0 GB storage", leaf.OSInUse)
@@ -200,7 +112,7 @@ func TestImportAndMergeMembers(t *testing.T) {
 	}
 
 	leaf := []common.AuthorizedUser{{Token: "user:b@x", OpenstackRole: "member"}}
-	got := mergeMembers(leaf, append(imported, common.AuthorizedUser{Token: "user:new@x", OpenstackRole: "member"}), "user:owner@x")
+	got := tree.MergeMembers(leaf, append(imported, common.AuthorizedUser{Token: "user:new@x", OpenstackRole: "member"}), "user:owner@x")
 	tokens := map[string]string{}
 	for _, u := range got {
 		tokens[u.Token] = u.OpenstackRole

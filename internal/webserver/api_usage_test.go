@@ -3,6 +3,7 @@ package webserver_test
 import (
 	"context"
 	"encoding/json"
+	"github.com/pfisterer/openstack-management-api/internal/identity"
 	"net/http"
 	"testing"
 	"time"
@@ -40,11 +41,11 @@ func usageRouter(t *testing.T, prices *usage.Prices) http.Handler {
 		DevMode: true,
 		Log:     sugar,
 		API: webserver.APIConfig{
-			Service: svc, Catalog: common.StaticCatalog(quotaResources), RoleSwitchGroups: rootAdminTokens,
+			Service: svc, Identity: testIdentity(store, sugar), Catalog: common.StaticCatalog(quotaResources), RoleSwitchGroups: rootAdminTokens,
 			Usage: rows, UsagePrices: prices,
 		},
 		RootAdminTokens: rootAdminTokens,
-		AuthMiddleware:  webserver.DummyAuthMiddleware(),
+		AuthMiddleware:  identity.DummyAuthMiddleware(),
 	})
 }
 

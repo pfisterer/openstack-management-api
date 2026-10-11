@@ -12,17 +12,14 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/identity"
 	"go.uber.org/zap"
 )
 
 // Service implements the tree domain: one authorization rule (ancestor walk), one
 // capacity mechanism (subtree usage rollup), one lifecycle for budgets and leaves.
-// The embedded identity.Service contributes the model-agnostic role-switch and
-// impersonation operations, so one object satisfies the whole HTTP service interface.
+// Who a caller is and acts as (role switch, impersonation) is not decided here
+// but in package identity; the tree is handed the effective tokens.
 type Service struct {
-	*identity.Service
-
 	store Store
 	roles roles.Provider
 	// ownerTokens caches people's tokens for the "owner in group" filter.
@@ -134,7 +131,6 @@ func NewService(store Store, roles roles.Provider, resources []common.Resource, 
 		maxAuthorizedUsers = common.DefaultMaxAuthorizedUsers
 	}
 	return &Service{
-		Service:            identity.NewService(store, roles, requestTimeout, log),
 		store:              store,
 		roles:              roles,
 		ownerTokens:        newTokenCache(2 * time.Minute),

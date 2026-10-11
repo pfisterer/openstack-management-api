@@ -3,6 +3,7 @@ package webserver
 import (
 	"context"
 	"fmt"
+	"github.com/pfisterer/openstack-management-api/internal/identity"
 	"net/http"
 	"slices"
 
@@ -75,7 +76,7 @@ func RegisterMCPRoutes(group *gin.RouterGroup, cfg APIConfig, log *zap.SugaredLo
 	if cfg.Service == nil {
 		return
 	}
-	group.Use(EffectiveAuthMiddleware(cfg.Service))
+	group.Use(identity.EffectiveAuthMiddleware(cfg.Identity))
 
 	// A server per request, built around the caller: a tool closes over the
 	// identity that called it, so there is no way for one request's tools to run

@@ -35,7 +35,7 @@ type PrincipalSearchResponse struct {
 //	@ID				searchPrincipals
 //	@Router			/v1/principals/search [get]
 func searchPrincipals(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
+	svc := cfg.Identity
 	return func(c *gin.Context) {
 		limit, _, err := parsePagination(c)
 		if err != nil {

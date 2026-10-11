@@ -3,6 +3,7 @@ package webserver_test
 import (
 	"context"
 	"encoding/json"
+	"github.com/pfisterer/openstack-management-api/internal/identity"
 	"net/http"
 	"slices"
 	"testing"
@@ -32,11 +33,11 @@ func catalogRouter(t *testing.T) http.Handler {
 		DevMode: true,
 		Log:     sugar,
 		API: webserver.APIConfig{
-			Service: svc, Catalog: cat, CatalogAdmin: &catalog.Admin{Catalog: cat, Tree: svc},
+			Service: svc, Identity: testIdentity(store, sugar), Catalog: cat, CatalogAdmin: &catalog.Admin{Catalog: cat, Tree: svc},
 			RoleSwitchGroups: rootAdminTokens,
 		},
 		RootAdminTokens: rootAdminTokens,
-		AuthMiddleware:  webserver.DummyAuthMiddleware(),
+		AuthMiddleware:  identity.DummyAuthMiddleware(),
 	})
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/pfisterer/openstack-management-api/internal/identity"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -85,9 +86,9 @@ func corsRouter(t *testing.T, devMode bool, corsOrigins ...string) http.Handler 
 	return webserver.SetupGinWebserver(webserver.SetupConfig{
 		DevMode:            devMode,
 		Log:                sugar,
-		API:                webserver.APIConfig{Service: svc, RoleSwitchGroups: rootAdminTokens},
+		API:                webserver.APIConfig{Service: svc, Identity: testIdentity(store, sugar), RoleSwitchGroups: rootAdminTokens},
 		RootAdminTokens:    rootAdminTokens,
-		AuthMiddleware:     webserver.DummyAuthMiddleware(),
+		AuthMiddleware:     identity.DummyAuthMiddleware(),
 		CORSAllowedOrigins: corsOrigins,
 	})
 }
@@ -155,15 +156,16 @@ func routerFromStore(t *testing.T, sugar *zap.SugaredLogger, store tree.Store, r
 		Log:          sugar,
 		StaticConfig: webserver.StaticConfig{},
 		API: webserver.APIConfig{
-			Service: svc,
-			Catalog: common.StaticCatalog(quotaResources),
+			Service:  svc,
+			Identity: testIdentity(store, sugar),
+			Catalog:  common.StaticCatalog(quotaResources),
 			// Role-switch allowlist = the (mixed user+group) root admin tokens,
 			// exactly as app.go wires it. canUseRoleSwitch accepts either kind.
 			RoleSwitchGroups: rootAdminTokens,
 		},
 		Reconciler:         rec,
 		RootAdminTokens:    rootAdminTokens,
-		AuthMiddleware:     webserver.DummyAuthMiddleware(),
+		AuthMiddleware:     identity.DummyAuthMiddleware(),
 		CORSAllowedOrigins: corsOrigins,
 	})
 }
@@ -231,4 +233,10 @@ func nodeIDs(ns []tree.Node) []string {
 		ids[i] = n.ID
 	}
 	return ids
+}
+
+// testIdentity is who callers are, over the same store and mock role provider
+// as the tree in these tests.
+func testIdentity(store tree.Store, sugar *zap.SugaredLogger) *identity.Service {
+	return identity.NewService(store, roleprovider.NewMockRoleProvider(), 10*time.Second, sugar)
 }

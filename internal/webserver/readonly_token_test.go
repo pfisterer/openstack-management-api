@@ -2,6 +2,7 @@ package webserver_test
 
 import (
 	"context"
+	"github.com/pfisterer/openstack-management-api/internal/identity"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,7 +10,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/cloud-self-service-golib/ginweb"
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/webserver"
 	"go.uber.org/zap"
 )
 
@@ -23,14 +23,14 @@ func readOnlyRouter(t *testing.T, useRESTRule bool) http.Handler {
 	gin.SetMode(gin.TestMode)
 	log := zap.NewNop().Sugar()
 
-	lookup := func(_ context.Context, secret string) (common.TokenLookupResult, error) {
+	lookup := func(_ context.Context, secret string) (identity.TokenLookupResult, error) {
 		switch secret {
 		case readOnlySecret:
-			return common.TokenLookupResult{Found: true, Subject: "a@b.c", ReadOnly: true}, nil
+			return identity.TokenLookupResult{Found: true, Subject: "a@b.c", ReadOnly: true}, nil
 		case writeSecret:
-			return common.TokenLookupResult{Found: true, Subject: "a@b.c"}, nil
+			return identity.TokenLookupResult{Found: true, Subject: "a@b.c"}, nil
 		}
-		return common.TokenLookupResult{Found: false}, nil
+		return identity.TokenLookupResult{Found: false}, nil
 	}
 	resolve := func(_ context.Context, claims *common.UserClaims) (common.TokenList, error) {
 		return common.TokenList{"user:" + claims.Email}, nil
@@ -38,7 +38,7 @@ func readOnlyRouter(t *testing.T, useRESTRule bool) http.Handler {
 
 	r := gin.New()
 	g := r.Group("/v1")
-	g.Use(webserver.CombinedAuthMiddleware(nil, lookup, resolve, log))
+	g.Use(identity.CombinedAuthMiddleware(nil, lookup, resolve, log))
 	if useRESTRule {
 		g.Use(ginweb.RejectWritesForReadOnlyTokens(log))
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/pfisterer/openstack-management-api/internal/core/roles"
+	"github.com/pfisterer/openstack-management-api/internal/identity"
 	"os"
 	"strings"
 	"time"
@@ -70,16 +71,16 @@ func configureStores(cfg *common.StorageConfiguration, log *zap.SugaredLogger) (
 }
 
 // tokenLookupFor adapts the token service to what the auth middleware wants.
-func tokenLookupFor(tokens *token.Service) common.TokenLookupFunc {
-	return func(ctx context.Context, secret string) (common.TokenLookupResult, error) {
+func tokenLookupFor(tokens *token.Service) identity.TokenLookupFunc {
+	return func(ctx context.Context, secret string) (identity.TokenLookupResult, error) {
 		rec, err := tokens.Lookup(ctx, secret)
 		if errors.Is(err, token.ErrNotFound) {
-			return common.TokenLookupResult{Found: false}, nil
+			return identity.TokenLookupResult{Found: false}, nil
 		}
 		if err != nil {
-			return common.TokenLookupResult{}, err
+			return identity.TokenLookupResult{}, err
 		}
-		return common.TokenLookupResult{
+		return identity.TokenLookupResult{
 			Found:    true,
 			Subject:  rec.Subject,
 			ReadOnly: rec.ReadOnly,
@@ -90,7 +91,7 @@ func tokenLookupFor(tokens *token.Service) common.TokenLookupFunc {
 // configureAuthMiddleware returns the middleware and, where one exists, the
 // verifier behind it — the webserver reports its state to the UI, so a login
 // that cannot work says why instead of just failing.
-func configureAuthMiddleware(cfg *WebServerConfig, tokenLookup common.TokenLookupFunc, userTokenResolver common.UserTokenResolverFunc, log *zap.SugaredLogger) (gin.HandlerFunc, *oidcauth.Verifier, error) {
+func configureAuthMiddleware(cfg *WebServerConfig, tokenLookup identity.TokenLookupFunc, userTokenResolver identity.UserTokenResolverFunc, log *zap.SugaredLogger) (gin.HandlerFunc, *oidcauth.Verifier, error) {
 
 	// Setup Web server
 	var authMiddleware gin.HandlerFunc
@@ -98,13 +99,13 @@ func configureAuthMiddleware(cfg *WebServerConfig, tokenLookup common.TokenLooku
 
 	if cfg.DummyAuth {
 		log.Warn("DummyAuth enabled: using DummyAuthMiddleware (no SSO, user=group:uni_root)")
-		authMiddleware = webserver.DummyAuthMiddleware()
+		authMiddleware = identity.DummyAuthMiddleware()
 	} else {
 
 		// Create OIDC Auth Verifier. With OIDC_JWKS_URL configured this makes no
 		// network call, so a provider that is down cannot stop this service
 		// from starting (see the oidcauth package).
-		oidcAuthVerifier, err := webserver.NewOIDCAuthVerifier(webserver.OIDCVerifierConfig{
+		oidcAuthVerifier, err := identity.NewOIDCAuthVerifier(identity.OIDCVerifierConfig{
 			IssuerURL: cfg.OIDCIssuerURL,
 			ClientID:  cfg.OIDCClientID,
 			JWKSURL:   cfg.OIDCJWKSURL,
@@ -115,7 +116,7 @@ func configureAuthMiddleware(cfg *WebServerConfig, tokenLookup common.TokenLooku
 		}
 
 		verifier = oidcAuthVerifier
-		authMiddleware = webserver.CombinedAuthMiddleware(oidcAuthVerifier, tokenLookup, userTokenResolver, log)
+		authMiddleware = identity.CombinedAuthMiddleware(oidcAuthVerifier, tokenLookup, userTokenResolver, log)
 	}
 	return authMiddleware, verifier, nil
 }
@@ -235,6 +236,8 @@ func RunApplication() {
 	}
 
 	requestTimeout := time.Duration(config.ServiceTimeoutSeconds) * time.Second
+	// Who a caller is and acts as (role switch, impersonation, principal search).
+	identitySvc := identity.NewService(nodeStore, roleProvider, requestTimeout, logger)
 	treeSvc := tree.NewService(tree.NotifyOnWrite(nodeStore, triggerReconcile), roleProvider, osclient.CoreResources(config.ProjectDefinitions), config.RootAdminTokens, requestTimeout, config.MaxAuthorizedUsers, tree.Accounting{
 		ChargeInUse:    config.ChargeOSInUse,
 		ChargeReleased: config.ChargeReleased,
@@ -349,6 +352,7 @@ func RunApplication() {
 			Catalog:          resourceCatalog,
 			CatalogAdmin:     catalogAdmin,
 			Service:          treeSvc,
+			Identity:         identitySvc,
 			DummyDevUsers:    dummyDevUsers,
 			// Asked per request: the reconciler may still be connecting.
 			ProvisioningEnabled:   func() bool { return reconcilerAPI != nil && reconcilerAPI.Ready() },

@@ -3,6 +3,7 @@ package webserver
 import (
 	"fmt"
 	"github.com/pfisterer/openstack-management-api/internal/core/roles"
+	"github.com/pfisterer/openstack-management-api/internal/identity"
 	"net/http"
 	"strconv"
 	"strings"
@@ -87,13 +88,20 @@ type RetirementConfig struct {
 	ChargeArchived bool `json:"chargeArchived"`
 }
 
-// APIService provides the business operations consumed by the HTTP handlers.
-// It is implemented by tree.Service (which embeds identity.Service for the
-// role-switch operations).
-type APIService interface {
-	// Principal search (groups + users) for token fields
+// IdentityAPI is who a caller is and acts as: principal search for token
+// fields, the role switch and impersonation. Implemented by identity.Service.
+type IdentityAPI interface {
+	identity.Effective
 	SearchPrincipals(query string, limit int) ([]roles.GroupSummary, []string, error)
+	GetUserGroupSwitchForActor(actorEmail string) *string
+	SetUserGroupSwitchForActor(actorEmail, groupToken string) error
+	SetUserImpersonationForActor(actorEmail, targetEmail string) error
+	ClearUserGroupSwitchForActor(actorEmail string)
+}
 
+// APIService provides the business operations consumed by the HTTP handlers.
+// It is implemented by tree.Service.
+type APIService interface {
 	// Node reads / views
 	GetNode(id string, userTokens common.TokenList) (*tree.Node, error)
 	ListChildren(parentID string, filter tree.ChildFilter, userTokens common.TokenList, limit, offset int) (tree.NodePage, error)
@@ -122,14 +130,6 @@ type APIService interface {
 	AttributesVisible(n *tree.Node, userTokens common.TokenList) (bool, error)
 	PromoteNode(id string, req tree.PromoteNodeRequest, actor tree.Actor, userTokens common.TokenList) (tree.Node, error)
 	DeleteNode(id string, actor tree.Actor, userTokens common.TokenList) error
-
-	// Role switch related operations
-	GetUserGroupSwitchForActor(actorEmail string) *string
-	SetUserGroupSwitchForActor(actorEmail, groupToken string) error
-	SetUserImpersonationForActor(actorEmail, targetEmail string) error
-	ClearUserGroupSwitchForActor(actorEmail string)
-	ResolveEffectiveUserTokens(actorEmail string, originalTokens common.TokenList) common.TokenList
-	ResolveEffectiveEmail(actorEmail string) string
 }
 
 // APIConfig configures API route registration.
@@ -140,8 +140,10 @@ type APIConfig struct {
 	Catalog common.ResourceCatalog
 	// CatalogAdmin runs the root admins' catalogue steps; nil leaves the
 	// routes answering 503.
-	CatalogAdmin  *catalog.Admin
-	Service       APIService
+	CatalogAdmin *catalog.Admin
+	Service      APIService
+	// Identity is who a caller is and acts as.
+	Identity      IdentityAPI
 	DummyDevUsers []string
 	// ProvisioningEnabled mirrors "the reconciler is configured and running".
 	// A function, not a bool: the reconciler may still be connecting when the
@@ -255,7 +257,7 @@ func (cfg APIConfig) resources() []common.Resource {
 
 // RegisterApiRoutes wires all resource-management API endpoints.
 func RegisterApiRoutes(v1 *gin.RouterGroup, cfg APIConfig, log *zap.SugaredLogger) *gin.RouterGroup {
-	v1.Use(EffectiveAuthMiddleware(cfg.Service))
+	v1.Use(identity.EffectiveAuthMiddleware(cfg.Identity))
 
 	v1.GET("/config", getConfig(cfg))
 

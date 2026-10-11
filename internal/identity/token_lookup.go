@@ -1,7 +1,9 @@
-package common
+package identity
 
 import (
 	"context"
+
+	"github.com/pfisterer/openstack-management-api/internal/common"
 )
 
 // TokenLookupResult is the token information required by the auth middleware.
@@ -19,4 +21,4 @@ type TokenLookupResult struct {
 type TokenLookupFunc func(ctx context.Context, tokenString string) (TokenLookupResult, error)
 
 // UserTokenResolverFunc resolves effective authorization tokens for the given claims.
-type UserTokenResolverFunc func(ctx context.Context, claims *UserClaims) (TokenList, error)
+type UserTokenResolverFunc func(ctx context.Context, claims *common.UserClaims) (common.TokenList, error)

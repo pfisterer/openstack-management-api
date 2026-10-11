@@ -1,4 +1,4 @@
-package webserver
+package identity
 
 import (
 	"errors"
@@ -26,7 +26,7 @@ const authContextKey = "__api_authContext"
 // resolved the token.
 
 // AuthContext holds the resolved identity for a single request, set once by
-// EffectiveAuthMiddleware and read by handlers via mustGetAuthContext.
+// EffectiveAuthMiddleware and read by handlers via FromContext.
 //
 // ActorEmail is the real authenticated caller (used for role-switch override
 // bookkeeping). UserEmail is the EFFECTIVE identity used for scoping — it equals
@@ -40,10 +40,17 @@ type AuthContext struct {
 	EffectiveTokens common.TokenList
 }
 
+// Effective resolves who a caller acts as: the role switch and impersonation
+// (*Service).
+type Effective interface {
+	ResolveEffectiveUserTokens(actorEmail string, originalTokens common.TokenList) common.TokenList
+	ResolveEffectiveEmail(actorEmail string) string
+}
+
 // EffectiveAuthMiddleware resolves both the original and effective token sets
 // once per request and stores them in the Gin context. Must run after the auth
 // middleware that populates userDataKey / userTokensKey.
-func EffectiveAuthMiddleware(svc APIService) gin.HandlerFunc {
+func EffectiveAuthMiddleware(svc Effective) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		actorEmail, originalTokens, err := ResolveOriginalAuthContext(c)
 		if err != nil {
@@ -65,8 +72,8 @@ func EffectiveAuthMiddleware(svc APIService) gin.HandlerFunc {
 	}
 }
 
-// mustGetAuthContext returns the AuthContext set by EffectiveAuthMiddleware.
-func mustGetAuthContext(c *gin.Context) (AuthContext, error) {
+// FromContext returns the AuthContext set by EffectiveAuthMiddleware.
+func FromContext(c *gin.Context) (AuthContext, error) {
 	v, ok := c.Get(authContextKey)
 	if !ok {
 		return AuthContext{}, fmt.Errorf("auth context not set")
@@ -125,7 +132,7 @@ func ResolveOriginalAuthContext(c *gin.Context) (string, common.TokenList, error
 	return userEmail, tokens, nil
 }
 
-func CombinedAuthMiddleware(oidcVerifier *oidcauth.Verifier, tokenLookup common.TokenLookupFunc, userTokenResolver common.UserTokenResolverFunc, log *zap.SugaredLogger) gin.HandlerFunc {
+func CombinedAuthMiddleware(oidcVerifier *oidcauth.Verifier, tokenLookup TokenLookupFunc, userTokenResolver UserTokenResolverFunc, log *zap.SugaredLogger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx := c.Request.Context()
 

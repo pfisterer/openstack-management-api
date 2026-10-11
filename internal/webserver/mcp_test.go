@@ -3,6 +3,7 @@ package webserver_test
 import (
 	"context"
 	"encoding/json"
+	"github.com/pfisterer/openstack-management-api/internal/identity"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -40,14 +41,14 @@ func mcpTestServerWithService(t *testing.T) (*httptest.Server, *tree.Service) {
 		t.Fatalf("bootstrap: %v", err)
 	}
 
-	lookup := func(_ context.Context, secret string) (common.TokenLookupResult, error) {
+	lookup := func(_ context.Context, secret string) (identity.TokenLookupResult, error) {
 		switch secret {
 		case readOnlySecret:
-			return common.TokenLookupResult{Found: true, Subject: "root.admin@uni.example", ReadOnly: true}, nil
+			return identity.TokenLookupResult{Found: true, Subject: "root.admin@uni.example", ReadOnly: true}, nil
 		case writeSecret:
-			return common.TokenLookupResult{Found: true, Subject: "root.admin@uni.example"}, nil
+			return identity.TokenLookupResult{Found: true, Subject: "root.admin@uni.example"}, nil
 		}
-		return common.TokenLookupResult{Found: false}, nil
+		return identity.TokenLookupResult{Found: false}, nil
 	}
 	resolve := func(_ context.Context, _ *common.UserClaims) (common.TokenList, error) {
 		return rootAdminTokens, nil
@@ -57,9 +58,9 @@ func mcpTestServerWithService(t *testing.T) (*httptest.Server, *tree.Service) {
 		DevMode:         true,
 		Log:             sugar,
 		StaticConfig:    webserver.StaticConfig{},
-		API:             webserver.APIConfig{Service: svc, RoleSwitchGroups: rootAdminTokens},
+		API:             webserver.APIConfig{Service: svc, Identity: testIdentity(store, sugar), RoleSwitchGroups: rootAdminTokens},
 		RootAdminTokens: rootAdminTokens,
-		AuthMiddleware:  webserver.CombinedAuthMiddleware(nil, lookup, resolve, sugar),
+		AuthMiddleware:  identity.CombinedAuthMiddleware(nil, lookup, resolve, sugar),
 	})
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)

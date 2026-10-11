@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/pfisterer/openstack-management-api/internal/identity"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,7 +14,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/cloud-self-service-golib/oidcauth"
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/webserver"
 	"go.uber.org/zap"
 )
 
@@ -57,7 +57,7 @@ func routerWithProvider(t *testing.T, jwks http.HandlerFunc) http.Handler {
 	provider := httptest.NewServer(jwks)
 	t.Cleanup(provider.Close)
 
-	verifier, err := webserver.NewOIDCAuthVerifier(webserver.OIDCVerifierConfig{
+	verifier, err := identity.NewOIDCAuthVerifier(identity.OIDCVerifierConfig{
 		IssuerURL: testIssuer,
 		ClientID:  testClientID,
 		JWKSURL:   provider.URL,
@@ -68,9 +68,9 @@ func routerWithProvider(t *testing.T, jwks http.HandlerFunc) http.Handler {
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	router.Use(webserver.CombinedAuthMiddleware(verifier,
-		func(_ context.Context, _ string) (common.TokenLookupResult, error) {
-			return common.TokenLookupResult{}, nil
+	router.Use(identity.CombinedAuthMiddleware(verifier,
+		func(_ context.Context, _ string) (identity.TokenLookupResult, error) {
+			return identity.TokenLookupResult{}, nil
 		},
 		func(_ context.Context, _ *common.UserClaims) (common.TokenList, error) {
 			return common.TokenList{}, nil
@@ -119,7 +119,7 @@ func TestAuth_BadTokenAnswers401(t *testing.T) {
 // And the verifier itself is built without touching the provider at all, which
 // is what lets the service start while the provider is down.
 func TestAuth_StartsWithoutTheProvider(t *testing.T) {
-	verifier, err := webserver.NewOIDCAuthVerifier(webserver.OIDCVerifierConfig{
+	verifier, err := identity.NewOIDCAuthVerifier(identity.OIDCVerifierConfig{
 		IssuerURL: testIssuer,
 		ClientID:  testClientID,
 		// Nothing listens here.

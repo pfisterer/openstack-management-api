@@ -73,7 +73,7 @@ func buildRoleSwitchStateResponse(c *gin.Context, cfg APIConfig, allowed bool) (
 
 	var overrideGroupToken *string
 	var impersonatedUser *string
-	if override := cfg.Service.GetUserGroupSwitchForActor(auth.ActorEmail); override != nil {
+	if override := cfg.Identity.GetUserGroupSwitchForActor(auth.ActorEmail); override != nil {
 		if email, ok := strings.CutPrefix(*override, "user:"); ok {
 			// Identity impersonation: activeIdentity already reflects the assumed
 			// user via UserEmail (the effective email); just surface the flag.
@@ -136,7 +136,7 @@ func getRoleSwitch(cfg APIConfig) gin.HandlerFunc {
 //	@ID				setRoleSwitch
 //	@Router			/v1/role-switch [put]
 func setRoleSwitch(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
+	svc := cfg.Identity
 	return func(c *gin.Context) {
 		actorEmail, _, ok := requireRoleSwitch(c, cfg)
 		if !ok {
@@ -185,7 +185,7 @@ func setRoleSwitch(cfg APIConfig) gin.HandlerFunc {
 //	@ID				clearRoleSwitch
 //	@Router			/v1/role-switch [delete]
 func clearRoleSwitch(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
+	svc := cfg.Identity
 	return func(c *gin.Context) {
 		actorEmail, _, ok := requireRoleSwitch(c, cfg)
 		if !ok {

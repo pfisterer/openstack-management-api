@@ -8,8 +8,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/tree"
-	"github.com/pfisterer/openstack-management-api/internal/usage"
+	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/usage"
 	"go.uber.org/zap"
 )
 

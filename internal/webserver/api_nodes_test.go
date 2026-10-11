@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 )
 
 // ── Views ─────────────────────────────────────────────────────────────────────

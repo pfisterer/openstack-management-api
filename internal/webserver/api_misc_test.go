@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pfisterer/openstack-management-api/internal/reconciler"
+	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/reconciler"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 )
 

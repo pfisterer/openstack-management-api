@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/pfisterer/openstack-management-api/internal/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 )
 
 type roleSwitchState struct {

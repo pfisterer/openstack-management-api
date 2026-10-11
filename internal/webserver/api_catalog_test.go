@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pfisterer/openstack-management-api/internal/catalog"
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/catalog"
+	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"github.com/pfisterer/openstack-management-api/internal/roleprovider"
-	"github.com/pfisterer/openstack-management-api/internal/tree"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 )
 

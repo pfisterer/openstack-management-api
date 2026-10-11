@@ -14,14 +14,14 @@ import (
 	"github.com/pfisterer/cloud-self-service-golib/oidcauth"
 	"github.com/pfisterer/cloud-self-service-golib/token"
 	"github.com/pfisterer/cloud-self-service-golib/tokengorm"
-	"github.com/pfisterer/openstack-management-api/internal/catalog"
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/catalog"
+	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/usage"
 	"github.com/pfisterer/openstack-management-api/internal/mockdata"
-	osclient "github.com/pfisterer/openstack-management-api/internal/openstack/client"
-	"github.com/pfisterer/openstack-management-api/internal/reconciler"
+	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
+	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/reconciler"
 	"github.com/pfisterer/openstack-management-api/internal/roleprovider"
-	"github.com/pfisterer/openstack-management-api/internal/tree"
-	"github.com/pfisterer/openstack-management-api/internal/usage"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 	"go.uber.org/zap"
 )
@@ -345,11 +345,11 @@ func RunApplication() {
 			SignInAvailable: func() bool { return oidcVerifier == nil || !oidcVerifier.KeysUnavailable() },
 		},
 		API: webserver.APIConfig{
-			RoleSwitchGroups:   config.RootAdminTokens,
-			Catalog:            resourceCatalog,
-			CatalogAdmin:       catalogAdmin,
-			Service:            treeSvc,
-			DummyDevUsers:      dummyDevUsers,
+			RoleSwitchGroups: config.RootAdminTokens,
+			Catalog:          resourceCatalog,
+			CatalogAdmin:     catalogAdmin,
+			Service:          treeSvc,
+			DummyDevUsers:    dummyDevUsers,
 			// Asked per request: the reconciler may still be connecting.
 			ProvisioningEnabled:   func() bool { return reconcilerAPI != nil && reconcilerAPI.Ready() },
 			OpenstackDashboardURL: config.WebServer.OpenstackDashboardURL,

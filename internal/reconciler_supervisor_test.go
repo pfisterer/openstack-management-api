@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pfisterer/openstack-management-api/internal/reconciler"
+	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/reconciler"
 	"go.uber.org/zap"
 )
 

@@ -6,7 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 )
 
 // getNode returns a single node by ID if the caller is authorized to view it.

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 )
 
 // A project may only hold an availability its budget holds. The UI hides what a

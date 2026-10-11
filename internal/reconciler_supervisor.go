@@ -7,9 +7,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pfisterer/openstack-management-api/internal/catalog"
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/reconciler"
+	"github.com/pfisterer/openstack-management-api/internal/core/catalog"
+	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/reconciler"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 	"go.uber.org/zap"
 )

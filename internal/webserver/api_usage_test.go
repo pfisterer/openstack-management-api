@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/usage"
 	"github.com/pfisterer/openstack-management-api/internal/mockdata"
 	"github.com/pfisterer/openstack-management-api/internal/roleprovider"
-	"github.com/pfisterer/openstack-management-api/internal/tree"
-	"github.com/pfisterer/openstack-management-api/internal/usage"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 )
 

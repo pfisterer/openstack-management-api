@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pfisterer/openstack-management-api/internal/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 )
 
 // The MCP tools take hand-written input structs rather than the tree request

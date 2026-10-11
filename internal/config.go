@@ -12,7 +12,7 @@ import (
 	"github.com/pfisterer/cloud-self-service-golib/envconf"
 	"github.com/pfisterer/cloud-self-service-golib/redact"
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/usage"
+	"github.com/pfisterer/openstack-management-api/internal/core/usage"
 	"go.uber.org/zap"
 )
 

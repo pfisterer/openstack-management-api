@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 )
 
 func cores(n int) common.ProjectQuota { return common.ProjectQuota{"cores": n} }

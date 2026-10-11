@@ -12,9 +12,9 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"github.com/pfisterer/openstack-management-api/internal/mockdata"
 	"github.com/pfisterer/openstack-management-api/internal/roleprovider"
-	"github.com/pfisterer/openstack-management-api/internal/tree"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 )
 

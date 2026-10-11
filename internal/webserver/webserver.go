@@ -11,11 +11,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/cloud-self-service-golib/ginweb"
 	"github.com/pfisterer/cloud-self-service-golib/logging"
-	"github.com/pfisterer/openstack-management-api/internal/catalog"
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/reconciler"
-	"github.com/pfisterer/openstack-management-api/internal/tree"
-	"github.com/pfisterer/openstack-management-api/internal/usage"
+	"github.com/pfisterer/openstack-management-api/internal/core/catalog"
+	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/usage"
+	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/reconciler"
 	"go.uber.org/zap"
 )
 

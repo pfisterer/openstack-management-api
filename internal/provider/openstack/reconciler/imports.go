@@ -277,8 +277,7 @@ func measureImport(resources []osclient.ManagedResource, limit common.ProjectQuo
 	return &tree.Observation{
 		Overcommitted: IsProjectOvercommitted(resources, limit, detail),
 		InUse:         ProjectInUse(resources, detail),
-		Servers:       detail.InUse.Instances,
-		ServerLimit:   detail.Limit.Instances,
+		Facts:         map[string]int{model.FactServers: detail.InUse.Instances, model.FactServerLimit: detail.Limit.Instances},
 	}
 }
 

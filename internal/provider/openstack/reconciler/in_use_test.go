@@ -84,11 +84,11 @@ func TestMeasureImport(t *testing.T) {
 	if _, measured := leaf.InUse["storage"]; !measured {
 		t.Error("storage was measured as 0 and must not read as unmeasured")
 	}
-	if leaf.Servers == nil || *leaf.Servers != 10 || leaf.Overcommitted {
-		t.Errorf("servers %v, overcommitted %v", leaf.Servers, leaf.Overcommitted)
+	if leaf.Facts[model.FactServers] != 10 || leaf.Overcommitted {
+		t.Errorf("facts %v, overcommitted %v", leaf.Facts, leaf.Overcommitted)
 	}
-	if leaf.ServerLimit == nil || *leaf.ServerLimit != 100 {
-		t.Errorf("server limit %v, want 100", leaf.ServerLimit)
+	if leaf.Facts[model.FactServerLimit] != 100 {
+		t.Errorf("server limit %v, want 100", leaf.Facts)
 	}
 }
 

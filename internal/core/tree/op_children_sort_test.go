@@ -19,10 +19,9 @@ func ids(nodes []model.Node) []string {
 // Resources sort as numbers: "10" after "9", unlimited above every amount, and
 // a project not measured yet below every measured one, never among the idle.
 func TestSortChildren_ByResource(t *testing.T) {
-	one, three := 1, 3
 	nodes := []model.Node{
-		{ID: "a", Limit: common.ProjectQuota{"cores": 10}, Bindings: map[string]model.Binding{"openstack": {InUse: common.ProjectQuota{"cores": 0}, Servers: &one}}},
-		{ID: "b", Limit: common.ProjectQuota{"cores": 9}, Bindings: map[string]model.Binding{"openstack": {InUse: common.ProjectQuota{"cores": 4}, Servers: &three}}},
+		{ID: "a", Limit: common.ProjectQuota{"cores": 10}, Bindings: map[string]model.Binding{"openstack": {InUse: common.ProjectQuota{"cores": 0}, Facts: map[string]int{model.FactServers: 1}}}},
+		{ID: "b", Limit: common.ProjectQuota{"cores": 9}, Bindings: map[string]model.Binding{"openstack": {InUse: common.ProjectQuota{"cores": 4}, Facts: map[string]int{model.FactServers: 3}}}},
 		{ID: "c", Limit: common.ProjectQuota{"cores": common.UnlimitedQuota}},
 		{ID: "d", Limit: common.ProjectQuota{"cores": 2},
 			Allocations: []model.Allocation{{BudgetID: "x", Limit: common.ProjectQuota{"cores": 16}}}},

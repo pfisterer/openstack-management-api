@@ -75,10 +75,9 @@ func TestApplyObservation_MeasuredPassOverwrites(t *testing.T) {
 // An unchanged measurement must not report a change, or the reconciler rewrites
 // every leaf on every tick.
 func TestApplyObservation_IdenticalMeasurementIsNotAChange(t *testing.T) {
-	servers, serverLimit := 1, 2
-	leaf := model.Binding{ExternalID: "os-1", InUse: common.ProjectQuota{"cores": 2}, Servers: &servers, ServerLimit: &serverLimit}
+	leaf := model.Binding{ExternalID: "os-1", InUse: common.ProjectQuota{"cores": 2}, Facts: map[string]int{model.FactServers: 1, model.FactServerLimit: 2}}
 
-	if ApplyObservation(&leaf, "os-1", &Observation{InUse: common.ProjectQuota{"cores": 2}, Servers: 1, ServerLimit: 2}) {
+	if ApplyObservation(&leaf, "os-1", &Observation{InUse: common.ProjectQuota{"cores": 2}, Facts: map[string]int{model.FactServers: 1, model.FactServerLimit: 2}}) {
 		t.Error("nothing changed, but the node was marked for persisting")
 	}
 }
@@ -88,13 +87,13 @@ func TestApplyObservation_IdenticalMeasurementIsNotAChange(t *testing.T) {
 func TestApplyObservation_ServerCount(t *testing.T) {
 	leaf := model.Binding{ExternalID: "os-1", InUse: common.ProjectQuota{"cores": 2}}
 
-	if !ApplyObservation(&leaf, "os-1", &Observation{InUse: common.ProjectQuota{"cores": 2}, Servers: 3}) {
+	if !ApplyObservation(&leaf, "os-1", &Observation{InUse: common.ProjectQuota{"cores": 2}, Facts: map[string]int{model.FactServers: 3}}) {
 		t.Fatal("a first server count has to be persisted")
 	}
-	if leaf.Servers == nil || *leaf.Servers != 3 {
-		t.Fatalf("Servers = %v, want 3", leaf.Servers)
+	if leaf.Facts[model.FactServers] != 3 {
+		t.Fatalf("facts = %v, want 3 servers", leaf.Facts)
 	}
-	if ApplyObservation(&leaf, "os-1", nil) || *leaf.Servers != 3 {
+	if ApplyObservation(&leaf, "os-1", nil) || leaf.Facts[model.FactServers] != 3 {
 		t.Error("an unmeasured pass must keep the last count")
 	}
 }
@@ -204,7 +203,7 @@ func TestProviderSync_WritesOnlyItsOwnBinding(t *testing.T) {
 	if err := p.RecordExternalID(ctx, "p_1", "os-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.RecordObservation(ctx, "p_1", "os-1", &Observation{InUse: common.ProjectQuota{"cores": 2}, Servers: 1}); err != nil {
+	if err := p.RecordObservation(ctx, "p_1", "os-1", &Observation{InUse: common.ProjectQuota{"cores": 2}, Facts: map[string]int{model.FactServers: 1}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.RecordPurgeProgress(ctx, "p_1", PurgeReport{Step: "servers", Steps: 3}); err != nil {

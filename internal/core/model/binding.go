@@ -21,13 +21,12 @@ type Binding struct {
 	// are refused. Without this the platform sees only the smaller claim and a
 	// shrink looks like capacity handed back when nothing was.
 	InUse common.ProjectQuota `json:"in_use,omitempty"`
-	// Servers is how many servers the project has, measured with InUse; nil
-	// until a pass has measured it.
-	Servers *int `json:"servers,omitempty"`
-	// ServerLimit is how many servers the project may have, read with
-	// Servers. Not a catalogue resource: for a managed OpenStack project it
-	// follows the cores (os_linked_field), an import has its own.
-	ServerLimit *int `json:"server_limit,omitempty"`
+	// Facts are counts the provider reports beside the catalogue's resources,
+	// for showing, never for arithmetic: for OpenStack how many servers the
+	// project has and may have (FactServers, FactServerLimit — the limit is no
+	// catalogue resource, it follows the cores). A missing key means "not
+	// measured", like InUse.
+	Facts map[string]int `json:"facts,omitempty"`
 	// GrantUse says, per availability of the catalogue (a network, flavour or
 	// image), how many of the project's servers or devices use it: whether
 	// switching it off would take something away. A missing key means "not
@@ -69,12 +68,18 @@ func (n Node) InUse() common.ProjectQuota {
 	return out
 }
 
+// Facts a provider may report.
+const (
+	FactServers     = "servers"      // servers of the project, whatever their state
+	FactServerLimit = "server_limit" // servers it may have
+)
+
 // ServerCount is how many servers the project has across its providers; false while none has measured it.
 func (n Node) ServerCount() (int, bool) {
 	total, measured := 0, false
 	for _, b := range n.Bindings {
-		if b.Servers != nil {
-			total += *b.Servers
+		if v, ok := b.Facts[FactServers]; ok {
+			total += v
 			measured = true
 		}
 	}

@@ -49,3 +49,36 @@ func bindNodeFields(db *gorm.DB, log *zap.SugaredLogger) error {
 	}
 	return nil
 }
+
+// factBindingFields are the counts that moved, inside the openstack binding,
+// from keys of their own into its facts.
+var factBindingFields = []string{"servers", "server_limit"}
+
+// factBindingCounts moves them into data.bindings.openstack.facts in every
+// node that still has one of them. Facts already there win. Runs after
+// bindNodeFields, which brings the oldest nodes' counts into the binding
+// first. A no-op on every start after the first.
+func factBindingCounts(db *gorm.DB, log *zap.SugaredLogger) error {
+	var pairs, removes, present []string
+	var pairArgs, removeArgs []any
+	for _, f := range factBindingFields {
+		pairs = append(pairs, "?::text, data #> ARRAY['bindings', 'openstack', ?::text]")
+		pairArgs = append(pairArgs, f, f)
+		removes = append(removes, " - ?::text")
+		removeArgs = append(removeArgs, f)
+		present = append(present, "data #> ARRAY['bindings', 'openstack', '"+f+"'] IS NOT NULL")
+	}
+	sql := `UPDATE nodes SET data = jsonb_set(data, '{bindings,openstack}',
+		((data #> '{bindings,openstack}')` + strings.Join(removes, "") + `) || jsonb_build_object('facts',
+			jsonb_strip_nulls(jsonb_build_object(` + strings.Join(pairs, ", ") + `))
+			|| COALESCE(data #> '{bindings,openstack,facts}', '{}'::jsonb)))
+		WHERE ` + strings.Join(present, " OR ")
+	res := db.Exec(sql, slices.Concat(removeArgs, pairArgs)...)
+	if res.Error != nil {
+		return fmt.Errorf("move server counts into the openstack binding's facts: %w", res.Error)
+	}
+	if res.RowsAffected > 0 {
+		log.Infow("Moved server counts into the openstack binding's facts", "nodes", res.RowsAffected)
+	}
+	return nil
+}

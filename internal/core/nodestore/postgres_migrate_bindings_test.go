@@ -17,7 +17,8 @@ func TestBoundNodeFields_AreTheKeysOfABinding(t *testing.T) {
 		keys = append(keys, strings.Split(bt.Field(i).Tag.Get("json"), ",")[0])
 	}
 	for _, f := range boundNodeFields {
-		if !slices.Contains(keys, f) {
+		// The server counts are moved on into the facts by factBindingCounts.
+		if !slices.Contains(keys, f) && !slices.Contains(factBindingFields, f) {
 			t.Errorf("boundNodeFields moves %q, which model.Binding does not read", f)
 		}
 	}

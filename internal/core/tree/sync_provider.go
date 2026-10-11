@@ -2,6 +2,7 @@ package tree
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -238,10 +239,9 @@ func MergeMembers(leafUsers, current []common.AuthorizedUser, owner string) []co
 type Observation struct {
 	Overcommitted bool
 	InUse         common.ProjectQuota
-	// Servers counts the project's servers, whatever their state, and
-	// ServerLimit is how many OpenStack allows.
-	Servers     int
-	ServerLimit int
+	// Facts are the counts beside the resources (model.Fact*); nil when none
+	// were read, and then the last known ones stay.
+	Facts map[string]int
 	// GrantUse is what uses each availability; nil when it could not be read,
 	// and then the last known values stay.
 	GrantUse common.ProjectQuota
@@ -261,8 +261,7 @@ func ApplyObservation(b *model.Binding, externalID string, o *Observation) bool 
 	changed := b.ExternalID != externalID
 	if o != nil {
 		changed = changed || b.Overcommitted != o.Overcommitted || !quotaEqual(b.InUse, o.InUse) ||
-			b.Servers == nil || *b.Servers != o.Servers ||
-			b.ServerLimit == nil || *b.ServerLimit != o.ServerLimit ||
+			(o.Facts != nil && !maps.Equal(b.Facts, o.Facts)) ||
 			(o.GrantUse != nil && !quotaEqual(b.GrantUse, o.GrantUse))
 	}
 	if !changed {
@@ -272,9 +271,9 @@ func ApplyObservation(b *model.Binding, externalID string, o *Observation) bool 
 	if o != nil {
 		b.Overcommitted = o.Overcommitted
 		b.InUse = o.InUse
-		servers, serverLimit := o.Servers, o.ServerLimit
-		b.Servers = &servers
-		b.ServerLimit = &serverLimit
+		if o.Facts != nil {
+			b.Facts = o.Facts
+		}
 		if o.GrantUse != nil {
 			b.GrantUse = o.GrantUse
 		}

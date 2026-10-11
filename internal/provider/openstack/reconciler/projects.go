@@ -137,7 +137,6 @@ func (r *Reconciler) syncQuota(leaf model.Node, osProject osclient.ProjectInfo, 
 	return &tree.Observation{
 		Overcommitted: IsProjectOvercommitted(r.resources(), leaf.EffectiveLimit(), detail),
 		InUse:         ProjectInUse(r.resources(), detail),
-		Servers:       detail.InUse.Instances,
-		ServerLimit:   detail.Limit.Instances,
+		Facts:         map[string]int{model.FactServers: detail.InUse.Instances, model.FactServerLimit: detail.Limit.Instances},
 	}, nil
 }

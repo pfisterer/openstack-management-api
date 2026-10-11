@@ -241,6 +241,32 @@
                 "additionalProperties": false
               }
             },
+            "providerResources": {
+              "type": "object",
+              "description": "Resources of the providers besides OpenStack, by provider name.",
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "name"],
+                  "properties": {
+                    "id": { "type": "string", "minLength": 1 },
+                    "name": { "type": "string", "minLength": 1 },
+                    "kind": { "enum": ["count", "window"] },
+                    "window": { "enum": ["24h", "7d", "30d"] },
+                    "group": { "type": "string" },
+                    "unit": { "type": "string" },
+                    "message": { "type": "string" },
+                    "default": { "type": "integer" },
+                    "min": { "type": "integer" },
+                    "max": { "type": "integer" },
+                    "show_on_ui": { "type": "boolean" },
+                    "static": { "type": "boolean" }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
             "chargeOsInUse": {
               "type": "boolean"
             },

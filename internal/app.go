@@ -186,13 +186,16 @@ func RunApplication() {
 	requestTimeout := time.Duration(config.ServiceTimeoutSeconds) * time.Second
 	// Who a caller is and acts as (role switch, impersonation, principal search).
 	identitySvc := identity.NewService(nodeStore, roleProvider, requestTimeout, logger)
-	treeSvc := tree.NewService(nodeStore, roleProvider, osclient.CoreResources(config.ProjectDefinitions), config.RootAdminTokens, requestTimeout, config.MaxAuthorizedUsers, tree.Accounting{
+	// The tree sees every provider's resources as one catalogue: OpenStack's,
+	// which root admins extend at runtime, and the configured ones of the others.
+	allResources := common.CombinedCatalog{resourceCatalog, common.StaticCatalog(config.ProviderResources)}
+	treeSvc := tree.NewService(nodeStore, roleProvider, allResources.Resources(), config.RootAdminTokens, requestTimeout, config.MaxAuthorizedUsers, tree.Accounting{
 		ChargeInUse:    config.ChargeOSInUse,
 		ChargeReleased: config.ChargeReleased,
 		ChargeArchived: config.ChargeArchived,
 	}, logger)
 	// A deletion request is only accepted where a reconciler will act on it.
-	treeSvc.UseCatalog(resourceCatalog)
+	treeSvc.UseCatalog(allResources)
 	treeSvc.SetDeletionAllowed(config.Reconciler.Enabled && reconciler.DeletesOnRequest(config.Reconciler.ReleasedDelete))
 
 	// Bootstrap: optional mock seed into an empty store, then ensure the
@@ -301,7 +304,7 @@ func RunApplication() {
 		},
 		API: webserver.APIConfig{
 			RoleSwitchGroups: config.RootAdminTokens,
-			Catalog:          resourceCatalog,
+			Catalog:          allResources,
 			CatalogAdmin:     catalogAdmin,
 			Service:          treeSvc,
 			Identity:         identitySvc,

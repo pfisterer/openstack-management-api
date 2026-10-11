@@ -221,3 +221,48 @@ func TestProviderSync_WritesOnlyItsOwnBinding(t *testing.T) {
 		t.Errorf("InUse across providers = %v, want both", got)
 	}
 }
+
+// A provider sees the leaves it carries out and those holding one of its resources — not a project that only has another provider's.
+func TestProviderSync_LeavesOfAProvider(t *testing.T) {
+	ctx := context.Background()
+	catalog := []common.Resource{
+		{ID: "cores", Provider: "openstack"},
+		{ID: "gpu_hours", Provider: "workspaces", Kind: common.KindWindow, Window: "30d"},
+		{ID: "legacy"}, // no provider: everybody's
+	}
+	leaf := func(id string, limit common.ProjectQuota, bound ...string) model.Node {
+		n := model.Node{ID: id, Kind: model.KindProject, Status: model.StatusApproved, Limit: limit}
+		for _, p := range bound {
+			n.EditBinding(p, func(b *model.Binding) { b.ExternalID = p + "-" + id })
+		}
+		return n
+	}
+	_, store := providerSyncWith(t,
+		leaf("vm", common.ProjectQuota{"cores": 4}),
+		leaf("ws", common.ProjectQuota{"gpu_hours": 100, "cores": 0}),
+		leaf("both", common.ProjectQuota{"cores": 2, "gpu_hours": 10}),
+		leaf("emptied", common.ProjectQuota{"cores": 0}, "openstack"),
+		leaf("unlimited", common.ProjectQuota{"cores": common.UnlimitedQuota}),
+		leaf("old", common.ProjectQuota{"legacy": 1}),
+		leaf("nothing", common.ProjectQuota{}),
+	)
+	ids := func(provider string) []string {
+		p := &ProviderSync{store: store, provider: provider, resources: func() []common.Resource { return catalog }}
+		leaves, err := p.Leaves(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, n := range leaves {
+			out = append(out, n.ID)
+		}
+		slices.Sort(out)
+		return out
+	}
+	if got, want := ids("openstack"), []string{"both", "emptied", "old", "unlimited", "vm"}; !slices.Equal(got, want) {
+		t.Errorf("openstack sees %v, want %v", got, want)
+	}
+	if got, want := ids("workspaces"), []string{"both", "old", "ws"}; !slices.Equal(got, want) {
+		t.Errorf("workspaces sees %v, want %v", got, want)
+	}
+}

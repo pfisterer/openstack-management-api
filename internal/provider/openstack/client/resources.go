@@ -91,6 +91,7 @@ func (m ManagedResource) Core() common.Resource {
 		ID: m.ID, Name: m.Name, Default: m.Default, Min: m.Min, Max: m.Max,
 		Unit: m.Unit, Message: m.Message, Kind: m.Kind, Group: m.Group,
 		ShowOnUI: m.ShowOnUI, Static: m.Static, Withdrawn: m.Withdrawn,
+		Provider: Provider,
 	}
 	switch m.OSQuotaField {
 	case "cores":
@@ -146,6 +147,10 @@ func ValidateManagedResources(defs []ManagedResource) error {
 		return err
 	}
 	for _, d := range defs {
+		// OpenStack quotas hold what runs at once; nothing there counts per window.
+		if d.Kind == common.KindWindow {
+			return fmt.Errorf("resource %q: OpenStack has no kind %q", d.ID, common.KindWindow)
+		}
 		if err := validateGrant(d); err != nil {
 			return err
 		}

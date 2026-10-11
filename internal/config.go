@@ -3,11 +3,14 @@ package app
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/reconciler"
-	"github.com/pfisterer/openstack-management-api/internal/webserver"
+	"maps"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/reconciler"
+	"github.com/pfisterer/openstack-management-api/internal/webserver"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/joho/godotenv"
@@ -174,9 +177,12 @@ type AppConfiguration struct {
 	// RootAdminTokens (from ROOT_ADMIN_TOKENS) are the system-wide admin tokens.
 	// They gate three surfaces: the service's root-admin checks, the reconciler
 	// admin endpoints, and the role-switch allowlist.
-	RootAdminTokens       common.TokenList           `json:"root_admin_tokens"`
-	ProjectDefinitions    []osclient.ManagedResource `json:"resource_definitions" validate:"required,min=1,dive"`
-	ServiceTimeoutSeconds int                        `json:"service_timeout_seconds"`
+	RootAdminTokens    common.TokenList           `json:"root_admin_tokens"`
+	ProjectDefinitions []osclient.ManagedResource `json:"resource_definitions" validate:"required,min=1,dive"`
+	// ProviderResources are the resources of the providers besides OpenStack
+	// (from PROVIDER_RESOURCES), each carrying its provider's name.
+	ProviderResources     []common.Resource `json:"provider_resources,omitempty"`
+	ServiceTimeoutSeconds int               `json:"service_timeout_seconds"`
 	// MaxAuthorizedUsers caps the participants one project may list. Each entry
 	// costs the reconciler Keystone work on every run (a group plus an account
 	// per member), so the ceiling bounds what a single request can trigger.
@@ -227,6 +233,10 @@ func loadAppConfiguration() (AppConfiguration, error) {
 	// message naming the offending resource, rather than surfacing later as a
 	// resource that exists in the portal and governs nothing.
 	resourceCatalogue, err := loadResourceCatalogue()
+	if err != nil {
+		return AppConfiguration{}, err
+	}
+	providerResources, err := loadProviderResources(osclient.CoreResources(resourceCatalogue))
 	if err != nil {
 		return AppConfiguration{}, err
 	}
@@ -301,6 +311,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 		DevMode:               getEnvString("API_MODE", "API_MODE", "production") == "development",
 		RootAdminTokens:       parseCSVEnv(envconf.String("ROOT_ADMIN_TOKENS", "")),
 		ProjectDefinitions:    resourceCatalogue,
+		ProviderResources:     providerResources,
 		ServiceTimeoutSeconds: envconf.Int("SERVICE_TIMEOUT_SECONDS", 30),
 		MaxAuthorizedUsers:    envconf.Int("API_MAX_AUTHORIZED_USERS", common.DefaultMaxAuthorizedUsers),
 		ChargeOSInUse:         envconf.Bool("API_CHARGE_OS_IN_USE", true),
@@ -361,6 +372,43 @@ func loadResourceCatalogue() ([]osclient.ManagedResource, error) {
 	}
 
 	return defs, nil
+}
+
+// providerResourcesEnv holds the resources of the providers besides OpenStack
+// as a JSON object from provider name to an array of resources, e.g.
+// {"aiaas": [{"id": "ws-gpu-hours-l4-3q", "name": "GPU L4 (3Q)", "kind": "window", "window": "30d"}]}.
+const providerResourcesEnv = "PROVIDER_RESOURCES"
+
+// loadProviderResources reads them and checks them together with OpenStack's,
+// because ids must be unique across all providers: a project's limit is one
+// map. Only quantities and windows: availabilities of another provider are
+// added at runtime, like OpenStack's, once that provider can be asked for them.
+func loadProviderResources(openstack []common.Resource) ([]common.Resource, error) {
+	raw := strings.TrimSpace(envconf.String(providerResourcesEnv, ""))
+	if raw == "" {
+		return nil, nil
+	}
+	var byProvider map[string][]common.Resource
+	if err := json.Unmarshal([]byte(raw), &byProvider); err != nil {
+		return nil, fmt.Errorf("%s is not a JSON object of provider name to resources: %w", providerResourcesEnv, err)
+	}
+	var out []common.Resource
+	for _, provider := range slices.Sorted(maps.Keys(byProvider)) {
+		if provider == "" || provider == osclient.Provider {
+			return nil, fmt.Errorf("%s: provider %q — OpenStack's resources are in %s", providerResourcesEnv, provider, resourceCatalogueEnv)
+		}
+		for _, r := range byProvider[provider] {
+			if r.Kind == common.KindBool {
+				return nil, fmt.Errorf("%s: resource %q: availabilities of %s are not configured here", providerResourcesEnv, r.ID, provider)
+			}
+			r.Provider = provider
+			out = append(out, r)
+		}
+	}
+	if err := common.ValidateResources(slices.Concat(openstack, out)); err != nil {
+		return nil, fmt.Errorf("%s: %w", providerResourcesEnv, err)
+	}
+	return out, nil
 }
 
 func logAppConfig(appConfig AppConfiguration, log *zap.SugaredLogger) {

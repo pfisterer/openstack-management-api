@@ -180,6 +180,10 @@ spec:
             - name: RESOURCE_DEFINITIONS
               value: {{ toJson . | quote }}
             {{- end }}
+            {{- with .Values.openstackManagementApi.api.providerResources }}
+            - name: PROVIDER_RESOURCES
+              value: {{ toJson . | quote }}
+            {{- end }}
             - name: CORS_ALLOWED_ORIGINS
               value: {{ join "," (.Values.openstackManagementApi.api.corsAllowedOrigins | default list) | quote }}
 

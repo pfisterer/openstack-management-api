@@ -326,6 +326,11 @@ type uiResource struct {
 	// tells how its use is counted — devices on a network, servers otherwise.
 	// The type only: the target stays private.
 	GrantType string `json:"grant_type,omitempty"`
+	// Provider is the system that carries the resource out (openstack,
+	// workspaces), so the UI can group by it.
+	Provider string `json:"provider,omitempty"`
+	// Window is the time window of an amount per window (kind window): 24h, 7d or 30d.
+	Window string `json:"window,omitempty"`
 }
 
 func uiResourceFrom(r common.Resource) uiResource {
@@ -341,6 +346,8 @@ func uiResourceFrom(r common.Resource) uiResource {
 		Group:     r.Group,
 		ShowOnUI:  r.ShowOnUI,
 		GrantType: r.GrantType,
+		Provider:  r.Provider,
+		Window:    r.Window,
 	}
 }
 

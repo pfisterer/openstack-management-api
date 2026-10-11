@@ -1,6 +1,9 @@
 package common
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // Resource kinds. A kind decides how a value is read, validated and aggregated —
 // everything else about a resource is presentation.
@@ -20,7 +23,18 @@ const (
 	// up to three networks. What a parent grants is not divided among children,
 	// it is passed to them.
 	KindBool = "bool"
+
+	// KindWindow is an amount per time window: "200 GPU hours per 30 days".
+	// It sums and caps like a count — the projects under a budget may not be
+	// granted more hours per window than the budget has — but what is measured
+	// against it is what was consumed in the current window, not what is held
+	// right now. Window names the window.
+	KindWindow = "window"
 )
+
+// The windows a KindWindow resource may have: calendar windows in UTC, the
+// same the aiaas provider books in.
+var Windows = []string{"24h", "7d", "30d"}
 
 // What a resource means in the usage books and in the charge of an archived
 // project — told to the tree by the system that carries it out, so the tree
@@ -49,6 +63,16 @@ type Resource struct {
 	// KindCount, which is what every resource was before kinds existed — an
 	// older catalogue keeps working unchanged.
 	Kind string `json:"kind,omitempty"`
+
+	// Provider is the system that carries the resource out ("openstack",
+	// "aiaas"). A project is that provider's business as soon as it holds
+	// more than zero of one of its resources. Empty only in catalogues written
+	// before providers existed, and then it counts for every provider.
+	Provider string `json:"provider,omitempty"`
+
+	// Window is the time window of a KindWindow resource (see Windows); empty
+	// for every other kind.
+	Window string `json:"window,omitempty"`
 
 	// Group is a heading the UI sorts resources under ("Compute", "Networks",
 	// "GPU flavours"). Purely presentational, and the reason a catalogue of
@@ -94,6 +118,23 @@ type StaticCatalog []Resource
 
 func (c StaticCatalog) Resources() []Resource { return c }
 
+// CombinedCatalog is the catalogues of several providers read as one, in order.
+type CombinedCatalog []ResourceCatalog
+
+func (c CombinedCatalog) Resources() []Resource {
+	var out []Resource
+	for _, part := range c {
+		out = append(out, part.Resources()...)
+	}
+	return out
+}
+
+// BelongsTo reports whether the resource is provider's to carry out. One
+// without a provider belongs to every provider, as before there were several.
+func (m Resource) BelongsTo(provider string) bool {
+	return m.Provider == "" || m.Provider == provider
+}
+
 // IsBool reports whether this resource is an availability rather than a
 // quantity. Everything that sums, caps or charges asks this first.
 func (m Resource) IsBool() bool { return m.Kind == KindBool }
@@ -103,7 +144,10 @@ func (m Resource) IsBool() bool { return m.Kind == KindBool }
 //
 // An empty kind counts, which is what keeps a catalogue written before kinds
 // existed behaving exactly as it did.
-func (m Resource) IsCount() bool { return m.Kind == "" || m.Kind == KindCount }
+func (m Resource) IsCount() bool { return m.Kind == "" || m.Kind == KindCount || m.Kind == KindWindow }
+
+// IsWindow reports whether this resource is an amount per time window.
+func (m Resource) IsWindow() bool { return m.Kind == KindWindow }
 
 // ValidateResources checks what the tree needs of a catalogue: unique ids and
 // known kinds. What an entry means in the executing system is checked there
@@ -132,6 +176,13 @@ func ValidateResources(defs []Resource) error {
 
 		switch d.Kind {
 		case "", KindCount, KindBool:
+			if d.Window != "" {
+				return fmt.Errorf("resource %q: only kind %q has a window", d.ID, KindWindow)
+			}
+		case KindWindow:
+			if !slices.Contains(Windows, d.Window) {
+				return fmt.Errorf("resource %q: window %q is not one of %v", d.ID, d.Window, Windows)
+			}
 		default:
 			return fmt.Errorf("resource %q: unknown kind %q", d.ID, d.Kind)
 		}

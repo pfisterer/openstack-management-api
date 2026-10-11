@@ -168,6 +168,26 @@ openstackManagementApi:
     # startup instead of quietly dropping the resource.
     resourceDefinitions: []
 
+    # The resources of the providers besides OpenStack, by provider name. They
+    # are checked together with resourceDefinitions (ids are unique across all
+    # providers) and may be quantities (kind count) or amounts per window
+    # (kind window with window 24h, 7d or 30d); availabilities of other
+    # providers are added at runtime, not here. Empty: OpenStack only.
+    #
+    #   providerResources:
+    #     aiaas:
+    #       - id: ws-gpu-hours-l4-3q
+    #         name: GPU L4 (3Q)
+    #         unit: GPU h
+    #         kind: window
+    #         window: 30d
+    #         group: Workspaces GPU
+    #         default: 0
+    #         min: 0
+    #         max: 20000
+    #         show_on_ui: true
+    providerResources: {}
+
     # Bill a project the LARGER of its declared limit and what OpenStack reports
     # it actually uses, in both the auto-approve check and the budget rollup.
     # On by default: with it off, shrinking a limit after filling the project

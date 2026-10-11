@@ -27,6 +27,9 @@ type ProviderSync struct {
 	store    nodestore.Store
 	provider string
 	changes  <-chan struct{}
+	// resources is the current catalogue, to tell which leaves are this
+	// provider's; nil (NewProviderSync) means all of them.
+	resources func() []common.Resource
 }
 
 // NewProviderSync is provider's view of the tree straight from its store, without a service that announces changes; Service.ProviderSync is the one with them.
@@ -40,9 +43,32 @@ func (p *ProviderSync) Provider() string { return p.provider }
 // Changes receives when the service changed what is wanted since the last receive. Nil — never ready — for a view made by NewProviderSync.
 func (p *ProviderSync) Changes() <-chan struct{} { return p.changes }
 
-// Leaves returns the projects in the given statuses.
+// Leaves returns the projects in the given statuses that are this provider's
+// business: those it already carries out (they have its binding — a project
+// emptied of its resources still has to be cleaned up there) and those that
+// hold more than zero of one of its resources.
 func (p *ProviderSync) Leaves(ctx context.Context, statuses []string) ([]model.Node, error) {
-	return p.store.ListNodes(ctx, nodestore.NodeQuery{Kinds: []string{model.KindProject}, Statuses: statuses}, 0, 0)
+	leaves, err := p.store.ListNodes(ctx, nodestore.NodeQuery{Kinds: []string{model.KindProject}, Statuses: statuses}, 0, 0)
+	if err != nil || p.resources == nil {
+		return leaves, err
+	}
+	var mine []string
+	for _, r := range p.resources() {
+		if r.BelongsTo(p.provider) {
+			mine = append(mine, r.ID)
+		}
+	}
+	return slices.DeleteFunc(leaves, func(n model.Node) bool { return !concerns(n, p.provider, mine) }), nil
+}
+
+// concerns reports whether leaf n is provider's business, given the ids of
+// provider's resources.
+func concerns(n model.Node, provider string, resourceIDs []string) bool {
+	if _, bound := n.Bindings[provider]; bound {
+		return true
+	}
+	limit := n.EffectiveLimit()
+	return slices.ContainsFunc(resourceIDs, func(id string) bool { return limit[id] > 0 || limit[id] == common.UnlimitedQuota })
 }
 
 // Budgets returns every budget, for naming a project's path in the tree.

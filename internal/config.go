@@ -181,8 +181,10 @@ type AppConfiguration struct {
 	ProjectDefinitions []osclient.ManagedResource `json:"resource_definitions" validate:"required,min=1,dive"`
 	// ProviderResources are the resources of the providers besides OpenStack
 	// (from PROVIDER_RESOURCES), each carrying its provider's name.
-	ProviderResources     []common.Resource `json:"provider_resources,omitempty"`
-	ServiceTimeoutSeconds int               `json:"service_timeout_seconds"`
+	ProviderResources []common.Resource `json:"provider_resources,omitempty"`
+	// AIaaS is where the AI service (aiaas-management-api) is and the token of the tree there; no URL = the provider is off.
+	AIaaS                 AIaaSConfig `json:"aiaas"`
+	ServiceTimeoutSeconds int         `json:"service_timeout_seconds"`
 	// MaxAuthorizedUsers caps the participants one project may list. Each entry
 	// costs the reconciler Keystone work on every run (a group plus an account
 	// per member), so the ceiling bounds what a single request can trigger.
@@ -308,10 +310,15 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			URL:      envconf.String("ROLE_PROVIDER_URL", ""),
 			APIToken: envconf.String("ROLE_PROVIDER_API_TOKEN", ""),
 		},
-		DevMode:               getEnvString("API_MODE", "API_MODE", "production") == "development",
-		RootAdminTokens:       parseCSVEnv(envconf.String("ROOT_ADMIN_TOKENS", "")),
-		ProjectDefinitions:    resourceCatalogue,
-		ProviderResources:     providerResources,
+		DevMode:            getEnvString("API_MODE", "API_MODE", "production") == "development",
+		RootAdminTokens:    parseCSVEnv(envconf.String("ROOT_ADMIN_TOKENS", "")),
+		ProjectDefinitions: resourceCatalogue,
+		ProviderResources:  providerResources,
+		AIaaS: AIaaSConfig{
+			URL:             envconf.String("AIAAS_URL", ""),
+			Token:           envconf.String("AIAAS_TREE_TOKEN", ""),
+			IntervalSeconds: envconf.Int("AIAAS_INTERVAL_SECONDS", 300),
+		},
 		ServiceTimeoutSeconds: envconf.Int("SERVICE_TIMEOUT_SECONDS", 30),
 		MaxAuthorizedUsers:    envconf.Int("API_MAX_AUTHORIZED_USERS", common.DefaultMaxAuthorizedUsers),
 		ChargeOSInUse:         envconf.Bool("API_CHARGE_OS_IN_USE", true),
@@ -374,6 +381,13 @@ func loadResourceCatalogue() ([]osclient.ManagedResource, error) {
 	return defs, nil
 }
 
+// AIaaSConfig is the AI service as a provider of the tree.
+type AIaaSConfig struct {
+	URL             string `json:"url"`
+	Token           string `json:"token"`
+	IntervalSeconds int    `json:"interval_seconds"`
+}
+
 // providerResourcesEnv holds the resources of the providers besides OpenStack
 // as a JSON object from provider name to an array of resources, e.g.
 // {"aiaas": [{"id": "ws-gpu-hours-l4-3q", "name": "GPU L4 (3Q)", "kind": "window", "window": "30d"}]}.
@@ -419,6 +433,7 @@ func logAppConfig(appConfig AppConfiguration, log *zap.SugaredLogger) {
 	appConfig.Openstack.ApplicationCredentialSecret = redact.Secret(appConfig.Openstack.ApplicationCredentialSecret)
 	appConfig.Openstack.Password = redact.Secret(appConfig.Openstack.Password)
 	appConfig.RoleProvider.APIToken = redact.Secret(appConfig.RoleProvider.APIToken)
+	appConfig.AIaaS.Token = redact.Secret(appConfig.AIaaS.Token)
 	appConfig.Storage.ConnectionString = redact.ConnString(appConfig.Storage.ConnectionString)
 
 	if appConfig.DevMode {

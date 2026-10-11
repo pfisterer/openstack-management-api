@@ -265,3 +265,29 @@ func TestProviderSync_LeavesOfAProvider(t *testing.T) {
 		t.Errorf("workspaces sees %v, want %v", got, want)
 	}
 }
+
+// A provider done with a retired leaf removes it only when no other provider still carries it out; else it drops just its own side.
+func TestRemoveRetired_LeavesTheOtherProvider(t *testing.T) {
+	ctx := context.Background()
+	both := model.Node{ID: "p_both", Kind: model.KindProject, Status: model.StatusReleased,
+		Bindings: map[string]model.Binding{"openstack": {ExternalID: "os-1"}, "aiaas": {ExternalID: "t-1"}}}
+	only := model.Node{ID: "p_only", Kind: model.KindProject, Status: model.StatusReleased,
+		Bindings: map[string]model.Binding{"openstack": {ExternalID: "os-2"}}}
+	p, store := providerSyncWith(t, both, only)
+	if gone, err := p.RemoveRetired(ctx, "p_both"); err != nil || gone {
+		t.Fatalf("removed a leaf the AI service still carries out: %v %v", gone, err)
+	}
+	if n := nodeIn(t, store, "p_both"); len(n.Bindings) != 1 || n.Bindings["aiaas"].ExternalID != "t-1" {
+		t.Errorf("bindings after openstack is done = %+v, want only aiaas", n.Bindings)
+	}
+	if !p.BoundElsewhere(nodeIn(t, store, "p_both")) {
+		t.Error("the aiaas binding is another provider's")
+	}
+	if gone, err := p.RemoveRetired(ctx, "p_only"); err != nil || !gone {
+		t.Errorf("a leaf only openstack carried out must go: %v %v", gone, err)
+	}
+	ai := NewProviderSync(store, "aiaas")
+	if gone, err := ai.RemoveRetired(ctx, "p_both"); err != nil || !gone {
+		t.Errorf("the last provider done removes the leaf: %v %v", gone, err)
+	}
+}

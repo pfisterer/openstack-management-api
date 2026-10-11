@@ -75,3 +75,21 @@ func TestChanges(t *testing.T) {
 	}
 	expect("delete of nothing", false)
 }
+
+// Every provider hears of every change: each view has its own channel.
+func TestChanges_EveryProviderHears(t *testing.T) {
+	ctx := context.Background()
+	log := zap.NewNop().Sugar()
+	svc := NewService(nodestore.NewInMemoryStore(log), nil, []common.Resource{{ID: "cores", Name: "Cores"}}, nil, time.Second, 0, Accounting{}, log)
+	os, ai := svc.ProviderSync("openstack"), svc.ProviderSync("aiaas")
+	if err := svc.store.UpsertNode(ctx, model.Node{ID: "p1", Kind: model.KindProject, Status: model.StatusPending}); err != nil {
+		t.Fatal(err)
+	}
+	for name, p := range map[string]*ProviderSync{"openstack": os, "aiaas": ai} {
+		select {
+		case <-p.Changes():
+		default:
+			t.Errorf("%s did not hear of the change", name)
+		}
+	}
+}

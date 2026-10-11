@@ -72,6 +72,11 @@ func (r *Reconciler) removeReleasedLeavesWithoutProject(
 		if _, inScope := osProjectByOSID[osID(leaf)]; inScope && osID(leaf) != "" {
 			continue
 		}
+		// No OpenStack project, but another provider still carries it out:
+		// nothing to do here; that provider removes the leaf when it is done.
+		if osID(leaf) == "" && r.nodes.BoundElsewhere(leaf) {
+			continue
+		}
 
 		// Nothing is destroyed in OpenStack here — the project is already gone
 		// from it, and keeping the record would leave the tree disagreeing with

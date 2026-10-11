@@ -8,16 +8,24 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 )
 
-// ProviderSync is the reconciler's view of this tree. Its Changes fire when the service changed what is wanted, so a change made through the API (REST or MCP) is carried out right away instead of at the next interval. The reconciler's own reports go to the plain store and do not fire, or every run would start the next one.
+// ProviderSync is a provider's view of this tree. Its Changes fire when the service changed what is wanted, so a change made through the API (REST or MCP) is carried out right away instead of at the next interval. Each view has its own channel: with two providers, both hear of every change. A provider's own reports go to the plain store and do not fire, or every run would start the next one.
 func (s *Service) ProviderSync(provider string) *ProviderSync {
-	return &ProviderSync{store: s.plain, provider: provider, changes: s.changes, resources: s.resources}
+	ch := make(chan struct{}, 1)
+	s.changesMu.Lock()
+	s.changes = append(s.changes, ch)
+	s.changesMu.Unlock()
+	return &ProviderSync{store: s.plain, provider: provider, changes: ch, resources: s.resources}
 }
 
-// signalChange marks that the wanted state changed. Non-blocking with room for one: changes that arrive while the reconciler runs fold into one follow-up run, and the interval catches anything else.
+// signalChange marks that the wanted state changed, for every provider. Non-blocking with room for one each: changes that arrive while a provider runs fold into one follow-up run, and the interval catches anything else.
 func (s *Service) signalChange() {
-	select {
-	case s.changes <- struct{}{}:
-	default:
+	s.changesMu.Lock()
+	defer s.changesMu.Unlock()
+	for _, ch := range s.changes {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
 	}
 }
 

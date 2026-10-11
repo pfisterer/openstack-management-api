@@ -22,6 +22,7 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"github.com/pfisterer/openstack-management-api/internal/core/usage"
 	"github.com/pfisterer/openstack-management-api/internal/dev"
+	"github.com/pfisterer/openstack-management-api/internal/provider/aiaas"
 	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/catalog"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/reconciler"
@@ -232,6 +233,23 @@ func RunApplication() {
 	// Without a reconciler nothing is checked in OpenStack, and nothing is
 	// granted there either.
 	catalogAdmin := &catalog.Admin{Catalog: resourceCatalog, Tree: treeSvc}
+
+	// The AI service as the second provider: it carries out the projects that
+	// hold its resources, like the reconciler does for OpenStack.
+	if config.AIaaS.URL != "" {
+		if config.AIaaS.Token == "" {
+			logger.Fatal("AIAAS_URL is set but AIAAS_TREE_TOKEN is not")
+		}
+		syncer := &aiaas.Syncer{
+			Tree:      treeSvc.ProviderSync(aiaas.Provider),
+			Service:   aiaas.NewClient(config.AIaaS.URL, config.AIaaS.Token, 30*time.Second),
+			Resources: allResources.Resources,
+			Interval:  time.Duration(config.AIaaS.IntervalSeconds) * time.Second,
+			Log:       logger,
+		}
+		logger.Infow("Starting the AI service provider", "url", config.AIaaS.URL, "interval_seconds", config.AIaaS.IntervalSeconds)
+		go syncer.Run(ctx)
+	}
 
 	// A local ReconcilerAPI variable avoids passing a typed nil as the interface,
 	// which would make cfg.Reconciler != nil even when no reconciler exists.

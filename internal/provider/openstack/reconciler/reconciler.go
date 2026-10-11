@@ -50,6 +50,7 @@ type TreeSync interface {
 	MarkArchived(ctx context.Context, leafID string) error
 	RecordPurgeProgress(ctx context.Context, leafID string, r tree.PurgeReport) error
 	RemoveRetired(ctx context.Context, leafID string) (bool, error)
+	BoundElsewhere(n model.Node) bool
 	RemoveImport(ctx context.Context, leafID string) (bool, error)
 	AddImport(ctx context.Context, leaf model.Node) error
 	RefreshImport(ctx context.Context, leaf model.Node, o *tree.Observation) error

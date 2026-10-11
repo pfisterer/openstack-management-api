@@ -20,10 +20,12 @@ import (
 // but in package identity; the tree is handed the effective tokens.
 type Service struct {
 	// store signals every write on changes; plain is the same store without, for ProviderSync (see service_changes.go).
-	store   nodestore.Store
-	plain   nodestore.Store
-	changes chan struct{}
-	roles   roles.Provider
+	store nodestore.Store
+	plain nodestore.Store
+	// changes has one channel per ProviderSync handed out, so every provider hears of every change.
+	changesMu sync.Mutex
+	changes   []chan struct{}
+	roles     roles.Provider
 	// ownerTokens caches people's tokens for the "owner in group" filter.
 	ownerTokens *tokenCache
 
@@ -134,7 +136,6 @@ func NewService(store nodestore.Store, roles roles.Provider, resources []common.
 	}
 	s := &Service{
 		plain:              store,
-		changes:            make(chan struct{}, 1),
 		roles:              roles,
 		ownerTokens:        newTokenCache(2 * time.Minute),
 		catalog:            common.StaticCatalog(resources),

@@ -150,11 +150,42 @@ func (p *ProviderSync) RecordPurgeProgress(ctx context.Context, leafID string, r
 	return err
 }
 
-// RemoveRetired deletes a released or archived leaf whose project is gone.
-// Reports false when the leaf is no longer retired — then it is not deleted.
+// RemoveRetired is for a released or archived leaf whose project is gone at
+// this provider: the leaf is deleted when no other provider carries it out,
+// else only this provider's binding is dropped and the others finish theirs.
+// Reports whether the leaf was deleted; false also when it is no longer
+// retired, and then nothing changes.
 func (p *ProviderSync) RemoveRetired(ctx context.Context, leafID string) (bool, error) {
-	return p.store.DeleteNodeIf(ctx, leafID, func(n model.Node) bool { return model.IsRetiredStatus(n.Status) })
+	deleted, err := p.store.DeleteNodeIf(ctx, leafID, func(n model.Node) bool {
+		return model.IsRetiredStatus(n.Status) && !boundElsewhere(n, p.provider)
+	})
+	if err != nil || deleted {
+		return deleted, err
+	}
+	_, err = p.store.UpdateNode(ctx, leafID, func(n *model.Node) error {
+		if _, bound := n.Bindings[p.provider]; !bound || !model.IsRetiredStatus(n.Status) {
+			return nodestore.ErrSkipUpdate
+		}
+		rest := maps.Clone(n.Bindings)
+		delete(rest, p.provider)
+		n.Bindings = rest
+		return nil
+	})
+	return false, err
 }
+
+// boundElsewhere reports whether a provider other than this one carries the leaf out.
+func boundElsewhere(n model.Node, provider string) bool {
+	for other := range n.Bindings {
+		if other != provider {
+			return true
+		}
+	}
+	return false
+}
+
+// BoundElsewhere reports whether a provider other than this view's carries the leaf out.
+func (p *ProviderSync) BoundElsewhere(n model.Node) bool { return boundElsewhere(n, p.provider) }
 
 // RemoveImport deletes an imported leaf: its project left the scope, or it
 // turned out to shadow a managed one. Reports false once the leaf was promoted

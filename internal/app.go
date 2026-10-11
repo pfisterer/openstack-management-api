@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 	"github.com/pfisterer/openstack-management-api/internal/identity"
 
@@ -34,7 +35,7 @@ import (
 // middleware routes on.
 const apiTokenPrefix = "os_mgt_"
 
-func configureStores(cfg *StorageConfiguration, log *zap.SugaredLogger) (tree.Store, *token.Service, usage.Store, catalog.Store, error) {
+func configureStores(cfg *StorageConfiguration, log *zap.SugaredLogger) (nodestore.Store, *token.Service, usage.Store, catalog.Store, error) {
 	storageType := strings.ToLower(strings.TrimSpace(cfg.Type))
 
 	switch storageType {
@@ -43,10 +44,10 @@ func configureStores(cfg *StorageConfiguration, log *zap.SugaredLogger) (tree.St
 		// Memory mode is intended for local development and tests. Tokens do
 		// not survive a restart here, which is fine for the one and unusable
 		// for the other.
-		return tree.NewInMemoryStore(log), token.NewService(apiTokenPrefix, token.NewMemoryStore()), usage.NewMemoryStore(), &catalog.MemoryStore{}, nil
+		return nodestore.NewInMemoryStore(log), token.NewService(apiTokenPrefix, token.NewMemoryStore()), usage.NewMemoryStore(), &catalog.MemoryStore{}, nil
 
 	case "postgres":
-		store, err := tree.NewPostgresStore(cfg.ConnectionString, log)
+		store, err := nodestore.NewPostgresStore(cfg.ConnectionString, log)
 		if err != nil {
 			return nil, nil, nil, nil, fmt.Errorf("postgres storage: %w", err)
 		}
@@ -185,7 +186,7 @@ func RunApplication() {
 	// A local ReconcilerAPI variable avoids passing a typed nil as the interface,
 	// which would make cfg.Reconciler != nil even when no reconciler exists.
 	// Declared this early for the service's store: a change made through the API
-	// starts a reconciler run right away (see tree.NotifyOnWrite). It is only
+	// starts a reconciler run right away (see nodestore.NotifyOnWrite). It is only
 	// read on writes, and the ones during bootstrap below find it still nil.
 	var reconcilerAPI webserver.ReconcilerAPI
 	triggerReconcile := func() {
@@ -197,7 +198,7 @@ func RunApplication() {
 	requestTimeout := time.Duration(config.ServiceTimeoutSeconds) * time.Second
 	// Who a caller is and acts as (role switch, impersonation, principal search).
 	identitySvc := identity.NewService(nodeStore, roleProvider, requestTimeout, logger)
-	treeSvc := tree.NewService(tree.NotifyOnWrite(nodeStore, triggerReconcile), roleProvider, osclient.CoreResources(config.ProjectDefinitions), config.RootAdminTokens, requestTimeout, config.MaxAuthorizedUsers, tree.Accounting{
+	treeSvc := tree.NewService(nodestore.NotifyOnWrite(nodeStore, triggerReconcile), roleProvider, osclient.CoreResources(config.ProjectDefinitions), config.RootAdminTokens, requestTimeout, config.MaxAuthorizedUsers, tree.Accounting{
 		ChargeInUse:    config.ChargeOSInUse,
 		ChargeReleased: config.ChargeReleased,
 		ChargeArchived: config.ChargeArchived,

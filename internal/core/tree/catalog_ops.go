@@ -6,6 +6,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 )
 
 // What the tree does when root admins add, withdraw or remove an availability
@@ -34,7 +35,7 @@ type Holder struct {
 // Holders lists the nodes holding availability id, the root excepted: it
 // holds everything while the resource is offered.
 func (s *Service) Holders(ctx context.Context, id string) ([]Holder, error) {
-	nodes, err := s.store.ListNodes(ctx, NodeQuery{}, 0, 0)
+	nodes, err := s.store.ListNodes(ctx, nodestore.NodeQuery{}, 0, 0)
 	if err != nil {
 		return nil, fmt.Errorf("list nodes: %w", err)
 	}
@@ -101,7 +102,7 @@ func (s *Service) AdoptAvailability(ctx context.Context, id string) error {
 	defer s.approvalMu.Unlock()
 	_, err := s.store.UpdateNode(ctx, model.RootNodeID, func(n *model.Node) error {
 		if n.Limit[id] == 1 {
-			return ErrSkipUpdate
+			return nodestore.ErrSkipUpdate
 		}
 		if n.Limit == nil {
 			n.Limit = common.ProjectQuota{}
@@ -119,7 +120,7 @@ func (s *Service) AdoptAvailability(ctx context.Context, id string) error {
 func (s *Service) rewriteAll(ctx context.Context, edit func(common.ProjectQuota) bool) (int, error) {
 	s.approvalMu.Lock()
 	defer s.approvalMu.Unlock()
-	nodes, err := s.store.ListNodes(ctx, NodeQuery{}, 0, 0)
+	nodes, err := s.store.ListNodes(ctx, nodestore.NodeQuery{}, 0, 0)
 	if err != nil {
 		return 0, fmt.Errorf("list nodes: %w", err)
 	}
@@ -152,7 +153,7 @@ func (s *Service) rewriteAll(ctx context.Context, edit func(common.ProjectQuota)
 				touched = true
 			}
 			if !touched {
-				return ErrSkipUpdate
+				return nodestore.ErrSkipUpdate
 			}
 			return nil
 		})
@@ -178,7 +179,7 @@ func grantsNothing(q common.ProjectQuota) bool {
 // ProjectsByExternalID maps the external (OpenStack) project ID of every project that has one
 // to the project, so a grant found in OpenStack can be named.
 func (s *Service) ProjectsByExternalID(ctx context.Context) (map[string]Holder, error) {
-	nodes, err := s.store.ListNodes(ctx, NodeQuery{Kinds: []string{model.KindProject}}, 0, 0)
+	nodes, err := s.store.ListNodes(ctx, nodestore.NodeQuery{Kinds: []string{model.KindProject}}, 0, 0)
 	if err != nil {
 		return nil, fmt.Errorf("list projects: %w", err)
 	}

@@ -6,6 +6,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 )
 
 func (s *Service) nodeChain(ctx context.Context, startID string) ([]model.Node, error) {
@@ -107,7 +108,7 @@ func (s *Service) undelegatedBudgetIDs(ctx context.Context, roots []model.Node, 
 	}
 
 	for len(queue) > 0 {
-		children, err := s.store.ListNodes(ctx, NodeQuery{ParentIDs: queue, Kinds: []string{model.KindBudget}}, 0, 0)
+		children, err := s.store.ListNodes(ctx, nodestore.NodeQuery{ParentIDs: queue, Kinds: []string{model.KindBudget}}, 0, 0)
 		if err != nil {
 			return nil, fmt.Errorf("load child budgets: %w", err)
 		}

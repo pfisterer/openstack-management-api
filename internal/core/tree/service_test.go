@@ -10,6 +10,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"go.uber.org/zap"
 )
@@ -23,10 +24,10 @@ var testResources = []common.Resource{{ID: "cores", Name: "Cores"}}
 // says something about the deployment rather than about a lenient fixture.
 var testAccounting = tree.Accounting{ChargeInUse: true, ChargeReleased: true}
 
-func newSvc(t *testing.T, rootAdmins common.TokenList) (*tree.Service, tree.Store) {
+func newSvc(t *testing.T, rootAdmins common.TokenList) (*tree.Service, nodestore.Store) {
 	t.Helper()
 	log := zap.NewNop().Sugar()
-	store := tree.NewInMemoryStore(log)
+	store := nodestore.NewInMemoryStore(log)
 	svc := tree.NewService(store, dev.NewMockRoleProvider(), testResources, rootAdmins, 5*time.Second, common.DefaultMaxAuthorizedUsers, testAccounting, log)
 	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
 		t.Fatalf("bootstrap: %v", err)
@@ -41,7 +42,7 @@ func cores(n int) common.ProjectQuota { return common.ProjectQuota{"cores": n} }
 // letting removed admins keep — and new admins never gain — the top-level scope).
 func TestBootstrap_SyncsRootAdminScope(t *testing.T) {
 	log := zap.NewNop().Sugar()
-	store := tree.NewInMemoryStore(log)
+	store := nodestore.NewInMemoryStore(log)
 
 	svc1 := tree.NewService(store, dev.NewMockRoleProvider(), testResources, common.TokenList{"group:admins-v1"}, 5*time.Second, common.DefaultMaxAuthorizedUsers, testAccounting, log)
 	if err := svc1.Bootstrap(context.Background(), nil, nil); err != nil {

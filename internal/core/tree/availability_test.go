@@ -8,6 +8,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 	"go.uber.org/zap"
 )
 
@@ -23,7 +24,7 @@ var availabilityCatalogue = []common.Resource{
 func availabilityService(t *testing.T) *Service {
 	t.Helper()
 	log := zap.NewNop().Sugar()
-	return NewService(NewInMemoryStore(log), noRoles{}, availabilityCatalogue,
+	return NewService(nodestore.NewInMemoryStore(log), noRoles{}, availabilityCatalogue,
 		common.TokenList{"group:root-admin"}, 5*time.Second,
 		common.DefaultMaxAuthorizedUsers,
 		Accounting{ChargeInUse: true, ChargeReleased: true}, log)
@@ -259,7 +260,7 @@ func TestAvailability_WithdrawalLeavesQuantitiesAlone(t *testing.T) {
 // created, which on any existing tree was long ago.
 func TestBootstrap_RootAdoptsResourcesNewToTheCatalogue(t *testing.T) {
 	ctx := context.Background()
-	store := NewInMemoryStore(zap.NewNop().Sugar())
+	store := nodestore.NewInMemoryStore(zap.NewNop().Sugar())
 
 	// A tree that predates the availability: the root exists with the old set.
 	before := NewService(store, noRoles{}, []common.Resource{{ID: "cores", Name: "Cores"}},

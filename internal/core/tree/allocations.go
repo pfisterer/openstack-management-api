@@ -10,6 +10,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 )
 
 // AllocationRequest grants, changes or removes what a project draws from a
@@ -270,7 +271,7 @@ func (s *Service) checkAllocationsAfterMove(ctx context.Context, moved model.Nod
 			budgetIDs = append(budgetIDs, bid)
 			inside[bid] = true
 		}
-		if projects, err = s.store.ListNodes(ctx, NodeQuery{ParentIDs: budgetIDs, Kinds: []string{model.KindProject}}, 0, 0); err != nil {
+		if projects, err = s.store.ListNodes(ctx, nodestore.NodeQuery{ParentIDs: budgetIDs, Kinds: []string{model.KindProject}}, 0, 0); err != nil {
 			return fmt.Errorf("load projects below: %w", err)
 		}
 	}

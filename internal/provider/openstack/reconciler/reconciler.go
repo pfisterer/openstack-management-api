@@ -269,7 +269,7 @@ func (r *Reconciler) Start(ctx context.Context) {
 // starts the next run once this one ends, so a change made mid-run is not lost:
 // the queued run has not read the state yet.
 //
-// Every API write triggers (tree.NotifyOnWrite). That holds per process — with
+// Every API write triggers (nodestore.NotifyOnWrite). That holds per process — with
 // more than one replica, only the one that served the request would run.
 func (r *Reconciler) Trigger() {
 	select {

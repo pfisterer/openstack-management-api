@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
@@ -33,7 +34,7 @@ func TestListChildrenFilters(t *testing.T) {
 		"ben@x":  {"group:standort-ka"},
 	}}
 	log := zap.NewNop().Sugar()
-	store := tree.NewInMemoryStore(log)
+	store := nodestore.NewInMemoryStore(log)
 	svc := tree.NewService(store, roles, testResources, common.TokenList{"group:root"}, 5*time.Second, common.DefaultMaxAuthorizedUsers, testAccounting, log)
 	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
 		t.Fatal(err)

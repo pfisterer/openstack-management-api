@@ -9,6 +9,7 @@ import (
 
 	"github.com/gophercloud/gophercloud/openstack/identity/v3/projects"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 	"go.uber.org/zap"
@@ -527,7 +528,7 @@ func TestPurgeSteps(t *testing.T) {
 // pass that changes nothing writes nothing.
 func TestRecordPurgeProgress(t *testing.T) {
 	ctx := context.Background()
-	store := tree.NewInMemoryStore(zap.NewNop().Sugar())
+	store := nodestore.NewInMemoryStore(zap.NewNop().Sugar())
 	if err := store.UpsertNode(ctx, model.Node{ID: "p", Kind: model.KindProject, Status: model.StatusArchived}); err != nil {
 		t.Fatal(err)
 	}

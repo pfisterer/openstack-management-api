@@ -6,6 +6,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 	"go.uber.org/zap"
@@ -15,10 +16,10 @@ import (
 // These tests change a node in the store AFTER the pass's copy was taken — as a
 // user would through the API — and check that the pass's write keeps that change.
 
-func staleWriteReconciler(t *testing.T) (*Reconciler, *tree.InMemoryStore) {
+func staleWriteReconciler(t *testing.T) (*Reconciler, *nodestore.InMemoryStore) {
 	t.Helper()
 	log := zap.NewNop().Sugar()
-	store := tree.NewInMemoryStore(log)
+	store := nodestore.NewInMemoryStore(log)
 	return &Reconciler{nodes: tree.NewProviderSync(store), log: log}, store
 }
 

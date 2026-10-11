@@ -8,6 +8,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 )
 
 // buildSubtreeParentMap performs a BFS over BUDGET nodes from the given roots,
@@ -24,7 +25,7 @@ func (s *Service) buildSubtreeParentMap(ctx context.Context, roots []model.Node)
 	}
 
 	for len(queue) > 0 {
-		children, err := s.store.ListNodes(ctx, NodeQuery{ParentIDs: queue, Kinds: []string{model.KindBudget}}, 0, 0)
+		children, err := s.store.ListNodes(ctx, nodestore.NodeQuery{ParentIDs: queue, Kinds: []string{model.KindBudget}}, 0, 0)
 		if err != nil {
 			return nil, fmt.Errorf("load child budgets: %w", err)
 		}
@@ -60,7 +61,7 @@ func (s *Service) loadSubtreeUsage(ctx context.Context, roots []model.Node) (mod
 	for id := range parentMap {
 		budgetIDs = append(budgetIDs, id)
 	}
-	leaves, err := s.store.ListNodes(ctx, NodeQuery{
+	leaves, err := s.store.ListNodes(ctx, nodestore.NodeQuery{
 		ParentIDs: budgetIDs,
 		Kinds:     []string{model.KindProject},
 		Statuses:  s.chargedStatuses(),
@@ -87,7 +88,7 @@ func (s *Service) loadSubtreeUsageAndAllocations(ctx context.Context, roots []mo
 	for id := range parentMap {
 		budgetIDs = append(budgetIDs, id)
 	}
-	leaves, err := s.store.ListNodes(ctx, NodeQuery{
+	leaves, err := s.store.ListNodes(ctx, nodestore.NodeQuery{
 		ParentIDs: budgetIDs,
 		Kinds:     []string{model.KindProject},
 		Statuses:  s.chargedStatuses(),
@@ -174,7 +175,7 @@ func buildRolledUpUsage(leaves []model.Node, parentMap map[string]*string, resou
 // the given budget, so auto-approval enforces a cumulative per-requester cap.
 // Matching is by the single Owner token — group memberships do not blur the count.
 func (s *Service) ownerActiveUsage(ctx context.Context, budgetID string, ownerToken string) (common.ProjectQuota, error) {
-	leaves, err := s.store.ListNodes(ctx, NodeQuery{
+	leaves, err := s.store.ListNodes(ctx, nodestore.NodeQuery{
 		ParentIDs: []string{budgetID},
 		Kinds:     []string{model.KindProject},
 		Statuses:  s.chargedStatuses(),

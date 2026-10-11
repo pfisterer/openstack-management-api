@@ -13,6 +13,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"github.com/pfisterer/openstack-management-api/internal/dev"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
@@ -125,17 +126,17 @@ func setupRouterSeeded(t *testing.T, nodes []model.Node, acc tree.Accounting) ht
 	return routerFromStore(t, sugar, store, nil, acc)
 }
 
-func newTestStore(t *testing.T) (tree.Store, *zap.SugaredLogger) {
+func newTestStore(t *testing.T) (nodestore.Store, *zap.SugaredLogger) {
 	t.Helper()
 	log, err := zap.NewDevelopment()
 	if err != nil {
 		t.Fatalf("init logger: %v", err)
 	}
 	sugar := log.Sugar()
-	return tree.NewInMemoryStore(sugar), sugar
+	return nodestore.NewInMemoryStore(sugar), sugar
 }
 
-func routerFromStore(t *testing.T, sugar *zap.SugaredLogger, store tree.Store, rec webserver.ReconcilerAPI, acc tree.Accounting, corsOrigins ...string) http.Handler {
+func routerFromStore(t *testing.T, sugar *zap.SugaredLogger, store nodestore.Store, rec webserver.ReconcilerAPI, acc tree.Accounting, corsOrigins ...string) http.Handler {
 	t.Helper()
 	svc := tree.NewService(
 		store,
@@ -238,6 +239,6 @@ func nodeIDs(ns []model.Node) []string {
 
 // testIdentity is who callers are, over the same store and mock role provider
 // as the tree in these tests.
-func testIdentity(store tree.Store, sugar *zap.SugaredLogger) *identity.Service {
+func testIdentity(store nodestore.Store, sugar *zap.SugaredLogger) *identity.Service {
 	return identity.NewService(store, dev.NewMockRoleProvider(), 10*time.Second, sugar)
 }

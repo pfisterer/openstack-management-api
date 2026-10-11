@@ -8,6 +8,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 )
 
 // GetNode fetches a single node, enforcing read authorization: the leaf owner, an
@@ -63,9 +64,9 @@ func (s *Service) ListMine(userEmail string, userTokens common.TokenList, limit,
 	if err != nil {
 		return NodePage{}, err
 	}
-	return s.listPage(ctx, NodeQuery{
+	return s.listPage(ctx, nodestore.NodeQuery{
 		Kinds:       []string{model.KindProject},
-		Responsible: &ResponsibleQuery{Owner: owner, AdminAny: userTokens},
+		Responsible: &nodestore.ResponsibleQuery{Owner: owner, AdminAny: userTokens},
 	}, limit, offset, append(slices.Clone(userTokens), owner))
 }
 
@@ -73,7 +74,7 @@ func (s *Service) ListMine(userEmail string, userTokens common.TokenList, limit,
 // cut from — and decorates only the page. Counting is a separate query on
 // purpose: it must not be the length of the page, or a full page would always
 // claim to be complete.
-func (s *Service) listPage(ctx context.Context, q NodeQuery, limit, offset int, viewer common.TokenList) (NodePage, error) {
+func (s *Service) listPage(ctx context.Context, q nodestore.NodeQuery, limit, offset int, viewer common.TokenList) (NodePage, error) {
 	nodes, err := s.store.ListNodes(ctx, q, limit, offset)
 	if err != nil {
 		return NodePage{}, fmt.Errorf("load nodes: %w", err)
@@ -100,7 +101,7 @@ func (s *Service) ListMyBudgets(userTokens common.TokenList, limit, offset int) 
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
-	page, err := s.listPage(ctx, NodeQuery{
+	page, err := s.listPage(ctx, nodestore.NodeQuery{
 		Kinds:         []string{model.KindBudget},
 		AdminScopeAny: userTokens,
 	}, limit, offset, userTokens)
@@ -129,7 +130,7 @@ func (s *Service) ListEligibleForMe(userTokens common.TokenList, limit, offset i
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
-	return s.listPage(ctx, NodeQuery{
+	return s.listPage(ctx, nodestore.NodeQuery{
 		Kinds:       []string{model.KindBudget},
 		Statuses:    []string{model.StatusApproved},
 		EligibleAny: userTokens,
@@ -166,7 +167,7 @@ func (s *Service) ListToManage(userTokens common.TokenList, includeSubtree bool,
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
-	administered, err := s.store.ListNodes(ctx, NodeQuery{
+	administered, err := s.store.ListNodes(ctx, nodestore.NodeQuery{
 		Kinds:         []string{model.KindBudget},
 		AdminScopeAny: userTokens,
 	}, 0, 0)
@@ -194,7 +195,7 @@ func (s *Service) ListToManage(userTokens common.TokenList, includeSubtree bool,
 		}
 	}
 
-	query := NodeQuery{
+	query := nodestore.NodeQuery{
 		ParentIDs: parentIDs,
 		Statuses:  []string{model.StatusPending, model.StatusChangePending, model.StatusImported},
 	}
@@ -237,7 +238,7 @@ func (s *Service) SearchNodes(userTokens common.TokenList, query string, limit, 
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
-	administered, err := s.store.ListNodes(ctx, NodeQuery{
+	administered, err := s.store.ListNodes(ctx, nodestore.NodeQuery{
 		Kinds:         []string{model.KindBudget},
 		AdminScopeAny: userTokens,
 	}, 0, 0)
@@ -259,7 +260,7 @@ func (s *Service) SearchNodes(userTokens common.TokenList, query string, limit, 
 		budgetIDs = append(budgetIDs, id)
 	}
 
-	candidates, err := s.store.ListNodes(ctx, NodeQuery{ParentIDs: budgetIDs}, 0, 0)
+	candidates, err := s.store.ListNodes(ctx, nodestore.NodeQuery{ParentIDs: budgetIDs}, 0, 0)
 	if err != nil {
 		return NodePage{}, fmt.Errorf("load subtree: %w", err)
 	}
@@ -287,7 +288,7 @@ func (s *Service) SearchNodes(userTokens common.TokenList, query string, limit, 
 	total := len(matches)
 	// Only the page itself is decorated (usage rollup, child count, parent name):
 	// a search over a large tree would otherwise roll up usage for every match.
-	decorated, err := s.attachUsage(ctx, paginateInMemory(matches, limit, offset), userTokens)
+	decorated, err := s.attachUsage(ctx, nodestore.PaginateInMemory(matches, limit, offset), userTokens)
 	if err != nil {
 		return NodePage{}, err
 	}

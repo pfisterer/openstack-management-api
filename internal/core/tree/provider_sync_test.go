@@ -7,6 +7,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 	"go.uber.org/zap"
 )
 
@@ -109,9 +110,9 @@ func TestApplyObservation_GrantUse(t *testing.T) {
 	}
 }
 
-func providerSyncWith(t *testing.T, nodes ...model.Node) (*ProviderSync, Store) {
+func providerSyncWith(t *testing.T, nodes ...model.Node) (*ProviderSync, nodestore.Store) {
 	t.Helper()
-	store := NewInMemoryStore(zap.NewNop().Sugar())
+	store := nodestore.NewInMemoryStore(zap.NewNop().Sugar())
 	for _, n := range nodes {
 		if err := store.UpsertNode(context.Background(), n); err != nil {
 			t.Fatal(err)
@@ -120,7 +121,7 @@ func providerSyncWith(t *testing.T, nodes ...model.Node) (*ProviderSync, Store) 
 	return NewProviderSync(store), store
 }
 
-func nodeIn(t *testing.T, store Store, id string) model.Node {
+func nodeIn(t *testing.T, store nodestore.Store, id string) model.Node {
 	t.Helper()
 	n, err := store.GetNode(context.Background(), id)
 	if err != nil {

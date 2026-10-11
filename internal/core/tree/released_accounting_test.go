@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
@@ -33,7 +34,7 @@ func (noRoles) ListRelations(context.Context) ([]string, error)            { ret
 func accountingSvc(t *testing.T, acc Accounting, leafStatus string) (*Service, string) {
 	t.Helper()
 	log := zap.NewNop().Sugar()
-	store := NewInMemoryStore(log)
+	store := nodestore.NewInMemoryStore(log)
 	svc := NewService(store, noRoles{}, []common.Resource{{ID: "cores", Name: "Cores"}},
 		common.TokenList{"group:admins"}, 5*time.Second, common.DefaultMaxAuthorizedUsers, acc, log)
 

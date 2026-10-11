@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
@@ -162,7 +163,7 @@ func (s *Service) ListChildren(parentID string, f ChildFilter, userTokens common
 		return NodePage{}, common.ErrForbidden
 	}
 
-	q := NodeQuery{ParentIDs: []string{parentID}, Statuses: f.Statuses}
+	q := nodestore.NodeQuery{ParentIDs: []string{parentID}, Statuses: f.Statuses}
 	if f.Kind != "" {
 		q.Kinds = []string{f.Kind}
 	}
@@ -201,7 +202,7 @@ func (s *Service) ListChildren(parentID string, f ChildFilter, userTokens common
 	}
 	sortChildren(children, f.Sort, f.Desc)
 
-	decorated, err := s.attachUsage(ctx, paginateInMemory(children, limit, offset), userTokens)
+	decorated, err := s.attachUsage(ctx, nodestore.PaginateInMemory(children, limit, offset), userTokens)
 	if err != nil {
 		return NodePage{}, err
 	}

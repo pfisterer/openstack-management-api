@@ -8,6 +8,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 )
 
 // ReparentNode moves a node under a new parent budget. Requires management rights
@@ -106,12 +107,12 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor model.A
 		}
 	}
 	if bound != nil {
-		if err := shortenEnd(&updated, *bound, actor, reason); err != nil && !errors.Is(err, ErrSkipUpdate) {
+		if err := shortenEnd(&updated, *bound, actor, reason); err != nil && !errors.Is(err, nodestore.ErrSkipUpdate) {
 			return model.Node{}, err
 		}
 	}
 	if maxTerm != nil && !updated.IsLeaf() {
-		if err := shortenTerm(&updated, *maxTerm, actor, termReason(*newParent, *maxTerm)); err != nil && !errors.Is(err, ErrSkipUpdate) {
+		if err := shortenTerm(&updated, *maxTerm, actor, termReason(*newParent, *maxTerm)); err != nil && !errors.Is(err, nodestore.ErrSkipUpdate) {
 			return model.Node{}, err
 		}
 	}

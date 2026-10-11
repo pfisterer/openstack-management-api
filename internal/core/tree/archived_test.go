@@ -7,6 +7,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 	"go.uber.org/zap"
 )
 
@@ -15,7 +16,7 @@ import (
 func archivedSvc(t *testing.T, acc Accounting) (*Service, model.Node, model.Node) {
 	t.Helper()
 	log := zap.NewNop().Sugar()
-	store := NewInMemoryStore(log)
+	store := nodestore.NewInMemoryStore(log)
 	svc := NewService(store, noRoles{}, []common.Resource{
 		{ID: "cores", Name: "Cores", Accounts: common.AccountsCores},
 		{ID: "storage", Name: "Storage", Accounts: common.AccountsStorage},

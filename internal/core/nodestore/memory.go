@@ -1,4 +1,4 @@
-package tree
+package nodestore
 
 import (
 	"context"
@@ -83,7 +83,7 @@ func (s *InMemoryStore) ListNodes(_ context.Context, q NodeQuery, limit, offset 
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return paginateInMemory(out, limit, offset), nil
+	return PaginateInMemory(out, limit, offset), nil
 }
 
 func (s *InMemoryStore) CountNodes(_ context.Context, q NodeQuery) (int, error) {
@@ -201,7 +201,7 @@ func (s *InMemoryStore) DeleteNodes(_ context.Context, ids []string) error {
 	return nil
 }
 
-func paginateInMemory[T any](items []T, limit, offset int) []T {
+func PaginateInMemory[T any](items []T, limit, offset int) []T {
 	if limit <= 0 {
 		limit = len(items)
 	}

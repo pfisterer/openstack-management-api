@@ -10,6 +10,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/catalog"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
@@ -33,7 +34,7 @@ func (f *fakeOpenStack) GrantedProjects(g osclient.Grant) ([]string, error) {
 
 type fixture struct {
 	ctx   context.Context
-	store tree.Store
+	store nodestore.Store
 	svc   *tree.Service
 	cat   *catalog.Catalog
 	os    *fakeOpenStack
@@ -48,7 +49,7 @@ func setup(t *testing.T) fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := tree.NewInMemoryStore(log)
+	store := nodestore.NewInMemoryStore(log)
 	svc := tree.NewService(store, dev.NewMockRoleProvider(), osclient.CoreResources(configured), common.TokenList{"group:root"},
 		5*time.Second, common.DefaultMaxAuthorizedUsers, tree.Accounting{}, log)
 	svc.UseCatalog(cat)

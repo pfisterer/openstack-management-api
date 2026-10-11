@@ -8,6 +8,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 )
 
 // ProviderSync is everything the system that carries the tree out — today the
@@ -21,22 +22,22 @@ import (
 // per leaf in OpenStack, and a user may have filed a change, been approved or
 // released the project meanwhile.
 type ProviderSync struct {
-	store Store
+	store nodestore.Store
 }
 
 // NewProviderSync gives the reconciler its view of the tree.
-func NewProviderSync(store Store) *ProviderSync {
+func NewProviderSync(store nodestore.Store) *ProviderSync {
 	return &ProviderSync{store: store}
 }
 
 // Leaves returns the projects in the given statuses.
 func (p *ProviderSync) Leaves(ctx context.Context, statuses []string) ([]model.Node, error) {
-	return p.store.ListNodes(ctx, NodeQuery{Kinds: []string{model.KindProject}, Statuses: statuses}, 0, 0)
+	return p.store.ListNodes(ctx, nodestore.NodeQuery{Kinds: []string{model.KindProject}, Statuses: statuses}, 0, 0)
 }
 
 // Budgets returns every budget, for naming a project's path in the tree.
 func (p *ProviderSync) Budgets(ctx context.Context) ([]model.Node, error) {
-	return p.store.ListNodes(ctx, NodeQuery{Kinds: []string{model.KindBudget}}, 0, 0)
+	return p.store.ListNodes(ctx, nodestore.NodeQuery{Kinds: []string{model.KindBudget}}, 0, 0)
 }
 
 // RecordExternalID records the project created for a leaf, whatever the leaf's
@@ -45,7 +46,7 @@ func (p *ProviderSync) Budgets(ctx context.Context) ([]model.Node, error) {
 func (p *ProviderSync) RecordExternalID(ctx context.Context, leafID, externalID string) error {
 	_, err := p.store.UpdateNode(ctx, leafID, func(n *model.Node) error {
 		if n.ExternalID == externalID {
-			return ErrSkipUpdate
+			return nodestore.ErrSkipUpdate
 		}
 		n.ExternalID = externalID
 		return nil
@@ -58,7 +59,7 @@ func (p *ProviderSync) RecordExternalID(ctx context.Context, leafID, externalID 
 func (p *ProviderSync) RecordObservation(ctx context.Context, leafID, externalID string, o *Observation) error {
 	_, err := p.store.UpdateNode(ctx, leafID, func(n *model.Node) error {
 		if !ApplyObservation(n, externalID, o) {
-			return ErrSkipUpdate
+			return nodestore.ErrSkipUpdate
 		}
 		return nil
 	})
@@ -70,7 +71,7 @@ func (p *ProviderSync) RecordObservation(ctx context.Context, leafID, externalID
 func (p *ProviderSync) MarkArchived(ctx context.Context, leafID string) error {
 	_, err := p.store.UpdateNode(ctx, leafID, func(n *model.Node) error {
 		if !model.MarkArchived(n) {
-			return ErrSkipUpdate
+			return nodestore.ErrSkipUpdate
 		}
 		return nil
 	})
@@ -99,7 +100,7 @@ func (p *ProviderSync) RecordPurgeProgress(ctx context.Context, leafID string, r
 			removed += prev.Removed
 		}
 		if prev != nil && prev.Step == r.Step && prev.Blocked == r.Blocked && prev.Detail == r.Detail && r.Removed == 0 {
-			return ErrSkipUpdate
+			return nodestore.ErrSkipUpdate
 		}
 		n.Purge = &model.PurgeProgress{
 			Step: r.Step, Index: r.Index, Steps: r.Steps,
@@ -135,7 +136,7 @@ func (p *ProviderSync) AddImport(ctx context.Context, leaf model.Node) error {
 func (p *ProviderSync) RefreshImport(ctx context.Context, leaf model.Node, o *Observation) error {
 	_, err := p.store.UpdateNode(ctx, leaf.ID, func(n *model.Node) error {
 		if !IsStillImported(*n) || slices.Contains(n.Flags, model.FlagPromoteOnReconcile) {
-			return ErrSkipUpdate
+			return nodestore.ErrSkipUpdate
 		}
 		n.Name = leaf.Name
 		n.Reason = leaf.Reason
@@ -158,7 +159,7 @@ func (p *ProviderSync) RefreshImport(ctx context.Context, leaf model.Node, o *Ob
 func (p *ProviderSync) Promote(ctx context.Context, leafID string, current []common.AuthorizedUser) (bool, error) {
 	return p.store.UpdateNode(ctx, leafID, func(n *model.Node) error {
 		if n.Status != model.StatusImported || !slices.Contains(n.Flags, model.FlagPromoteOnReconcile) {
-			return ErrSkipUpdate
+			return nodestore.ErrSkipUpdate
 		}
 		n.AuthorizedUsers = MergeMembers(n.AuthorizedUsers, current, n.Owner)
 		n.Status = model.StatusPending

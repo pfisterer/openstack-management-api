@@ -8,7 +8,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
-	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 	"go.uber.org/zap"
 )
 
@@ -34,7 +34,7 @@ type DayReport struct {
 
 // Nodes is the tree, read-only.
 type Nodes interface {
-	ListNodes(ctx context.Context, q tree.NodeQuery, limit, offset int) ([]model.Node, error)
+	ListNodes(ctx context.Context, q nodestore.NodeQuery, limit, offset int) ([]model.Node, error)
 }
 
 // Books writes one row per project and finished UTC day, from what the
@@ -94,7 +94,7 @@ func (c *Books) RecordDay(ctx context.Context, day time.Time, report DayReport) 
 	day = dayOf(day)
 	byProject := report.Usage
 
-	all, err := c.nodes.ListNodes(ctx, tree.NodeQuery{}, 0, 0)
+	all, err := c.nodes.ListNodes(ctx, nodestore.NodeQuery{}, 0, 0)
 	if err != nil {
 		return fmt.Errorf("load tree: %w", err)
 	}

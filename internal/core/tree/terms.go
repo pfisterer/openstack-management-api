@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 )
 
 // endsNoLater reports whether the RFC 3339 date next is not after bound; a nil
@@ -154,7 +155,7 @@ func dateOnly(ts string) string {
 func (s *Service) shortenSubtreeEnds(ctx context.Context, parentIDs []string, end string, actor model.Actor, reason string) (int, error) {
 	changed := 0
 	for len(parentIDs) > 0 {
-		children, err := s.store.ListNodes(ctx, NodeQuery{ParentIDs: parentIDs}, 0, 0)
+		children, err := s.store.ListNodes(ctx, nodestore.NodeQuery{ParentIDs: parentIDs}, 0, 0)
 		if err != nil {
 			return changed, fmt.Errorf("load children for end date: %w", err)
 		}
@@ -189,7 +190,7 @@ func (s *Service) shortenSubtreeTerms(ctx context.Context, parentIDs []string, d
 	end := termEnd(now, days)
 	changed := 0
 	for len(parentIDs) > 0 {
-		children, err := s.store.ListNodes(ctx, NodeQuery{ParentIDs: parentIDs}, 0, 0)
+		children, err := s.store.ListNodes(ctx, nodestore.NodeQuery{ParentIDs: parentIDs}, 0, 0)
 		if err != nil {
 			return changed, fmt.Errorf("load children for project term: %w", err)
 		}
@@ -219,7 +220,7 @@ func (s *Service) shortenSubtreeTerms(ctx context.Context, parentIDs []string, d
 // longer or sets none. ErrSkipUpdate when it is already as short.
 func shortenTerm(n *model.Node, days int, actor model.Actor, reason string) error {
 	if n.MaxProjectTermDays != nil && *n.MaxProjectTermDays <= days {
-		return ErrSkipUpdate
+		return nodestore.ErrSkipUpdate
 	}
 	n.MaxProjectTermDays = &days
 	entry := model.NewHistoryEntry("term_shortened", actor, n.Status)
@@ -235,7 +236,7 @@ func shortenEnd(n *model.Node, end string, actor model.Actor, reason string) err
 	cutProposal := n.Pending != nil && n.Pending.TerminationDate != nil && longer(n.Pending.TerminationDate)
 	cutNode := longer(n.TerminationDate)
 	if !cutNode && !cutProposal {
-		return ErrSkipUpdate
+		return nodestore.ErrSkipUpdate
 	}
 	entry := model.NewHistoryEntry("end_shortened", actor, n.Status)
 	entry.Reason = &reason

@@ -7,7 +7,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
-	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 	"go.uber.org/zap"
 )
 
@@ -31,7 +31,7 @@ func ptr(s string) *string { return &s }
 func fixture(t *testing.T) (*Books, *MemoryStore) {
 	t.Helper()
 	ctx := context.Background()
-	nodes := tree.NewInMemoryStore(zap.NewNop().Sugar())
+	nodes := nodestore.NewInMemoryStore(zap.NewNop().Sugar())
 	for _, n := range []model.Node{
 		{ID: "root", Kind: model.KindBudget, Name: "Root", Status: model.StatusApproved},
 		{ID: "uni", Kind: model.KindBudget, Name: "Uni", ParentID: ptr("root"), Status: model.StatusApproved,

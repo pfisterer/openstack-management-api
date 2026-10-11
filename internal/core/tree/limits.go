@@ -6,6 +6,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 )
 
 // checkAvailabilityWithdrawal refuses to take an availability away from a budget
@@ -62,11 +63,11 @@ func (s *Service) descendantsHolding(ctx context.Context, root model.Node, resou
 	}
 	// Leaves are not in the parent map — it walks budgets only — so they are
 	// fetched in one go under every budget of the subtree.
-	leaves, err := s.store.ListNodes(ctx, NodeQuery{ParentIDs: budgetIDs, Kinds: []string{model.KindProject}}, 0, 0)
+	leaves, err := s.store.ListNodes(ctx, nodestore.NodeQuery{ParentIDs: budgetIDs, Kinds: []string{model.KindProject}}, 0, 0)
 	if err != nil {
 		return nil, fmt.Errorf("load subtree leaves: %w", err)
 	}
-	budgets, err := s.store.ListNodes(ctx, NodeQuery{IDs: budgetIDs}, 0, 0)
+	budgets, err := s.store.ListNodes(ctx, nodestore.NodeQuery{IDs: budgetIDs}, 0, 0)
 	if err != nil {
 		return nil, fmt.Errorf("load subtree budgets: %w", err)
 	}

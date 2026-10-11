@@ -11,6 +11,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"go.uber.org/zap"
 )
@@ -31,7 +32,7 @@ var (
 // student budget holding neither, and one student project of 4 cores in it.
 type allocationFixture struct {
 	svc       *tree.Service
-	store     *tree.InMemoryStore
+	store     *nodestore.InMemoryStore
 	uni, stud model.Node
 	project   model.Node
 }
@@ -39,7 +40,7 @@ type allocationFixture struct {
 func newAllocationFixture(t *testing.T) allocationFixture {
 	t.Helper()
 	log := zap.NewNop().Sugar()
-	store := tree.NewInMemoryStore(log)
+	store := nodestore.NewInMemoryStore(log)
 	svc := tree.NewService(store, dev.NewMockRoleProvider(), allocationResources,
 		common.TokenList{"group:root"}, 5*time.Second, common.DefaultMaxAuthorizedUsers, testAccounting, log)
 	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {

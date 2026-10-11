@@ -7,6 +7,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 )
 
 // ReleaseNode marks an approved leaf as released, returning its capacity and
@@ -153,7 +154,7 @@ func (s *Service) DeleteNode(id string, actor model.Actor, userTokens common.Tok
 	for budgetID := range parentMap {
 		budgetIDs = append(budgetIDs, budgetID)
 	}
-	descendants, err := s.store.ListNodes(ctx, NodeQuery{ParentIDs: budgetIDs}, 0, 0)
+	descendants, err := s.store.ListNodes(ctx, nodestore.NodeQuery{ParentIDs: budgetIDs}, 0, 0)
 	if err != nil {
 		return fmt.Errorf("load subtree nodes: %w", err)
 	}

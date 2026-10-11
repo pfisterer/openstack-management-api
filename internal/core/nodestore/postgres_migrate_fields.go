@@ -1,4 +1,4 @@
-package tree
+package nodestore
 
 import (
 	"fmt"

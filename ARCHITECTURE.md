@@ -18,7 +18,7 @@ Self-service backend for **delegated OpenStack resource management**. Organizati
 ┌──────────────────────────────────────────────────────────────────────┐
 │                  openstack-management-api (:8083)                    │
 │                                                                      │
-│   webserver ──────────▶ tree.Service ──────────▶ tree.Store          │
+│   webserver ──────────▶ tree.Service ──────────▶ nodestore.Store          │
 │   (REST, MCP)           + identity.Service       (memory | Postgres) │
 │        │                      │                        ▲             │
 │        │ token lookup         │ group tokens           │ ListNodes / │
@@ -219,7 +219,7 @@ internal/
 
 Code shared with the sibling services lives in `github.com/pfisterer/cloud-self-service-golib`: `authn` (claims, `Claims.Identity()`, bearer parsing), `ginweb` (CORS, cache headers, the read-only flag), `envconf`, `logging`, `redact` (secrets in the logged configuration), `token` / `tokengorm` (API tokens) and `mcpserve` (MCP transport and tool gating).
 
-Layering: `webserver → tree.Service → tree.Store`, with `identity.Service` beside it for who the caller is (the webserver holds both; the tree is handed the effective tokens). Handlers never touch the store; all authorization lives in the service. The reconciler is the one other writer, and it does not get the store either: it goes through `tree.ProviderSync` (interface `reconciler.TreeSync`), named operations for what it may report — the project it created, what it measured, archiving, purge progress, removing a retired leaf or a stale import, adding, refreshing and promoting imports. Each applies to the node as it is *now* (`UpdateNode`, in PostgreSQL under a row lock) or deletes only if the node is still what the pass assumed (`DeleteNodeIf`, e.g. still `imported`): a pass loads its nodes once and then spends seconds per leaf in OpenStack, and writing the early copy back would undo a change request, an approval or a release made during the pass. The rules for how a report lands on a node live in `core/tree`, next to the model; the reconciler only decides what it observed. Nothing under `core/` imports the OpenStack client.
+Layering: `webserver → tree.Service → nodestore.Store`, with `identity.Service` beside it for who the caller is (the webserver holds both; the tree is handed the effective tokens). Handlers never touch the store; all authorization lives in the service. The reconciler is the one other writer, and it does not get the store either: it goes through `tree.ProviderSync` (interface `reconciler.TreeSync`), named operations for what it may report — the project it created, what it measured, archiving, purge progress, removing a retired leaf or a stale import, adding, refreshing and promoting imports. Each applies to the node as it is *now* (`UpdateNode`, in PostgreSQL under a row lock) or deletes only if the node is still what the pass assumed (`DeleteNodeIf`, e.g. still `imported`): a pass loads its nodes once and then spends seconds per leaf in OpenStack, and writing the early copy back would undo a change request, an approval or a release made during the pass. The rules for how a report lands on a node live in `core/tree`, next to the model; the reconciler only decides what it observed. Nothing under `core/` imports the OpenStack client.
 
 ---
 
@@ -327,7 +327,7 @@ Errors from the service are sentinel-wrapped and mapped centrally in [errors.go]
 
 ## 8. Reconciler (two-way OpenStack sync)
 
-[internal/provider/openstack/reconciler/reconciler.go](internal/provider/openstack/reconciler/reconciler.go). Optional (`RECONCILER_ENABLED`), runs every `RECONCILER_INTERVAL_SECONDS`, and right away after every change made through the API (REST or MCP; see `tree.NotifyOnWrite`), and on demand.
+[internal/provider/openstack/reconciler/reconciler.go](internal/provider/openstack/reconciler/reconciler.go). Optional (`RECONCILER_ENABLED`), runs every `RECONCILER_INTERVAL_SECONDS`, and right away after every change made through the API (REST or MCP; see `nodestore.NotifyOnWrite`), and on demand.
 
 ### 8.1 Lifecycle and connection
 
@@ -402,7 +402,7 @@ Those clouds split the work: Keystone wants the **domain** scope for creating pr
 
 ## 9. Storage
 
-`tree.Store` ([store.go](internal/core/tree/store.go)) is a small interface: get, list and count by `NodeQuery`, upsert, delete, count children per parent and kind (budgets and projects separately, exposed as `child_budget_count` / `child_project_count` next to `child_count`), plus seeding and participant listing. `NodeQuery` fields combine with AND, values within a field with OR (ids, parent ids, kinds, statuses, owner, `AdminScopeAny`, `EligibleAny`); `Responsible` is the one OR across fields — owner or admin scope — which is what "mine" asks. `ListNodes` and `CountNodes` share the same query translation, so a page and its total cannot disagree.
+`nodestore.Store` ([store.go](internal/core/tree/store.go)) is a small interface: get, list and count by `NodeQuery`, upsert, delete, count children per parent and kind (budgets and projects separately, exposed as `child_budget_count` / `child_project_count` next to `child_count`), plus seeding and participant listing. `NodeQuery` fields combine with AND, values within a field with OR (ids, parent ids, kinds, statuses, owner, `AdminScopeAny`, `EligibleAny`); `Responsible` is the one OR across fields — owner or admin scope — which is what "mine" asks. `ListNodes` and `CountNodes` share the same query translation, so a page and its total cannot disagree.
 
 - **memory** ([memory.go](internal/core/tree/memory.go)) — development and tests; returns copies so callers cannot mutate stored state.
 - **postgres** ([postgres.go](internal/core/tree/postgres.go)) — table `nodes`: indexed columns `id`, `parent_id`, `kind`, `status`, `owner`, the token lists `admin_scope` and `eligible_requesters` as JSONB (queried with `@>` containment), and the full node as JSONB `data`. Response-only fields are cleared before writing. Table `identities` holds seeded mock identities. GORM `AutoMigrate` creates both; because AutoMigrate never drops anything, `dropLegacyTables` removes the three tables of the pre-tree model (`delegations`, `projects`, `eligibility_rules`) at startup if present, logging their row counts first — an explicit list, so it can never touch a table still in use. The pool is capped at 10 open / 5 idle connections, since `database/sql` defaults to unlimited and the database may be shared. API tokens (`tokengorm`) use the same `*gorm.DB`.

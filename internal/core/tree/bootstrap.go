@@ -8,6 +8,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 )
 
 // Bootstrap prepares storage: optionally seeds mock data into an empty store,
@@ -36,7 +37,7 @@ func (s *Service) Bootstrap(ctx context.Context, mockIdentities []common.Identit
 // finds them. A no-op once the data is clean, so it runs on every start instead
 // of being tracked as a one-off; the tree is hundreds of nodes, not millions.
 func (s *Service) canonicalizeStoredTokens(ctx context.Context) error {
-	nodes, err := s.store.ListNodes(ctx, NodeQuery{}, 0, 0)
+	nodes, err := s.store.ListNodes(ctx, nodestore.NodeQuery{}, 0, 0)
 	if err != nil {
 		return fmt.Errorf("load nodes to canonicalize tokens: %w", err)
 	}
@@ -47,7 +48,7 @@ func (s *Service) canonicalizeStoredTokens(ctx context.Context) error {
 		}
 		wrote, err := s.store.UpdateNode(ctx, n.ID, func(stored *model.Node) error {
 			if !canonicalizeNodeTokens(stored) {
-				return ErrSkipUpdate
+				return nodestore.ErrSkipUpdate
 			}
 			return nil
 		})

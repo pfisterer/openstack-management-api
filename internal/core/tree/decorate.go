@@ -8,6 +8,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 )
 
 // attachUsage computes per-status subtree usage for the budget nodes in the list
@@ -156,7 +157,7 @@ func (s *Service) walkAncestors(ctx context.Context, start []string) (ancestry, 
 		}
 	}
 	for depth := 0; len(frontier) > 0 && depth < maxAncestorDepth; depth++ {
-		level, err := s.store.ListNodes(ctx, NodeQuery{IDs: frontier}, 0, 0)
+		level, err := s.store.ListNodes(ctx, nodestore.NodeQuery{IDs: frontier}, 0, 0)
 		if err != nil {
 			return ancestry{}, fmt.Errorf("load ancestors: %w", err)
 		}

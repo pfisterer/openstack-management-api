@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
@@ -18,7 +19,7 @@ import (
 // Who a caller is and acts as (role switch, impersonation) is not decided here
 // but in package identity; the tree is handed the effective tokens.
 type Service struct {
-	store Store
+	store nodestore.Store
 	roles roles.Provider
 	// ownerTokens caches people's tokens for the "owner in group" filter.
 	ownerTokens *tokenCache
@@ -105,7 +106,7 @@ type Accounting struct {
 // NewService constructs the tree service.
 // rootAdminTokens is synchronized into the root node's AdminScope on every
 // Bootstrap — the configuration is the source of truth for that one scope.
-func NewService(store Store, roles roles.Provider, resources []common.Resource, rootAdminTokens common.TokenList, requestTimeout time.Duration, maxAuthorizedUsers int, accounting Accounting, log *zap.SugaredLogger) *Service {
+func NewService(store nodestore.Store, roles roles.Provider, resources []common.Resource, rootAdminTokens common.TokenList, requestTimeout time.Duration, maxAuthorizedUsers int, accounting Accounting, log *zap.SugaredLogger) *Service {
 	if store == nil {
 		panic("tree.NewService requires a non-nil store")
 	}

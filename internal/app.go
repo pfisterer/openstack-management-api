@@ -321,10 +321,9 @@ func RunApplication() {
 			rec := reconciler.New(tree.NewProviderSync(nodeStore), osClient, reconcilerCfg, config.ProjectDefinitions, roleProvider, logger)
 			rec.UseCatalog(resourceCatalog)
 			if config.Reconciler.UsageEnabled {
-				source := reconciler.NewUsageSource(osClient, config.Reconciler.UsagePublicNetworks)
-				collector := usage.NewCollector(usageStore, nodeStore, source, osclient.CoreResources(config.ProjectDefinitions), logger)
-				collector.BackfillDays = config.Reconciler.UsageBackfillDays
-				rec.SetUsageCollector(collector)
+				books := usage.NewBooks(usageStore, nodeStore, osclient.CoreResources(config.ProjectDefinitions), logger)
+				books.BackfillDays = config.Reconciler.UsageBackfillDays
+				rec.SetUsage(books, reconciler.NewUsageSource(osClient, config.Reconciler.UsagePublicNetworks))
 			}
 			return rec, nil
 		}, logger)

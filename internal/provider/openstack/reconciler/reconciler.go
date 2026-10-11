@@ -40,6 +40,7 @@ import (
 	"github.com/gophercloud/gophercloud/openstack/identity/v3/projects"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/core/usage"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 	"go.uber.org/zap"
 )
@@ -206,22 +207,63 @@ type Reconciler struct {
 	// scopeParentSeen is the same, for the API's goroutines.
 	scopeParentSeen atomic.Pointer[string]
 
-	// usage, when set, records each finished day's consumption after a pass.
-	usage UsageCollector
+	// usageBooks and usageMeter, when set, record each finished day's
+	// consumption after a pass: the books say which days are missing and
+	// keep the rows, the meter reads OpenStack.
+	usageBooks UsageBooks
+	usageMeter UsageMeter
 
 	// problems keeps what the recent runs logged at warning level and above.
 	problems *problemRecorder
 }
 
-// UsageCollector records what projects used per day (package usage). An
-// interface so this package does not depend on where the rows are kept.
-type UsageCollector interface {
-	CatchUp(ctx context.Context) (int, error)
+// UsageBooks is where the tree keeps what projects used per day (package
+// usage, *usage.Books): which days are still missing, whether a day is recent
+// enough for what can only be counted now, and the report for a day.
+type UsageBooks interface {
+	DaysToRecord(ctx context.Context) ([]time.Time, error)
+	Sampled(day time.Time) bool
+	RecordDay(ctx context.Context, day time.Time, report usage.DayReport) error
 }
 
-// SetUsageCollector makes every pass also record the days not recorded yet.
-// It reads from OpenStack only, so it runs in dry-run mode as well.
-func (r *Reconciler) SetUsageCollector(c UsageCollector) { r.usage = c }
+// UsageMeter reads what projects used from OpenStack (*UsageSource).
+type UsageMeter interface {
+	DayUsage(start, end time.Time) (map[string]usage.Measured, error)
+	PublicIPv4() (map[string]int, error)
+}
+
+// SetUsage makes every pass also report the days not recorded yet. It reads
+// from OpenStack only, so it runs in dry-run mode as well.
+func (r *Reconciler) SetUsage(books UsageBooks, meter UsageMeter) {
+	r.usageBooks, r.usageMeter = books, meter
+}
+
+// recordUsage measures each day the books are missing and reports it, oldest
+// first. Returns how many days it recorded. A failed count of addresses leaves
+// the day without them rather than failing it.
+func (r *Reconciler) recordUsage(ctx context.Context) (int, error) {
+	days, err := r.usageBooks.DaysToRecord(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for i, day := range days {
+		measured, err := r.usageMeter.DayUsage(day, day.AddDate(0, 0, 1))
+		if err != nil {
+			return i, err
+		}
+		report := usage.DayReport{Usage: measured}
+		if r.usageBooks.Sampled(day) {
+			if report.PublicIPv4, err = r.usageMeter.PublicIPv4(); err != nil {
+				r.log.Warnw("Usage: could not count public IPv4 addresses, the day goes without", "error", err)
+				report.PublicIPv4 = nil
+			}
+		}
+		if err := r.usageBooks.RecordDay(ctx, day, report); err != nil {
+			return i, err
+		}
+	}
+	return len(days), nil
+}
 
 // When the OpenStack project of a released leaf is deleted, see Config.ReleasedDelete.
 // Ordered from never to at once; each deletes in every case the one before does.
@@ -352,8 +394,8 @@ func (r *Reconciler) runOnce(ctx context.Context) {
 	// After the pass, not inside it: a day's usage is collected once and
 	// does nothing on the passes after, and a failure here must not mark
 	// the reconciliation itself as failed.
-	if r.usage != nil {
-		if n, uerr := r.usage.CatchUp(ctx); uerr != nil {
+	if r.usageBooks != nil && r.usageMeter != nil {
+		if n, uerr := r.recordUsage(ctx); uerr != nil {
 			r.log.Warnw("Usage collection failed", "error", uerr, "days_collected", n)
 		}
 	}

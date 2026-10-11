@@ -20,13 +20,15 @@ type Measured struct {
 	DiskGBHours float64
 }
 
-// Source is where the used amounts come from — the system that runs the
-// projects, keyed by a project's ID there (the node's OSProjectID). How it
-// counts is its business; this package only books what it reports.
-type Source interface {
-	DayUsage(start, end time.Time) (map[string]Measured, error)
-	// PublicIPv4 counts each project's public IPv4 addresses now.
-	PublicIPv4() (map[string]int, error)
+// DayReport is what the system running the projects reports for one day,
+// keyed by a project's ID there (the node's OSProjectID). How it counts is its
+// business; this package only books it.
+type DayReport struct {
+	Usage map[string]Measured
+	// PublicIPv4 is each project's public IPv4 addresses, counted now — only
+	// for a day that is sampled (see Books.Sampled); nil where nothing was
+	// counted, which is not the same as zero.
+	PublicIPv4 map[string]int
 }
 
 // Nodes is the tree, read-only.
@@ -34,13 +36,13 @@ type Nodes interface {
 	ListNodes(ctx context.Context, q tree.NodeQuery, limit, offset int) ([]tree.Node, error)
 }
 
-// Collector writes one row per project and finished UTC day. It is asked on
-// every reconciler pass and does nothing once yesterday is stored, so a pod
+// Books writes one row per project and finished UTC day, from what the
+// executing system reports. That system asks on every pass which days are
+// missing (DaysToRecord), and there are none once yesterday is stored, so a pod
 // that was down for a while catches up by itself.
-type Collector struct {
+type Books struct {
 	store   Store
 	nodes   Nodes
-	source  Source
 	catalog []common.Resource
 	log     *zap.SugaredLogger
 
@@ -54,40 +56,42 @@ type Collector struct {
 	now           func() time.Time
 }
 
-func NewCollector(store Store, nodes Nodes, source Source, catalog []common.Resource, log *zap.SugaredLogger) *Collector {
-	return &Collector{store: store, nodes: nodes, source: source, catalog: catalog, log: log,
+func NewBooks(store Store, nodes Nodes, catalog []common.Resource, log *zap.SugaredLogger) *Books {
+	return &Books{store: store, nodes: nodes, catalog: catalog, log: log,
 		BackfillDays: 365, MaxDaysPerRun: 31, now: time.Now}
 }
 
-// CatchUp collects the finished days not stored yet, oldest first. Returns how
-// many it collected.
-func (c *Collector) CatchUp(ctx context.Context) (int, error) {
+// DaysToRecord are the finished UTC days not stored yet, oldest first and at
+// most MaxDaysPerRun of them; the first time reaching BackfillDays back.
+func (c *Books) DaysToRecord(ctx context.Context) ([]time.Time, error) {
 	today := dayOf(c.now())
 	last, ok, err := c.store.LastDay(ctx)
 	if err != nil {
-		return 0, fmt.Errorf("last usage day: %w", err)
+		return nil, fmt.Errorf("last usage day: %w", err)
 	}
 	next := today.AddDate(0, 0, -c.BackfillDays)
 	if ok {
 		next = last.AddDate(0, 0, 1)
 	}
-	done := 0
-	for ; next.Before(today) && done < c.MaxDaysPerRun; next = next.AddDate(0, 0, 1) {
-		if err := c.CollectDay(ctx, next); err != nil {
-			return done, err
-		}
-		done++
+	var days []time.Time
+	for ; next.Before(today) && len(days) < c.MaxDaysPerRun; next = next.AddDate(0, 0, 1) {
+		days = append(days, next)
 	}
-	return done, nil
+	return days, nil
 }
 
-// CollectDay stores the rows of one UTC day, replacing what it held.
-func (c *Collector) CollectDay(ctx context.Context, day time.Time) error {
+// Sampled reports whether a day is recent enough for what can only be counted
+// now — storage, public addresses: only for yesterday is now what it was on
+// the day. Older days are backfilled without them.
+func (c *Books) Sampled(day time.Time) bool {
+	return !dayOf(day).Before(dayOf(c.now()).AddDate(0, 0, -1))
+}
+
+// RecordDay stores the rows of one UTC day from what was reported for it,
+// replacing what it held.
+func (c *Books) RecordDay(ctx context.Context, day time.Time, report DayReport) error {
 	day = dayOf(day)
-	byProject, err := c.source.DayUsage(day, day.AddDate(0, 0, 1))
-	if err != nil {
-		return err
-	}
+	byProject := report.Usage
 
 	all, err := c.nodes.ListNodes(ctx, tree.NodeQuery{}, 0, 0)
 	if err != nil {
@@ -103,17 +107,13 @@ func (c *Collector) CollectDay(ctx context.Context, day time.Time) error {
 	now := c.now()
 	// The snapshot is the tree as it is now; only for yesterday is that what
 	// it was on the day.
-	backfilled := day.Before(dayOf(now).AddDate(0, 0, -1))
+	backfilled := !c.Sampled(day)
 	storageID := c.resourceFor(common.AccountsStorage)
 	// Addresses are a sample of now, like storage: only for yesterday is that
-	// the day being collected. A failed count leaves the day unmeasured rather
-	// than failing it.
-	var ipv4 map[string]int
-	if !backfilled {
-		if ipv4, err = c.source.PublicIPv4(); err != nil {
-			c.log.Warnw("Usage: could not count public IPv4 addresses, the day goes without", "error", err)
-			ipv4 = nil
-		}
+	// the day being recorded. Reported for an older day, they are not used.
+	ipv4 := report.PublicIPv4
+	if backfilled {
+		ipv4 = nil
 	}
 
 	var rows []Day
@@ -170,7 +170,7 @@ func holdsResources(status string) bool {
 }
 
 // resourceFor names the catalogue resource that accounts as what (common.Accounts*).
-func (c *Collector) resourceFor(accounts string) string {
+func (c *Books) resourceFor(accounts string) string {
 	for _, r := range c.catalog {
 		if r.Accounts == accounts {
 			return r.ID
@@ -181,7 +181,7 @@ func (c *Collector) resourceFor(accounts string) string {
 
 // reserved is what the project holds back for itself: its limit, allocations
 // included — and once archived only the storage, the rest is frozen at zero.
-func (c *Collector) reserved(n tree.Node) common.ProjectQuota {
+func (c *Books) reserved(n tree.Node) common.ProjectQuota {
 	q := c.quantities(n.EffectiveLimit())
 	if n.Status != tree.StatusArchived {
 		return q
@@ -197,7 +197,7 @@ func (c *Collector) reserved(n tree.Node) common.ProjectQuota {
 
 // quantities keeps the counted resources of a limit — availabilities say
 // nothing about consumption.
-func (c *Collector) quantities(limit common.ProjectQuota) common.ProjectQuota {
+func (c *Books) quantities(limit common.ProjectQuota) common.ProjectQuota {
 	out := common.ProjectQuota{}
 	for _, r := range c.catalog {
 		if r.IsBool() || r.Static {

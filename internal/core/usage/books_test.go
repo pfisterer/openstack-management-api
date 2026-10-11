@@ -2,7 +2,6 @@ package usage
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -18,31 +17,17 @@ var catalog = []common.Resource{
 	{ID: "ports", Name: "Ports", Static: true},
 }
 
-type fakeSource struct {
-	calls []time.Time
-	usage map[string]Measured
-	// ipv4 answers PublicIPv4; ipv4Err makes it fail.
-	ipv4    map[string]int
-	ipv4Err error
-}
-
-func (f *fakeSource) PublicIPv4() (map[string]int, error) {
-	if f.ipv4Err != nil {
-		return nil, f.ipv4Err
-	}
-	return f.ipv4, nil
-}
-
-func (f *fakeSource) DayUsage(start, end time.Time) (map[string]Measured, error) {
-	f.calls = append(f.calls, start)
-	return f.usage, nil
-}
+// report is what the executing system reports for a day in these tests.
+var report = DayReport{Usage: map[string]Measured{
+	"os-run":     {ServerHours: 24, VCPUHours: 96, RAMGBHours: 24 * 8, DiskGBHours: 480},
+	"os-foreign": {ServerHours: 5, VCPUHours: 5},
+}}
 
 func ptr(s string) *string { return &s }
 
 // A tree of root → Uni → Students with three projects: one that ran, one that
 // is approved but idle, one rejected and never in OpenStack.
-func fixture(t *testing.T) (*Collector, *MemoryStore, *fakeSource) {
+func fixture(t *testing.T) (*Books, *MemoryStore) {
 	t.Helper()
 	ctx := context.Background()
 	nodes := tree.NewInMemoryStore(zap.NewNop().Sugar())
@@ -67,21 +52,17 @@ func fixture(t *testing.T) (*Collector, *MemoryStore, *fakeSource) {
 			t.Fatal(err)
 		}
 	}
-	src := &fakeSource{usage: map[string]Measured{
-		"os-run":     {ServerHours: 24, VCPUHours: 96, RAMGBHours: 24 * 8, DiskGBHours: 480},
-		"os-foreign": {ServerHours: 5, VCPUHours: 5},
-	}}
 	store := NewMemoryStore()
-	c := NewCollector(store, nodes, src, catalog, zap.NewNop().Sugar())
+	c := NewBooks(store, nodes, catalog, zap.NewNop().Sugar())
 	c.now = func() time.Time { return time.Date(2026, 10, 5, 9, 0, 0, 0, time.UTC) }
-	return c, store, src
+	return c, store
 }
 
-func TestCollectDay(t *testing.T) {
-	c, store, _ := fixture(t)
+func TestRecordDay(t *testing.T) {
+	c, store := fixture(t)
 	ctx := context.Background()
 	yesterday := time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)
-	if err := c.CollectDay(ctx, yesterday); err != nil {
+	if err := c.RecordDay(ctx, yesterday, report); err != nil {
 		t.Fatal(err)
 	}
 	rows, _ := store.Days(ctx, nil, yesterday, yesterday.AddDate(0, 0, 1))
@@ -115,55 +96,66 @@ func TestCollectDay(t *testing.T) {
 	}
 }
 
-// Public IPv4 is a sample of now, like storage: counted for yesterday, a
-// project holding none counts zero, and a failed count leaves the day
-// unmeasured instead of claiming zero.
-func TestCollectDay_PublicIPv4(t *testing.T) {
-	c, store, src := fixture(t)
-	src.ipv4 = map[string]int{"os-run": 3}
+// Public IPv4 is a sample of now, like storage: booked for yesterday, a
+// project holding none counts zero, nothing counted leaves the day unmeasured
+// instead of claiming zero, and an older day never carries today's count.
+func TestRecordDay_PublicIPv4(t *testing.T) {
+	c, store := fixture(t)
 	ctx := context.Background()
 	yesterday := time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)
-	_ = c.CollectDay(ctx, yesterday)
+	counted := report
+	counted.PublicIPv4 = map[string]int{"os-run": 3}
+	_ = c.RecordDay(ctx, yesterday, counted)
 	rows, _ := store.Days(ctx, nil, yesterday, yesterday.AddDate(0, 0, 1))
 	if rows[1].PublicIPv4 == nil || *rows[1].PublicIPv4 != 3 || rows[0].PublicIPv4 == nil || *rows[0].PublicIPv4 != 0 {
 		t.Errorf("counts: run %v, idle %v", rows[1].PublicIPv4, rows[0].PublicIPv4)
 	}
 
-	src.ipv4Err = errors.New("neutron down")
-	_ = c.CollectDay(ctx, yesterday)
+	_ = c.RecordDay(ctx, yesterday, report)
 	rows, _ = store.Days(ctx, nil, yesterday, yesterday.AddDate(0, 0, 1))
 	if rows[1].PublicIPv4 != nil {
-		t.Errorf("a failed count was stored as %d", *rows[1].PublicIPv4)
+		t.Errorf("a day without a count was stored as %d", *rows[1].PublicIPv4)
 	}
 
-	src.ipv4Err = nil
 	earlier := yesterday.AddDate(0, 0, -5)
-	_ = c.CollectDay(ctx, earlier)
+	_ = c.RecordDay(ctx, earlier, counted)
 	rows, _ = store.Days(ctx, nil, earlier, earlier.AddDate(0, 0, 1))
 	if rows[0].PublicIPv4 != nil {
 		t.Error("a backfilled day carries today's addresses")
 	}
+	if c.Sampled(earlier) || !c.Sampled(yesterday) {
+		t.Error("only yesterday is sampled")
+	}
 }
 
-// The first run reaches back, a bounded number of days at a time; later runs
-// only add what is missing, and nothing is collected twice.
-func TestCatchUp(t *testing.T) {
-	c, store, src := fixture(t)
+// The first pass reaches back, a bounded number of days at a time; later
+// passes only ask for what is missing, and no day is asked for twice.
+func TestDaysToRecord(t *testing.T) {
+	c, store := fixture(t)
 	ctx := context.Background()
 	c.BackfillDays = 40
 	c.MaxDaysPerRun = 31
+	pass := func() int {
+		days, err := c.DaysToRecord(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range days {
+			if err := c.RecordDay(ctx, d, report); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return len(days)
+	}
 
-	if n, err := c.CatchUp(ctx); err != nil || n != 31 {
-		t.Fatalf("first run: %d days, %v; want 31", n, err)
+	if n := pass(); n != 31 {
+		t.Fatalf("first pass: %d days; want 31", n)
 	}
-	if n, _ := c.CatchUp(ctx); n != 9 {
-		t.Fatalf("second run: %d days; want the remaining 9", n)
+	if n := pass(); n != 9 {
+		t.Fatalf("second pass: %d days; want the remaining 9", n)
 	}
-	if n, _ := c.CatchUp(ctx); n != 0 {
-		t.Fatalf("third run: %d days; want none, yesterday is stored", n)
-	}
-	if len(src.calls) != 40 {
-		t.Errorf("Nova asked %d times, want once per day", len(src.calls))
+	if n := pass(); n != 0 {
+		t.Fatalf("third pass: %d days; want none, yesterday is stored", n)
 	}
 	last, _, _ := store.LastDay(ctx)
 	if !last.Equal(time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)) {
@@ -174,12 +166,12 @@ func TestCatchUp(t *testing.T) {
 		t.Errorf("older days are backfilled without a storage sample: %d rows, first %+v", len(rows), rows[0])
 	}
 
-	// Collecting a day again replaces it.
-	if err := c.CollectDay(ctx, last); err != nil {
+	// Recording a day again replaces it.
+	if err := c.RecordDay(ctx, last, report); err != nil {
 		t.Fatal(err)
 	}
 	again, _ := store.Days(ctx, nil, last, last.AddDate(0, 0, 1))
 	if len(again) != 2 {
-		t.Errorf("a day collected twice holds %d rows, want 2", len(again))
+		t.Errorf("a day recorded twice holds %d rows, want 2", len(again))
 	}
 }

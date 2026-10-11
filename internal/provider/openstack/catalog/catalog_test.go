@@ -58,9 +58,9 @@ func setup(t *testing.T) fixture {
 	for _, n := range []tree.Node{
 		{ID: budget, Kind: tree.KindBudget, ParentID: &root, Status: tree.StatusApproved, Name: "Budget",
 			Limit: common.ProjectQuota{"cores": 10, "net": 1}},
-		{ID: "p1", Kind: tree.KindProject, ParentID: &budget, Status: tree.StatusApproved, Name: "P1", OSProjectID: "os-p1",
+		{ID: "p1", Kind: tree.KindProject, ParentID: &budget, Status: tree.StatusApproved, Name: "P1", ExternalID: "os-p1",
 			Limit: common.ProjectQuota{"cores": 2, "net": 1}},
-		{ID: "p2", Kind: tree.KindProject, ParentID: &budget, Status: tree.StatusApproved, Name: "P2", OSProjectID: "os-p2",
+		{ID: "p2", Kind: tree.KindProject, ParentID: &budget, Status: tree.StatusApproved, Name: "P2", ExternalID: "os-p2",
 			Limit:       common.ProjectQuota{"cores": 1, "net": 0},
 			Allocations: []tree.Allocation{{BudgetID: root, Limit: common.ProjectQuota{"net": 1}, Reason: "lab"}}},
 	} {

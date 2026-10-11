@@ -32,7 +32,7 @@ type Day struct {
 
 	// Snapshot. For days collected after the fact (Backfilled) these are the
 	// values at collection time — the tree keeps no history of them.
-	OSProjectID string
+	ExternalID  string
 	ProjectName string
 	Owner       string
 	Status      string

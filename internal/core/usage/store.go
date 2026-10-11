@@ -19,7 +19,7 @@ import (
 type dbDay struct {
 	Day         time.Time `gorm:"column:day;type:date;primaryKey"`
 	NodeID      string    `gorm:"column:node_id;primaryKey"`
-	OSProjectID string    `gorm:"column:os_project_id;index"`
+	ExternalID  string    `gorm:"column:external_id;index"`
 	ProjectName string    `gorm:"column:project_name"`
 	Owner       string    `gorm:"column:owner;index"`
 	Status      string    `gorm:"column:status"`
@@ -48,6 +48,14 @@ type PostgresStore struct{ db *gorm.DB }
 
 // NewPostgresStore creates the table if needed.
 func NewPostgresStore(db *gorm.DB) (*PostgresStore, error) {
+	// The project's ID where it runs was called os_project_id before the tree
+	// stopped naming OpenStack. Renamed once, before AutoMigrate would add an
+	// empty external_id next to it; a no-op on every later start.
+	if m := db.Migrator(); m.HasTable(&dbDay{}) && m.HasColumn(&dbDay{}, "os_project_id") {
+		if err := m.RenameColumn(&dbDay{}, "os_project_id", "external_id"); err != nil {
+			return nil, fmt.Errorf("rename usage column os_project_id: %w", err)
+		}
+	}
 	if err := db.AutoMigrate(&dbDay{}); err != nil {
 		return nil, fmt.Errorf("migrate usage table: %w", err)
 	}
@@ -73,7 +81,7 @@ func (s *PostgresStore) ReplaceDay(ctx context.Context, day time.Time, rows []Da
 			}
 		}
 		recs = append(recs, dbDay{
-			Day: day, NodeID: r.NodeID, OSProjectID: r.OSProjectID, ProjectName: r.ProjectName,
+			Day: day, NodeID: r.NodeID, ExternalID: r.ExternalID, ProjectName: r.ProjectName,
 			Owner: r.Owner, Status: r.Status, BudgetID: r.BudgetID, BudgetPath: path,
 			People: r.People, Groups: r.Groups,
 			ServerHours: r.ServerHours, VCPUHours: r.VCPUHours, RAMGBHours: r.RAMGBHours,
@@ -132,7 +140,7 @@ func (s *PostgresStore) find(q *gorm.DB) ([]Day, error) {
 	out := make([]Day, 0, len(recs))
 	for _, r := range recs {
 		d := Day{
-			Day: dayOf(r.Day), NodeID: r.NodeID, OSProjectID: r.OSProjectID, ProjectName: r.ProjectName,
+			Day: dayOf(r.Day), NodeID: r.NodeID, ExternalID: r.ExternalID, ProjectName: r.ProjectName,
 			Owner: r.Owner, Status: r.Status, BudgetID: r.BudgetID, People: r.People, Groups: r.Groups,
 			ServerHours: r.ServerHours, VCPUHours: r.VCPUHours, RAMGBHours: r.RAMGBHours,
 			DiskGBHours: r.DiskGBHours, StorageGB: r.StorageGB, PublicIPv4: r.PublicIPv4,

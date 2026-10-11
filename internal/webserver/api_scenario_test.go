@@ -116,7 +116,7 @@ func TestScenario_DHBWTreeLifecycle(t *testing.T) {
 	// and every number after the first release would be measuring the
 	// accounting policy instead of the lifecycle. The policy has its own tests
 	// (TestReleasedLeafAccounting); this keeps the off-path covered too.
-	h := setupRouterSeeded(t, nil, tree.Accounting{ChargeOSInUse: true})
+	h := setupRouterSeeded(t, nil, tree.Accounting{ChargeInUse: true})
 
 	// ── Phase 1: build the tree in different roles ────────────────────────────
 

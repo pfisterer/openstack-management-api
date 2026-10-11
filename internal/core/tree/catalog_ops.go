@@ -183,8 +183,8 @@ func (s *Service) ProjectsByOSID(ctx context.Context) (map[string]Holder, error)
 	}
 	out := make(map[string]Holder, len(nodes))
 	for _, n := range nodes {
-		if n.OSProjectID != "" {
-			out[n.OSProjectID] = Holder{NodeID: n.ID, Name: nodeLabel(n), Kind: n.Kind, Status: n.Status}
+		if n.ExternalID != "" {
+			out[n.ExternalID] = Holder{NodeID: n.ID, Name: nodeLabel(n), Kind: n.Kind, Status: n.Status}
 		}
 	}
 	return out, nil

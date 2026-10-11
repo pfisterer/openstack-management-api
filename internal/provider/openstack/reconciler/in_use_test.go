@@ -77,17 +77,17 @@ func TestMeasureImport(t *testing.T) {
 	var leaf tree.Node
 	tree.ApplyObservation(&leaf, "os-1", measureImport(resources, limit, detail))
 
-	if leaf.OSInUse["cores"] != 80 || leaf.OSInUse["ram"] != 160 || leaf.OSInUse["storage"] != 0 {
-		t.Errorf("in use = %v, want 80 cores, 160 GB RAM, 0 GB storage", leaf.OSInUse)
+	if leaf.InUse["cores"] != 80 || leaf.InUse["ram"] != 160 || leaf.InUse["storage"] != 0 {
+		t.Errorf("in use = %v, want 80 cores, 160 GB RAM, 0 GB storage", leaf.InUse)
 	}
-	if _, measured := leaf.OSInUse["storage"]; !measured {
+	if _, measured := leaf.InUse["storage"]; !measured {
 		t.Error("storage was measured as 0 and must not read as unmeasured")
 	}
-	if leaf.OSServers == nil || *leaf.OSServers != 10 || leaf.OSOvercommitted {
-		t.Errorf("servers %v, overcommitted %v", leaf.OSServers, leaf.OSOvercommitted)
+	if leaf.Servers == nil || *leaf.Servers != 10 || leaf.Overcommitted {
+		t.Errorf("servers %v, overcommitted %v", leaf.Servers, leaf.Overcommitted)
 	}
-	if leaf.OSServerLimit == nil || *leaf.OSServerLimit != 100 {
-		t.Errorf("server limit %v, want 100", leaf.OSServerLimit)
+	if leaf.ServerLimit == nil || *leaf.ServerLimit != 100 {
+		t.Errorf("server limit %v, want 100", leaf.ServerLimit)
 	}
 }
 

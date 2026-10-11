@@ -43,10 +43,10 @@ func (p *ProviderSync) Budgets(ctx context.Context) ([]Node, error) {
 // be cleaned up.
 func (p *ProviderSync) RecordExternalID(ctx context.Context, leafID, externalID string) error {
 	_, err := p.store.UpdateNode(ctx, leafID, func(n *Node) error {
-		if n.OSProjectID == externalID {
+		if n.ExternalID == externalID {
 			return ErrSkipUpdate
 		}
-		n.OSProjectID = externalID
+		n.ExternalID = externalID
 		return nil
 	})
 	return err
@@ -141,9 +141,9 @@ func (p *ProviderSync) RefreshImport(ctx context.Context, leaf Node, o *Observat
 		n.Limit = leaf.Limit
 		n.AuthorizedUsers = leaf.AuthorizedUsers
 		n.ExternalGroupAssignments = leaf.ExternalGroupAssignments
-		n.OSProjectID = leaf.OSProjectID
-		n.OSProjectName = leaf.OSProjectName
-		ApplyObservation(n, leaf.OSProjectID, o)
+		n.ExternalID = leaf.ExternalID
+		n.ExternalName = leaf.ExternalName
+		ApplyObservation(n, leaf.ExternalID, o)
 		return nil
 	})
 	return err
@@ -215,27 +215,27 @@ type Observation struct {
 // Since the accounting bills max(limit, in-use), the charge then silently fell
 // back to the declared limit until the next successful pass — the
 // shrink-after-filling loophole, reopened by a transient API error, and
-// OSOvercommitted cleared along with it so the UI stopped warning too.
+// Overcommitted cleared along with it so the UI stopped warning too.
 func ApplyObservation(n *Node, externalID string, o *Observation) bool {
-	changed := n.OSProjectID != externalID
+	changed := n.ExternalID != externalID
 	if o != nil {
-		changed = changed || n.OSOvercommitted != o.Overcommitted || !quotaEqual(n.OSInUse, o.InUse) ||
-			n.OSServers == nil || *n.OSServers != o.Servers ||
-			n.OSServerLimit == nil || *n.OSServerLimit != o.ServerLimit ||
-			(o.GrantUse != nil && !quotaEqual(n.OSGrantUse, o.GrantUse))
+		changed = changed || n.Overcommitted != o.Overcommitted || !quotaEqual(n.InUse, o.InUse) ||
+			n.Servers == nil || *n.Servers != o.Servers ||
+			n.ServerLimit == nil || *n.ServerLimit != o.ServerLimit ||
+			(o.GrantUse != nil && !quotaEqual(n.GrantUse, o.GrantUse))
 	}
 	if !changed {
 		return false
 	}
-	n.OSProjectID = externalID
+	n.ExternalID = externalID
 	if o != nil {
-		n.OSOvercommitted = o.Overcommitted
-		n.OSInUse = o.InUse
+		n.Overcommitted = o.Overcommitted
+		n.InUse = o.InUse
 		servers, serverLimit := o.Servers, o.ServerLimit
-		n.OSServers = &servers
-		n.OSServerLimit = &serverLimit
+		n.Servers = &servers
+		n.ServerLimit = &serverLimit
 		if o.GrantUse != nil {
-			n.OSGrantUse = o.GrantUse
+			n.GrantUse = o.GrantUse
 		}
 	}
 	return true

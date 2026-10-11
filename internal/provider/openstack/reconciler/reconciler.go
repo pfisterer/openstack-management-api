@@ -27,6 +27,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 	"net/mail"
 	"slices"
 	"strings"
@@ -189,7 +190,7 @@ type Reconciler struct {
 	// catalog is read through resources(): root admins add and withdraw
 	// availabilities while the reconciler runs (package catalog).
 	catalog      osclient.ManagedCatalog
-	roleProvider common.RoleProvider
+	roleProvider roles.Provider
 	log          *zap.SugaredLogger
 
 	mu      sync.RWMutex
@@ -300,7 +301,7 @@ func New(
 	osClient *osclient.OpenStackClient,
 	cfg Config,
 	managedProjects []osclient.ManagedResource,
-	roleProvider common.RoleProvider,
+	roleProvider roles.Provider,
 	log *zap.SugaredLogger,
 ) *Reconciler {
 	if cfg.Interval <= 0 {
@@ -569,8 +570,8 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 	// importedByOSProjectID: existing imported leaves keyed by their OSProjectID.
 	importedByOSProjectID := make(map[string]tree.Node, len(existingImported))
 	for _, leaf := range existingImported {
-		if leaf.OSProjectID != "" {
-			importedByOSProjectID[leaf.OSProjectID] = leaf
+		if leaf.ExternalID != "" {
+			importedByOSProjectID[leaf.ExternalID] = leaf
 		}
 	}
 
@@ -622,7 +623,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 				continue
 			}
 			res.projectsCreated++
-			leaf.OSProjectID = created.ID
+			leaf.ExternalID = created.ID
 			if !r.cfg.DryRun {
 				r.persistOSProjectID(ctx, leaf.ID, created.ID)
 			}
@@ -743,7 +744,7 @@ func (r *Reconciler) removeReleasedLeavesWithoutProject(
 		// project is right there, its resource-id tag is not — which any
 		// project admin can arrange in Horizon with two clicks. In scope is in
 		// scope, so this is not a deletion. One map lookup, no API call.
-		if _, inScope := osProjectByOSID[leaf.OSProjectID]; inScope && leaf.OSProjectID != "" {
+		if _, inScope := osProjectByOSID[leaf.ExternalID]; inScope && leaf.ExternalID != "" {
 			continue
 		}
 
@@ -751,7 +752,7 @@ func (r *Reconciler) removeReleasedLeavesWithoutProject(
 		// from it, and keeping the record would leave the tree disagreeing with
 		// the cloud.
 		r.log.Infow("Removing released leaf — its OpenStack project is gone",
-			"node_id", leaf.ID, "name", leaf.Name, "os_project_id", leaf.OSProjectID,
+			"node_id", leaf.ID, "name", leaf.Name, "os_project_id", leaf.ExternalID,
 			"dry_run", r.cfg.DryRun)
 		if !r.cfg.DryRun {
 			deleted, err := r.nodes.RemoveRetired(ctx, leaf.ID)
@@ -778,10 +779,10 @@ func chooseRecoverableProject(
 	claimed map[string]string,
 	log *zap.SugaredLogger,
 ) (osclient.ProjectInfo, bool) {
-	if leaf.OSProjectID == "" {
+	if leaf.ExternalID == "" {
 		return osclient.ProjectInfo{}, false // never had one — Phase 4 creates it
 	}
-	osProject, exists := osProjectByOSID[leaf.OSProjectID]
+	osProject, exists := osProjectByOSID[leaf.ExternalID]
 	if !exists {
 		return osclient.ProjectInfo{}, false // really gone (deleted, or moved out of scope)
 	}
@@ -808,7 +809,7 @@ func chooseRecoverableProject(
 // admin — which every project owner is — can drop it in Horizon with two clicks.
 // Without this, the next tick sees a leaf with no project and builds a SECOND
 // one beside the first, while the original reappears in "Unassigned" as an
-// import, VMs and all. The node's stored os_project_id is the second witness
+// import, VMs and all. The node's stored ExternalID is the second witness
 // that survives whatever happens to the tags, so it decides.
 //
 // The project is claimed even when re-tagging fails: a duplicate project is far
@@ -893,15 +894,15 @@ func (r *Reconciler) promoteImportedLeaves(
 			continue
 		}
 
-		osProject, ok := osProjectByOSID[leaf.OSProjectID]
+		osProject, ok := osProjectByOSID[leaf.ExternalID]
 		if !ok {
 			r.log.Warnw("Cannot promote: OS project not found in scope",
-				"node_id", leaf.ID, "os_project_id", leaf.OSProjectID)
+				"node_id", leaf.ID, "os_project_id", leaf.ExternalID)
 			continue
 		}
 
 		r.log.Infow("Promoting imported leaf to managed project",
-			"node_id", leaf.ID, "os_project_id", leaf.OSProjectID, "dry_run", r.cfg.DryRun)
+			"node_id", leaf.ID, "os_project_id", leaf.ExternalID, "dry_run", r.cfg.DryRun)
 
 		if !r.cfg.DryRun {
 			if err := r.osClient.TagProjectForNode(osProject.ID, leaf.ID, osProject.Tags); err != nil {
@@ -938,8 +939,8 @@ func (r *Reconciler) promoteImportedLeaves(
 		}
 
 		// Remove from Phase-5 maps so the newly-tagged OS project is not re-imported.
-		delete(osProjectByOSID, leaf.OSProjectID)
-		delete(importedByOSProjectID, leaf.OSProjectID)
+		delete(osProjectByOSID, leaf.ExternalID)
+		delete(importedByOSProjectID, leaf.ExternalID)
 		osProjectByResourceID[leaf.ID] = osProject
 
 		res.projectsPromoted++
@@ -1752,7 +1753,7 @@ func (r *Reconciler) syncQuota(leaf tree.Node, osProject osclient.ProjectInfo, d
 	r.syncManagedTags(leaf, osProject)
 
 	// Overcommit check: OpenStack accepts a quota reduction below current usage but blocks
-	// new resource creation. We surface this in the UI via the OSOvercommitted flag.
+	// new resource creation. We surface this in the UI via the node's Overcommitted flag.
 	detail, err := r.osClient.GetProjectQuotaDetail(osProjectID)
 	if err != nil {
 		// Not an error for the caller: the quota push above succeeded, so the
@@ -1922,8 +1923,8 @@ func (r *Reconciler) upsertImported(
 		ExternalGroupAssignments: externalGroups,
 		History:                  []tree.HistoryEntry{},
 		CreatedBy:                "System",
-		OSProjectID:              osProject.ID,
-		OSProjectName:            osProject.Name,
+		ExternalID:               osProject.ID,
+		ExternalName:             osProject.Name,
 	}
 	tree.ApplyObservation(&leaf, osProject.ID, measured)
 

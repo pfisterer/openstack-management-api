@@ -118,10 +118,10 @@ func (c *Books) RecordDay(ctx context.Context, day time.Time, report DayReport) 
 
 	var rows []Day
 	for _, n := range all {
-		if n.Kind != tree.KindProject || n.OSProjectID == "" {
+		if n.Kind != tree.KindProject || n.ExternalID == "" {
 			continue
 		}
-		u, used := byProject[n.OSProjectID]
+		u, used := byProject[n.ExternalID]
 		// A project that existed but ran nothing still gets its row: an idle
 		// reservation is exactly what utilisation has to show.
 		if !used && !holdsResources(n.Status) {
@@ -129,7 +129,7 @@ func (c *Books) RecordDay(ctx context.Context, day time.Time, report DayReport) 
 		}
 		people, groups := peopleOf(n)
 		row := Day{
-			Day: day, NodeID: n.ID, OSProjectID: n.OSProjectID,
+			Day: day, NodeID: n.ID, ExternalID: n.ExternalID,
 			ProjectName: n.Name, Owner: n.OwnerEmail(), Status: n.Status,
 			People: people, Groups: groups,
 			ServerHours: u.ServerHours, VCPUHours: u.VCPUHours,
@@ -143,10 +143,10 @@ func (c *Books) RecordDay(ctx context.Context, day time.Time, report DayReport) 
 		}
 		row.Attributes = attributesOf(n, budgets)
 		if !backfilled && storageID != "" {
-			row.StorageGB = float64(n.OSInUse[storageID])
+			row.StorageGB = float64(n.InUse[storageID])
 		}
 		if ipv4 != nil {
-			v := ipv4[n.OSProjectID]
+			v := ipv4[n.ExternalID]
 			row.PublicIPv4 = &v
 		}
 		rows = append(rows, row)

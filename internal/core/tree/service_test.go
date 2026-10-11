@@ -19,7 +19,7 @@ var testResources = []common.Resource{{ID: "cores", Name: "Cores"}}
 
 // testAccounting mirrors the production defaults, so a test that passes here
 // says something about the deployment rather than about a lenient fixture.
-var testAccounting = tree.Accounting{ChargeOSInUse: true, ChargeReleased: true}
+var testAccounting = tree.Accounting{ChargeInUse: true, ChargeReleased: true}
 
 func newSvc(t *testing.T, rootAdmins common.TokenList) (*tree.Service, tree.Store) {
 	t.Helper()

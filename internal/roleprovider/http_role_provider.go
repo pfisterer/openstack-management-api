@@ -3,6 +3,7 @@ package roleprovider
 import (
 	"context"
 	"fmt"
+	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 	"net/http"
 	"strings"
 	"time"
@@ -18,7 +19,7 @@ const (
 	groupPrefix = "group:"
 )
 
-// HttpRoleProvider implements common.RoleProvider by calling the role-provider-service REST API.
+// HttpRoleProvider implements roles.Provider by calling the role-provider-service REST API.
 type HttpRoleProvider struct {
 	client *roleclient.ClientWithResponses
 	log    *zap.SugaredLogger
@@ -71,7 +72,7 @@ func (h *HttpRoleProvider) GetUserTokens(ctx context.Context, claims *common.Use
 // display name as the label. The role-provider matches the query against the
 // group ID, the display name and the description, so a label-only hit arrives
 // here too.
-func (h *HttpRoleProvider) SearchGroups(ctx context.Context, query string, limit int) ([]common.GroupSummary, error) {
+func (h *HttpRoleProvider) SearchGroups(ctx context.Context, query string, limit int) ([]roles.GroupSummary, error) {
 	params := &roleclient.ListGroupsParams{Q: &query, Limit: &limit}
 
 	resp, err := h.client.ListGroupsWithResponse(ctx, params)
@@ -82,12 +83,12 @@ func (h *HttpRoleProvider) SearchGroups(ctx context.Context, query string, limit
 		return nil, fmt.Errorf("HttpRoleProvider.SearchGroups: unexpected status %d", resp.StatusCode())
 	}
 
-	out := make([]common.GroupSummary, 0, len(*resp.JSON200))
+	out := make([]roles.GroupSummary, 0, len(*resp.JSON200))
 	for _, g := range *resp.JSON200 {
 		if g.Token == nil {
 			continue
 		}
-		summary := common.GroupSummary{Token: *g.Token}
+		summary := roles.GroupSummary{Token: *g.Token}
 		// Imported groups get display_name = ID; drop that so the UI does not
 		// print the token twice.
 		if g.DisplayName != nil && *g.DisplayName != strings.TrimPrefix(*g.Token, groupPrefix) {

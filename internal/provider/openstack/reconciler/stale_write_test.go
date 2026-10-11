@@ -43,7 +43,7 @@ func TestOSSyncStateDoesNotRevertAChangeMadeDuringThePass(t *testing.T) {
 	if got.Status != tree.StatusChangePending || got.Pending == nil || got.Pending.Limit == nil || (*got.Pending.Limit)["cores"] != 8 {
 		t.Errorf("the change request was lost: status %q, pending %+v", got.Status, got.Pending)
 	}
-	if got.OSProjectID != "os-1" || !got.OSOvercommitted || got.OSInUse["cores"] != 3 {
+	if got.ExternalID != "os-1" || !got.Overcommitted || got.InUse["cores"] != 3 {
 		t.Errorf("the measured OpenStack state was not written: %+v", got)
 	}
 }
@@ -62,8 +62,8 @@ func TestOSProjectIDIsWrittenOntoTheCurrentNode(t *testing.T) {
 	r.persistOSProjectID(ctx, "p_1", "os-new")
 
 	got, _ := store.GetNode(ctx, "p_1")
-	if got.Status != tree.StatusReleased || got.OSProjectID != "os-new" {
-		t.Errorf("got status %q / os id %q, want released / os-new", got.Status, got.OSProjectID)
+	if got.Status != tree.StatusReleased || got.ExternalID != "os-new" {
+		t.Errorf("got status %q / os id %q, want released / os-new", got.Status, got.ExternalID)
 	}
 }
 
@@ -74,7 +74,7 @@ func TestStaleImportIsNotDeletedOnceItWasPromoted(t *testing.T) {
 
 	// The pass loaded an import whose project left the scope; in the meantime an
 	// admin promoted it into the managed tree.
-	loaded := tree.Node{ID: "p_imp", Kind: tree.KindProject, ParentID: &parent, Status: tree.StatusImported, OSProjectID: "os-gone"}
+	loaded := tree.Node{ID: "p_imp", Kind: tree.KindProject, ParentID: &parent, Status: tree.StatusImported, ExternalID: "os-gone"}
 	now := loaded
 	now.Status = tree.StatusPending
 	if err := store.UpsertNode(ctx, now); err != nil {

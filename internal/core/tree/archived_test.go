@@ -33,7 +33,7 @@ func archivedSvc(t *testing.T, acc Accounting) (*Service, Node, Node) {
 		{ID: "p", Kind: KindProject, ParentID: &chairID, Status: StatusArchived, Name: "Old",
 			Limit:       common.ProjectQuota{"cores": 4, "storage": 50},
 			Allocations: []Allocation{{BudgetID: uniID, Limit: common.ProjectQuota{"cores": 2}}},
-			OSInUse:     common.ProjectQuota{"cores": 0, "storage": 30}},
+			InUse:       common.ProjectQuota{"cores": 0, "storage": 30}},
 	} {
 		if err := store.UpsertNode(ctx, n); err != nil {
 			t.Fatal(err)
@@ -56,7 +56,7 @@ func rolledUp(t *testing.T, svc *Service, budget Node) common.ProjectQuota {
 // Charged, an archived project costs only the storage it measurably holds, in
 // its own budget; its cores and its allocation from further up are free again.
 func TestArchivedAccounting_StorageOnly(t *testing.T) {
-	svc, uni, chair := archivedSvc(t, Accounting{ChargeOSInUse: true, ChargeReleased: true, ChargeArchived: true})
+	svc, uni, chair := archivedSvc(t, Accounting{ChargeInUse: true, ChargeReleased: true, ChargeArchived: true})
 	if got := rolledUp(t, svc, chair); got["cores"] != 0 || got["storage"] != 30 {
 		t.Errorf("chair is charged %v, want 0 cores and the 30 GB measured", got)
 	}
@@ -67,7 +67,7 @@ func TestArchivedAccounting_StorageOnly(t *testing.T) {
 
 // Not charged, archiving frees the budget entirely.
 func TestArchivedAccounting_Free(t *testing.T) {
-	svc, uni, chair := archivedSvc(t, Accounting{ChargeOSInUse: true, ChargeReleased: true})
+	svc, uni, chair := archivedSvc(t, Accounting{ChargeInUse: true, ChargeReleased: true})
 	for _, b := range []Node{chair, uni} {
 		if got := rolledUp(t, svc, b); got["cores"] != 0 || got["storage"] != 0 {
 			t.Errorf("%s is charged %v for an archived project", b.Name, got)

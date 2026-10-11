@@ -37,15 +37,15 @@ func fixture(t *testing.T) (*Books, *MemoryStore) {
 			Attributes: tree.Attributes{"billing": {"cost_center": "4711"}}},
 		{ID: "stud", Kind: tree.KindBudget, Name: "Students", ParentID: ptr("uni"), Status: tree.StatusApproved},
 		{ID: "p_run", Kind: tree.KindProject, Name: "Thesis", ParentID: ptr("stud"), Status: tree.StatusApproved,
-			Owner: "user:a@x", OSProjectID: "os-run",
+			Owner: "user:a@x", ExternalID: "os-run",
 			Limit:           common.ProjectQuota{"cores": 4, "storage": 50, "ipv4": 0, "ports": 10},
 			Allocations:     []tree.Allocation{{BudgetID: "uni", Limit: common.ProjectQuota{"cores": 8, "ipv4": 1}}},
 			AdminScope:      common.TokenList{"user:b@x"},
 			AuthorizedUsers: []common.AuthorizedUser{{Token: "user:a@x"}, {Token: "user:c@x"}, {Token: "group:course"}},
-			OSInUse:         common.ProjectQuota{"storage": 30},
+			InUse:           common.ProjectQuota{"storage": 30},
 			Attributes:      tree.Attributes{"funding": {"wbs": "D-1"}}},
 		{ID: "p_idle", Kind: tree.KindProject, Name: "Idle", ParentID: ptr("stud"), Status: tree.StatusApproved,
-			Owner: "user:d@x", OSProjectID: "os-idle", Limit: common.ProjectQuota{"cores": 2}},
+			Owner: "user:d@x", ExternalID: "os-idle", Limit: common.ProjectQuota{"cores": 2}},
 		{ID: "p_rej", Kind: tree.KindProject, Name: "No", ParentID: ptr("stud"), Status: tree.StatusRejected, Owner: "user:e@x"},
 	} {
 		if err := nodes.UpsertNode(ctx, n); err != nil {

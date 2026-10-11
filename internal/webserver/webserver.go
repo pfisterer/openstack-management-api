@@ -2,6 +2,7 @@ package webserver
 
 import (
 	"fmt"
+	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 	"net/http"
 	"strconv"
 	"strings"
@@ -91,7 +92,7 @@ type RetirementConfig struct {
 // role-switch operations).
 type APIService interface {
 	// Principal search (groups + users) for token fields
-	SearchPrincipals(query string, limit int) ([]common.GroupSummary, []string, error)
+	SearchPrincipals(query string, limit int) ([]roles.GroupSummary, []string, error)
 
 	// Node reads / views
 	GetNode(id string, userTokens common.TokenList) (*tree.Node, error)

@@ -147,8 +147,8 @@ type mcpProject struct {
 	RequestedLimit     map[string]int `json:"requested_limit,omitempty" jsonschema:"resources a pending request or change asks for; limit keeps what is granted until it is decided"`
 	InUse              map[string]int `json:"in_use,omitempty" jsonschema:"what OpenStack reports as actually used; a missing key means not measured, not zero"`
 	AvailableResources []string       `json:"available_resources,omitempty" jsonschema:"on a budget: the resource ids a request under it may name"`
-	OSProjectID        string         `json:"os_project_id,omitempty" jsonschema:"the OpenStack project, empty while it is still being created"`
-	OSProjectName      string         `json:"os_project_name,omitempty" jsonschema:"its name in OpenStack, which is what the dashboard and the CLI show"`
+	ExternalID         string         `json:"external_id,omitempty" jsonschema:"the project where it runs (the OpenStack project ID), empty while it is still being created"`
+	ExternalName       string         `json:"external_name,omitempty" jsonschema:"its name where it runs, which is what the OpenStack dashboard and the CLI show"`
 	TerminationDate    string         `json:"termination_date,omitempty" jsonschema:"intended end of life"`
 	MaxProjectTermDays int            `json:"max_project_term_days,omitempty" jsonschema:"on a budget: a project below it may end at most this many days after the day it is requested or extended"`
 	InheritsLimit      bool           `json:"inherits_limit,omitempty" jsonschema:"on a budget: it only structures the tree and passes on the limit of the budget above, which limit shows"`
@@ -173,10 +173,10 @@ func toMCPProject(n tree.Node) mcpProject {
 		Shared:             n.Kind == tree.KindProject && len(n.AdminScope) > 0,
 		PaidFromName:       n.ParentName,
 		Limit:              n.EffectiveLimit(),
-		InUse:              n.OSInUse,
+		InUse:              n.InUse,
 		AvailableResources: n.AvailableResources,
-		OSProjectID:        n.OSProjectID,
-		OSProjectName:      n.OSProjectName,
+		ExternalID:         n.ExternalID,
+		ExternalName:       n.ExternalName,
 		DeletionRequested:  slices.Contains(n.Flags, tree.FlagDeleteRequested),
 		InheritsLimit:      n.InheritsLimit,
 	}

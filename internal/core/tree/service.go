@@ -3,6 +3,7 @@ package tree
 import (
 	"context"
 	"fmt"
+	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 	"maps"
 	"net/mail"
 	"slices"
@@ -23,7 +24,7 @@ type Service struct {
 	*identity.Service
 
 	store Store
-	roles common.RoleProvider
+	roles roles.Provider
 	// ownerTokens caches people's tokens for the "owner in group" filter.
 	ownerTokens *tokenCache
 
@@ -75,9 +76,9 @@ type Service struct {
 // indistinguishable, and swapping them compiles cleanly and silently changes
 // every budget in the deployment.
 type Accounting struct {
-	// ChargeOSInUse bills max(declared limit, measured OpenStack usage) instead
+	// ChargeInUse bills max(declared limit, measured OpenStack usage) instead
 	// of the declared limit alone. See chargedQuota for why.
-	ChargeOSInUse bool
+	ChargeInUse bool
 	// ChargeReleased keeps a released leaf's limit booked against its budget.
 	//
 	// Releasing is a request, not a deletion: the reconciler tags the project
@@ -109,7 +110,7 @@ type Accounting struct {
 // NewService constructs the tree service.
 // rootAdminTokens is synchronized into the root node's AdminScope on every
 // Bootstrap — the configuration is the source of truth for that one scope.
-func NewService(store Store, roles common.RoleProvider, resources []common.Resource, rootAdminTokens common.TokenList, requestTimeout time.Duration, maxAuthorizedUsers int, accounting Accounting, log *zap.SugaredLogger) *Service {
+func NewService(store Store, roles roles.Provider, resources []common.Resource, rootAdminTokens common.TokenList, requestTimeout time.Duration, maxAuthorizedUsers int, accounting Accounting, log *zap.SugaredLogger) *Service {
 	if store == nil {
 		panic("tree.NewService requires a non-nil store")
 	}
@@ -1765,7 +1766,7 @@ func (s *Service) leafCost(leaf Node) (common.ProjectQuota, bool) {
 	if leaf.Status == StatusArchived {
 		return archivedQuota(leaf, s.storageIDs), false
 	}
-	return chargedQuota(leaf, s.countIDs, s.accounting.ChargeOSInUse), true
+	return chargedQuota(leaf, s.countIDs, s.accounting.ChargeInUse), true
 }
 
 // archivedQuota is the storage an archived leaf still holds: what OpenStack
@@ -1774,7 +1775,7 @@ func (s *Service) leafCost(leaf Node) (common.ProjectQuota, bool) {
 func archivedQuota(leaf Node, storageIDs []string) common.ProjectQuota {
 	out := common.ProjectQuota{}
 	for _, id := range storageIDs {
-		if inUse, measured := leaf.OSInUse[id]; measured {
+		if inUse, measured := leaf.InUse[id]; measured {
 			out[id] = inUse
 		} else if v := leaf.Limit[id]; v > 0 {
 			out[id] = v
@@ -1784,7 +1785,7 @@ func archivedQuota(leaf Node, storageIDs []string) common.ProjectQuota {
 }
 
 // chargedQuota is what a leaf COSTS its budget: the declared limit, or the
-// measured OpenStack usage where that is higher. With chargeOSInUse off it is
+// measured OpenStack usage where that is higher. With chargeInUse off it is
 // the declared limit alone, which is the pre-2026-08 behaviour.
 //
 // Why the max: shrinking a limit after filling the project frees budget on
@@ -1796,7 +1797,7 @@ func archivedQuota(leaf Node, storageIDs []string) common.ProjectQuota {
 // which route (self-service or an approving manager) granted the shrink.
 //
 // Two rules that are easy to get wrong:
-//   - A resource MISSING from OSInUse means "OpenStack does not measure this",
+//   - A resource MISSING from InUse means "OpenStack does not measure this",
 //     NOT "zero in use". Treating an absent key as 0 would be exactly the
 //     understatement this function exists to prevent, so it leaves the limit
 //     untouched instead.
@@ -1807,8 +1808,8 @@ func archivedQuota(leaf Node, storageIDs []string) common.ProjectQuota {
 // The result must be computed PER LEAF and only then summed: max() does not
 // distribute over addition, so applying it to an already-aggregated total
 // gives a different (and wrong) answer.
-func chargedQuota(leaf Node, resourceIDs []string, chargeOSInUse bool) common.ProjectQuota {
-	if !chargeOSInUse {
+func chargedQuota(leaf Node, resourceIDs []string, chargeInUse bool) common.ProjectQuota {
+	if !chargeInUse {
 		return leaf.Limit
 	}
 	// Measured use is compared with everything the project holds, allocations
@@ -1822,7 +1823,7 @@ func chargedQuota(leaf Node, resourceIDs []string, chargeOSInUse bool) common.Pr
 		if total[id] == common.UnlimitedQuota {
 			continue
 		}
-		inUse, measured := leaf.OSInUse[id]
+		inUse, measured := leaf.InUse[id]
 		if measured && inUse > total[id] {
 			out[id] = limit + inUse - total[id]
 		}

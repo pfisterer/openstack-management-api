@@ -233,11 +233,11 @@ func DefaultMockTreeState() ([]common.Identity, []tree.Node) {
 			// Imported by the reconciler: an OpenStack project unknown to the
 			// system, parked under "unassigned" until a root admin promotes it.
 			ID: "p_imported_001", Kind: tree.KindProject, ParentID: &unassignedID, Status: tree.StatusImported,
-			Name:          "legacy-ml-workload",
-			Reason:        "OpenStack project: legacy-ml-workload (os-project-abc-123)",
-			OSProjectID:   "os-project-abc-123",
-			OSProjectName: "legacy-ml-workload",
-			Limit:         common.ProjectQuota{"cores": 9, "ram": 16, "storage": 100},
+			Name:         "legacy-ml-workload",
+			Reason:       "OpenStack project: legacy-ml-workload (os-project-abc-123)",
+			ExternalID:   "os-project-abc-123",
+			ExternalName: "legacy-ml-workload",
+			Limit:        common.ProjectQuota{"cores": 9, "ram": 16, "storage": 100},
 			AuthorizedUsers: []common.AuthorizedUser{
 				{Token: "user:faculty@cs.example", OpenstackRole: "member"},
 				{Token: DeptCSFaculty, OpenstackRole: "member"},

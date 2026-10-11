@@ -439,31 +439,34 @@ type Node struct {
 	CreatedBy string `json:"created_by,omitempty"`
 	CreatedAt string `json:"created_at,omitempty"`
 
-	// ── OpenStack linkage (leaves, maintained by the reconciler) ──────────────
-	OSProjectID     string `json:"os_project_id,omitempty"`
-	OSProjectName   string `json:"os_project_name,omitempty"`
-	OSOvercommitted bool   `json:"os_overcommitted,omitempty"`
-	// OSInUse is what the project actually consumes in OpenStack, as opposed to
-	// the Limit it was granted. Only resources OpenStack reports an in-use
-	// counter for appear here; a missing key means "not measured", not zero.
+	// ── Where the project runs (leaves, reported by the executing system) ──────
+	//
+	// Written only through ProviderSync. Today the executing system is
+	// OpenStack, so ExternalID is the OpenStack project ID.
+	ExternalID    string `json:"external_id,omitempty"`
+	ExternalName  string `json:"external_name,omitempty"`
+	Overcommitted bool   `json:"overcommitted,omitempty"`
+	// InUse is what the project actually consumes, as opposed to the Limit it
+	// was granted. Only resources the executing system measures appear here; a
+	// missing key means "not measured", not zero.
 	//
 	// It exists because a quota reduction below current usage is something
 	// OpenStack accepts silently — the servers keep running and only new ones
 	// are refused. Without this the platform sees only the smaller claim and a
 	// shrink looks like capacity handed back when nothing was.
-	OSInUse common.ProjectQuota `json:"os_in_use,omitempty"`
-	// OSServers is how many servers the project has in OpenStack, measured with
-	// OSInUse; nil until a pass has measured it.
-	OSServers *int `json:"os_servers,omitempty"`
-	// OSServerLimit is how many servers OpenStack allows the project, read
-	// with OSServers. Not a catalogue resource: for a managed project it
+	InUse common.ProjectQuota `json:"in_use,omitempty"`
+	// Servers is how many servers the project has, measured with InUse; nil
+	// until a pass has measured it.
+	Servers *int `json:"servers,omitempty"`
+	// ServerLimit is how many servers the project may have, read with
+	// Servers. Not a catalogue resource: for a managed OpenStack project it
 	// follows the cores (os_linked_field), an import has its own.
-	OSServerLimit *int `json:"os_server_limit,omitempty"`
-	// OSGrantUse says, per availability of the catalogue (a network, flavour or
+	ServerLimit *int `json:"server_limit,omitempty"`
+	// GrantUse says, per availability of the catalogue (a network, flavour or
 	// image), how many of the project's servers or devices use it: whether
 	// switching it off would take something away. A missing key means "not
-	// measured", like OSInUse.
-	OSGrantUse common.ProjectQuota `json:"os_grant_use,omitempty"`
+	// measured", like InUse.
+	GrantUse common.ProjectQuota `json:"grant_use,omitempty"`
 	// Purge is how far emptying the project before its deletion has got,
 	// written by the reconciler on every pass while it runs, so its owner
 	// sees why a deletion takes long.

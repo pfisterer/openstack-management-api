@@ -2,6 +2,7 @@ package tree_test
 
 import (
 	"context"
+	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 	"slices"
 	"testing"
 	"time"
@@ -14,7 +15,7 @@ import (
 // groupsRoles answers a person's tokens from a fixed table and counts the
 // questions, so a test can see the cache work.
 type groupsRoles struct {
-	common.RoleProvider
+	roles.Provider
 	tokens map[string]common.TokenList
 	asked  int
 }

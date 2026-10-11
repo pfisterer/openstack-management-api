@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 	"os"
 	"strings"
 	"time"
@@ -195,7 +196,7 @@ func RunApplication() {
 	logger.Infof("Using storage backend: %s", config.Storage.Type)
 
 	// Create role provider based on ROLE_PROVIDER env var ("http" or "mock").
-	var roleProvider common.RoleProvider
+	var roleProvider roles.Provider
 	switch strings.ToLower(strings.TrimSpace(config.RoleProvider.Type)) {
 	case "http":
 		logger.Infow("Using HttpRoleProvider", "url", config.RoleProvider.URL)
@@ -235,7 +236,7 @@ func RunApplication() {
 
 	requestTimeout := time.Duration(config.ServiceTimeoutSeconds) * time.Second
 	treeSvc := tree.NewService(tree.NotifyOnWrite(nodeStore, triggerReconcile), roleProvider, osclient.CoreResources(config.ProjectDefinitions), config.RootAdminTokens, requestTimeout, config.MaxAuthorizedUsers, tree.Accounting{
-		ChargeOSInUse:  config.ChargeOSInUse,
+		ChargeInUse:    config.ChargeOSInUse,
 		ChargeReleased: config.ChargeReleased,
 		ChargeArchived: config.ChargeArchived,
 	}, logger)

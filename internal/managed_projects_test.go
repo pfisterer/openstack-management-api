@@ -4,7 +4,7 @@ import "testing"
 
 // Whether a resource is MEASURED in OpenStack is decided by one flag on its
 // definition, and forgetting that flag fails silently: ProjectInUse skips the
-// resource, it never reaches OSInUse, and the accounting goes on billing the
+// resource, it never reaches the measured in-use, and the accounting goes on billing the
 // declared limit as if nothing were running.
 //
 // That is exactly how storage stayed exploitable after the max(limit, in-use)

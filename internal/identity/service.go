@@ -7,6 +7,7 @@ package identity
 import (
 	"context"
 	"fmt"
+	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 	"maps"
 	"sort"
 	"strings"
@@ -36,7 +37,7 @@ const groupTokenPrefix = "group:"
 // Service implements role-switch overrides and identity resolution.
 type Service struct {
 	store          Store
-	roles          common.RoleProvider
+	roles          roles.Provider
 	requestTimeout time.Duration
 
 	overridesWriteMu sync.Mutex
@@ -46,7 +47,7 @@ type Service struct {
 }
 
 // NewService constructs the identity service.
-func NewService(store Store, roles common.RoleProvider, requestTimeout time.Duration, log *zap.SugaredLogger) *Service {
+func NewService(store Store, roles roles.Provider, requestTimeout time.Duration, log *zap.SugaredLogger) *Service {
 	if store == nil {
 		panic("identity.NewService requires a non-nil store")
 	}
@@ -238,7 +239,7 @@ func (s *Service) GetUserGroupSwitchForActor(actorEmail string) *string {
 //
 // Both halves are best-effort: a directory outage yields the local half rather
 // than an error, so a form still works.
-func (s *Service) SearchPrincipals(query string, limit int) ([]common.GroupSummary, []string, error) {
+func (s *Service) SearchPrincipals(query string, limit int) ([]roles.GroupSummary, []string, error) {
 	ctx, cancel := s.newCtx()
 	defer cancel()
 

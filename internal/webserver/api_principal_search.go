@@ -1,6 +1,7 @@
 package webserver
 
 import (
+	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -15,8 +16,8 @@ type TokenListResponse struct {
 // PrincipalSearchResponse wraps everything a token field may be filled with:
 // groups with their labels, and bare email addresses for individual people.
 type PrincipalSearchResponse struct {
-	Groups []common.GroupSummary `json:"groups"`
-	Users  []string              `json:"users"`
+	Groups []roles.GroupSummary `json:"groups"`
+	Users  []string             `json:"users"`
 }
 
 // searchPrincipals searches for groups and users.
@@ -48,7 +49,7 @@ func searchPrincipals(cfg APIConfig) gin.HandlerFunc {
 			return
 		}
 		if groups == nil {
-			groups = []common.GroupSummary{}
+			groups = []roles.GroupSummary{}
 		}
 		if users == nil {
 			users = []string{}

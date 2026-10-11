@@ -9,7 +9,7 @@ import (
 var chargedResources = []string{"cores", "ram"}
 
 func leafWith(limit, inUse common.ProjectQuota) Node {
-	return Node{ID: "leaf", Limit: limit, OSInUse: inUse}
+	return Node{ID: "leaf", Limit: limit, InUse: inUse}
 }
 
 func TestChargedQuota_DisabledKeepsDeclaredLimit(t *testing.T) {
@@ -66,13 +66,13 @@ func TestBuildRolledUpUsage_MaxAppliesPerLeafNotToTheSum(t *testing.T) {
 	budget := "budget"
 	leaves := []Node{
 		{ID: "a", ParentID: &budget, Status: StatusApproved,
-			Limit: common.ProjectQuota{"cores": 1}, OSInUse: common.ProjectQuota{"cores": 8}},
+			Limit: common.ProjectQuota{"cores": 1}, InUse: common.ProjectQuota{"cores": 8}},
 		{ID: "b", ParentID: &budget, Status: StatusApproved,
-			Limit: common.ProjectQuota{"cores": 8}, OSInUse: common.ProjectQuota{"cores": 2}},
+			Limit: common.ProjectQuota{"cores": 8}, InUse: common.ProjectQuota{"cores": 2}},
 	}
 	parentMap := map[string]*string{budget: nil}
 
-	osInUse := (&Service{accounting: Accounting{ChargeOSInUse: true}, countIDs: chargedResources}).leafCost
+	osInUse := (&Service{accounting: Accounting{ChargeInUse: true}, countIDs: chargedResources}).leafCost
 	usage := buildRolledUpUsage(leaves, parentMap, chargedResources, osInUse)
 	total := usage[budget].Total(chargedResources)
 	if total["cores"] != 16 {

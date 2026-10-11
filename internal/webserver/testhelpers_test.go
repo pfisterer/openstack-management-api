@@ -53,7 +53,7 @@ var quotaResources = osclient.CoreResources(managedResources)
 
 // testAccounting mirrors the production defaults, so a test that passes here
 // says something about the deployment rather than about a lenient fixture.
-var testAccounting = tree.Accounting{ChargeOSInUse: true, ChargeReleased: true}
+var testAccounting = tree.Accounting{ChargeInUse: true, ChargeReleased: true}
 
 // rootAdminTokens mirrors the root-level tokens in mock data.
 var rootAdminTokens = common.TokenList{"group:root_uni", "user:root.admin@uni.example"}

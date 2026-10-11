@@ -458,7 +458,7 @@ func defaultResourceCatalogue() []osclient.ManagedResource {
 			OSQuotaField: "gigabytes",
 			// Measured, like cores and ram — and for the same reason. Without
 			// this flag ProjectInUse skips the resource entirely, so storage
-			// never reaches OSInUse and the accounting keeps billing the
+			// never reaches the measured in-use and the accounting keeps billing the
 			// declared limit. That leaves the shrink-after-filling loophole
 			// wide open for exactly the resource that is cheapest to abuse:
 			// request 500 GB, fill it with volumes, shrink to 5. OpenStack

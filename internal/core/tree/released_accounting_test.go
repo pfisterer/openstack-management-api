@@ -2,6 +2,7 @@ package tree
 
 import (
 	"context"
+	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 	"testing"
 	"time"
 
@@ -9,7 +10,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// noRoles satisfies common.RoleProvider without answering anything. The usage
+// noRoles satisfies roles.Provider without answering anything. The usage
 // rollup never asks it; the service just refuses to be built without one. Kept
 // local because an internal test cannot import roleprovider — its mock reaches
 // back into this package through mockdata, which is an import cycle.
@@ -18,7 +19,7 @@ type noRoles struct{}
 func (noRoles) GetUserTokens(context.Context, *common.UserClaims) (common.TokenList, error) {
 	return nil, nil
 }
-func (noRoles) SearchGroups(context.Context, string, int) ([]common.GroupSummary, error) {
+func (noRoles) SearchGroups(context.Context, string, int) ([]roles.GroupSummary, error) {
 	return nil, nil
 }
 func (noRoles) SearchUsers(context.Context, string, int) ([]string, error) { return nil, nil }
@@ -75,7 +76,7 @@ func budgetCores(t *testing.T, svc *Service, budgetID string) int {
 // its cores stay occupied and stay booked. Without this a budget could be
 // re-spent on capacity that is still running.
 func TestReleasedLeafAccounting_ChargedWhenOn(t *testing.T) {
-	svc, budgetID := accountingSvc(t, Accounting{ChargeOSInUse: true, ChargeReleased: true}, StatusReleased)
+	svc, budgetID := accountingSvc(t, Accounting{ChargeInUse: true, ChargeReleased: true}, StatusReleased)
 	if got := budgetCores(t, svc, budgetID); got != 7 {
 		t.Errorf("released leaf must still cost its 7 cores, got %d", got)
 	}
@@ -84,7 +85,7 @@ func TestReleasedLeafAccounting_ChargedWhenOn(t *testing.T) {
 // Off is the pre-2026-08 behaviour: the budget frees up the moment the project
 // is released, and over-booking is accepted for as long as the deletion takes.
 func TestReleasedLeafAccounting_FreeWhenOff(t *testing.T) {
-	svc, budgetID := accountingSvc(t, Accounting{ChargeOSInUse: true}, StatusReleased)
+	svc, budgetID := accountingSvc(t, Accounting{ChargeInUse: true}, StatusReleased)
 	if got := budgetCores(t, svc, budgetID); got != 0 {
 		t.Errorf("with the switch off a released leaf costs nothing, got %d", got)
 	}
@@ -105,7 +106,7 @@ func TestReleasedLeafAccounting_LeavesOtherStatusesAlone(t *testing.T) {
 		t.Run(tc.status, func(t *testing.T) {
 			for _, charge := range []bool{false, true} {
 				svc, budgetID := accountingSvc(t,
-					Accounting{ChargeOSInUse: true, ChargeReleased: charge}, tc.status)
+					Accounting{ChargeInUse: true, ChargeReleased: charge}, tc.status)
 				if got := budgetCores(t, svc, budgetID); got != tc.want {
 					t.Errorf("ChargeReleased=%v: %s cost %d, want %d", charge, tc.status, got, tc.want)
 				}

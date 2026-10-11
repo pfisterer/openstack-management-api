@@ -304,7 +304,7 @@ func (s *Service) SearchNodes(userTokens common.TokenList, query string, limit, 
 func nodeMatches(n Node, needle string) bool {
 	fields := []string{
 		n.Name, n.Reason, n.ID, n.Owner, n.CreatedBy,
-		n.OSProjectName, n.OSProjectID, n.Status,
+		n.ExternalName, n.ExternalID, n.Status,
 	}
 	fields = append(fields, n.AdminScope...)
 	fields = append(fields, n.EligibleRequesters...)

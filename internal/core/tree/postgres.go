@@ -94,6 +94,9 @@ func NewPostgresStore(dsn string, log *zap.SugaredLogger) (*PostgresStore, error
 	if err := dropLegacyTables(db, log); err != nil {
 		return nil, fmt.Errorf("postgres: %w", err)
 	}
+	if err := renameNodeFields(db, log); err != nil {
+		return nil, fmt.Errorf("postgres: %w", err)
+	}
 	return &PostgresStore{db: db, log: log}, nil
 }
 

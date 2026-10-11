@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 	"math"
 	"slices"
 	"strings"
@@ -73,10 +74,10 @@ func numericSort(key string) (func(Node) float64, bool) {
 	switch {
 	case key == ChildSortServers:
 		return func(n Node) float64 {
-			if n.OSServers == nil {
+			if n.Servers == nil {
 				return -1
 			}
-			return float64(*n.OSServers)
+			return float64(*n.Servers)
 		}, true
 	case strings.HasPrefix(key, ChildSortReservedPrefix) && len(key) > len(ChildSortReservedPrefix):
 		id := strings.TrimPrefix(key, ChildSortReservedPrefix)
@@ -90,7 +91,7 @@ func numericSort(key string) (func(Node) float64, bool) {
 	case strings.HasPrefix(key, ChildSortUsedPrefix) && len(key) > len(ChildSortUsedPrefix):
 		id := strings.TrimPrefix(key, ChildSortUsedPrefix)
 		return func(n Node) float64 {
-			v, ok := n.OSInUse[id]
+			v, ok := n.InUse[id]
 			if !ok {
 				return -1
 			}
@@ -305,7 +306,7 @@ func newTokenCache(ttl time.Duration) *tokenCache {
 	return &tokenCache{ttl: ttl, entries: map[string]tokenCacheEntry{}}
 }
 
-func (c *tokenCache) get(ctx context.Context, roles common.RoleProvider, email string) (common.TokenList, error) {
+func (c *tokenCache) get(ctx context.Context, roles roles.Provider, email string) (common.TokenList, error) {
 	c.mu.Lock()
 	e, ok := c.entries[email]
 	c.mu.Unlock()

@@ -25,7 +25,7 @@ func availabilityService(t *testing.T) *Service {
 	return NewService(NewInMemoryStore(log), noRoles{}, availabilityCatalogue,
 		common.TokenList{"group:root-admin"}, 5*time.Second,
 		common.DefaultMaxAuthorizedUsers,
-		Accounting{ChargeOSInUse: true, ChargeReleased: true}, log)
+		Accounting{ChargeInUse: true, ChargeReleased: true}, log)
 }
 
 // The one that would be invisible in production: three projects with a network

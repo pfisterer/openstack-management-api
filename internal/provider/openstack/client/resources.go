@@ -76,7 +76,7 @@ type ManagedResource struct {
 
 	// OSOvercommitCheck marks this resource for overcommit detection.
 	// When true, the reconciler compares OS in-use against OS limit and sets
-	// OSOvercommitted on the project if in-use exceeds the configured quota.
+	// Overcommitted on the project if in-use exceeds the configured quota.
 	OSOvercommitCheck bool `json:"os_overcommit_check,omitempty"`
 }
 

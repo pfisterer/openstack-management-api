@@ -2,6 +2,7 @@ package roleprovider
 
 import (
 	"context"
+	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 	"sort"
 	"strings"
 
@@ -12,7 +13,7 @@ import (
 type MockRoleProvider struct{}
 
 // Ensure MockRoleProvider implements the RoleProvider interface
-var _ common.RoleProvider = (*MockRoleProvider)(nil)
+var _ roles.Provider = (*MockRoleProvider)(nil)
 
 func NewMockRoleProvider() *MockRoleProvider {
 	return &MockRoleProvider{}
@@ -90,7 +91,7 @@ var mockGroupLabels = map[string]string{
 // SearchGroups returns mock groups from mockdata identities, matching the query
 // against the token and the label, like the real provider does against group ID,
 // display name and description.
-func (m *MockRoleProvider) SearchGroups(_ context.Context, query string, limit int) ([]common.GroupSummary, error) {
+func (m *MockRoleProvider) SearchGroups(_ context.Context, query string, limit int) ([]roles.GroupSummary, error) {
 	identities, _ := mockdata.DefaultMockTreeState()
 	groupSet := map[string]struct{}{}
 	for _, ident := range identities {
@@ -103,7 +104,7 @@ func (m *MockRoleProvider) SearchGroups(_ context.Context, query string, limit i
 		}
 	}
 	needle := strings.ToLower(strings.TrimSpace(query))
-	out := make([]common.GroupSummary, 0, len(groupSet))
+	out := make([]roles.GroupSummary, 0, len(groupSet))
 	for token := range groupSet {
 		label := mockGroupLabels[token]
 		if needle != "" &&
@@ -111,7 +112,7 @@ func (m *MockRoleProvider) SearchGroups(_ context.Context, query string, limit i
 			!strings.Contains(strings.ToLower(label), needle) {
 			continue
 		}
-		out = append(out, common.GroupSummary{Token: token, Label: label})
+		out = append(out, roles.GroupSummary{Token: token, Label: label})
 	}
 	// Sort the output list
 	if len(out) > 1 {

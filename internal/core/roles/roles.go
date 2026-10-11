@@ -1,14 +1,20 @@
-package common
+// Package roles is what the tree needs to know about people and groups: the
+// interface it asks, not where the answers come from.
+package roles
 
 import (
 	"context"
+
+	"github.com/pfisterer/openstack-management-api/internal/common"
 )
 
-// RoleProvider abstracts authorization and token discovery.
-// Implementations can use mock logic, Zanzibar, SpiceDB, or other systems.
-type RoleProvider interface {
+// Provider abstracts authorization and token discovery: which groups a person
+// belongs to, and finding groups and people to name on a node.
+// Implementations live in package roleprovider (the role-provider-service over
+// HTTP, and a mock); the tree depends only on this interface.
+type Provider interface {
 	// GetUserTokens queries the authorization system to discover all tokens/relationships a user has.
-	GetUserTokens(ctx context.Context, claims *UserClaims) (TokenList, error)
+	GetUserTokens(ctx context.Context, claims *common.UserClaims) (common.TokenList, error)
 
 	// SearchGroups searches for known groups whose token, label or description
 	// matches the query.
@@ -36,20 +42,3 @@ type GroupSummary struct {
 	Label       string `json:"label"`
 	Description string `json:"description,omitempty"`
 }
-
-// TokenLookupResult is the token information required by the auth middleware.
-type TokenLookupResult struct {
-	Found bool
-	// Subject is the identity the token was issued for, in the form group
-	// resolution expects — an e-mail address. Named Username before, which is
-	// what invited filling it with preferred_username and getting a caller that
-	// authenticates but belongs to no group.
-	Subject  string
-	ReadOnly bool
-}
-
-// TokenLookupFunc resolves an API token string to token details.
-type TokenLookupFunc func(ctx context.Context, tokenString string) (TokenLookupResult, error)
-
-// UserTokenResolverFunc resolves effective authorization tokens for the given claims.
-type UserTokenResolverFunc func(ctx context.Context, claims *UserClaims) (TokenList, error)

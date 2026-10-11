@@ -16,9 +16,9 @@ import (
 // billing the maximum exists to close, reopened by a transient API error.
 func TestApplyObservation_UnmeasuredPassKeepsTheLastKnownUsage(t *testing.T) {
 	leaf := Node{
-		OSProjectID:     "os-1",
-		OSOvercommitted: true,
-		OSInUse:         common.ProjectQuota{"cores": 8, "ram": 5},
+		ExternalID:    "os-1",
+		Overcommitted: true,
+		InUse:         common.ProjectQuota{"cores": 8, "ram": 5},
 	}
 
 	changed := ApplyObservation(&leaf, "os-1", nil)
@@ -26,27 +26,27 @@ func TestApplyObservation_UnmeasuredPassKeepsTheLastKnownUsage(t *testing.T) {
 	if changed {
 		t.Error("nothing was measured and the project id is unchanged; there is nothing to persist")
 	}
-	if !quotaEqual(leaf.OSInUse, common.ProjectQuota{"cores": 8, "ram": 5}) {
-		t.Errorf("OSInUse = %v, want the stored measurement untouched", leaf.OSInUse)
+	if !quotaEqual(leaf.InUse, common.ProjectQuota{"cores": 8, "ram": 5}) {
+		t.Errorf("InUse = %v, want the stored measurement untouched", leaf.InUse)
 	}
-	if !leaf.OSOvercommitted {
-		t.Error("OSOvercommitted was cleared by a pass that did not measure anything")
+	if !leaf.Overcommitted {
+		t.Error("Overcommitted was cleared by a pass that did not measure anything")
 	}
 }
 
 // The project id is tracked even when the quota detail was unreadable — it does
 // not come from the measurement, so there is no reason to lose it.
 func TestApplyObservation_UnmeasuredPassStillAdoptsTheProjectID(t *testing.T) {
-	leaf := Node{OSInUse: common.ProjectQuota{"cores": 8}}
+	leaf := Node{InUse: common.ProjectQuota{"cores": 8}}
 
 	if !ApplyObservation(&leaf, "os-new", nil) {
 		t.Fatal("a new OS project id has to be persisted")
 	}
-	if leaf.OSProjectID != "os-new" {
-		t.Errorf("OSProjectID = %q, want %q", leaf.OSProjectID, "os-new")
+	if leaf.ExternalID != "os-new" {
+		t.Errorf("OSProjectID = %q, want %q", leaf.ExternalID, "os-new")
 	}
-	if !quotaEqual(leaf.OSInUse, common.ProjectQuota{"cores": 8}) {
-		t.Errorf("OSInUse = %v, want it untouched", leaf.OSInUse)
+	if !quotaEqual(leaf.InUse, common.ProjectQuota{"cores": 8}) {
+		t.Errorf("InUse = %v, want it untouched", leaf.InUse)
 	}
 }
 
@@ -54,19 +54,19 @@ func TestApplyObservation_UnmeasuredPassStillAdoptsTheProjectID(t *testing.T) {
 // genuinely released its servers must stop being billed for them.
 func TestApplyObservation_MeasuredPassOverwrites(t *testing.T) {
 	leaf := Node{
-		OSProjectID:     "os-1",
-		OSOvercommitted: true,
-		OSInUse:         common.ProjectQuota{"cores": 8, "ram": 5},
+		ExternalID:    "os-1",
+		Overcommitted: true,
+		InUse:         common.ProjectQuota{"cores": 8, "ram": 5},
 	}
 
 	if !ApplyObservation(&leaf, "os-1", &Observation{InUse: common.ProjectQuota{"cores": 0, "ram": 0}}) {
 		t.Fatal("the measurement changed, so the node needs persisting")
 	}
-	if !quotaEqual(leaf.OSInUse, common.ProjectQuota{"cores": 0, "ram": 0}) {
-		t.Errorf("OSInUse = %v, want the fresh measurement", leaf.OSInUse)
+	if !quotaEqual(leaf.InUse, common.ProjectQuota{"cores": 0, "ram": 0}) {
+		t.Errorf("InUse = %v, want the fresh measurement", leaf.InUse)
 	}
-	if leaf.OSOvercommitted {
-		t.Error("OSOvercommitted should follow the fresh measurement")
+	if leaf.Overcommitted {
+		t.Error("Overcommitted should follow the fresh measurement")
 	}
 }
 
@@ -74,7 +74,7 @@ func TestApplyObservation_MeasuredPassOverwrites(t *testing.T) {
 // every leaf on every tick.
 func TestApplyObservation_IdenticalMeasurementIsNotAChange(t *testing.T) {
 	servers, serverLimit := 1, 2
-	leaf := Node{OSProjectID: "os-1", OSInUse: common.ProjectQuota{"cores": 2}, OSServers: &servers, OSServerLimit: &serverLimit}
+	leaf := Node{ExternalID: "os-1", InUse: common.ProjectQuota{"cores": 2}, Servers: &servers, ServerLimit: &serverLimit}
 
 	if ApplyObservation(&leaf, "os-1", &Observation{InUse: common.ProjectQuota{"cores": 2}, Servers: 1, ServerLimit: 2}) {
 		t.Error("nothing changed, but the node was marked for persisting")
@@ -84,27 +84,27 @@ func TestApplyObservation_IdenticalMeasurementIsNotAChange(t *testing.T) {
 // The server count is part of the measurement: written with it, and a change
 // in it alone is worth persisting.
 func TestApplyObservation_ServerCount(t *testing.T) {
-	leaf := Node{OSProjectID: "os-1", OSInUse: common.ProjectQuota{"cores": 2}}
+	leaf := Node{ExternalID: "os-1", InUse: common.ProjectQuota{"cores": 2}}
 
 	if !ApplyObservation(&leaf, "os-1", &Observation{InUse: common.ProjectQuota{"cores": 2}, Servers: 3}) {
 		t.Fatal("a first server count has to be persisted")
 	}
-	if leaf.OSServers == nil || *leaf.OSServers != 3 {
-		t.Fatalf("OSServers = %v, want 3", leaf.OSServers)
+	if leaf.Servers == nil || *leaf.Servers != 3 {
+		t.Fatalf("Servers = %v, want 3", leaf.Servers)
 	}
-	if ApplyObservation(&leaf, "os-1", nil) || *leaf.OSServers != 3 {
+	if ApplyObservation(&leaf, "os-1", nil) || *leaf.Servers != 3 {
 		t.Error("an unmeasured pass must keep the last count")
 	}
 }
 
 // An unread use keeps the stored one; a read one replaces it and counts as a change.
 func TestApplyObservation_GrantUse(t *testing.T) {
-	leaf := Node{OSProjectID: "os-1", OSGrantUse: common.ProjectQuota{"dhbw-ipv4": 1}}
-	if ApplyObservation(&leaf, "os-1", &Observation{}) && leaf.OSGrantUse["dhbw-ipv4"] != 1 {
-		t.Errorf("unread use overwrote the stored one: %v", leaf.OSGrantUse)
+	leaf := Node{ExternalID: "os-1", GrantUse: common.ProjectQuota{"dhbw-ipv4": 1}}
+	if ApplyObservation(&leaf, "os-1", &Observation{}) && leaf.GrantUse["dhbw-ipv4"] != 1 {
+		t.Errorf("unread use overwrote the stored one: %v", leaf.GrantUse)
 	}
-	if !ApplyObservation(&leaf, "os-1", &Observation{GrantUse: common.ProjectQuota{"dhbw-ipv4": 0}}) || leaf.OSGrantUse["dhbw-ipv4"] != 0 {
-		t.Errorf("fresh use not applied: %v", leaf.OSGrantUse)
+	if !ApplyObservation(&leaf, "os-1", &Observation{GrantUse: common.ProjectQuota{"dhbw-ipv4": 0}}) || leaf.GrantUse["dhbw-ipv4"] != 0 {
+		t.Errorf("fresh use not applied: %v", leaf.GrantUse)
 	}
 }
 
@@ -159,14 +159,14 @@ func TestRefreshImportLeavesAPromotionAlone(t *testing.T) {
 		Node{ID: "p_2", Kind: KindProject, Status: StatusPending, Name: "old"},
 		Node{ID: "p_3", Kind: KindProject, Status: StatusImported, Name: "old"})
 	for _, id := range []string{"p_1", "p_2", "p_3"} {
-		if err := p.RefreshImport(ctx, Node{ID: id, Name: "new", OSProjectID: "os-" + id}, nil); err != nil {
+		if err := p.RefreshImport(ctx, Node{ID: id, Name: "new", ExternalID: "os-" + id}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if nodeIn(t, store, "p_1").Name != "old" || nodeIn(t, store, "p_2").Name != "old" {
 		t.Error("a node being adopted or adopted was refreshed as an import")
 	}
-	if n := nodeIn(t, store, "p_3"); n.Name != "new" || n.OSProjectID != "os-p_3" {
+	if n := nodeIn(t, store, "p_3"); n.Name != "new" || n.ExternalID != "os-p_3" {
 		t.Errorf("import not refreshed: %+v", n)
 	}
 }

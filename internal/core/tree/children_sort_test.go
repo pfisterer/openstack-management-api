@@ -20,8 +20,8 @@ func ids(nodes []Node) []string {
 func TestSortChildren_ByResource(t *testing.T) {
 	one, three := 1, 3
 	nodes := []Node{
-		{ID: "a", Limit: common.ProjectQuota{"cores": 10}, OSInUse: common.ProjectQuota{"cores": 0}, OSServers: &one},
-		{ID: "b", Limit: common.ProjectQuota{"cores": 9}, OSInUse: common.ProjectQuota{"cores": 4}, OSServers: &three},
+		{ID: "a", Limit: common.ProjectQuota{"cores": 10}, InUse: common.ProjectQuota{"cores": 0}, Servers: &one},
+		{ID: "b", Limit: common.ProjectQuota{"cores": 9}, InUse: common.ProjectQuota{"cores": 4}, Servers: &three},
 		{ID: "c", Limit: common.ProjectQuota{"cores": common.UnlimitedQuota}},
 		{ID: "d", Limit: common.ProjectQuota{"cores": 2},
 			Allocations: []Allocation{{BudgetID: "x", Limit: common.ProjectQuota{"cores": 16}}}},

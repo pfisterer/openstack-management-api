@@ -7,16 +7,26 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	osclient "github.com/pfisterer/openstack-management-api/internal/openstack/client"
 	"github.com/pfisterer/openstack-management-api/internal/tree"
 	"go.uber.org/zap"
 )
 
-// Source is where the used amounts come from: Nova's accounting per project.
+// Measured is what the system running a project counted for it over one day:
+// how long its servers existed, weighted by their size.
+type Measured struct {
+	ServerHours float64
+	VCPUHours   float64
+	RAMGBHours  float64
+	DiskGBHours float64
+}
+
+// Source is where the used amounts come from — the system that runs the
+// projects, keyed by a project's ID there (the node's OSProjectID). How it
+// counts is its business; this package only books what it reports.
 type Source interface {
-	TenantUsages(start, end time.Time) ([]osclient.TenantUsage, error)
-	// PublicIPv4ByProject counts each project's public IPv4 addresses now.
-	PublicIPv4ByProject(publicNetworks []string) (map[string]int, error)
+	DayUsage(start, end time.Time) (map[string]Measured, error)
+	// PublicIPv4 counts each project's public IPv4 addresses now.
+	PublicIPv4() (map[string]int, error)
 }
 
 // Nodes is the tree, read-only.
@@ -41,10 +51,7 @@ type Collector struct {
 	// MaxDaysPerRun bounds one call, so a long backfill is spread over passes
 	// instead of holding one up.
 	MaxDaysPerRun int
-	// PublicNetworks are the networks whose addresses count as public IPv4
-	// besides floating IPs — a network VMs attach to directly.
-	PublicNetworks []string
-	now            func() time.Time
+	now           func() time.Time
 }
 
 func NewCollector(store Store, nodes Nodes, source Source, catalog []common.ManagedProject, log *zap.SugaredLogger) *Collector {
@@ -77,13 +84,9 @@ func (c *Collector) CatchUp(ctx context.Context) (int, error) {
 // CollectDay stores the rows of one UTC day, replacing what it held.
 func (c *Collector) CollectDay(ctx context.Context, day time.Time) error {
 	day = dayOf(day)
-	usages, err := c.source.TenantUsages(day, day.AddDate(0, 0, 1))
+	byProject, err := c.source.DayUsage(day, day.AddDate(0, 0, 1))
 	if err != nil {
 		return err
-	}
-	byProject := make(map[string]osclient.TenantUsage, len(usages))
-	for _, u := range usages {
-		byProject[u.ProjectID] = u
 	}
 
 	all, err := c.nodes.ListNodes(ctx, tree.NodeQuery{}, 0, 0)
@@ -107,7 +110,7 @@ func (c *Collector) CollectDay(ctx context.Context, day time.Time) error {
 	// than failing it.
 	var ipv4 map[string]int
 	if !backfilled {
-		if ipv4, err = c.source.PublicIPv4ByProject(c.PublicNetworks); err != nil {
+		if ipv4, err = c.source.PublicIPv4(); err != nil {
 			c.log.Warnw("Usage: could not count public IPv4 addresses, the day goes without", "error", err)
 			ipv4 = nil
 		}
@@ -130,7 +133,7 @@ func (c *Collector) CollectDay(ctx context.Context, day time.Time) error {
 			ProjectName: n.Name, Owner: n.OwnerEmail(), Status: n.Status,
 			People: people, Groups: groups,
 			ServerHours: u.ServerHours, VCPUHours: u.VCPUHours,
-			RAMGBHours: u.MemoryMBHours / 1024, DiskGBHours: u.LocalGBHours,
+			RAMGBHours: u.RAMGBHours, DiskGBHours: u.DiskGBHours,
 			Reserved:   c.reserved(n),
 			Backfilled: backfilled, CollectedAt: now,
 		}

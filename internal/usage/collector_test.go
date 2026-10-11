@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	osclient "github.com/pfisterer/openstack-management-api/internal/openstack/client"
 	"github.com/pfisterer/openstack-management-api/internal/tree"
 	"go.uber.org/zap"
 )
@@ -21,29 +20,22 @@ var catalog = []common.ManagedProject{
 
 type fakeSource struct {
 	calls []time.Time
-	usage map[string]osclient.TenantUsage
-	// ipv4 answers PublicIPv4ByProject; ipv4Err makes it fail.
+	usage map[string]Measured
+	// ipv4 answers PublicIPv4; ipv4Err makes it fail.
 	ipv4    map[string]int
 	ipv4Err error
-	// ipv4Networks records the networks asked about.
-	ipv4Networks []string
 }
 
-func (f *fakeSource) PublicIPv4ByProject(networks []string) (map[string]int, error) {
-	f.ipv4Networks = networks
+func (f *fakeSource) PublicIPv4() (map[string]int, error) {
 	if f.ipv4Err != nil {
 		return nil, f.ipv4Err
 	}
 	return f.ipv4, nil
 }
 
-func (f *fakeSource) TenantUsages(start, end time.Time) ([]osclient.TenantUsage, error) {
+func (f *fakeSource) DayUsage(start, end time.Time) (map[string]Measured, error) {
 	f.calls = append(f.calls, start)
-	var out []osclient.TenantUsage
-	for _, u := range f.usage {
-		out = append(out, u)
-	}
-	return out, nil
+	return f.usage, nil
 }
 
 func ptr(s string) *string { return &s }
@@ -75,9 +67,9 @@ func fixture(t *testing.T) (*Collector, *MemoryStore, *fakeSource) {
 			t.Fatal(err)
 		}
 	}
-	src := &fakeSource{usage: map[string]osclient.TenantUsage{
-		"os-run":     {ProjectID: "os-run", ServerHours: 24, VCPUHours: 96, MemoryMBHours: 24 * 8192, LocalGBHours: 480},
-		"os-foreign": {ProjectID: "os-foreign", ServerHours: 5, VCPUHours: 5},
+	src := &fakeSource{usage: map[string]Measured{
+		"os-run":     {ServerHours: 24, VCPUHours: 96, RAMGBHours: 24 * 8, DiskGBHours: 480},
+		"os-foreign": {ServerHours: 5, VCPUHours: 5},
 	}}
 	store := NewMemoryStore()
 	c := NewCollector(store, nodes, src, catalog, zap.NewNop().Sugar())
@@ -128,7 +120,6 @@ func TestCollectDay(t *testing.T) {
 // unmeasured instead of claiming zero.
 func TestCollectDay_PublicIPv4(t *testing.T) {
 	c, store, src := fixture(t)
-	c.PublicNetworks = []string{"net-v4"}
 	src.ipv4 = map[string]int{"os-run": 3}
 	ctx := context.Background()
 	yesterday := time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)
@@ -136,9 +127,6 @@ func TestCollectDay_PublicIPv4(t *testing.T) {
 	rows, _ := store.Days(ctx, nil, yesterday, yesterday.AddDate(0, 0, 1))
 	if rows[1].PublicIPv4 == nil || *rows[1].PublicIPv4 != 3 || rows[0].PublicIPv4 == nil || *rows[0].PublicIPv4 != 0 {
 		t.Errorf("counts: run %v, idle %v", rows[1].PublicIPv4, rows[0].PublicIPv4)
-	}
-	if len(src.ipv4Networks) != 1 || src.ipv4Networks[0] != "net-v4" {
-		t.Errorf("asked about %v", src.ipv4Networks)
 	}
 
 	src.ipv4Err = errors.New("neutron down")

@@ -41,7 +41,7 @@ Self-service backend for **delegated OpenStack resource management**. Organizati
 
 ## 2. Domain model: one tree, one node type
 
-The whole domain is a single tree of `model.Node` values ([internal/core/tree/model.go](internal/core/tree/model.go)):
+The whole domain is a single tree of `model.Node` values ([internal/core/model/model.go](internal/core/model/model.go)):
 
 - **Budgets** (`kind: budget`) are the inner nodes — delegated capacity pools.
 - **Projects** (`kind: project`) are the leaves — concrete allocations that become OpenStack projects.
@@ -105,7 +105,7 @@ The strict separation of `admin_scope` (manage) and `eligible_requesters` (consu
 
 ### 2.4 Editing
 
-Two kinds of change exist, and they are authorized differently ([service_ops.go](internal/core/tree/service_ops.go)):
+Two kinds of change exist, and they are authorized differently ([op_lifecycle.go](internal/core/tree/op_lifecycle.go)):
 
 - **Direct edits** (`PUT /v1/nodes/{id}`, `UpdateNode`) take effect immediately. On a budget, policy fields (name, `admin_scope`, `eligible_requesters`, `auto_approve`, `allow_sub_budget_requests`, `allow_requests_beyond_auto_approve`, `auto_approve_extensions`, `max_project_term_days`) need a manager of the node or above; the limit and termination date need a manager of the *parent* chain, because nobody raises their own budget. A project leaf accepts two direct edits — a rename and its admin list, by its owner, its admins or a manager — because neither is an allocation. The root's `admin_scope` cannot be edited through the API (it is owned by configuration, §2.5).
 - **Change requests** (`POST /v1/nodes/{id}/request-change`, `RequestChange`) are how everything else about a leaf changes, and how a budget's managers ask their parent for more. On an approved node the proposal is stored in `pending` and the node moves to `change_pending`; the approved limit stays in force (and is what the reconciler applies) until a manager of the parent chain approves. On a project leaf some changes need nobody (`leafChangeDecision`): giving resources back, an earlier end and member changes always take effect at once; growth does when the budget's `auto_approve` would grant the difference, and a later end when the budget has `auto_approve`, has not set `auto_approve_extensions: false`, and the date stays within the budget's own. With `auto_approve_extensions: false` an extension waits for a manager, even under `allow_requests_beyond_auto_approve: false`: the hard limit refuses resources beyond the policy, not a question the budget wants asked. Every part of a proposal has to qualify — otherwise the whole of it waits, so a manager never decides on half a change.
@@ -147,7 +147,7 @@ A node's limit is a `map[resource id]int`. What the ids mean is the **resource c
 
 The service keeps the ids of the `count` resources in a separate `countIDs` slice, and every sum, capacity check and rollup iterates that slice — the name at the call site is what keeps an availability out of arithmetic.
 
-**Invariants for availabilities** ([service.go](internal/core/tree/service.go)):
+**Invariants for availabilities** ([rule_limits.go](internal/core/tree/rule_limits.go)):
 
 - Only 0 or 1 is accepted. `-1` is refused by name: the edge rule reads `-1` as "no cap", so on an availability it would act as a wildcard for every descendant.
 - On budget edges, a child cannot hold an availability its parent does not (`validateChildBudgetLimit` covers all resources).
@@ -189,12 +189,17 @@ internal/
   core/                      the budget tree, without knowledge of any executing system
     roles/                   roles.Provider: the interface the tree asks about people and
                              groups, and the group token notation (group:x#relation)
-    tree/                    THE domain, one file per concern: model, queries, lifecycle
-                             (service_ops), retirement, moves, allocations, attributes,
-                             authorization, limits, auto-approve, terms, rollup/accounting,
-                             response decoration, bootstrap; Store with memory and
-                             Postgres implementations; ProviderSync (what an executing
-                             system may write)
+    model/                   the node and what it carries: Node, statuses, kinds,
+                             auto-approve, allocations, attributes, history, purge progress
+    nodestore/               how nodes are kept: the Store interface, memory and Postgres,
+                             their migrations, NotifyOnWrite
+    tree/                    what may be done with nodes — tree.Service, by file prefix:
+                             service_* (type, bootstrap), op_* (queries, lifecycle,
+                             retirement, moves, allocations, attributes, external groups,
+                             catalogue, children, request types), rule_* (authorization,
+                             limits, auto-approve, terms, members), calc_* (rollup and
+                             accounting, response decoration), sync_* (ProviderSync: what
+                             an executing system may write)
     usage/                   per-day usage books and reports; rows from what the executing
                              system reports per day
   identity/                  who a caller is and acts as: OIDC/API-token middleware, token
@@ -402,10 +407,10 @@ Those clouds split the work: Keystone wants the **domain** scope for creating pr
 
 ## 9. Storage
 
-`nodestore.Store` ([store.go](internal/core/tree/store.go)) is a small interface: get, list and count by `NodeQuery`, upsert, delete, count children per parent and kind (budgets and projects separately, exposed as `child_budget_count` / `child_project_count` next to `child_count`), plus seeding and participant listing. `NodeQuery` fields combine with AND, values within a field with OR (ids, parent ids, kinds, statuses, owner, `AdminScopeAny`, `EligibleAny`); `Responsible` is the one OR across fields — owner or admin scope — which is what "mine" asks. `ListNodes` and `CountNodes` share the same query translation, so a page and its total cannot disagree.
+`nodestore.Store` ([store.go](internal/core/nodestore/store.go)) is a small interface: get, list and count by `NodeQuery`, upsert, delete, count children per parent and kind (budgets and projects separately, exposed as `child_budget_count` / `child_project_count` next to `child_count`), plus seeding and participant listing. `NodeQuery` fields combine with AND, values within a field with OR (ids, parent ids, kinds, statuses, owner, `AdminScopeAny`, `EligibleAny`); `Responsible` is the one OR across fields — owner or admin scope — which is what "mine" asks. `ListNodes` and `CountNodes` share the same query translation, so a page and its total cannot disagree.
 
-- **memory** ([memory.go](internal/core/tree/memory.go)) — development and tests; returns copies so callers cannot mutate stored state.
-- **postgres** ([postgres.go](internal/core/tree/postgres.go)) — table `nodes`: indexed columns `id`, `parent_id`, `kind`, `status`, `owner`, the token lists `admin_scope` and `eligible_requesters` as JSONB (queried with `@>` containment), and the full node as JSONB `data`. Response-only fields are cleared before writing. Table `identities` holds seeded mock identities. GORM `AutoMigrate` creates both; because AutoMigrate never drops anything, `dropLegacyTables` removes the three tables of the pre-tree model (`delegations`, `projects`, `eligibility_rules`) at startup if present, logging their row counts first — an explicit list, so it can never touch a table still in use. The pool is capped at 10 open / 5 idle connections, since `database/sql` defaults to unlimited and the database may be shared. API tokens (`tokengorm`) use the same `*gorm.DB`.
+- **memory** ([memory.go](internal/core/nodestore/memory.go)) — development and tests; returns copies so callers cannot mutate stored state.
+- **postgres** ([postgres.go](internal/core/nodestore/postgres.go)) — table `nodes`: indexed columns `id`, `parent_id`, `kind`, `status`, `owner`, the token lists `admin_scope` and `eligible_requesters` as JSONB (queried with `@>` containment), and the full node as JSONB `data`. Response-only fields are cleared before writing. Table `identities` holds seeded mock identities. GORM `AutoMigrate` creates both; because AutoMigrate never drops anything, `dropLegacyTables` removes the three tables of the pre-tree model (`delegations`, `projects`, `eligibility_rules`) at startup if present, logging their row counts first — an explicit list, so it can never touch a table still in use. The pool is capped at 10 open / 5 idle connections, since `database/sql` defaults to unlimited and the database may be shared. API tokens (`tokengorm`) use the same `*gorm.DB`.
 
 Mock seed (`DB_ADD_MOCK_DATA=true`, only into an empty store): five identities (root admin, CS admin, CS faculty, biology faculty, CS student) and a small university — root, `unassigned`, a CS department with a faculty pool and a student budget with `auto_approve`, a biology department, a pending sub-budget request, leaves in `approved`, `pending` and `change_pending`, and one `imported` leaf with an external group assignment.
 

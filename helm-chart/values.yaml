@@ -41,6 +41,18 @@ openstackManagementApi:
     apiToken: ""
 
   #------------------------------------
+  # AI service (aiaas-management-api) as the tree's second provider
+  #------------------------------------
+  # Projects holding resources of provider "aiaas" (see api.providerResources)
+  # are carried out there through its /v1/tree API. url empty = off. The token
+  # is the AI service's TREE_API_TOKEN, stored in the Secret (key
+  # aiaas-tree-token; with existingSecret supply that key there).
+  aiaas:
+    url: ""
+    treeToken: ""
+    intervalSeconds: 300
+
+  #------------------------------------
   # Database
   #------------------------------------
   db:

@@ -72,6 +72,15 @@
         "existingSecret": {
           "type": "string"
         },
+        "aiaas": {
+          "type": "object",
+          "properties": {
+            "url": { "type": "string" },
+            "treeToken": { "type": "string" },
+            "intervalSeconds": { "type": "integer", "minimum": 10 }
+          },
+          "additionalProperties": false
+        },
         "roleProvider": {
           "type": "object",
           "additionalProperties": false,

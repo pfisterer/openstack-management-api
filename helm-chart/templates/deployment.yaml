@@ -180,6 +180,20 @@ spec:
             - name: RESOURCE_DEFINITIONS
               value: {{ toJson . | quote }}
             {{- end }}
+            {{- with .Values.openstackManagementApi.aiaas }}
+            {{- if .url }}
+            # The AI service as the tree's second provider (provider/aiaas).
+            - name: AIAAS_URL
+              value: {{ .url | quote }}
+            - name: AIAAS_INTERVAL_SECONDS
+              value: {{ .intervalSeconds | default 300 | quote }}
+            - name: AIAAS_TREE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: aiaas-tree-token
+            {{- end }}
+            {{- end }}
             {{- with .Values.openstackManagementApi.api.providerResources }}
             - name: PROVIDER_RESOURCES
               value: {{ toJson . | quote }}

@@ -19,7 +19,7 @@ Self-service backend for **delegated OpenStack resource management**. Organizati
 │                  openstack-management-api (:8083)                    │
 │                                                                      │
 │   webserver ──────────▶ tree.Service ──────────▶ tree.Store          │
-│   (REST, MCP, auth)     (embeds identity)        (memory | Postgres) │
+│   (REST, MCP)           + identity.Service       (memory | Postgres) │
 │        │                      │                        ▲             │
 │        │ token lookup         │ group tokens           │ ListNodes / │
 │        ▼                      ▼                        │ UpsertNode  │
@@ -181,42 +181,45 @@ What one leaf costs is `leafCost`: its own share and whether its allocations cou
 ```
 cmd/main.go                  → app.RunApplication
 internal/
-  app.go, config.go          package app: env configuration, catalogue loading, wiring of
-                             stores, role provider, auth middleware, reconciler, router
-  reconciler_supervisor.go   retries the OpenStack connection in the background (§8.1)
-  common/                    shared types: ProjectQuota (-1 = unlimited), TokenList/TokenSet,
-                             AuthorizedUser, API-token lookup types, sentinel errors,
-                             Resource (the tree's view of the catalogue) + its validation,
-                             OpenStack roles
+  app.go, config.go          package app: env configuration, wiring of stores, role
+                             provider, identity, reconciler and router — nothing else
+  common/                    shared primitives: ProjectQuota (-1 = unlimited),
+                             TokenList/TokenSet, AuthorizedUser, sentinel errors,
+                             Resource (the tree's view of the catalogue) + its validation
   core/                      the budget tree, without knowledge of any executing system
     roles/                   roles.Provider: the interface the tree asks about people and
-                             groups (implemented in roleprovider/)
-    tree/                    THE domain: Node model, Service (operations, authorization,
-                             accounting), Store interface, memory + Postgres stores,
-                             ProviderSync (what an executing system may write), one-time
-                             drop of the pre-tree tables
+                             groups, and the group token notation (group:x#relation)
+    tree/                    THE domain, one file per concern: model, queries, lifecycle
+                             (service_ops), retirement, moves, allocations, attributes,
+                             authorization, limits, auto-approve, terms, rollup/accounting,
+                             response decoration, bootstrap; Store with memory and
+                             Postgres implementations; ProviderSync (what an executing
+                             system may write)
     usage/                   per-day usage books and reports; rows from what the executing
                              system reports per day
-  identity/                  role switch, impersonation, principal search — model-agnostic,
-                             embedded into tree.Service so handlers see ONE service
-  webserver/                 Gin router: auth middlewares, /v1 node, token, role-switch,
-                             principal-search and reconciler-admin handlers, /mcp, static
-  roleprovider/              roles.Provider implementations: mock (from mockdata) and http
-                             (api/: Go client generated from role-provider-service's spec)
+  identity/                  who a caller is and acts as: OIDC/API-token middleware, token
+                             lookup, role switch, impersonation, principal search
+  webserver/                 Gin router: /v1 node, token, role-switch, principal-search,
+                             catalogue and reconciler-admin handlers, /mcp, static
+  roleprovider/              roles.Provider over HTTP (api/: Go client generated from
+                             role-provider-service's spec)
   provider/openstack/        carries the tree out in OpenStack
     catalog/                 availabilities at runtime (§3)
-    reconciler/              two-way sync (§8), catalogue ↔ quota mapper, usage source
-    client/                  ManagedResource (catalogue entry with its OpenStack side),
-                             gophercloud client: projects, quotas, members, groups,
-                             federated users, grants, the project-scoped second client
-  mockdata/                  development seed: five identities and a small university tree
+    reconciler/              two-way sync (§8), one file per concern; Supervisor (retries
+                             the connection in the background, §8.1); usage source
+    client/                  Config + NewFromConfig, ManagedResource and the built-in
+                             catalogue, gophercloud client: projects, quotas, users,
+                             members, groups, federated users, grants, the project-scoped
+                             second client
+  dev/                       development only: seed (five identities, a small university
+                             tree), mock role provider, dummy auth
   generated_docs/            swagger.json + VERSION, embedded via go:embed (make bundle)
   helper/                    embedded landing page
 ```
 
 Code shared with the sibling services lives in `github.com/pfisterer/cloud-self-service-golib`: `authn` (claims, `Claims.Identity()`, bearer parsing), `ginweb` (CORS, cache headers, the read-only flag), `envconf`, `logging`, `redact` (secrets in the logged configuration), `token` / `tokengorm` (API tokens) and `mcpserve` (MCP transport and tool gating).
 
-Layering: `webserver → tree.Service (embeds identity.Service) → tree.Store`. Handlers never touch the store; all authorization lives in the service. The reconciler is the one other writer, and it does not get the store either: it goes through `tree.ProviderSync` (interface `reconciler.TreeSync`), named operations for what it may report — the project it created, what it measured, archiving, purge progress, removing a retired leaf or a stale import, adding, refreshing and promoting imports. Each applies to the node as it is *now* (`UpdateNode`, in PostgreSQL under a row lock) or deletes only if the node is still what the pass assumed (`DeleteNodeIf`, e.g. still `imported`): a pass loads its nodes once and then spends seconds per leaf in OpenStack, and writing the early copy back would undo a change request, an approval or a release made during the pass. The rules for how a report lands on a node live in `core/tree`, next to the model; the reconciler only decides what it observed. Nothing under `core/` imports the OpenStack client.
+Layering: `webserver → tree.Service → tree.Store`, with `identity.Service` beside it for who the caller is (the webserver holds both; the tree is handed the effective tokens). Handlers never touch the store; all authorization lives in the service. The reconciler is the one other writer, and it does not get the store either: it goes through `tree.ProviderSync` (interface `reconciler.TreeSync`), named operations for what it may report — the project it created, what it measured, archiving, purge progress, removing a retired leaf or a stale import, adding, refreshing and promoting imports. Each applies to the node as it is *now* (`UpdateNode`, in PostgreSQL under a row lock) or deletes only if the node is still what the pass assumed (`DeleteNodeIf`, e.g. still `imported`): a pass loads its nodes once and then spends seconds per leaf in OpenStack, and writing the early copy back would undo a change request, an approval or a release made during the pass. The rules for how a report lands on a node live in `core/tree`, next to the model; the reconciler only decides what it observed. Nothing under `core/` imports the OpenStack client.
 
 ---
 
@@ -224,12 +227,12 @@ Layering: `webserver → tree.Service (embeds identity.Service) → tree.Store`.
 
 ### 6.1 Authentication
 
-Every `/v1` and `/mcp` request passes the configured auth middleware ([authentication.go](internal/webserver/authentication.go)):
+Every `/v1` and `/mcp` request passes the configured auth middleware ([middleware.go](internal/identity/middleware.go)):
 
 - **OIDC bearer tokens** are verified against `OIDC_ISSUER_URL` with `OIDC_CLIENT_ID` as audience. `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID` and `OPENSTACK_AUTH_URL` are validated at startup even in setups that do not use them.
 - **The identity provider is not a startup dependency.** With `OIDC_JWKS_URL` set, the verifier is built from configured values and fetches keys when the first token arrives (`oidcauth` in cloud-self-service-golib); without it, the key set is discovered from the issuer and the provider has to answer right then. The difference is not academic: on 2026-09-25 a Keycloak outage during a power cut left every restarting pod in CrashLoopBackOff, so the platform stayed down long after its own cluster was healthy. A token that cannot be judged because the provider is away is answered **503**, not 401 — a 401 would send the browser into a login loop against a provider that cannot answer — and the public `/config.json` reports `auth.sign_in_available: false` for as long as the last key fetch failed — public, because an authenticated endpoint fails exactly when this matters.
 - **API tokens** are recognised by their `os_mgt_` prefix and looked up through the shared `token.Service` (only a SHA-256 hash of the secret is stored). The token's subject becomes the email claim; its read-only flag is recorded on the request.
-- **Dummy auth** (`API_DUMMY_AUTH=true`, refused at startup unless `API_MODE=development`) takes the email from `X-Dummy-Auth-User` and the tokens straight from `mockdata`. ⚠️ An email that is not a mock identity — or no header at all — falls back to the **root** mock identity's tokens, so any dev email can drive the full API; surprising privileges in development are usually this fallback.
+- **Dummy auth** (`API_DUMMY_AUTH=true`, refused at startup unless `API_MODE=development`) takes the email from `X-Dummy-Auth-User` and the tokens straight from the development seed ([internal/dev](internal/dev)). ⚠️ An email that is not a mock identity — or no header at all — falls back to the **root** mock identity's tokens, so any dev email can drive the full API; surprising privileges in development are usually this fallback.
 
 For OIDC and API tokens the caller's tokens come from `RoleProvider.GetUserTokens`, **fresh on every request**. Authorization never compares emails, only **tokens**: `user:<email>` and `group:<name>`. A caller's identity is a `TokenList`, and every scope field on a node is a `TokenList`. The caller's email is `Claims.Identity()` (email, then preferred_username, then sub).
 
@@ -237,7 +240,7 @@ For OIDC and API tokens the caller's tokens come from `RoleProvider.GetUserToken
 
 `roles.Provider` ([internal/core/roles](internal/core/roles)) has five methods: `GetUserTokens`, `SearchGroups`, `SearchUsers` (by address only, never by name), `GetGroupUsers` and `ListRelations`. Two implementations:
 
-- **`mock`** — derived from the mockdata identities; no external dependency. Logged as a warning because it hands out fake group memberships.
+- **`mock`** ([internal/dev](internal/dev)) — derived from the seed identities; no external dependency. Logged as a warning because it hands out fake group memberships.
 - **`http`** — calls role-provider-service with a bearer token (`ROLE_PROVIDER_URL`, `ROLE_PROVIDER_API_TOKEN`) through a client generated from that service's released OpenAPI spec (§10). If the token lookup fails, the caller gets only their own `user:` token — they lose group rights for that request rather than the request failing. Search errors are returned as errors: principal search then degrades to what it could still find, while the `authorized_users` group check fails closed.
 
 Any other `ROLE_PROVIDER` value stops the service at startup rather than silently falling back to the mock.
@@ -267,7 +270,7 @@ Two deliberate consequences:
 - **Root-admin surfaces follow the effective identity.** The reconciler admin routes and `eligible-for-owner` check effective tokens, so while impersonating a non-root user those actions are denied — what the actor can do always matches the identity on screen.
 - **API tokens belong to the actor, never to the effective identity.** `/v1/tokens` lists, issues and revokes under `ActorEmail`: a temporary view must not turn into a permanent credential.
 
-⚠️ Dev gotcha: dummy auth resolves tokens from `mockdata`, while impersonation resolves them through the configured role provider. With dummy auth but `ROLE_PROVIDER=http`, the same email can therefore carry different groups when logged in directly and when impersonated.
+⚠️ Dev gotcha: dummy auth resolves tokens from the development seed, while impersonation resolves them through the configured role provider. With dummy auth but `ROLE_PROVIDER=http`, the same email can therefore carry different groups when logged in directly and when impersonated.
 
 ### 6.4 API tokens and read-only
 
@@ -328,7 +331,7 @@ Errors from the service are sentinel-wrapped and mapped centrally in [errors.go]
 
 ### 8.1 Lifecycle and connection
 
-`app.go` does not connect to OpenStack in the startup path. A `reconcilerSupervisor` is handed to the webserver immediately and retries building the OpenStack client (which authenticates) in the background with exponential backoff (15 s doubling to 5 min, ±10 % jitter). Until that succeeds `Ready()` is false: `/v1/config` reports `provisioningEnabled: false` and the admin routes answer 503 "still connecting" instead of presenting a configured cloud as disabled. Once connected, the reconciler runs one pass immediately, then on every tick or trigger; the trigger channel holds one signal, so repeated triggers coalesce. `GET /v1/admin/reconcile/status` returns the counters of the last run, its error, the pre-seeding conflicts (§8.3) and the configured termination-tag prefix.
+`app.go` does not connect to OpenStack in the startup path. A `reconciler.Supervisor` is handed to the webserver immediately and retries building the OpenStack client (which authenticates) in the background with exponential backoff (15 s doubling to 5 min, ±10 % jitter). Until that succeeds `Ready()` is false: `/v1/config` reports `provisioningEnabled: false` and the admin routes answer 503 "still connecting" instead of presenting a configured cloud as disabled. Once connected, the reconciler runs one pass immediately, then on every tick or trigger; the trigger channel holds one signal, so repeated triggers coalesce. `GET /v1/admin/reconcile/status` returns the counters of the last run, its error, the pre-seeding conflicts (§8.3) and the configured termination-tag prefix.
 
 A pass aborts only when it cannot load its inputs (leaves, the scope parent, the project listing). Everything per project, group or user is logged and skipped, and the next pass retries — the desired state lives in the tree, not in the call.
 

@@ -187,7 +187,7 @@ matters when a sourced `openrc` is in the same shell.
 | `OPENSTACK_SYSTEM_SCOPE`, `OPENSTACK_DOMAIN_NAME`, `OPENSTACK_PROJECT_ID`, `OPENSTACK_PROJECT_NAME`, `OPENSTACK_PROJECT_DOMAIN_NAME` | — | Token scope for service-user auth, in that order of precedence (`OPENSTACK_SYSTEM_SCOPE=all`); falls back to `OS_*` |
 | `OPENSTACK_FEDERATED_PROVISIONING`, `OPENSTACK_FEDERATED_IDP_ID`, `_PROTOCOL_ID`, `_DOMAIN_ID` | `false`, `keycloak`, `openid`, `default` | Pre-seed federated accounts (see above) |
 
-[`internal/config.go`](internal/config.go) has the complete list, including the `RECONCILER_DEFAULT_*` network-quota defaults, which apply to the built-in catalogue only.
+[`internal/config.go`](internal/config.go) has the complete list; the `RECONCILER_DEFAULT_*` network-quota defaults, which apply to the built-in catalogue only, are read in [`default_catalogue.go`](internal/provider/openstack/client/default_catalogue.go).
 
 ## Authentication
 

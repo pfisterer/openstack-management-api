@@ -339,3 +339,18 @@ func TestAvailability_WithdrawalPassesABudgetThatInherits(t *testing.T) {
 		t.Fatal("withdrawn while a project below the group holds it")
 	}
 }
+
+// A refusal names the resource that did not fit and the numbers, so a request with ten resources does not leave its author guessing.
+func TestCapacity_RefusalNamesTheResource(t *testing.T) {
+	svc := availabilityService(t)
+	ctx := context.Background()
+	budget := model.Node{ID: "b", Kind: model.KindBudget, Status: model.StatusApproved, Name: "Pure AI",
+		Limit: common.ProjectQuota{"cores": 4}}
+	if err := svc.store.UpsertNode(ctx, budget); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	err := svc.checkCapacity(ctx, []model.Node{budget}, common.ProjectQuota{"cores": 5}, nil)
+	if err == nil || !strings.Contains(err.Error(), "cores asks 5, 4 free") {
+		t.Errorf("refusal = %v, want it to name cores with 5 asked and 4 free", err)
+	}
+}

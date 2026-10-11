@@ -132,8 +132,11 @@ func (s *Service) checkCapacity(ctx context.Context, ancestors []model.Node, add
 			committed[resourceID] -= subtractLimit[resourceID]
 		}
 		needed := quotaAdd(committed, addLimit, s.countIDs)
-		if !quotaFits(needed, ancestor.Limit, s.countIDs) {
-			return fmt.Errorf("budget %q (%s) capacity exceeded", ancestor.ID, ancestor.Name)
+		if id, ok := shortfall(needed, ancestor.Limit, s.countIDs); ok {
+			// Named, with the numbers: "capacity exceeded" alone leaves a
+			// request with ten resources to guess which one did not fit.
+			free := ancestor.Limit[id] - (needed[id] - addLimit[id])
+			return fmt.Errorf("budget %q (%s) capacity exceeded: %s asks %d, %d free", ancestor.ID, ancestor.Name, id, addLimit[id], max(free, 0))
 		}
 	}
 	return nil

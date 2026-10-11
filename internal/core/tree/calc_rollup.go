@@ -299,6 +299,17 @@ func quotaAdd(a, b common.ProjectQuota, resourceIDs []string) common.ProjectQuot
 
 // quotaFits checks whether the needed quota stays within the given limits.
 // A limit of common.UnlimitedQuota (-1) means no cap for that resource.
+// shortfall is the first resource of resourceIDs where need exceeds limit;
+// false when everything fits (quotaFits).
+func shortfall(need, limit common.ProjectQuota, resourceIDs []string) (string, bool) {
+	for _, resourceID := range resourceIDs {
+		if limit[resourceID] != common.UnlimitedQuota && need[resourceID] > limit[resourceID] {
+			return resourceID, true
+		}
+	}
+	return "", false
+}
+
 func quotaFits(need, limit common.ProjectQuota, resourceIDs []string) bool {
 	for _, resourceID := range resourceIDs {
 		if limit[resourceID] == common.UnlimitedQuota {

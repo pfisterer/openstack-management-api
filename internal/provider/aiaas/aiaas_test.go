@@ -38,9 +38,9 @@ func TestProjectFor(t *testing.T) {
 	if p.GPUsByClass["l4-3q"] != 2 || p.LLMMTokens != 80 {
 		t.Errorf("gpus %v, llm %d", p.GPUsByClass, p.LLMMTokens)
 	}
-	in := InUseFrom(Status{Used: []Use{{Budget: Budget{Unit: "vcpu_hours", Window: "30d", Amount: 1000}, Used: 12.6}}}, catalog)
-	if len(in) != 1 || in["ws-vcpu-hours"] != 13 {
-		t.Errorf("in use = %v", in)
+	in := InUseFrom(Status{Used: []Use{{Budget: Budget{Unit: "vcpu_hours", Window: "30d", Amount: 1000}, Used: 12.6}, {Budget: Budget{Unit: "llm_mtokens", Window: "30d", Amount: 80}, Used: 7.4}}}, catalog)
+	if len(in) != 2 || in["ws-vcpu-hours"] != 13 || in["llm-mtokens"] != 7 {
+		t.Errorf("in use = %v (the LLM pool's use counts as the project's llm-mtokens)", in)
 	}
 }
 

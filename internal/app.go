@@ -212,6 +212,7 @@ func RunApplication() {
 	var mockNodes []model.Node
 	if config.Storage.AddMockData {
 		mockIdentities, mockNodes = dev.DefaultMockTreeState()
+		mockNodes = dev.WithProviderBudget(mockNodes, config.ProviderResources)
 	}
 	if err := treeSvc.Bootstrap(context.Background(), mockIdentities, mockNodes); err != nil {
 		logger.Fatal("Failed to bootstrap resource tree", zap.Error(err))

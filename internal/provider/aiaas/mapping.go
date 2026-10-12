@@ -111,11 +111,17 @@ func parseDay(s string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// InUseFrom is what the AI service reports as used, by resource id: for each tree budget the use in its current window. Budgets the catalogue does not know are left out.
+// unitLLMMTokens is how the AI service reports what a project's members used of its LLM pool, in millions of tokens in the current window.
+const unitLLMMTokens = "llm_mtokens"
+
+// InUseFrom is what the AI service reports as used, by resource id: for each tree budget the use in its current window, and what the project's LLM pool used. Budgets the catalogue does not know are left out.
 func InUseFrom(st Status, resources []common.Resource) common.ProjectQuota {
 	out := common.ProjectQuota{}
 	for _, r := range resources {
 		want, ok := budgetFor(r)
+		if r.ID == idLLMMTokens && r.IsWindow() {
+			want, ok = Budget{Unit: unitLLMMTokens, Window: r.Window}, true
+		}
 		if !ok || r.Provider != Provider {
 			continue
 		}

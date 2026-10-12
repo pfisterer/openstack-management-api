@@ -52,7 +52,7 @@ RP_SWAGGER_URL    ?= https://github.com/pfisterer/role-provider-service/releases
 
 .DEFAULT_GOAL := all
 
-.PHONY: all image build clean doc convert client bundle npm-package npm-pack npm-publish check swag run help install-npm docker docker-login docker-build multi-arch-build dev helm-update test generate-role-provider-client print-rp-swagger-url bump version-check
+.PHONY: publish all image build clean doc convert client bundle npm-package npm-pack npm-publish check swag run help install-npm docker docker-login docker-build multi-arch-build dev helm-update test generate-role-provider-client print-rp-swagger-url bump version-check
 
 all: test bundle build
 
@@ -230,7 +230,7 @@ test: check-modules
 build: check-modules
 	@echo "🔨 Building Go binary..."
 	@mkdir -p $(BUILD_DIR)
-	@set -e; CGO_ENABLED=1 go build -o $(BUILD_DIR)/$(BINARY_NAME) $(SRC_DIR)/main.go
+	@set -e; CGO_ENABLED=$${CGO_ENABLED:-1} GOOS=$${BUILD_GOOS:-$$(go env GOOS)} GOARCH=$${BUILD_GOARCH:-$$(go env GOARCH)} go build -o $(BUILD_DIR)/$(BINARY_NAME) $(SRC_DIR)/main.go
 	@echo "✅ Go binary built (./$(BUILD_DIR)/$(BINARY_NAME))"
 
 # Check for go.mod file
@@ -342,3 +342,15 @@ help:
 	@echo "  docker-multi-arch-build → Build and push multi-architecture Docker image (requires buildx & Docker login)"
 	@echo "  update-deps             → Update Go and npm dependencies"
 	@echo "  helm-update             → Update Helm chart"
+
+# make publish — release from this machine instead of waiting for CI, for test and stable versions alike: runs the checks, builds the image for the cluster (linux/amd64; the build stage runs natively and cross-compiles, see the Dockerfile), pushes it and the Helm chart to GHCR, and only then pushes the commits. CI then finds the version published and just verifies that it builds; tags and GitHub releases of stable versions stay with CI. Refuses a dirty tree and a version that is already published, so what is in the registry is always exactly one commit. Needs `docker login ghcr.io` and `helm registry login ghcr.io` with a token that may write packages.
+publish: version-check test
+	@test -z "$$(git status --porcelain)" || { echo "✗ uncommitted changes — commit first"; exit 1; }
+	@set -e; V=$$(tr -d '\n' < VERSION); I=ghcr.io/pfisterer/openstack-management-api; \
+	if docker buildx imagetools inspect "$$I:$$V" >/dev/null 2>&1; then echo "✗ $$I:$$V is already published — bump the version first"; exit 1; fi; \
+	echo "🏗️  $$I:$$V (linux/amd64)"; \
+	docker buildx build --platform linux/amd64 --tag "$$I:$$V" --tag "$$I:latest" --push .; \
+	rm -rf tmp/chart && mkdir -p tmp/chart && helm package helm-chart/ --destination tmp/chart >/dev/null; \
+	helm push tmp/chart/*.tgz oci://ghcr.io/pfisterer/charts; \
+	git push; \
+	echo "✅ $$I:$$V and its chart are published, commits pushed — CI only verifies"

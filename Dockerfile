@@ -1,5 +1,7 @@
 ## Stage 1: Builder image
-FROM golang:1-alpine AS builder
+# The build stage runs on the machine that builds (BUILDPLATFORM) and cross-compiles for the target: on an arm64 Mac that is native speed instead of emulation. No cgo is needed, so the binary is static.
+FROM --platform=$BUILDPLATFORM golang:1-alpine AS builder
+ARG TARGETOS TARGETARCH
 
 RUN apk add --no-cache git nodejs npm make build-base
 
@@ -19,7 +21,7 @@ COPY internal/ ./internal/
 # `image` builds the bundle + binary WITHOUT running the Go test suite.
 # Tests are a local/dev concern (`make all`) and are intentionally not run
 # during the image build.
-RUN make image
+RUN CGO_ENABLED=0 BUILD_GOOS=$TARGETOS BUILD_GOARCH=$TARGETARCH make image
 
 ## Stage 2: Production image
 FROM alpine:latest AS final

@@ -16,6 +16,7 @@ const (
 	idLLMMTokens   = "llm-mtokens"
 	idLLMRPM       = "llm-rpm"
 	idLLMTPM       = "llm-tpm"
+	idStorageGB    = "ws-storage-gb"
 	prefixLLMModel = "llm-model-"
 	prefixGPUHours = "ws-gpu-hours-"
 	prefixGPUs     = "ws-gpus-"
@@ -23,6 +24,9 @@ const (
 
 // unlimitedLLM is what an unlimited LLM share becomes: the AI service books tokens in whole millions and has no "no limit" for them.
 const unlimitedLLM = 1_000_000
+
+// unlimitedStorage is what unlimited workspace storage becomes, in GB: a volume always has a size.
+const unlimitedStorage = 10_000
 
 // unlimitedRate is what an unlimited rate becomes: 0 would mean "not set" there, which is the AI service's default, not no limit.
 const unlimitedRate = 1_000_000_000
@@ -88,6 +92,11 @@ func ProjectFor(n model.Node, resources []common.Resource) Project {
 			} else {
 				p.LLMTPM = rate
 			}
+		case r.ID == idStorageGB:
+			p.StorageGB = v
+			if v == common.UnlimitedQuota {
+				p.StorageGB = unlimitedStorage
+			}
 		case r.ID == idLLMMTokens:
 			p.LLMMTokens = v
 			if v == common.UnlimitedQuota {
@@ -134,13 +143,19 @@ func parseDay(s string) (time.Time, bool) {
 // unitLLMMTokens is how the AI service reports what a project's members used of its LLM pool, in millions of tokens in the current window.
 const unitLLMMTokens = "llm_mtokens"
 
-// InUseFrom is what the AI service reports as used, by resource id: for each tree budget the use in its current window, and what the project's LLM pool used. Budgets the catalogue does not know are left out.
+// unitStorageGB is how the AI service reports the space a project's workspace volume holds, in GiB, without a window.
+const unitStorageGB = "storage_gb"
+
+// InUseFrom is what the AI service reports as used, by resource id: for each tree budget the use in its current window, what the project's LLM pool used and what its workspace storage holds. Budgets the catalogue does not know are left out.
 func InUseFrom(st Status, resources []common.Resource) common.ProjectQuota {
 	out := common.ProjectQuota{}
 	for _, r := range resources {
 		want, ok := budgetFor(r)
 		if r.ID == idLLMMTokens && r.IsWindow() {
 			want, ok = Budget{Unit: unitLLMMTokens, Window: r.Window}, true
+		}
+		if r.ID == idStorageGB && !r.IsWindow() {
+			want, ok = Budget{Unit: unitStorageGB}, true
 		}
 		if !ok || r.Provider != Provider {
 			continue

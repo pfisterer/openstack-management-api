@@ -20,6 +20,7 @@ var catalog = []common.Resource{
 	{ID: "llm-mtokens", Provider: Provider, Kind: common.KindWindow, Window: "30d"},
 	{ID: "llm-rpm", Provider: Provider},
 	{ID: "llm-tpm", Provider: Provider},
+	{ID: "ws-storage-gb", Provider: Provider},
 	{ID: "llm-model-code", Provider: Provider, Kind: common.KindBool},
 	{ID: "llm-model-all-proxy-models", Provider: Provider, Kind: common.KindBool},
 }
@@ -129,5 +130,19 @@ func TestProjectForLLMLimits(t *testing.T) {
 	}
 	if p := ProjectFor(model.Node{ID: "p_2", Limit: common.ProjectQuota{"llm-mtokens": 5}}, catalog); p.LLMRPM != 0 || p.LLMTPM != 0 || len(p.LLMModels) != 0 {
 		t.Errorf("unset limits should stay 0 / empty: %+v", p)
+	}
+}
+
+// Workspace storage travels as GB, unlimited as a large finite size; what the volume holds comes back as in-use.
+func TestStorage(t *testing.T) {
+	if p := ProjectFor(model.Node{ID: "p_1", Limit: common.ProjectQuota{"ws-storage-gb": 50}}, catalog); p.StorageGB != 50 {
+		t.Errorf("storage = %d", p.StorageGB)
+	}
+	if p := ProjectFor(model.Node{ID: "p_1", Limit: common.ProjectQuota{"ws-storage-gb": common.UnlimitedQuota}}, catalog); p.StorageGB != unlimitedStorage {
+		t.Errorf("unlimited storage = %d", p.StorageGB)
+	}
+	in := InUseFrom(Status{Used: []Use{{Budget: Budget{Unit: "storage_gb", Amount: 50}, Used: 2.4}}}, catalog)
+	if in["ws-storage-gb"] != 2 {
+		t.Errorf("in use = %v", in)
 	}
 }

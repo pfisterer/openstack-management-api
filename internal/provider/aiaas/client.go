@@ -41,6 +41,8 @@ type Project struct {
 	LLMTPM int `json:"llm_tpm"`
 	// LLMModels are the extra model groups the project was granted (availabilities llm-model-<group>); the base models every project has are the AI service's.
 	LLMModels []string `json:"llm_models"`
+	// StorageGB is the project's workspace storage (homes of its members and their shared folder); 0 = none.
+	StorageGB int `json:"storage_gb"`
 }
 
 type Use struct {

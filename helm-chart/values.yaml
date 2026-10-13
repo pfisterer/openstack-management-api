@@ -313,7 +313,7 @@ openstackManagementApi:
   #------------------------------------
   # Miscellaneous
   #------------------------------------
-  # Comma-separated list of tokens that grant role-switch (super-admin) access
+  # Comma-separated list of root-admin tokens; they may also act on behalf of other people (X-Act-As)
   rootAdminTokens: ""
   serviceTimeoutSeconds: 30
 

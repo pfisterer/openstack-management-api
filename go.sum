@@ -88,6 +88,8 @@ github.com/pelletier/go-toml/v2 v2.4.3 h1:GTRvJQutkOSftxIFD5xw9aepkYNuPWmVJpffdD
 github.com/pelletier/go-toml/v2 v2.4.3/go.mod h1:2gIqNv+qfxSVS7cM2xJQKtLSTLUE9V8t9Stt+h56mCY=
 github.com/pfisterer/cloud-self-service-golib v0.10.0 h1:C/aParGdoDYlV/vPgQJxyETtg4Iig8UatVgIvzZOUk0=
 github.com/pfisterer/cloud-self-service-golib v0.10.0/go.mod h1:ACQqiD462g7ygyuA8N1ZbI0PggCdIBErTBumhCWrf10=
+github.com/pfisterer/cloud-self-service-golib v0.11.0 h1:cdBWwknbOXu2kuXUb9xzSAJzV3yAxditk3yndwilBjE=
+github.com/pfisterer/cloud-self-service-golib v0.11.0/go.mod h1:ACQqiD462g7ygyuA8N1ZbI0PggCdIBErTBumhCWrf10=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/pquerna/cachecontrol v0.2.0 h1:vBXSNuE5MYP9IJ5kjsdo8uq+w41jSPgvba2DEnkRx9k=
 github.com/pquerna/cachecontrol v0.2.0/go.mod h1:NrUG3Z7Rdu85UNR3vm7SOsl1nFIeSiQnrHV5K9mBcUI=

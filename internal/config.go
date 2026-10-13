@@ -112,6 +112,8 @@ type WebServerConfig struct {
 	// Use dummy authentication middleware that allows all requests and sets a default user (for development/testing).
 	// If false, the real authentication middleware with OIDC and API token support will be used.
 	DummyAuth bool `json:"dummy_auth"`
+	// DevAuthUser is who the dummy authentication signs in (API_DEV_AUTH_USER); the seed's root admin when empty. Other people are reached with X-Act-As.
+	DevAuthUser string `json:"dev_auth_user"`
 	// The OIDC issuer URL for authentication
 	OIDCIssuerURL string `json:"oidc_issuer_url" validate:"required,url"`
 	// The OIDC client ID for authentication
@@ -176,7 +178,7 @@ type AppConfiguration struct {
 	DevMode      bool                    `json:"dev_mode"`
 	// RootAdminTokens (from ROOT_ADMIN_TOKENS) are the system-wide admin tokens.
 	// They gate three surfaces: the service's root-admin checks, the reconciler
-	// admin endpoints, and the role-switch allowlist.
+	// admin endpoints, and who may act on behalf of another person (X-Act-As).
 	RootAdminTokens    common.TokenList           `json:"root_admin_tokens"`
 	ProjectDefinitions []osclient.ManagedResource `json:"resource_definitions" validate:"required,min=1,dive"`
 	// ProviderResources are the resources of the providers besides OpenStack
@@ -271,6 +273,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 		},
 		WebServer: WebServerConfig{
 			DummyAuth:                 getEnvBool("API_DUMMY_AUTH", "API_DUMMY_AUTH", false),
+			DevAuthUser:               os.Getenv("API_DEV_AUTH_USER"),
 			OIDCIssuerURL:             envconf.String("OIDC_ISSUER_URL", ""),
 			OIDCClientID:              envconf.String("OIDC_CLIENT_ID", ""),
 			OIDCJWKSURL:               envconf.String("OIDC_JWKS_URL", ""),

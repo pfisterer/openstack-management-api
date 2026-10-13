@@ -33,10 +33,10 @@ func requireRootAdmin(rootAdminTokens common.TokenList, log *zap.SugaredLogger) 
 		allowed[t] = struct{}{}
 	}
 	return func(c *gin.Context) {
-		// Gate on the EFFECTIVE tokens, not the real caller's, so impersonation is
-		// faithful: while a root admin impersonates a non-root user, admin actions are
-		// denied (they must Reset first). Group override keeps root in the effective set,
-		// so it is unaffected. Actions therefore always match the identity on screen.
+		// Gate on the EFFECTIVE tokens, not the real caller's, so acting on behalf of
+		// somebody is faithful: while a root admin acts for a non-root user, admin
+		// actions are denied (they must switch back first). Actions therefore always
+		// match the identity on screen.
 		auth, err := mustGetAuthContext(c)
 		if err != nil {
 			log.Warnw("Reconciler admin: failed to resolve auth context", "error", err)

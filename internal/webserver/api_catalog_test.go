@@ -33,10 +33,10 @@ func catalogRouter(t *testing.T) http.Handler {
 		Log:     sugar,
 		API: webserver.APIConfig{
 			Service: svc, Identity: testIdentity(store, sugar), Catalog: cat, CatalogAdmin: &catalog.Admin{Catalog: cat, Tree: svc},
-			RoleSwitchGroups: rootAdminTokens,
+			ActAsTokens: rootAdminTokens,
 		},
 		RootAdminTokens: rootAdminTokens,
-		AuthMiddleware:  dev.DummyAuthMiddleware(),
+		AuthMiddleware:  dev.DummyAuthMiddleware(""),
 	})
 }
 

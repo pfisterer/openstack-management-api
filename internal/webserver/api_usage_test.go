@@ -40,11 +40,11 @@ func usageRouter(t *testing.T, prices *usage.Prices) http.Handler {
 		DevMode: true,
 		Log:     sugar,
 		API: webserver.APIConfig{
-			Service: svc, Identity: testIdentity(store, sugar), Catalog: common.StaticCatalog(quotaResources), RoleSwitchGroups: rootAdminTokens,
+			Service: svc, Identity: testIdentity(store, sugar), Catalog: common.StaticCatalog(quotaResources), ActAsTokens: rootAdminTokens,
 			Usage: rows, UsagePrices: prices,
 		},
 		RootAdminTokens: rootAdminTokens,
-		AuthMiddleware:  dev.DummyAuthMiddleware(),
+		AuthMiddleware:  dev.DummyAuthMiddleware(""),
 	})
 }
 

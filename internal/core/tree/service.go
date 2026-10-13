@@ -16,7 +16,7 @@ import (
 
 // Service implements the tree domain: one authorization rule (ancestor walk), one
 // capacity mechanism (subtree usage rollup), one lifecycle for budgets and leaves.
-// Who a caller is and acts as (role switch, impersonation) is not decided here
+// Who a caller is and acts as (acting on behalf of a person) is not decided here
 // but in package identity; the tree is handed the effective tokens.
 type Service struct {
 	// store signals every write on changes; plain is the same store without, for ProviderSync (see service_changes.go).

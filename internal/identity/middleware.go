@@ -18,20 +18,19 @@ const apiTokenPrefix = "os_mgt_"
 const userDataKey = "__api_userData"
 const userTokensKey = "__api_userTokens"
 const authContextKey = "__api_authContext"
+const viaAPITokenKey = "__api_viaAPIToken"
+
+// viaAPIToken reports whether the request authenticated with an API token rather than a sign-in.
+func viaAPIToken(c *gin.Context) bool { return c.GetBool(viaAPITokenKey) }
 
 // The read-only-token rule (recording the flag, reading it, and refusing writes
 // for it) lives in cloud-self-service-golib/ginweb, shared with the other
 // services. This file records the flag via ginweb.SetReadOnly once it has
 // resolved the token.
 
-// AuthContext holds the resolved identity for a single request, set once by
-// EffectiveAuthMiddleware and read by handlers via FromContext.
+// AuthContext holds the resolved identity for a single request, set once by EffectiveAuthMiddleware and read by handlers via FromContext.
 //
-// ActorEmail is the real authenticated caller (used for role-switch override
-// bookkeeping). UserEmail is the EFFECTIVE identity used for scoping — it equals
-// ActorEmail normally, but becomes the impersonated identity while an identity
-// role switch is active, so email-scoped views ("my projects", created-by, …)
-// reflect the assumed user.
+// ActorEmail is the person signed in. UserEmail is the person the request acts as: the actor themself, or the person named in the X-Act-As header when an admin acts on their behalf. Everything is scoped on UserEmail and EffectiveTokens — the admin sees and does what that person would — while ActorEmail is what the history and the log record as the one who actually acted.
 type AuthContext struct {
 	ActorEmail      string
 	UserEmail       string
@@ -39,17 +38,19 @@ type AuthContext struct {
 	EffectiveTokens common.TokenList
 }
 
-// Effective resolves who a caller acts as: the role switch and impersonation
-// (*Service).
+// OnBehalf reports whether the request acts on behalf of somebody else.
+func (a AuthContext) OnBehalf() bool { return a.UserEmail != a.ActorEmail }
+
+// Effective resolves the tokens of the person a caller acts on behalf of (*Service).
 type Effective interface {
-	ResolveEffectiveUserTokens(actorEmail string, originalTokens common.TokenList) common.TokenList
-	ResolveEffectiveEmail(actorEmail string) string
+	TokensFor(email string) (common.TokenList, error)
 }
 
-// EffectiveAuthMiddleware resolves both the original and effective token sets
-// once per request and stores them in the Gin context. Must run after the auth
-// middleware that populates userDataKey / userTokensKey.
-func EffectiveAuthMiddleware(svc Effective) gin.HandlerFunc {
+// EffectiveAuthMiddleware resolves who the request is from and who it acts as, once per request, and stores both in the Gin context. Must run after the auth middleware that populates userDataKey / userTokensKey.
+//
+// mayActAs are the tokens that allow acting on behalf of another person (the root admins). The check runs on the actor's own tokens, never on the person's. A forbidden or malformed X-Act-As is refused rather than ignored: an admin who believes they act for somebody else and actually acts as themself would act on the wrong things.
+func EffectiveAuthMiddleware(svc Effective, mayActAs common.TokenList, log *zap.SugaredLogger) gin.HandlerFunc {
+	allowed := common.NewTokenSet(common.CanonicalTokens(mayActAs))
 	return func(c *gin.Context) {
 		actorEmail, originalTokens, err := ResolveOriginalAuthContext(c)
 		if err != nil {
@@ -59,14 +60,38 @@ func EffectiveAuthMiddleware(svc Effective) gin.HandlerFunc {
 		// Canonical spelling on the way in, so a role provider that hands back
 		// "user:A.B@x" still matches the "user:a.b@x" stored on a node.
 		originalTokens = common.CanonicalTokens(originalTokens)
-		effectiveTokens := common.CanonicalTokens(svc.ResolveEffectiveUserTokens(actorEmail, originalTokens))
-		effectiveEmail := svc.ResolveEffectiveEmail(actorEmail)
-		c.Set(authContextKey, AuthContext{
-			ActorEmail:      actorEmail,
-			UserEmail:       effectiveEmail,
-			OriginalTokens:  originalTokens,
-			EffectiveTokens: effectiveTokens,
-		})
+		auth := AuthContext{ActorEmail: actorEmail, UserEmail: actorEmail, OriginalTokens: originalTokens, EffectiveTokens: originalTokens}
+
+		if header := c.GetHeader(authn.ActAsHeader); header != "" {
+			if viaAPIToken(c) {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": authn.ErrActAsNeedsSignIn.Error()})
+				return
+			}
+			target, err := authn.ActAs(header, actorEmail, len(allowed) > 0 && allowed.ContainsAny(originalTokens))
+			if err != nil {
+				status := http.StatusForbidden
+				if errors.Is(err, authn.ErrActAsInvalid) {
+					status = http.StatusBadRequest
+				}
+				c.AbortWithStatusJSON(status, gin.H{"error": err.Error()})
+				return
+			}
+			if target != actorEmail {
+				tokens, err := svc.TokensFor(target)
+				if err != nil {
+					log.Warnw("acting on behalf: cannot resolve the person's tokens", "actor", actorEmail, "as", target, "error", err)
+					c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "the directory cannot be reached to resolve the person acted for"})
+					return
+				}
+				auth.UserEmail = target
+				auth.EffectiveTokens = common.CanonicalTokens(tokens)
+				if authn.IsWrite(c.Request.Method) {
+					log.Infow("acting on behalf", "actor", actorEmail, "as", target, "method", c.Request.Method, "path", c.Request.URL.Path)
+				}
+			}
+		}
+
+		c.Set(authContextKey, auth)
 		c.Next()
 	}
 }
@@ -101,7 +126,7 @@ func authenticatedEmailFromClaims(claims *common.UserClaims) string {
 }
 
 // ResolveOriginalAuthContext returns the authenticated identity and token set
-// resolved in auth middleware before any role-switch override is applied.
+// resolved in auth middleware, before acting on behalf of anybody.
 func ResolveOriginalAuthContext(c *gin.Context) (string, common.TokenList, error) {
 	claimsAny, ok := c.Get(userDataKey)
 	if !ok {
@@ -190,6 +215,7 @@ func CombinedAuthMiddleware(oidcVerifier *oidcauth.Verifier, tokenLookup TokenLo
 			// is a property of the OPERATION, and only the REST routes can read
 			// that off the HTTP method (see RejectWritesForReadOnlyTokens).
 			ginweb.SetReadOnly(c, token.ReadOnly)
+			c.Set(viaAPITokenKey, true)
 
 			// Email, not PreferredUsername. Claims.Identity prefers the e-mail
 			// and the role provider resolves groups by it, so a token filled
@@ -247,7 +273,7 @@ func CombinedAuthMiddleware(oidcVerifier *oidcauth.Verifier, tokenLookup TokenLo
 
 // SetAuthenticated records an authenticated caller and the tokens resolved for
 // it, as the auth middlewares do; EffectiveAuthMiddleware reads them. For an
-// authentication that lives elsewhere — the development dummy auth.
+// authentication that lives elsewhere — the development auth.
 func SetAuthenticated(c *gin.Context, claims *common.UserClaims, tokens common.TokenList) {
 	c.Set(userDataKey, claims)
 	c.Set(userTokensKey, tokens)

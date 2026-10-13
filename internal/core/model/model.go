@@ -221,9 +221,10 @@ type PendingChanges struct {
 // strings and both about the caller: side by side in a call, swapping them
 // compiles cleanly and silently attributes every change to a channel name.
 type Actor struct {
-	// Email identifies the person. Under a role switch this is the EFFECTIVE
-	// identity, matching what the REST handlers record.
+	// Email identifies the person the change is attributed to and whose rights it was made with. While an admin acts on behalf of somebody (X-Act-As), that somebody.
 	Email string
+	// ActedBy is the admin who actually made the change on Email's behalf; empty when the person acted themself.
+	ActedBy string
 	// Via names the channel. Empty means the web UI and the REST API; see
 	// Channel, which is what actually reaches the history.
 	Via string
@@ -287,7 +288,9 @@ type HistoryEntry struct {
 	// why an unset channel is stored as "ui" rather than left empty: the two
 	// mean different things. The node lives in a jsonb column, so nothing
 	// needed migrating.
-	Via                 string               `json:"via,omitempty"`
+	Via string `json:"via,omitempty"`
+	// ActedBy is the admin who made the change on behalf of Actor, e.g. working on a ticket; absent when Actor acted themself.
+	ActedBy             string               `json:"acted_by,omitempty"`
 	StatusFrom          *string              `json:"status_from,omitempty"`
 	StatusTo            string               `json:"status_to"`
 	LimitFrom           *common.ProjectQuota `json:"limit_from,omitempty"`
@@ -546,6 +549,7 @@ func NewHistoryEntry(event string, actor Actor, statusTo string) HistoryEntry {
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Event:     event,
 		Actor:     actor.Email,
+		ActedBy:   actor.ActedBy,
 		Via:       actor.Channel(),
 		StatusTo:  statusTo,
 	}

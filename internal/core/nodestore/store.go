@@ -50,12 +50,11 @@ type Store interface {
 	// Seed replaces the full state with the given identities and nodes.
 	Seed(ctx context.Context, identities []common.Identity, nodes []model.Node) error
 
-	// ListIdentities returns the seeded identities (dev/mock data, used by the
-	// role-switch identity picker).
+	// ListIdentities returns the seeded identities (dev/mock data).
 	ListIdentities(ctx context.Context) ([]common.Identity, error)
 	// ListParticipants returns the distinct user emails appearing as owner or
-	// authorized user on any leaf (used by the role-switch identity picker to
-	// surface pattern-covered members).
+	// authorized user on any leaf (used by the principal search to surface
+	// pattern-covered members).
 	ListParticipants(ctx context.Context) ([]string, error)
 
 	GetNode(ctx context.Context, id string) (*model.Node, error)

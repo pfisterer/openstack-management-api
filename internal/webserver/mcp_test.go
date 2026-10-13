@@ -59,7 +59,7 @@ func mcpTestServerWithService(t *testing.T) (*httptest.Server, *tree.Service) {
 		DevMode:         true,
 		Log:             sugar,
 		StaticConfig:    webserver.StaticConfig{},
-		API:             webserver.APIConfig{Service: svc, Identity: testIdentity(store, sugar), RoleSwitchGroups: rootAdminTokens},
+		API:             webserver.APIConfig{Service: svc, Identity: testIdentity(store, sugar), ActAsTokens: rootAdminTokens},
 		RootAdminTokens: rootAdminTokens,
 		AuthMiddleware:  identity.CombinedAuthMiddleware(nil, lookup, resolve, sugar),
 	})

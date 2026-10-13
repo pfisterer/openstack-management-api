@@ -101,8 +101,8 @@ func configureAuthMiddleware(cfg *WebServerConfig, tokenLookup identity.TokenLoo
 	var verifier *oidcauth.Verifier
 
 	if cfg.DummyAuth {
-		log.Warn("DummyAuth enabled: using DummyAuthMiddleware (no SSO, user=group:uni_root)")
-		authMiddleware = dev.DummyAuthMiddleware()
+		log.Warnw("DummyAuth enabled: every request is signed in as the dev user (no SSO); other people via X-Act-As", "dev_user", cfg.DevAuthUser)
+		authMiddleware = dev.DummyAuthMiddleware(cfg.DevAuthUser)
 	} else {
 
 		// Create OIDC Auth Verifier. With OIDC_JWKS_URL configured this makes no
@@ -138,8 +138,8 @@ func RunApplication() {
 	logger.Info("Starting OpenStack Management Application")
 	logAppConfig(config, logger)
 
-	// Fail closed: the dummy-auth bypass (identity from an unverified header, with an
-	// unknown user resolving to root tokens) must never run outside development.
+	// Fail closed: the dummy-auth bypass (every request signed in as the dev user,
+	// a root admin, without any verification) must never run outside development.
 	if config.WebServer.DummyAuth && !config.DevMode {
 		logger.Fatal("API_DUMMY_AUTH=true is not allowed when API_MODE=production — refusing to start with an authentication bypass")
 	}
@@ -185,7 +185,7 @@ func RunApplication() {
 	}
 
 	requestTimeout := time.Duration(config.ServiceTimeoutSeconds) * time.Second
-	// Who a caller is and acts as (role switch, impersonation, principal search).
+	// Who a caller is and acts as (acting on behalf via X-Act-As, principal search).
 	identitySvc := identity.NewService(nodeStore, roleProvider, requestTimeout, logger)
 	// The tree sees every provider's resources as one catalogue: OpenStack's,
 	// which root admins extend at runtime, and the configured ones of the others.
@@ -329,12 +329,11 @@ func RunApplication() {
 			SignInAvailable: func() bool { return oidcVerifier == nil || !oidcVerifier.KeysUnavailable() },
 		},
 		API: webserver.APIConfig{
-			RoleSwitchGroups: config.RootAdminTokens,
-			Catalog:          allResources,
-			CatalogAdmin:     catalogAdmin,
-			Service:          treeSvc,
-			Identity:         identitySvc,
-			DummyDevUsers:    dummyDevUsers,
+			ActAsTokens:  config.RootAdminTokens,
+			Catalog:      allResources,
+			CatalogAdmin: catalogAdmin,
+			Service:      treeSvc,
+			Identity:     identitySvc,
 			// Asked per request: the reconciler may still be connecting.
 			ProvisioningEnabled:   func() bool { return reconcilerAPI != nil && reconcilerAPI.Ready() },
 			Providers:             activeProviders(config),

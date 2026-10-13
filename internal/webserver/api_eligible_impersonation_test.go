@@ -3,7 +3,7 @@ package webserver_test
 // Reproduction of the prod report "user added to Can request does not see the
 // budget": a root admin creates a budget whose only eligible requester is a
 // user the role provider knows nothing about beyond their own user token, then
-// impersonates that user — eligible-for-me must list the budget.
+// acts on behalf of that user — eligible-for-me must list the budget.
 
 import (
 	"net/http"
@@ -30,10 +30,7 @@ func TestEligibleForMe_UnderImpersonationOfUnknownUser(t *testing.T) {
 	var budget model.Node
 	mustDecode(t, rr, &budget)
 
-	assertStatus(t, do(t, h, http.MethodPut, "/v1/role-switch", userRoot,
-		map[string]string{"impersonate_user": ghost}), http.StatusOK)
-
-	rr = do(t, h, http.MethodGet, "/v1/nodes/eligible-for-me", userRoot, nil)
+	rr = do(t, h, http.MethodGet, "/v1/nodes/eligible-for-me", ghost, nil)
 	assertStatus(t, rr, http.StatusOK)
 	eligible := decodePage(t, rr)
 	found := false

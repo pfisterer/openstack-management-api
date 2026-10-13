@@ -13,6 +13,7 @@ import (
 	"github.com/gin-contrib/cors"
 	ginzap "github.com/gin-contrib/zap"
 	"github.com/gin-gonic/gin"
+	"github.com/pfisterer/cloud-self-service-golib/authn"
 	"github.com/pfisterer/cloud-self-service-golib/ginweb"
 	"github.com/pfisterer/cloud-self-service-golib/logging"
 	"github.com/pfisterer/openstack-management-api/internal/common"
@@ -62,7 +63,6 @@ type SetupConfig struct {
 type ConfigResponse struct {
 	Resources      []uiResource `json:"resources"`
 	OpenstackRoles []string     `json:"openstackRoles"`
-	DummyDevUsers  []string     `json:"dummyDevUsers,omitempty"`
 	// ProvisioningEnabled reports whether the reconciler is running. Only then
 	// does an approved project eventually get an OpenStack project — without it
 	// the UI would show every project as "waiting for OpenStack" forever.
@@ -94,15 +94,10 @@ type RetirementConfig struct {
 	ChargeArchived bool `json:"chargeArchived"`
 }
 
-// IdentityAPI is who a caller is and acts as: principal search for token
-// fields, the role switch and impersonation. Implemented by identity.Service.
+// IdentityAPI is who a caller is and acts as: the tokens of a person acted for, and the principal search for token fields. Implemented by identity.Service.
 type IdentityAPI interface {
 	identity.Effective
 	SearchPrincipals(query string, limit int) ([]roles.GroupSummary, []string, error)
-	GetUserGroupSwitchForActor(actorEmail string) *string
-	SetUserGroupSwitchForActor(actorEmail, groupToken string) error
-	SetUserImpersonationForActor(actorEmail, targetEmail string) error
-	ClearUserGroupSwitchForActor(actorEmail string)
 }
 
 // APIService provides the business operations consumed by the HTTP handlers.
@@ -140,7 +135,8 @@ type APIService interface {
 
 // APIConfig configures API route registration.
 type APIConfig struct {
-	RoleSwitchGroups common.TokenList
+	// ActAsTokens may act on behalf of another person (X-Act-As): the root admins.
+	ActAsTokens common.TokenList
 	// Catalog is the resource catalogue, read per request: root admins change
 	// its availabilities at runtime.
 	Catalog common.ResourceCatalog
@@ -149,8 +145,7 @@ type APIConfig struct {
 	CatalogAdmin *catalog.Admin
 	Service      APIService
 	// Identity is who a caller is and acts as.
-	Identity      IdentityAPI
-	DummyDevUsers []string
+	Identity IdentityAPI
 	// ProvisioningEnabled mirrors "the reconciler is configured and running".
 	// A function, not a bool: the reconciler may still be connecting when the
 	// server starts, and a value frozen at startup would tell every client for
@@ -200,7 +195,7 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 	// which embed the running version. Served uncached so a deploy is visible on
 	// the next reload instead of whenever a browser cache expires. (The generated
 	// TypeScript client used to be served here too and had the same problem
-	// harder — a stale cached SDK once masked the role-switch impersonation
+	// harder — a stale cached SDK once masked the identity
 	// picker; it is an npm package consumed at build time now.) In DevMode the
 	// whole router already gets this middleware.
 	if !cfg.DevMode {
@@ -215,7 +210,7 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 	ginweb.EnableCORS(apiV1Group, ginweb.CORSOptions{
 		AllowedOrigins: cfg.CORSAllowedOrigins,
 		DevMode:        cfg.DevMode,
-		AllowHeaders:   []string{"Origin", "Content-Type", "Authorization", "X-DNS-Key-Name", "X-DNS-Key-Algorithm", "X-DNS-Key", "X-Dummy-Auth-User"},
+		AllowHeaders:   []string{"Origin", "Content-Type", "Authorization", "X-DNS-Key-Name", "X-DNS-Key-Algorithm", "X-DNS-Key", authn.ActAsHeader},
 		Log:            cfg.Log,
 	})
 
@@ -229,7 +224,7 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 	// nothing else, so it belongs to the group it describes.
 	apiV1Group.Use(ginweb.RejectWritesForReadOnlyTokens(cfg.Log))
 
-	// Register API routes with the provided tree service and role switch groups configuration
+	// Register API routes with the provided tree service and the act-as allowlist
 	RegisterApiRoutes(apiV1Group, cfg.API, cfg.Log)
 
 	// After RegisterApiRoutes: the token handlers read the AuthContext that
@@ -265,16 +260,10 @@ func (cfg APIConfig) resources() []common.Resource {
 
 // RegisterApiRoutes wires all resource-management API endpoints.
 func RegisterApiRoutes(v1 *gin.RouterGroup, cfg APIConfig, log *zap.SugaredLogger) *gin.RouterGroup {
-	v1.Use(identity.EffectiveAuthMiddleware(cfg.Identity))
+	v1.Use(identity.EffectiveAuthMiddleware(cfg.Identity, cfg.ActAsTokens, log))
 
 	v1.GET("/config", getConfig(cfg))
-
-	roleSwitch := v1.Group("/role-switch")
-	{
-		roleSwitch.GET("", getRoleSwitch(cfg))
-		roleSwitch.PUT("", setRoleSwitch(cfg))
-		roleSwitch.DELETE("", clearRoleSwitch(cfg))
-	}
+	v1.GET("/act-as", getActAs(cfg))
 
 	v1.GET("/principals/search", searchPrincipals(cfg))
 
@@ -390,11 +379,6 @@ func getConfig(cfg APIConfig) gin.HandlerFunc {
 			Providers:             append([]string{}, cfg.Providers...),
 			OpenstackDashboardURL: cfg.OpenstackDashboardURL,
 			Retirement:            cfg.Retirement,
-		}
-
-		// Include dummy dev users in config if set, to inform frontend of available users for testing.
-		if len(cfg.DummyDevUsers) > 0 {
-			config.DummyDevUsers = cfg.DummyDevUsers
 		}
 		c.JSON(http.StatusOK, config)
 	}

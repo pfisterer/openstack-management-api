@@ -23,7 +23,7 @@ import (
 // It lives IN this service rather than in a server of its own, because one line
 // buys everything such a server would have to rebuild: /mcp is mounted with the
 // same auth middleware as /v1, and therefore gets token resolution, the
-// read-only flag, the role-switch protection on the token subject and rights
+// read-only flag, the actor/effective split and rights
 // fetched fresh from the role provider on every request. A process in front
 // would have to answer each of those again, or pass them through and be a hop
 // with no content.
@@ -42,7 +42,7 @@ import (
 // into the request context, which is the only thing the SDK hands to getServer.
 type mcpCaller struct {
 	// actorEmail is the real caller, for the audit trail; userEmail is the
-	// effective one a role switch may have replaced. Same distinction the REST
+	// effective one, the person an admin acts for. Same distinction the REST
 	// handlers make, and for the same reason.
 	actorEmail string
 	userEmail  string
@@ -52,8 +52,8 @@ type mcpCaller struct {
 
 // serviceActor is the identity handed to the service as the one making the
 // change. Every REST write passes auth.UserEmail (api_nodes.go), i.e. the
-// EFFECTIVE identity — under a role switch the change is recorded as the
-// impersonated user, not as whoever is really typing. Right or wrong, the same
+// EFFECTIVE identity — on someone's behalf the change is recorded as that
+// person, with the admin in ActedBy. Right or wrong, the same
 // action through MCP has to land in the history the same way.
 //
 // What it adds is the channel, and that is the point: the change is exactly as
@@ -63,7 +63,11 @@ type mcpCaller struct {
 //
 // actorEmail stays for OUR log lines, where the real caller is the useful one.
 func (c mcpCaller) serviceActor() model.Actor {
-	return model.Actor{Email: c.userEmail, Via: model.ChannelMCP}
+	a := model.Actor{Email: c.userEmail, Via: model.ChannelMCP}
+	if c.actorEmail != c.userEmail {
+		a.ActedBy = c.actorEmail
+	}
+	return a
 }
 
 // ReadOnly satisfies mcpserve.Caller: whether this request's credential may
@@ -78,7 +82,7 @@ func RegisterMCPRoutes(group *gin.RouterGroup, cfg APIConfig, log *zap.SugaredLo
 	if cfg.Service == nil {
 		return
 	}
-	group.Use(identity.EffectiveAuthMiddleware(cfg.Identity))
+	group.Use(identity.EffectiveAuthMiddleware(cfg.Identity, cfg.ActAsTokens, log))
 
 	// A server per request, built around the caller: a tool closes over the
 	// identity that called it, so there is no way for one request's tools to run

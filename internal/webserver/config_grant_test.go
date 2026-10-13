@@ -19,7 +19,7 @@ func TestGetConfig_ShipsOnlyDisplayFields(t *testing.T) {
 	router := setupRouter(t)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/config", nil)
-	req.Header.Set("X-Dummy-Auth-User", "someone@dhbw.de")
+	req.Header.Set("X-Act-As", "someone@dhbw.de")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 

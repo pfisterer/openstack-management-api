@@ -106,10 +106,10 @@ func RegisterTokenRoutes(v1 *gin.RouterGroup, cfg TokenConfig, log *zap.SugaredL
 // effective identity.
 //
 // Everything else in this API scopes on auth.UserEmail, which becomes somebody
-// else's address while a role switch is active — that is the point of the
-// switch. A credential must not follow it. A token issued under an assumed
-// identity would be a permanent authorization created from a temporary view,
-// and it would keep working long after the switch was cleared.
+// else's address while an admin acts on their behalf (X-Act-As) — that is the
+// point. A credential must not follow it. A token issued for the person acted
+// for would be a permanent authorization created from a temporary view, and it
+// would keep working long after the admin switched back.
 func tokenSubject(c *gin.Context) (string, bool) {
 	auth, err := mustGetAuthContext(c)
 	if err != nil || auth.ActorEmail == "" {

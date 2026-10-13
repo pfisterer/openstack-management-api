@@ -52,8 +52,7 @@ The whole domain is **one tree of nodes** (`internal/core/tree`):
   in an *ancestor's* `admin_scope`, so nobody approves their own request. Root
   admins are simply the `admin_scope` of the `root` node, synchronised from
   `ROOT_ADMIN_TOKENS` at startup.
-- **Role switch** — a root admin may act within a single group, or fully
-  impersonate another identity, to see the platform as that person sees it.
+- **Acting on behalf** — a root admin may act on behalf of another person (`X-Act-As` header, e.g. for a ticket), seeing and doing what that person would; the history records the admin beside the person.
 - **Role provider** — pluggable source of a caller's group tokens and of group search: `mock` (built-in test identities, no external dependency) or `http` (the external [role-provider-service](https://github.com/pfisterer/role-provider-service)).
 - **History** — every node keeps a history of its lifecycle events, recording who made a change and through which channel (`ui` for the web UI and REST API, `mcp` for an agent acting with a person's token).
 
@@ -126,7 +125,7 @@ The REST API is served under `/v1`, and the service publishes its own OpenAPI de
   now depend on a version at build time, so a missing operation is a build error there
   instead of a silent no-op in the browser.
 
-Besides the tree itself (`/v1/nodes`), the spec covers API tokens (`/v1/tokens`), the role switch (`/v1/role-switch`), principal search for token fields (`/v1/principals/search`), the resource catalogue as a frontend sees it (`/v1/config`) and, for root admins, the availabilities of the catalogue (`/v1/admin/catalog`), the usage report (`/v1/admin/usage`) and the reconciler's status — including the warnings and errors of its recent runs — and a manual trigger (`/v1/admin/reconcile/status`, `/v1/admin/reconcile/trigger`).
+Besides the tree itself (`/v1/nodes`), the spec covers API tokens (`/v1/tokens`), acting on behalf of a person (`/v1/act-as`), principal search for token fields (`/v1/principals/search`), the resource catalogue as a frontend sees it (`/v1/config`) and, for root admins, the availabilities of the catalogue (`/v1/admin/catalog`), the usage report (`/v1/admin/usage`) and the reconciler's status — including the warnings and errors of its recent runs — and a manual trigger (`/v1/admin/reconcile/status`, `/v1/admin/reconcile/trigger`).
 
 **MCP.** `/mcp` serves the [Model Context Protocol](https://modelcontextprotocol.io) (streamable HTTP), so an LLM client can work with projects and budgets on a person's behalf. It sits behind the same authentication as `/v1` — typically an API token — and contains no authorization of its own: every tool calls the same service method the REST handler calls, with that person's rights. A read-only token is not offered the tools that change anything, releasing a project or deleting a budget requires repeating its exact name (`confirm_name`), and every change is recorded in the node's history as coming through `mcp`.
 
@@ -146,7 +145,8 @@ matters when a sourced `openrc` is in the same shell.
 |---|---|---|
 | `API_MODE` | `production` | `development` enables verbose mode and permits dummy auth |
 | `API_BIND` | `:8083` | Listen address |
-| `API_DUMMY_AUTH` | `false` | Dev-only bypass via `X-Dummy-Auth-User`; the service **refuses to start** with it unless `API_MODE=development` |
+| `API_DUMMY_AUTH` | `false` | Dev-only: every request is signed in as `API_DEV_AUTH_USER`; the service **refuses to start** with it unless `API_MODE=development` |
+| `API_DEV_AUTH_USER` | `root.admin@uni.example` | Who dummy auth signs in; other people are reached with `X-Act-As` |
 | `CORS_ALLOWED_ORIGINS` | — | Comma-separated browser origins allowed to call `/v1` cross-origin; empty allows none (right when the UI reaches the API same-origin) |
 | `DB_TYPE` | `memory` | `memory` \| `postgres` |
 | `DB_CONNECTION_STRING` | local `postgres` DSN | DSN for `postgres` |
@@ -191,11 +191,11 @@ matters when a sourced `openrc` is in the same shell.
 
 ## Authentication
 
-Callers authenticate with an **OIDC bearer token**, verified against `OIDC_ISSUER_URL`, or with an **API token** issued by this service. While the identity provider is unreachable, an OIDC token that needs a key not yet cached is answered with **503**, never 401: a 401 tells the browser to drop its session and sign in again, which is the one thing that cannot work just then. API tokens are unaffected — they are checked against this service's own database — so scripts and MCP clients keep working through an outage of the provider, and the public `/config.json` reports `auth.sign_in_available: false` so the UI can say what is wrong. Either way their group tokens come from the configured role provider, fetched fresh per request; `ROOT_ADMIN_TOKENS` elevates matching callers to root admin and enables the role switch.
+Callers authenticate with an **OIDC bearer token**, verified against `OIDC_ISSUER_URL`, or with an **API token** issued by this service. While the identity provider is unreachable, an OIDC token that needs a key not yet cached is answered with **503**, never 401: a 401 tells the browser to drop its session and sign in again, which is the one thing that cannot work just then. API tokens are unaffected — they are checked against this service's own database — so scripts and MCP clients keep working through an outage of the provider, and the public `/config.json` reports `auth.sign_in_available: false` so the UI can say what is wrong. Either way their group tokens come from the configured role provider, fetched fresh per request; `ROOT_ADMIN_TOKENS` elevates matching callers to root admin and lets them act on behalf of others.
 
-API tokens (prefix `os_mgt_`) are for non-interactive callers — a CI job, a script, an MCP client. They are created, listed and revoked under `/v1/tokens`, carry a description and a lifetime (see the `API_TOKEN_*` settings), record when they were last used, and can be read-only, which rejects every write. A token always belongs to the real caller, never to an identity assumed through the role switch: a temporary view must not turn into a permanent credential. With `DB_TYPE=memory` tokens do not survive a restart.
+API tokens (prefix `os_mgt_`) are for non-interactive callers — a CI job, a script, an MCP client. They are created, listed and revoked under `/v1/tokens`, carry a description and a lifetime (see the `API_TOKEN_*` settings), record when they were last used, and can be read-only, which rejects every write. A token always belongs to the real caller, never to the person acted for: acting for somebody for a while must not turn into a permanent credential. With `DB_TYPE=memory` tokens do not survive a restart.
 
-In development, `API_DUMMY_AUTH=true` allows asserting one of the built-in mock identities with the `X-Dummy-Auth-User` header; the service refuses to start with it unless `API_MODE=development`.
+In development, `API_DUMMY_AUTH=true` signs every request in as `API_DEV_AUTH_USER`, the seed's root admin by default, who reaches the other mock identities with `X-Act-As`; the service refuses to start with it unless `API_MODE=development`.
 
 ## Build & CI
 

@@ -130,7 +130,7 @@ Stored with the node (one JSON document per node):
 - `allocations` (projects) — what a project draws from budgets ABOVE its own, on top of its own `limit`: one entry per budget with the amounts, a reason, who granted it and when. It is how a single student project gets a GPU, a network or more cores than its own budget gives, without handing the same to that budget and everyone in it. `limit` stays the project's own share and is what every existing rule — requests, auto-approve, a person's share, the lifetime — applies to; OpenStack gets `EffectiveLimit()`, the own share plus all allocations. Each allocation is charged to its budget and the budgets above that one, never to the ones in between (§4), so every budget still carries only what it holds and the edge rule of §2.1 is untouched — budgets never have allocations. Rules (`SetAllocation`, `PUT /v1/nodes/{id}/allocations`): the budget must lie above the project's own, not be it; granting or raising needs a manager of that budget or above, a reason and room in that budget's chain; lowering or removing may also come from the project's owner and admins, but not from the managers in between, who would veto what they never held. An availability comes from exactly one place — the own limit or one allocation — so withdrawing it has one answer: a budget's withdrawal is blocked by the projects holding it through their own limit or through an allocation from that budget's subtree, not by one that has it from further up. A move that would leave an allocation's budget no longer above the project is refused until the allocation is removed. Budgets report what they allocated as `allocated_out` (projects, amounts), and `children?allocated=true` lists those projects however deep they lie. History events `allocation_set` / `allocation_removed` carry `allocation_from`.
 - Where a leaf runs, reported by the executing system through `ProviderSync` (today the OpenStack reconciler): `external_id` (the OpenStack project ID), `external_name` (imports), `in_use` (measured usage; a missing key means *not measured*, not zero), `overcommitted`, `servers` and `server_limit`, `grant_use` (how many servers or devices use each availability), `external_group_assignments` (group role assignments on an imported project that map to no token here; preserved verbatim). Until 0.8.42 these were stored as `os_project_id`, `os_in_use` and so on; `renameNodeFields` moves stored nodes to the new keys once at startup, and the usage table's column `os_project_id` becomes `external_id` the same way.
 
-**History carries a channel.** `model.Actor` is `{Email, Via}` — a struct rather than two string parameters so the two cannot be swapped silently. REST handlers pass `model.UIActor(email)`; the MCP endpoint passes `Via: "mcp"`. `newHistoryEntry` writes `via: "ui"` for an unset channel rather than leaving it empty, because an absent `via` already means "written before the field existed". The recorded email is the *effective* identity, so under impersonation a change is attributed to the impersonated person (§6.3), identically for REST and MCP.
+**History carries a channel.** `model.Actor` is `{Email, ActedBy, Via}` — a struct rather than two string parameters so the two cannot be swapped silently. REST handlers pass `model.UIActor(email)`; the MCP endpoint passes `Via: "mcp"`. `newHistoryEntry` writes `via: "ui"` for an unset channel rather than leaving it empty, because an absent `via` already means "written before the field existed". The recorded email is the *effective* identity, so a change made on someone's behalf is attributed to that person, with the admin in `acted_by` (§6.3).
 
 Attached to responses and never persisted (`attachUsage` and friends): `usage` (budgets), `child_count` (so a client can tell an empty budget from an unloaded one), `parent_name` (one batched query instead of one per node), `available_resources` (§3) and, on `/v1/nodes/my-budgets` only, `ancestor_ids` — root-most first, loaded one tree level per query — so a client can tell which of the budgets it manages are top-most even when the budgets in between belong to someone else.
 
@@ -203,8 +203,8 @@ internal/
     usage/                   per-day usage books and reports; rows from what the executing
                              system reports per day
   identity/                  who a caller is and acts as: OIDC/API-token middleware, token
-                             lookup, role switch, impersonation, principal search
-  webserver/                 Gin router: /v1 node, token, role-switch, principal-search,
+                             lookup, acting on behalf (X-Act-As), principal search
+  webserver/                 Gin router: /v1 node, token, act-as, principal-search,
                              catalogue and reconciler-admin handlers, /mcp, static
   roleprovider/              roles.Provider over HTTP (api/: Go client generated from
                              role-provider-service's spec)
@@ -237,7 +237,7 @@ Every `/v1` and `/mcp` request passes the configured auth middleware ([middlewar
 - **OIDC bearer tokens** are verified against `OIDC_ISSUER_URL` with `OIDC_CLIENT_ID` as audience. `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID` and `OPENSTACK_AUTH_URL` are validated at startup even in setups that do not use them.
 - **The identity provider is not a startup dependency.** With `OIDC_JWKS_URL` set, the verifier is built from configured values and fetches keys when the first token arrives (`oidcauth` in cloud-self-service-golib); without it, the key set is discovered from the issuer and the provider has to answer right then. The difference is not academic: on 2026-09-25 a Keycloak outage during a power cut left every restarting pod in CrashLoopBackOff, so the platform stayed down long after its own cluster was healthy. A token that cannot be judged because the provider is away is answered **503**, not 401 — a 401 would send the browser into a login loop against a provider that cannot answer — and the public `/config.json` reports `auth.sign_in_available: false` for as long as the last key fetch failed — public, because an authenticated endpoint fails exactly when this matters.
 - **API tokens** are recognised by their `os_mgt_` prefix and looked up through the shared `token.Service` (only a SHA-256 hash of the secret is stored). The token's subject becomes the email claim; its read-only flag is recorded on the request.
-- **Dummy auth** (`API_DUMMY_AUTH=true`, refused at startup unless `API_MODE=development`) takes the email from `X-Dummy-Auth-User` and the tokens straight from the development seed ([internal/dev](internal/dev)). ⚠️ An email that is not a mock identity — or no header at all — falls back to the **root** mock identity's tokens, so any dev email can drive the full API; surprising privileges in development are usually this fallback.
+- **Dummy auth** (`API_DUMMY_AUTH=true`, refused at startup unless `API_MODE=development`) signs every request in as one fixed person, `API_DEV_AUTH_USER` (the seed's root admin when unset), with that person's tokens from the development seed ([internal/dev](internal/dev)). There is no header naming the caller: other people are reached by acting on their behalf (§6.3), so development runs the same path as production.
 
 For OIDC and API tokens the caller's tokens come from `RoleProvider.GetUserTokens`, **fresh on every request**. Authorization never compares emails, only **tokens**: `user:<email>` and `group:<name>`. A caller's identity is a `TokenList`, and every scope field on a node is a `TokenList`. The caller's email is `Claims.Identity()` (email, then preferred_username, then sub).
 
@@ -252,30 +252,27 @@ Any other `ROLE_PROVIDER` value stops the service at startup rather than silentl
 
 **Relations.** The role provider can say what someone is in a group, not only that they are in it: a user who is `dozent` in `wwi23seb` resolves to `group:wwi23seb#dozent` *and* `group:wwi23seb`. Every relation implies membership, so a rule on the plain group token keeps meaning everyone in the group, and tokens are still compared as plain strings. `common.SplitGroupToken` separates the relation where it matters: `GetGroupUsers` passes it as the `relation` parameter (a `#` has no place in a URL path), and the `authorized_users` check requires both the group to exist and the relation to be one `ListRelations` returns — still failing closed. The mock provider mirrors the role-provider mock course (`wwi23seb` with a `dozent` and a `studierende`).
 
-### 6.3 Effective identity and the role switch
+### 6.3 Effective identity and acting on behalf of a person
 
 `EffectiveAuthMiddleware` resolves identity once per request into an `AuthContext`, and handlers read only that:
 
 | Field | Meaning |
 |---|---|
-| `ActorEmail`, `OriginalTokens` | the real, authenticated caller |
-| `UserEmail`, `EffectiveTokens` | who the caller is acting as — used for all scoping and authorization |
+| `ActorEmail`, `OriginalTokens` | the person signed in |
+| `UserEmail`, `EffectiveTokens` | who the request acts as — used for all scoping and authorization |
 
-The role switch (`/v1/role-switch`, [identity/service.go](internal/identity/service.go)) is gated on the **original** tokens holding one of `ROOT_ADMIN_TOKENS` (any token type). One override slot per actor, two modes:
+A root admin acts on behalf of another person, e.g. working on a ticket, by sending `X-Act-As: <email>` with each request (`authn.ActAs` in cloud-self-service-golib). The DNS service and the AI service read the same header and check it against their own admin lists; none of them trusts another's answer, and the UI sends it to all of them. The rules:
 
-| Mode | Request | Effective tokens | Effective email |
-|---|---|---|---|
-| **Group override** | `PUT {group_token}` | own non-group tokens + that one group (keeps `user:` and a `user:`-based root grant) | unchanged |
-| **Impersonation** | `PUT {impersonate_user}` | **replaced** by the target's tokens from the role provider — the actor's own root grant is gone | target's email |
-
-There is no whitelist of assumable identities: an unknown address yields whatever the role provider answers for it (with the http provider, at least that person's `user:` token), which is the only way to see what someone covered solely by a pattern rule sees. If resolution fails or returns nothing, the actor's original tokens are used. Overrides live in process memory (a copy-on-write map), so they end with a restart.
+- Allowed when the **original** tokens hold one of `ROOT_ADMIN_TOKENS` (any token type). Otherwise **403**, a malformed value **400** — never a silent fallback to the actor, who would then act on the wrong things. Naming oneself is no switch.
+- Only for a sign-in: a request with an API token and the header is refused (403).
+- The person's tokens come live from the role provider; an address it does not know is just its `user:` token, which is the only way to see what someone covered solely by a pattern rule sees. If the provider cannot be reached the request fails (503) rather than running with the admin's own rights.
+- No state on the server: the UI keeps the choice per browser tab. `GET /v1/act-as` reports whether the caller may (`may_act_as`) and whom the request acted for.
+- Writes are logged with actor and person, and every history entry written on someone's behalf carries `acted_by` beside `actor` (the person).
 
 Two deliberate consequences:
 
-- **Root-admin surfaces follow the effective identity.** The reconciler admin routes and `eligible-for-owner` check effective tokens, so while impersonating a non-root user those actions are denied — what the actor can do always matches the identity on screen.
-- **API tokens belong to the actor, never to the effective identity.** `/v1/tokens` lists, issues and revokes under `ActorEmail`: a temporary view must not turn into a permanent credential.
-
-⚠️ Dev gotcha: dummy auth resolves tokens from the development seed, while impersonation resolves them through the configured role provider. With dummy auth but `ROLE_PROVIDER=http`, the same email can therefore carry different groups when logged in directly and when impersonated.
+- **Root-admin surfaces follow the effective identity.** The reconciler admin routes and `eligible-for-owner` check effective tokens, so while acting for a non-root user those actions are denied — what the actor can do always matches the identity on screen.
+- **API tokens belong to the actor, never to the effective identity.** `/v1/tokens` lists, issues and revokes under `ActorEmail`: acting for somebody for a while must not turn into a permanent credential.
 
 ### 6.4 API tokens and read-only
 
@@ -309,7 +306,7 @@ All under `/v1`, JSON, authenticated as above. Swagger annotations on the handle
 | `GET /v1/nodes/{id}/allocation-sources` | the budgets the caller may allocate to that project from, nearest first, with usage |
 | `POST /v1/nodes/{id}/promote` | move an imported leaf into a real budget with an owner and flag it for the reconciler (§8.5) |
 | `DELETE /v1/nodes/{id}` | delete a budget subtree; refused while anything below is pending, awaiting a change decision, imported, or an approved leaf. Leaves are never deleted directly |
-| `GET/PUT/DELETE /v1/role-switch` | role switch state, set, clear (§6.3) |
+| `GET /v1/act-as` | whether the caller may act on behalf of others, and for whom this request acted (§6.3) |
 | `GET /v1/principals/search?q=…` | what a token field can be filled with: groups (by token, label or description) and users (by address only, only for a non-empty query; role-provider results plus everyone already owning or participating in a leaf) |
 | `GET/POST /v1/tokens` · `DELETE /v1/tokens/{id}` | API tokens of the actor |
 | `GET /v1/admin/reconcile/status` · `POST /v1/admin/reconcile/trigger` | reconciler status and manual run; root admins; 503 while disabled or still connecting |
@@ -320,7 +317,7 @@ Errors from the service are sentinel-wrapped and mapped centrally in [errors.go]
 
 ### 7.1 MCP endpoint
 
-`/mcp` ([mcp.go](internal/webserver/mcp.go)) serves MCP over streamable HTTP inside this process, mounted behind the same auth middleware and `EffectiveAuthMiddleware` as `/v1`. That one mount is why it is not a separate server: token resolution, fresh group rights, the role-switch rules and the actor/effective split all come for free.
+`/mcp` ([mcp.go](internal/webserver/mcp.go)) serves MCP over streamable HTTP inside this process, mounted behind the same auth middleware and `EffectiveAuthMiddleware` as `/v1`. That one mount is why it is not a separate server: token resolution, fresh group rights, the actor/effective split all come for free.
 
 - **No authorization of its own.** Every tool calls the same `tree.Service` method the REST handler calls, with the effective tokens, and passes `model.Actor{Email: effective email, Via: "mcp"}` so the history records the channel.
 - **A server per request**, built around the caller (`mcpserve.Handler`), so a tool closure can never run with another request's rights. A request without a resolved caller is refused.
@@ -434,7 +431,7 @@ The **Go client for role-provider-service** (`internal/roleprovider/api`) is gen
 ## 11. Testing
 
 - **`webserver/api_scenario_test.go` is the acceptance oracle:** it builds a multi-level tree through the real HTTP API as five different mock identities (including a budget request), drives the full lifecycle and asserts the usage rollup on every level. Regressions in authorization or capacity almost always surface here.
-- Unit and focused tests sit next to the code. In `tree/`: service operations, availabilities, charged quotas, released accounting, actor/channel, ancestor ids, authorized-user validation, the legacy table drop. In `reconciler/`: grants, in-use measurement, released leaves, tag recovery, scope parent, project names, prefixed tags, desired members. In `openstack/client/`: federated pre-seeding and conflicts, the project-scope split. In `webserver/`: node handlers, role switch (including eligibility under impersonation), CORS, the config endpoint, read-only tokens, MCP and the MCP input drift check. In `internal/` (package `app`): catalogue loading and validation, the built-in catalogue's measurement flags, the supervisor's retry loop.
+- Unit and focused tests sit next to the code. In `tree/`: service operations, availabilities, charged quotas, released accounting, actor/channel, ancestor ids, authorized-user validation, the legacy table drop. In `reconciler/`: grants, in-use measurement, released leaves, tag recovery, scope parent, project names, prefixed tags, desired members. In `openstack/client/`: federated pre-seeding and conflicts, the project-scope split. In `webserver/`: node handlers, acting on behalf (including eligibility for an unknown person), CORS, the config endpoint, read-only tokens, MCP and the MCP input drift check. In `internal/` (package `app`): catalogue loading and validation, the built-in catalogue's measurement flags, the supervisor's retry loop.
 - Test helpers ([testhelpers_test.go](internal/webserver/testhelpers_test.go)): `setupRouter`, `setupRouterSeeded`, `routerFromStore` (memory store, dummy auth, chosen accounting), `do`, `mustDecode`, `decodePage`.
 - CI (`Checks`) runs `make bundle`, `go vet`, `make test` and the role-provider spec/client checks. The image build deliberately runs no tests (`make image`).
 
@@ -442,15 +439,13 @@ The **Go client for role-provider-service** (`internal/roleprovider/api`) is gen
 
 ## 12. Development and deployment
 
-**Locally**, the defaults need nothing external: in-memory store, mock role provider, reconciler off. `make dev` runs the server with live reload under `API_MODE=development`; add `API_DUMMY_AUTH=true` and `DB_ADD_MOCK_DATA=true` for a populated tree driven by `X-Dummy-Auth-User`. Configuration is environment-only (see the README table and [config.go](internal/config.go)); a `.env` in the working directory **overrides** already-set variables, which also decides what a local test run sees.
+**Locally**, the defaults need nothing external: in-memory store, mock role provider, reconciler off. `make dev` runs the server with live reload under `API_MODE=development`; add `API_DUMMY_AUTH=true` and `DB_ADD_MOCK_DATA=true` for a populated tree, signed in as the seed's root admin; other people via `X-Act-As`. Configuration is environment-only (see the README table and [config.go](internal/config.go)); a `.env` in the working directory **overrides** already-set variables, which also decides what a local test run sees.
 
-**Deployment** is a Helm chart in `helm-chart/` (with `values.schema.json`), published as an OCI artifact and normally composed with the other services by the umbrella chart described in the README. It runs one replica, which the in-process `approvalMu` and the in-memory role-switch overrides rely on. Postgres is expected in production; the tree needs only its `nodes` and `identities` tables plus the token table. A cautious reconciler rollout starts with `RECONCILER_DRY_RUN=true`.
+**Deployment** is a Helm chart in `helm-chart/` (with `values.schema.json`), published as an OCI artifact and normally composed with the other services by the umbrella chart described in the README. It runs one replica, which the in-process `approvalMu` relies on. Postgres is expected in production; the tree needs only its `nodes` and `identities` tables plus the token table. A cautious reconciler rollout starts with `RECONCILER_DRY_RUN=true`.
 
 ---
 
 ## 13. Known gaps and follow-ups
 
 - **`termination_date` is not enforced** — published as a tag, but nothing expires a project.
-- **Single replica assumed**: capacity serialization (`approvalMu`) and role-switch overrides are process-local.
-- **Dummy-auth root fallback** for unknown emails (§6.1) is convenient but surprising.
-- **Dummy auth and impersonation can disagree** about an email's groups when `ROLE_PROVIDER=http` (§6.3).
+- **Single replica assumed**: capacity serialization (`approvalMu`) is process-local.

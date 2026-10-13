@@ -62,7 +62,7 @@ var testAccounting = tree.Accounting{ChargeInUse: true, ChargeReleased: true}
 var rootAdminTokens = common.TokenList{"group:root_uni", "user:root.admin@uni.example"}
 
 // setupRouter builds a Gin engine wired with:
-//   - DummyAuthMiddleware (X-Dummy-Auth-User header)
+//   - DummyAuthMiddleware: signed in as the root admin, other people via X-Act-As
 //   - In-memory store seeded from DefaultMockTreeState
 //   - MockRoleProvider
 //   - No reconciler (reconciler endpoints return 503)
@@ -88,9 +88,9 @@ func corsRouter(t *testing.T, devMode bool, corsOrigins ...string) http.Handler 
 	return webserver.SetupGinWebserver(webserver.SetupConfig{
 		DevMode:            devMode,
 		Log:                sugar,
-		API:                webserver.APIConfig{Service: svc, Identity: testIdentity(store, sugar), RoleSwitchGroups: rootAdminTokens},
+		API:                webserver.APIConfig{Service: svc, Identity: testIdentity(store, sugar), ActAsTokens: rootAdminTokens},
 		RootAdminTokens:    rootAdminTokens,
-		AuthMiddleware:     dev.DummyAuthMiddleware(),
+		AuthMiddleware:     dev.DummyAuthMiddleware(""),
 		CORSAllowedOrigins: corsOrigins,
 	})
 }
@@ -138,6 +138,22 @@ func newTestStore(t *testing.T) (nodestore.Store, *zap.SugaredLogger) {
 
 func routerFromStore(t *testing.T, sugar *zap.SugaredLogger, store nodestore.Store, rec webserver.ReconcilerAPI, acc tree.Accounting, corsOrigins ...string) http.Handler {
 	t.Helper()
+	return routerFromStoreAs(t, "", sugar, store, rec, acc, corsOrigins...)
+}
+
+// setupRouterSignedInAs builds the seeded test router with somebody other than the root admin signed in — for what a caller may NOT do, which acting on behalf of them cannot show.
+func setupRouterSignedInAs(t *testing.T, devUser string) http.Handler {
+	t.Helper()
+	store, sugar := newTestStore(t)
+	ids, nodes := dev.DefaultMockTreeState()
+	if err := store.Seed(context.Background(), ids, nodes); err != nil {
+		t.Fatalf("seed mock state: %v", err)
+	}
+	return routerFromStoreAs(t, devUser, sugar, store, nil, testAccounting)
+}
+
+func routerFromStoreAs(t *testing.T, devUser string, sugar *zap.SugaredLogger, store nodestore.Store, rec webserver.ReconcilerAPI, acc tree.Accounting, corsOrigins ...string) http.Handler {
+	t.Helper()
 	svc := tree.NewService(
 		store,
 		dev.NewMockRoleProvider(),
@@ -163,18 +179,17 @@ func routerFromStore(t *testing.T, sugar *zap.SugaredLogger, store nodestore.Sto
 			Catalog:  common.StaticCatalog(quotaResources),
 			// Role-switch allowlist = the (mixed user+group) root admin tokens,
 			// exactly as app.go wires it. canUseRoleSwitch accepts either kind.
-			RoleSwitchGroups: rootAdminTokens,
+			ActAsTokens: rootAdminTokens,
 		},
 		Reconciler:         rec,
 		RootAdminTokens:    rootAdminTokens,
-		AuthMiddleware:     dev.DummyAuthMiddleware(),
+		AuthMiddleware:     dev.DummyAuthMiddleware(devUser),
 		CORSAllowedOrigins: corsOrigins,
 	})
 }
 
 // do sends an HTTP request to the handler as the given user and returns the recorder.
-// Set user="" to omit the X-Dummy-Auth-User header (defaults to root.admin@uni.example
-// per DummyAuthMiddleware behaviour).
+// The root admin is signed in; any other user is reached by acting on their behalf (X-Act-As). Set user="" to send no header.
 func do(t *testing.T, h http.Handler, method, path, user string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -190,7 +205,7 @@ func do(t *testing.T, h http.Handler, method, path, user string, body any) *http
 	req := httptest.NewRequest(method, path, bytes.NewReader(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 	if user != "" {
-		req.Header.Set("X-Dummy-Auth-User", user)
+		req.Header.Set("X-Act-As", user)
 	}
 
 	rr := httptest.NewRecorder()

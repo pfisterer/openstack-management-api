@@ -182,9 +182,10 @@ openstackManagementApi:
 
     # The resources of the providers besides OpenStack, by provider name. They
     # are checked together with resourceDefinitions (ids are unique across all
-    # providers) and may be quantities (kind count) or amounts per window
-    # (kind window with window 24h, 7d or 30d); availabilities of other
-    # providers are added at runtime, not here. Empty: OpenStack only.
+    # providers) and may be quantities (kind count), amounts per window
+    # (kind window with window 24h, 7d or 30d) or availabilities (kind bool),
+    # which the provider interprets — the AI service reads llm-model-<group>
+    # as an extra model group. Empty: OpenStack only.
     #
     #   providerResources:
     #     aiaas:

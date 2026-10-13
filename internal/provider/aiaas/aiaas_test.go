@@ -18,6 +18,10 @@ var catalog = []common.Resource{
 	{ID: "ws-gpu-hours-l4-3q", Provider: Provider, Kind: common.KindWindow, Window: "30d"},
 	{ID: "ws-gpus-l4-3q", Provider: Provider},
 	{ID: "llm-mtokens", Provider: Provider, Kind: common.KindWindow, Window: "30d"},
+	{ID: "llm-rpm", Provider: Provider},
+	{ID: "llm-tpm", Provider: Provider},
+	{ID: "llm-model-code", Provider: Provider, Kind: common.KindBool},
+	{ID: "llm-model-all-proxy-models", Provider: Provider, Kind: common.KindBool},
 }
 
 func TestProjectFor(t *testing.T) {
@@ -109,5 +113,21 @@ func TestPass(t *testing.T) {
 	}
 	if n, _ := store.GetNode(ctx, "p_del"); n != nil {
 		t.Error("the leaf whose deletion was requested is still there")
+	}
+}
+
+// Rate limits and extra models travel with the project: granted availabilities llm-model-<group> become model groups, an unlimited rate a very large one (0 would mean "default" there).
+func TestProjectForLLMLimits(t *testing.T) {
+	n := model.Node{ID: "p_1", Name: "Forschung", Owner: "user:o@dhbw.de",
+		Limit: common.ProjectQuota{"llm-mtokens": 100, "llm-rpm": 300, "llm-tpm": common.UnlimitedQuota, "llm-model-code": 1, "llm-model-all-proxy-models": 0}}
+	p := ProjectFor(n, catalog)
+	if p.LLMRPM != 300 || p.LLMTPM != unlimitedRate {
+		t.Errorf("rates = %d / %d", p.LLMRPM, p.LLMTPM)
+	}
+	if len(p.LLMModels) != 1 || p.LLMModels[0] != "code" {
+		t.Errorf("models = %v", p.LLMModels)
+	}
+	if p := ProjectFor(model.Node{ID: "p_2", Limit: common.ProjectQuota{"llm-mtokens": 5}}, catalog); p.LLMRPM != 0 || p.LLMTPM != 0 || len(p.LLMModels) != 0 {
+		t.Errorf("unset limits should stay 0 / empty: %+v", p)
 	}
 }

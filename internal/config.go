@@ -411,10 +411,8 @@ func loadProviderResources(openstack []common.Resource) ([]common.Resource, erro
 		if provider == "" || provider == osclient.Provider {
 			return nil, fmt.Errorf("%s: provider %q — OpenStack's resources are in %s", providerResourcesEnv, provider, resourceCatalogueEnv)
 		}
+		// Availabilities are allowed here too: for another provider they are a switch the provider interprets (the AI service: which extra models a project gets), not an object in OpenStack, so they come from this list rather than from the portal's catalogue.
 		for _, r := range byProvider[provider] {
-			if r.Kind == common.KindBool {
-				return nil, fmt.Errorf("%s: resource %q: availabilities of %s are not configured here", providerResourcesEnv, r.ID, provider)
-			}
 			r.Provider = provider
 			out = append(out, r)
 		}

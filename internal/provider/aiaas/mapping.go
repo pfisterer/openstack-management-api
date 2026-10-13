@@ -14,12 +14,18 @@ const (
 	idRAMGBHours   = "ws-ram-gb-hours"
 	idServerHours  = "ws-server-hours"
 	idLLMMTokens   = "llm-mtokens"
+	idLLMRPM       = "llm-rpm"
+	idLLMTPM       = "llm-tpm"
+	prefixLLMModel = "llm-model-"
 	prefixGPUHours = "ws-gpu-hours-"
 	prefixGPUs     = "ws-gpus-"
 )
 
 // unlimitedLLM is what an unlimited LLM share becomes: the AI service books tokens in whole millions and has no "no limit" for them.
 const unlimitedLLM = 1_000_000
+
+// unlimitedRate is what an unlimited rate becomes: 0 would mean "not set" there, which is the AI service's default, not no limit.
+const unlimitedRate = 1_000_000_000
 
 // budgetFor is the AI service's budget a window resource maps to; false for every other id.
 func budgetFor(r common.Resource) (Budget, bool) {
@@ -41,7 +47,7 @@ func budgetFor(r common.Resource) (Budget, bool) {
 
 // ProjectFor is what the AI service is told about a leaf: its name and people, its end, and its amounts of this provider's resources. An unlimited budget is sent with amount 0, which the AI service reads as no cap.
 func ProjectFor(n model.Node, resources []common.Resource) Project {
-	p := Project{Name: strings.TrimSpace(n.Name), GPUsByClass: map[string]int{}, Budgets: []Budget{}}
+	p := Project{Name: strings.TrimSpace(n.Name), GPUsByClass: map[string]int{}, Budgets: []Budget{}, LLMModels: []string{}}
 	if p.Name == "" {
 		p.Name = strings.TrimSpace(n.Reason)
 	}
@@ -68,6 +74,20 @@ func ProjectFor(n model.Node, resources []common.Resource) Project {
 			continue
 		}
 		switch {
+		case r.IsBool() && strings.HasPrefix(r.ID, prefixLLMModel) && len(r.ID) > len(prefixLLMModel):
+			if v == 1 {
+				p.LLMModels = append(p.LLMModels, strings.TrimPrefix(r.ID, prefixLLMModel))
+			}
+		case r.ID == idLLMRPM || r.ID == idLLMTPM:
+			rate := v
+			if v == common.UnlimitedQuota {
+				rate = unlimitedRate
+			}
+			if r.ID == idLLMRPM {
+				p.LLMRPM = rate
+			} else {
+				p.LLMTPM = rate
+			}
 		case r.ID == idLLMMTokens:
 			p.LLMMTokens = v
 			if v == common.UnlimitedQuota {

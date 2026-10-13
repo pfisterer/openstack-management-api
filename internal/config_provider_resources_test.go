@@ -27,6 +27,12 @@ func TestLoadProviderResources(t *testing.T) {
 		t.Errorf("got %+v", got)
 	}
 
+	// An availability is a switch the provider interprets (e.g. an extra model group).
+	t.Setenv(providerResourcesEnv, `{"aiaas": [{"id": "llm-model-code", "name": "Code model", "kind": "bool"}]}`)
+	if got, err := loadProviderResources(openstack); err != nil || len(got) != 1 || !got[0].IsBool() || got[0].Provider != "aiaas" {
+		t.Errorf("availability: %+v %v", got, err)
+	}
+
 	for name, raw := range map[string]string{
 		"not an object":           `[{"id": "x", "name": "x"}]`,
 		"openstack here":          `{"openstack": [{"id": "x", "name": "x"}]}`,
@@ -34,7 +40,6 @@ func TestLoadProviderResources(t *testing.T) {
 		"window without a window": `{"workspaces": [{"id": "x", "name": "x", "kind": "window"}]}`,
 		"unknown window":          `{"workspaces": [{"id": "x", "name": "x", "kind": "window", "window": "1y"}]}`,
 		"window on a count":       `{"workspaces": [{"id": "x", "name": "x", "window": "30d"}]}`,
-		"availability":            `{"workspaces": [{"id": "x", "name": "x", "kind": "bool"}]}`,
 	} {
 		t.Setenv(providerResourcesEnv, raw)
 		if _, err := loadProviderResources(openstack); err == nil {

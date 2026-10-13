@@ -36,6 +36,11 @@ type Project struct {
 	Budgets     []Budget       `json:"budgets"`
 	GPUsByClass map[string]int `json:"gpus_by_class"`
 	LLMMTokens  int            `json:"llm_mtokens"`
+	// LLMRPM and LLMTPM are the requests and tokens per minute for the whole project; 0 = not set, the AI service's default.
+	LLMRPM int `json:"llm_rpm"`
+	LLMTPM int `json:"llm_tpm"`
+	// LLMModels are the extra model groups the project was granted (availabilities llm-model-<group>); the base models every project has are the AI service's.
+	LLMModels []string `json:"llm_models"`
 }
 
 type Use struct {

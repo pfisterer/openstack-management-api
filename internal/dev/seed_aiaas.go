@@ -21,6 +21,10 @@ const (
 	resGPUHours  = "ws-gpu-hours-l4-3q"
 	resGPUs      = "ws-gpus-l4-3q"
 	resLLM       = "llm-mtokens"
+	resRPM       = "llm-rpm"
+	resTPM       = "llm-tpm"
+	resCode      = "llm-model-code"
+	resAllModels = "llm-model-all-proxy-models"
 )
 
 // WithProviderBudget gives the seed the AI service as a second provider, when the catalogue has its resources: the root holds them without a cap, the CS department and its faculty pool get shares, and there are budgets and projects of every kind worth trying —
@@ -32,9 +36,11 @@ const (
 // Without such resources in the catalogue the seed stays as it is.
 func WithProviderBudget(nodes []model.Node, resources []common.Resource) []model.Node {
 	known := map[string]bool{}
+	switches := map[string]bool{}
 	for _, r := range resources {
-		if r.Provider != "" && r.Provider != "openstack" && r.Kind != common.KindBool {
+		if r.Provider != "" && r.Provider != "openstack" {
 			known[r.ID] = true
+			switches[r.ID] = r.IsBool()
 		}
 	}
 	if len(known) == 0 {
@@ -68,15 +74,18 @@ func WithProviderBudget(nodes []model.Node, resources []common.Resource) []model
 	unlimited := common.ProjectQuota{}
 	for id := range known {
 		unlimited[id] = common.UnlimitedQuota
+		if switches[id] {
+			unlimited[id] = 1 // an availability is granted or not
+		}
 	}
 	for i := range nodes {
 		switch nodes[i].ID {
 		case model.RootNodeID:
 			nodes[i].Limit = with(nodes[i].Limit, unlimited)
 		case "b_dept_cs":
-			nodes[i].Limit = with(nodes[i].Limit, common.ProjectQuota{resVCPUHours: 20000, resRAMHours: 80000, resGPUHours: 1000, resGPUs: 4, resLLM: 3000})
+			nodes[i].Limit = with(nodes[i].Limit, common.ProjectQuota{resVCPUHours: 20000, resRAMHours: 80000, resGPUHours: 1000, resGPUs: 4, resLLM: 3000, resRPM: 3000, resTPM: 10000000, resCode: 1, resAllModels: 1})
 		case "b_cs_faculty":
-			nodes[i].Limit = with(nodes[i].Limit, common.ProjectQuota{resVCPUHours: 12000, resRAMHours: 48000, resGPUHours: 800, resGPUs: 4, resLLM: 1500})
+			nodes[i].Limit = with(nodes[i].Limit, common.ProjectQuota{resVCPUHours: 12000, resRAMHours: 48000, resGPUHours: 800, resGPUs: 4, resLLM: 1500, resRPM: 1500, resTPM: 5000000, resCode: 1})
 		}
 	}
 
@@ -85,11 +94,12 @@ func WithProviderBudget(nodes []model.Node, resources []common.Resource) []model
 	basicID := AIBudgetID
 	courseID := AICourseBudgetID
 
-	courseLimit := q(common.ProjectQuota{resVCPUHours: 3000, resRAMHours: 12000, resGPUHours: 200, resGPUs: 2, resLLM: 300})
-	personalLimit := q(common.ProjectQuota{resVCPUHours: 100, resRAMHours: 400, resLLM: 20})
-	researchLimit := q(common.ProjectQuota{resVCPUHours: 2000, resRAMHours: 8000, resGPUHours: 400, resGPUs: 2, resLLM: 200})
-	thesisLimit := q(common.ProjectQuota{resVCPUHours: 200, resRAMHours: 800, resGPUHours: 20, resLLM: 30})
-	mixedLimit := with(common.ProjectQuota{"cores": 2, "ram": 4, "storage": 20}, common.ProjectQuota{resLLM: 50})
+	// Rates per minute for the whole project; extra model groups only where the work needs them (research gets the code model).
+	courseLimit := q(common.ProjectQuota{resVCPUHours: 3000, resRAMHours: 12000, resGPUHours: 200, resGPUs: 2, resLLM: 300, resRPM: 600, resTPM: 2000000})
+	personalLimit := q(common.ProjectQuota{resVCPUHours: 100, resRAMHours: 400, resLLM: 20, resRPM: 30, resTPM: 100000})
+	researchLimit := q(common.ProjectQuota{resVCPUHours: 2000, resRAMHours: 8000, resGPUHours: 400, resGPUs: 2, resLLM: 200, resRPM: 300, resTPM: 1000000, resCode: 1})
+	thesisLimit := q(common.ProjectQuota{resVCPUHours: 200, resRAMHours: 800, resGPUHours: 20, resLLM: 30, resRPM: 60, resTPM: 200000})
+	mixedLimit := with(common.ProjectQuota{"cores": 2, "ram": 4, "storage": 20}, common.ProjectQuota{resLLM: 50, resRPM: 60, resTPM: 200000})
 
 	return append(nodes,
 		// ── Budgets ───────────────────────────────────────────────────────────
@@ -100,7 +110,7 @@ func WithProviderBudget(nodes []model.Node, resources []common.Resource) []model
 			AdminScope:         common.TokenList{RootGroup},
 			EligibleRequesters: common.TokenList{DeptCSFaculty, DeptCSAdmin, CSStudentGroup, CourseGroup},
 			AutoApprove:        &model.AutoApprove{PerRequesterLimit: personalLimit},
-			Limit:              q(common.ProjectQuota{resVCPUHours: 20000, resRAMHours: 80000, resLLM: 4000}),
+			Limit:              q(common.ProjectQuota{resVCPUHours: 20000, resRAMHours: 80000, resLLM: 4000, resRPM: 3000, resTPM: 10000000}),
 			CreatedBy:          "root.admin@uni.example", CreatedAt: "2026-10-01T09:00:00Z",
 		},
 		model.Node{
@@ -110,7 +120,7 @@ func WithProviderBudget(nodes []model.Node, resources []common.Resource) []model
 			AdminScope:         common.TokenList{CourseDozentGroup},
 			EligibleRequesters: common.TokenList{CourseGroup},
 			AutoApprove:        &model.AutoApprove{PerRequesterLimit: thesisLimit},
-			Limit:              q(common.ProjectQuota{resVCPUHours: 5000, resRAMHours: 20000, resGPUHours: 300, resGPUs: 2, resLLM: 500}),
+			Limit:              q(common.ProjectQuota{resVCPUHours: 5000, resRAMHours: 20000, resGPUHours: 300, resGPUs: 2, resLLM: 500, resRPM: 1000, resTPM: 3000000}),
 			CreatedBy:          "faculty@cs.example", CreatedAt: "2026-10-01T09:00:00Z",
 			TerminationDate: days(150),
 		},

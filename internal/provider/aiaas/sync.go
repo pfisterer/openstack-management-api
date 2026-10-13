@@ -33,13 +33,15 @@ type Syncer struct {
 	Service   Service
 	Resources func() []common.Resource
 	Interval  time.Duration
+	// GraceDays: a project's Lab/AI part is deleted this many days after its end (see EndOf); 0 = never.
+	GraceDays int
 	Log       *zap.SugaredLogger
 	now       func() time.Time
 }
 
 // Result is what one pass did.
 type Result struct {
-	Synced, Ended, Deleted, Removed, Orphans, Failed int
+	Synced, Ended, Expired, Deleted, Removed, Orphans, Failed int
 }
 
 // Run passes once right away and then on every tick and change until ctx ends.
@@ -55,7 +57,7 @@ func (s *Syncer) Run(ctx context.Context) {
 		if err != nil {
 			s.Log.Warnw("aiaas: pass failed", "error", err)
 		} else {
-			s.Log.Infow("aiaas: pass complete", "synced", res.Synced, "ended", res.Ended, "deleted", res.Deleted, "removed", res.Removed, "orphans", res.Orphans, "failed", res.Failed)
+			s.Log.Infow("aiaas: pass complete", "synced", res.Synced, "ended", res.Ended, "expired", res.Expired, "deleted", res.Deleted, "removed", res.Removed, "orphans", res.Orphans, "failed", res.Failed)
 		}
 		select {
 		case <-ctx.Done():
@@ -71,6 +73,7 @@ var statuses = []string{model.StatusApproved, model.StatusChangePending, model.S
 // Pass brings the AI service in line with the tree:
 //   - an approved project gets its project there, with its amounts, people and end;
 //   - a released or archived one ends there (nobody can start any more) and is deleted when its deletion was requested — then the leaf goes too, unless OpenStack still carries it out;
+//   - GraceDays after a project's end (EndOf) its Lab/AI part is deleted there and not carried out again; the leaf and its cloud part stay. Until then the project carries the day (DeleteAt) for the warnings;
 //   - a project there whose leaf is gone is deleted.
 //
 // What was used comes back as the leaf's in-use, per window resource.
@@ -88,6 +91,10 @@ func (s *Syncer) Pass(ctx context.Context) (Result, error) {
 	now := time.Now
 	if s.now != nil {
 		now = s.now
+	}
+	there := map[string]bool{}
+	for _, st := range remote {
+		there[st.Node] = true
 	}
 	known := map[string]bool{}
 	for _, leaf := range leaves {
@@ -107,7 +114,22 @@ func (s *Syncer) Pass(ctx context.Context) (Result, error) {
 			}
 			continue
 		}
+		if at, ok := s.deleteAt(leaf); ok && !now().Before(at) {
+			if !there[leaf.ID] {
+				continue // deleted on an earlier pass
+			}
+			if err := s.Service.Delete(ctx, leaf.ID); err != nil && !errors.Is(err, ErrNotFound) {
+				s.Log.Warnw("aiaas: deleting an expired project failed", "node_id", leaf.ID, "error", err)
+				res.Failed++
+				continue
+			}
+			res.Expired++
+			continue
+		}
 		p := ProjectFor(leaf, resources)
+		if at, ok := s.deleteAt(leaf); ok {
+			p.DeleteAt = &at
+		}
 		if retired {
 			// Ended the day before: the project stays, with its usage, but nobody starts in it.
 			end := now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -1)
@@ -139,4 +161,41 @@ func (s *Syncer) Pass(ctx context.Context) (Result, error) {
 		res.Orphans++
 	}
 	return res, nil
+}
+
+// EndOf is the last day of a leaf's Lab/AI part: its termination date, or the day it was released if that came first. false without either (a released leaf without a recorded release and without an end).
+func EndOf(leaf model.Node) (time.Time, bool) {
+	var end time.Time
+	ok := false
+	if leaf.TerminationDate != nil {
+		end, ok = parseDay(*leaf.TerminationDate)
+	}
+	if model.IsRetiredStatus(leaf.Status) {
+		for i := len(leaf.History) - 1; i >= 0; i-- {
+			h := leaf.History[i]
+			if h.StatusTo != model.StatusReleased {
+				continue
+			}
+			if t, err := time.Parse(time.RFC3339, h.Timestamp); err == nil {
+				day := t.UTC().Truncate(24 * time.Hour)
+				if !ok || day.Before(end) {
+					end, ok = day, true
+				}
+			}
+			break
+		}
+	}
+	return end.Truncate(24 * time.Hour), ok
+}
+
+// deleteAt is the day a leaf's Lab/AI part is deleted: GraceDays after the day after its end. false when it is not planned (no end, or GraceDays 0).
+func (s *Syncer) deleteAt(leaf model.Node) (time.Time, bool) {
+	if s.GraceDays <= 0 {
+		return time.Time{}, false
+	}
+	end, ok := EndOf(leaf)
+	if !ok {
+		return time.Time{}, false
+	}
+	return end.AddDate(0, 0, 1+s.GraceDays), true
 }

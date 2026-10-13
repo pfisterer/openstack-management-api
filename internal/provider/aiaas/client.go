@@ -43,6 +43,8 @@ type Project struct {
 	LLMModels []string `json:"llm_models"`
 	// StorageGB is the project's workspace storage (homes of its members and their shared folder); 0 = none.
 	StorageGB int `json:"storage_gb"`
+	// DeleteAt is the day the project's Lab/AI part is deleted (its end plus the grace period), for the warnings in the hub and the self-service UI; nil = not planned.
+	DeleteAt *time.Time `json:"delete_at,omitempty"`
 }
 
 type Use struct {

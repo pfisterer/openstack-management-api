@@ -51,6 +51,8 @@ openstackManagementApi:
     url: ""
     treeToken: ""
     intervalSeconds: 300
+    # Days after a project's end (or its release, if earlier) when its Lab/AI part — workspaces, homes, shared folder — is deleted; 0 = never.
+    deleteGraceDays: 14
 
   #------------------------------------
   # Database

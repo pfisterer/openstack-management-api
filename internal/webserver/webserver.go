@@ -92,6 +92,8 @@ type RetirementConfig struct {
 	ChargeReleased bool `json:"chargeReleased"`
 	// ChargeArchived: an archived project still costs the storage it holds.
 	ChargeArchived bool `json:"chargeArchived"`
+	// AIaaSDeleteGraceDays: days after a project's end (or its release, if earlier) when its Lab/AI part — workspaces and their files — is deleted; 0 = never.
+	AIaaSDeleteGraceDays int `json:"aiaasDeleteGraceDays"`
 }
 
 // IdentityAPI is who a caller is and acts as: the tokens of a person acted for, and the principal search for token fields. Implemented by identity.Service.

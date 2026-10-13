@@ -77,7 +77,8 @@
           "properties": {
             "url": { "type": "string" },
             "treeToken": { "type": "string" },
-            "intervalSeconds": { "type": "integer", "minimum": 10 }
+            "intervalSeconds": { "type": "integer", "minimum": 10 },
+            "deleteGraceDays": { "type": "integer", "minimum": 0 }
           },
           "additionalProperties": false
         },

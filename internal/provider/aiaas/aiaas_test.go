@@ -146,3 +146,51 @@ func TestStorage(t *testing.T) {
 		t.Errorf("in use = %v", in)
 	}
 }
+
+// GraceDays after its end a project's Lab/AI part is deleted and not carried out again; before that it carries the day for the warnings. A release before the end counts as the end.
+func TestExpiry(t *testing.T) {
+	ctx := context.Background()
+	log := zap.NewNop().Sugar()
+	store := nodestore.NewInMemoryStore(log)
+	svc := tree.NewService(store, nil, catalog, nil, time.Second, 0, tree.Accounting{}, log)
+	day := func(s string) *string { return &s }
+	for _, n := range []model.Node{
+		{ID: "p_old", Kind: model.KindProject, Status: model.StatusApproved, Name: "Old", TerminationDate: day("2026-09-20"), Limit: common.ProjectQuota{"ws-storage-gb": 5}},
+		{ID: "p_soon", Kind: model.KindProject, Status: model.StatusApproved, Name: "Soon", TerminationDate: day("2026-10-05"), Limit: common.ProjectQuota{"ws-storage-gb": 5}},
+		{ID: "p_rel", Kind: model.KindProject, Status: model.StatusReleased, Name: "Released", TerminationDate: day("2027-03-31"), Limit: common.ProjectQuota{"ws-storage-gb": 5},
+			History: []model.HistoryEntry{{Timestamp: "2026-09-01T10:00:00Z", StatusTo: model.StatusReleased}}},
+		{ID: "p_open", Kind: model.KindProject, Status: model.StatusApproved, Name: "Open", Limit: common.ProjectQuota{"ws-storage-gb": 5}},
+	} {
+		if err := store.UpsertNode(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fake := &fakeService{projects: map[string]Project{"p_old": {}, "p_rel": {}}}
+	s := &Syncer{Tree: svc.ProviderSync(Provider), Service: fake, Resources: func() []common.Resource { return catalog }, Log: log, GraceDays: 14,
+		now: func() time.Time { return time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC) }}
+	res, err := s.Pass(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Expired != 2 {
+		t.Errorf("result = %+v", res)
+	}
+	for _, gone := range []string{"p_old", "p_rel"} {
+		if _, ok := fake.projects[gone]; ok {
+			t.Errorf("%s should be deleted", gone)
+		}
+	}
+	// Ended 5 Oct: deleted on 20 Oct, announced until then.
+	if at := fake.projects["p_soon"].DeleteAt; at == nil || at.Format(time.DateOnly) != "2026-10-20" {
+		t.Errorf("p_soon delete_at = %v", at)
+	}
+	if fake.projects["p_open"].DeleteAt != nil {
+		t.Error("a project without an end has no deletion day")
+	}
+	// Grace 0: nothing is deleted.
+	s.GraceDays = 0
+	fake.projects["p_old"] = Project{}
+	if res, _ := s.Pass(ctx); res.Expired != 0 {
+		t.Errorf("grace 0 deleted: %+v", res)
+	}
+}

@@ -253,6 +253,7 @@ func RunApplication() {
 			Service:   aiaas.NewClient(config.AIaaS.URL, config.AIaaS.Token, 30*time.Second),
 			Resources: allResources.Resources,
 			Interval:  time.Duration(config.AIaaS.IntervalSeconds) * time.Second,
+			GraceDays: config.AIaaS.DeleteGraceDays,
 			Log:       logger,
 		}
 		logger.Infow("Starting the AI service provider", "url", config.AIaaS.URL, "interval_seconds", config.AIaaS.IntervalSeconds)

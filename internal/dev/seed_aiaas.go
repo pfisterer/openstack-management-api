@@ -23,7 +23,6 @@ const (
 	resLLM       = "llm-mtokens"
 	resRPM       = "llm-rpm"
 	resTPM       = "llm-tpm"
-	resCode      = "llm-model-code"
 	resAllModels = "llm-model-all-proxy-models"
 )
 
@@ -83,9 +82,9 @@ func WithProviderBudget(nodes []model.Node, resources []common.Resource) []model
 		case model.RootNodeID:
 			nodes[i].Limit = with(nodes[i].Limit, unlimited)
 		case "b_dept_cs":
-			nodes[i].Limit = with(nodes[i].Limit, common.ProjectQuota{resVCPUHours: 20000, resRAMHours: 80000, resGPUHours: 1000, resGPUs: 4, resLLM: 3000, resRPM: 3000, resTPM: 10000000, resCode: 1, resAllModels: 1})
+			nodes[i].Limit = with(nodes[i].Limit, common.ProjectQuota{resVCPUHours: 20000, resRAMHours: 80000, resGPUHours: 1000, resGPUs: 4, resLLM: 3000, resRPM: 3000, resTPM: 10000000, resAllModels: 1})
 		case "b_cs_faculty":
-			nodes[i].Limit = with(nodes[i].Limit, common.ProjectQuota{resVCPUHours: 12000, resRAMHours: 48000, resGPUHours: 800, resGPUs: 4, resLLM: 1500, resRPM: 1500, resTPM: 5000000, resCode: 1})
+			nodes[i].Limit = with(nodes[i].Limit, common.ProjectQuota{resVCPUHours: 12000, resRAMHours: 48000, resGPUHours: 800, resGPUs: 4, resLLM: 1500, resRPM: 1500, resTPM: 5000000, resAllModels: 1})
 		}
 	}
 
@@ -94,10 +93,10 @@ func WithProviderBudget(nodes []model.Node, resources []common.Resource) []model
 	basicID := AIBudgetID
 	courseID := AICourseBudgetID
 
-	// Rates per minute for the whole project; extra model groups only where the work needs them (research gets the code model).
+	// Rates per minute for the whole project; extra model groups only where the work needs them (research gets every model directly).
 	courseLimit := q(common.ProjectQuota{resVCPUHours: 3000, resRAMHours: 12000, resGPUHours: 200, resGPUs: 2, resLLM: 300, resRPM: 600, resTPM: 2000000})
 	personalLimit := q(common.ProjectQuota{resVCPUHours: 100, resRAMHours: 400, resLLM: 20, resRPM: 30, resTPM: 100000})
-	researchLimit := q(common.ProjectQuota{resVCPUHours: 2000, resRAMHours: 8000, resGPUHours: 400, resGPUs: 2, resLLM: 200, resRPM: 300, resTPM: 1000000, resCode: 1})
+	researchLimit := q(common.ProjectQuota{resVCPUHours: 2000, resRAMHours: 8000, resGPUHours: 400, resGPUs: 2, resLLM: 200, resRPM: 300, resTPM: 1000000, resAllModels: 1})
 	thesisLimit := q(common.ProjectQuota{resVCPUHours: 200, resRAMHours: 800, resGPUHours: 20, resLLM: 30, resRPM: 60, resTPM: 200000})
 	mixedLimit := with(common.ProjectQuota{"cores": 2, "ram": 4, "storage": 20}, common.ProjectQuota{resLLM: 50, resRPM: 60, resTPM: 200000})
 

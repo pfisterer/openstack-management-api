@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/pfisterer/cloud-self-service-golib/token"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -183,6 +184,7 @@ func routerFromStoreAs(t *testing.T, devUser string, sugar *zap.SugaredLogger, s
 		},
 		Reconciler:         rec,
 		RootAdminTokens:    rootAdminTokens,
+		Tokens:             webserver.TokenConfig{Service: token.NewService("os_mgt_", token.NewMemoryStore()), TTL: token.TTLPolicy{Default: 24 * time.Hour}},
 		AuthMiddleware:     dev.DummyAuthMiddleware(devUser),
 		CORSAllowedOrigins: corsOrigins,
 	})

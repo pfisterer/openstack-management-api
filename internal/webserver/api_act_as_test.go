@@ -88,3 +88,28 @@ func TestActAs_FaithfulAndRecorded(t *testing.T) {
 	// Without the header root is root again.
 	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/approve", "", tree.ApproveNodeRequest{}), http.StatusOK)
 }
+
+// Acting on somebody's behalf manages that person's API tokens, not the admin's.
+func TestActAs_APITokensAreThePersons(t *testing.T) {
+	h := setupRouter(t)
+	assertStatus(t, do(t, h, http.MethodPost, "/v1/tokens", userStudent, map[string]any{"description": "for the ticket"}), http.StatusCreated)
+
+	var list struct {
+		Tokens []struct {
+			User string `json:"user"`
+		} `json:"tokens"`
+	}
+	rr := do(t, h, http.MethodGet, "/v1/tokens", userStudent, nil)
+	assertStatus(t, rr, http.StatusOK)
+	mustDecode(t, rr, &list)
+	if len(list.Tokens) != 1 || list.Tokens[0].User != userStudent {
+		t.Errorf("the student should own the token, got %+v", list.Tokens)
+	}
+	list.Tokens = nil
+	rr = do(t, h, http.MethodGet, "/v1/tokens", "", nil)
+	assertStatus(t, rr, http.StatusOK)
+	mustDecode(t, rr, &list)
+	if len(list.Tokens) != 0 {
+		t.Errorf("the admin should have no tokens, got %+v", list.Tokens)
+	}
+}

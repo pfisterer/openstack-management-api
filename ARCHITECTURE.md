@@ -272,7 +272,7 @@ A root admin acts on behalf of another person, e.g. working on a ticket, by send
 Two deliberate consequences:
 
 - **Root-admin surfaces follow the effective identity.** The reconciler admin routes and `eligible-for-owner` check effective tokens, so while acting for a non-root user those actions are denied — what the actor can do always matches the identity on screen.
-- **API tokens belong to the actor, never to the effective identity.** `/v1/tokens` lists, issues and revokes under `ActorEmail`: acting for somebody for a while must not turn into a permanent credential.
+- **API tokens follow the effective identity too.** `/v1/tokens` lists, issues and revokes under `UserEmail`, so an admin acting on somebody's behalf manages that person's tokens; the write is logged with the admin.
 
 ### 6.4 API tokens and read-only
 

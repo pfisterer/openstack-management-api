@@ -102,21 +102,14 @@ func RegisterTokenRoutes(v1 *gin.RouterGroup, cfg TokenConfig, log *zap.SugaredL
 	}
 }
 
-// tokenSubject is the identity a token belongs to: the ACTOR, never the
-// effective identity.
-//
-// Everything else in this API scopes on auth.UserEmail, which becomes somebody
-// else's address while an admin acts on their behalf (X-Act-As) — that is the
-// point. A credential must not follow it. A token issued for the person acted
-// for would be a permanent authorization created from a temporary view, and it
-// would keep working long after the admin switched back.
+// tokenSubject is the identity a token belongs to: the person the request acts as, like everything else in this API. An admin acting on somebody's behalf (X-Act-As) lists, issues and revokes THAT person's tokens — managing them for a ticket is one of the reasons to act on someone's behalf. Issuing one is logged with the admin.
 func tokenSubject(c *gin.Context) (string, bool) {
 	auth, err := mustGetAuthContext(c)
-	if err != nil || auth.ActorEmail == "" {
+	if err != nil || auth.UserEmail == "" {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
 		return "", false
 	}
-	return auth.ActorEmail, true
+	return auth.UserEmail, true
 }
 
 // listTokens returns the caller's API tokens.

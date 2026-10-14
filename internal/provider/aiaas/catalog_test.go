@@ -34,7 +34,7 @@ func TestGPUCatalog(t *testing.T) {
 		ids[r.ID] = r
 	}
 	// The configured resource stays as configured; the rest comes from the classes.
-	if ids["ws-gpus-l4-3q"].Name != "GPUs L4 (3Q) at once" || ids["ws-gpu-hours-l4-3q"].Kind != common.KindWindow || ids["ws-gpus-allgemein-mittel"].Name != "GPUs Allgemein · mittel at once" || len(ids) != 5 {
+	if ids["ws-gpus-l4-3q"].Name != "GPUs L4 (3Q) at once" || ids["ws-gpu-hours-l4-3q"].Kind != common.KindWindow || ids["ws-gpus-allgemein-mittel"].Name != "Allgemein · mittel: GPUs at the same time" || len(ids) != 5 {
 		t.Errorf("resources: %v", ids)
 	}
 	// Nothing new: nothing adopted. The AI service down: the classes seen stay.

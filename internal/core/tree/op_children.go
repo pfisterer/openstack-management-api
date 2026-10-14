@@ -46,6 +46,10 @@ type ChildFilter struct {
 	// those of every sub-budget below it — instead of its direct children.
 	// Projects only: the sub-budgets themselves are what the tree shows.
 	Deep bool
+	// Provider restricts to the projects of one provider ("openstack", "aiaas"):
+	// those holding or asking for more than zero of its resources, and those
+	// holding nothing yet (they could become either).
+	Provider string
 }
 
 // Group filter modes.
@@ -106,7 +110,7 @@ func numericSort(key string) (func(model.Node) float64, bool) {
 }
 
 func (f ChildFilter) needsMemory() bool {
-	return f.Query != "" || f.Group != "" || f.Sort != "" || f.Allocated || f.Deep
+	return f.Query != "" || f.Group != "" || f.Sort != "" || f.Allocated || f.Deep || f.Provider != ""
 }
 
 // Validate refuses values that would otherwise be silently ignored.
@@ -195,6 +199,16 @@ func (s *Service) ListChildren(parentID string, f ChildFilter, userTokens common
 	if needle := strings.ToLower(strings.TrimSpace(f.Query)); needle != "" {
 		children = slices.DeleteFunc(children, func(n model.Node) bool { return !nodeMatches(n, needle) })
 	}
+	if f.Provider != "" {
+		resources := s.resources()
+		children = slices.DeleteFunc(children, func(n model.Node) bool {
+			if n.Kind != model.KindProject {
+				return false
+			}
+			providers := projectProviders(n, resources)
+			return len(providers) > 0 && !providers[f.Provider]
+		})
+	}
 	if f.Group != "" {
 		children, err = s.filterByGroup(ctx, children, common.CanonicalToken(f.Group), f.GroupMode)
 		if err != nil {
@@ -208,6 +222,27 @@ func (s *Service) ListChildren(parentID string, f ChildFilter, userTokens common
 		return NodePage{}, err
 	}
 	return newNodePage(decorated, len(children), limit, offset), nil
+}
+
+// projectProviders are the providers a project holds or asks for more than zero
+// of (an unlimited amount counts).
+func projectProviders(n model.Node, resources []common.Resource) map[string]bool {
+	limits := []common.ProjectQuota{n.EffectiveLimit()}
+	if n.Pending != nil && n.Pending.Limit != nil {
+		limits = append(limits, *n.Pending.Limit)
+	}
+	out := map[string]bool{}
+	for _, r := range resources {
+		if r.Provider == "" {
+			continue
+		}
+		for _, l := range limits {
+			if v := l[r.ID]; v > 0 || v == common.UnlimitedQuota {
+				out[r.Provider] = true
+			}
+		}
+	}
+	return out
 }
 
 func (s *Service) filterByGroup(ctx context.Context, nodes []model.Node, token, mode string) ([]model.Node, error) {

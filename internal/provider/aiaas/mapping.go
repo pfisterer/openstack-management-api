@@ -70,6 +70,9 @@ func ProjectFor(n model.Node, resources []common.Resource) Project {
 		if v == 0 {
 			continue
 		}
+		if r.InArea() == common.AreaWorkspaces {
+			p.Workspaces = true
+		}
 		if b, ok := budgetFor(r); ok {
 			if v != common.UnlimitedQuota {
 				b.Amount = float64(v)

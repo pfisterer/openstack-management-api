@@ -45,6 +45,8 @@ type Project struct {
 	StorageGB int `json:"storage_gb"`
 	// DeleteAt is the day the project's Lab/AI part is deleted (its end plus the grace period), for the warnings in the hub and the self-service UI; nil = not planned.
 	DeleteAt *time.Time `json:"delete_at,omitempty"`
+	// Workspaces tells whether the project holds anything of the area workspaces: only then it is a workspace project (start form, servers); one with LLM tokens only is not.
+	Workspaces bool `json:"workspaces"`
 }
 
 type Use struct {

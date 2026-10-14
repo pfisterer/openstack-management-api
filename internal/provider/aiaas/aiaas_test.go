@@ -14,15 +14,15 @@ import (
 
 var catalog = []common.Resource{
 	{ID: "cores", Provider: "openstack"},
-	{ID: "ws-vcpu-hours", Provider: Provider, Kind: common.KindWindow, Window: "30d"},
-	{ID: "ws-gpu-hours-l4-3q", Provider: Provider, Kind: common.KindWindow, Window: "30d"},
-	{ID: "ws-gpus-l4-3q", Provider: Provider},
-	{ID: "llm-mtokens", Provider: Provider, Kind: common.KindWindow, Window: "30d"},
-	{ID: "llm-rpm", Provider: Provider},
-	{ID: "llm-tpm", Provider: Provider},
-	{ID: "ws-storage-gb", Provider: Provider},
-	{ID: "llm-model-code", Provider: Provider, Kind: common.KindBool},
-	{ID: "llm-model-all-proxy-models", Provider: Provider, Kind: common.KindBool},
+	{ID: "ws-vcpu-hours", Provider: Provider, Area: common.AreaWorkspaces, Kind: common.KindWindow, Window: "30d"},
+	{ID: "ws-gpu-hours-l4-3q", Provider: Provider, Area: common.AreaWorkspaces, Kind: common.KindWindow, Window: "30d"},
+	{ID: "ws-gpus-l4-3q", Provider: Provider, Area: common.AreaWorkspaces},
+	{ID: "llm-mtokens", Provider: Provider, Area: common.AreaLLM, Kind: common.KindWindow, Window: "30d"},
+	{ID: "llm-rpm", Provider: Provider, Area: common.AreaLLM},
+	{ID: "llm-tpm", Provider: Provider, Area: common.AreaLLM},
+	{ID: "ws-storage-gb", Provider: Provider, Area: common.AreaWorkspaces},
+	{ID: "llm-model-code", Provider: Provider, Area: common.AreaLLM, Kind: common.KindBool},
+	{ID: "llm-model-all-proxy-models", Provider: Provider, Area: common.AreaLLM, Kind: common.KindBool},
 }
 
 func TestProjectFor(t *testing.T) {
@@ -40,8 +40,8 @@ func TestProjectFor(t *testing.T) {
 	if len(p.Budgets) != 2 || p.Budgets[0].Unit != "vcpu_hours" || p.Budgets[0].Amount != 1000 || p.Budgets[1].GPUClass != "l4-3q" || p.Budgets[1].Amount != 0 {
 		t.Errorf("budgets = %+v (unlimited GPU hours: amount 0)", p.Budgets)
 	}
-	if p.GPUsByClass["l4-3q"] != 2 || p.LLMMTokens != 80 {
-		t.Errorf("gpus %v, llm %d", p.GPUsByClass, p.LLMMTokens)
+	if p.GPUsByClass["l4-3q"] != 2 || p.LLMMTokens != 80 || !p.Workspaces {
+		t.Errorf("gpus %v, llm %d, workspaces %v", p.GPUsByClass, p.LLMMTokens, p.Workspaces)
 	}
 	in := InUseFrom(Status{Used: []Use{{Budget: Budget{Unit: "vcpu_hours", Window: "30d", Amount: 1000}, Used: 12.6}, {Budget: Budget{Unit: "llm_mtokens", Window: "30d", Amount: 80}, Used: 7.4}}}, catalog)
 	if len(in) != 2 || in["ws-vcpu-hours"] != 13 || in["llm-mtokens"] != 7 {
@@ -127,6 +127,10 @@ func TestProjectForLLMLimits(t *testing.T) {
 	}
 	if len(p.LLMModels) != 1 || p.LLMModels[0] != "code" {
 		t.Errorf("models = %v", p.LLMModels)
+	}
+	// LLM only: no workspace project.
+	if p.Workspaces {
+		t.Errorf("an LLM project is no workspace project")
 	}
 	if p := ProjectFor(model.Node{ID: "p_2", Limit: common.ProjectQuota{"llm-mtokens": 5}}, catalog); p.LLMRPM != 0 || p.LLMTPM != 0 || len(p.LLMModels) != 0 {
 		t.Errorf("unset limits should stay 0 / empty: %+v", p)

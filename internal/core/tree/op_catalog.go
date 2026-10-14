@@ -95,6 +95,23 @@ func (s *Service) ForgetResource(ctx context.Context, id string) (int, error) {
 	})
 }
 
+// AdoptNewResources gives the root what the catalogue gained while the service
+// runs (GPU classes of the AI service): quantities unlimited, availabilities
+// granted — what Bootstrap does at startup.
+func (s *Service) AdoptNewResources(ctx context.Context) error {
+	s.approvalMu.Lock()
+	defer s.approvalMu.Unlock()
+	_, err := s.store.UpdateNode(ctx, model.RootNodeID, func(n *model.Node) error {
+		added := s.adoptNewCatalogueResources(n)
+		if len(added) == 0 {
+			return nodestore.ErrSkipUpdate
+		}
+		s.log.Infow("root adopted resources new to the catalogue", "resources", added)
+		return nil
+	})
+	return err
+}
+
 // AdoptAvailability gives the root availability id, so it can be delegated —
 // what Bootstrap does for resources found in the catalogue at startup.
 func (s *Service) AdoptAvailability(ctx context.Context, id string) error {

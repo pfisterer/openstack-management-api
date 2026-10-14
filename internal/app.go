@@ -36,7 +36,7 @@ import (
 // middleware routes on.
 const apiTokenPrefix = "os_mgt_"
 
-func configureStores(cfg *StorageConfiguration, log *zap.SugaredLogger) (nodestore.Store, *token.Service, usage.Store, catalog.Store, error) {
+func configureStores(cfg *StorageConfiguration, log *zap.SugaredLogger) (nodestore.Store, *token.Service, usage.Store, catalog.Store, aiaas.ClassStore, error) {
 	storageType := strings.ToLower(strings.TrimSpace(cfg.Type))
 
 	switch storageType {
@@ -45,31 +45,35 @@ func configureStores(cfg *StorageConfiguration, log *zap.SugaredLogger) (nodesto
 		// Memory mode is intended for local development and tests. Tokens do
 		// not survive a restart here, which is fine for the one and unusable
 		// for the other.
-		return nodestore.NewInMemoryStore(log), token.NewService(apiTokenPrefix, token.NewMemoryStore()), usage.NewMemoryStore(), &catalog.MemoryStore{}, nil
+		return nodestore.NewInMemoryStore(log), token.NewService(apiTokenPrefix, token.NewMemoryStore()), usage.NewMemoryStore(), &catalog.MemoryStore{}, &aiaas.MemoryClassStore{}, nil
 
 	case "postgres":
 		store, err := nodestore.NewPostgresStore(cfg.ConnectionString, log)
 		if err != nil {
-			return nil, nil, nil, nil, fmt.Errorf("postgres storage: %w", err)
+			return nil, nil, nil, nil, nil, fmt.Errorf("postgres storage: %w", err)
 		}
 		// Same connection pool: this Postgres is shared with PowerDNS and its
 		// connection budget is the reason NewPostgresStore caps it at all.
 		tokens, err := tokengorm.NewService(apiTokenPrefix, store.DB())
 		if err != nil {
-			return nil, nil, nil, nil, fmt.Errorf("token storage: %w", err)
+			return nil, nil, nil, nil, nil, fmt.Errorf("token storage: %w", err)
 		}
 		used, err := usage.NewPostgresStore(store.DB())
 		if err != nil {
-			return nil, nil, nil, nil, fmt.Errorf("usage storage: %w", err)
+			return nil, nil, nil, nil, nil, fmt.Errorf("usage storage: %w", err)
 		}
 		availabilities, err := catalog.NewPostgresStore(store.DB())
 		if err != nil {
-			return nil, nil, nil, nil, fmt.Errorf("catalog storage: %w", err)
+			return nil, nil, nil, nil, nil, fmt.Errorf("catalog storage: %w", err)
 		}
-		return store, tokens, used, availabilities, nil
+		gpuClasses, err := aiaas.NewPostgresClassStore(store.DB())
+		if err != nil {
+			return nil, nil, nil, nil, nil, err
+		}
+		return store, tokens, used, availabilities, gpuClasses, nil
 
 	default:
-		return nil, nil, nil, nil, fmt.Errorf("unsupported storage type %q", cfg.Type)
+		return nil, nil, nil, nil, nil, fmt.Errorf("unsupported storage type %q", cfg.Type)
 	}
 }
 
@@ -145,7 +149,7 @@ func RunApplication() {
 	}
 
 	// Configure resource storage and token lookup
-	nodeStore, apiTokens, usageStore, catalogStore, err := configureStores(&config.Storage, logger)
+	nodeStore, apiTokens, usageStore, catalogStore, gpuClassStore, err := configureStores(&config.Storage, logger)
 	if err != nil {
 		logger.Fatal("Failed to initialize storage", zap.Error(err))
 	}
@@ -188,8 +192,26 @@ func RunApplication() {
 	// Who a caller is and acts as (acting on behalf via X-Act-As, principal search).
 	identitySvc := identity.NewService(nodeStore, roleProvider, requestTimeout, logger)
 	// The tree sees every provider's resources as one catalogue: OpenStack's,
-	// which root admins extend at runtime, and the configured ones of the others.
-	allResources := common.CombinedCatalog{resourceCatalog, common.StaticCatalog(config.ProviderResources)}
+	// which root admins extend at runtime, the configured ones of the others,
+	// and the GPU classes of the AI service, which its GPU administration adds
+	// at runtime (two resources each; the classes seen are kept, so the tree
+	// knows them even when the AI service does not answer at a start).
+	var aiaasClient *aiaas.Client
+	if config.AIaaS.URL != "" {
+		aiaasClient = aiaas.NewClient(config.AIaaS.URL, config.AIaaS.Token, 30*time.Second)
+	}
+	gpuCatalog := aiaas.NewGPUCatalog(config.ProviderResources, gpuClassStore, aiaasClient, logger)
+	if err := gpuCatalog.Load(context.Background()); err != nil {
+		logger.Fatalw("Failed to load the GPU classes of the AI service", "error", err)
+	}
+	if aiaasClient != nil {
+		refreshCtx, cancelRefresh := context.WithTimeout(context.Background(), 15*time.Second)
+		if _, err := gpuCatalog.Refresh(refreshCtx); err != nil {
+			logger.Warnw("GPU classes of the AI service not refreshed at the start; the ones seen before apply", "error", err)
+		}
+		cancelRefresh()
+	}
+	allResources := common.CombinedCatalog{resourceCatalog, gpuCatalog}
 	treeSvc := tree.NewService(nodeStore, roleProvider, allResources.Resources(), config.RootAdminTokens, requestTimeout, config.MaxAuthorizedUsers, tree.Accounting{
 		ChargeInUse:    config.ChargeOSInUse,
 		ChargeReleased: config.ChargeReleased,
@@ -250,7 +272,7 @@ func RunApplication() {
 		}
 		syncer := &aiaas.Syncer{
 			Tree:      treeSvc.ProviderSync(aiaas.Provider),
-			Service:   aiaas.NewClient(config.AIaaS.URL, config.AIaaS.Token, 30*time.Second),
+			Service:   aiaasClient,
 			Resources: allResources.Resources,
 			Interval:  time.Duration(config.AIaaS.IntervalSeconds) * time.Second,
 			GraceDays: config.AIaaS.DeleteGraceDays,
@@ -258,6 +280,9 @@ func RunApplication() {
 		}
 		logger.Infow("Starting the AI service provider", "url", config.AIaaS.URL, "interval_seconds", config.AIaaS.IntervalSeconds)
 		go syncer.Run(ctx)
+		// New GPU classes reach the tree within five minutes; the root gets them unlimited, to be granted down like any quantity.
+		gpuCatalog.OnNew = treeSvc.AdoptNewResources
+		go gpuCatalog.Run(ctx, 5*time.Minute)
 	}
 
 	// A local ReconcilerAPI variable avoids passing a typed nil as the interface,

@@ -70,7 +70,7 @@ func (s *Service) loadSubtreeUsage(ctx context.Context, roots []model.Node) (mod
 		return nil, fmt.Errorf("load active leaves for usage rollup: %w", err)
 	}
 
-	return buildRolledUpUsage(leaves, parentMap, s.countIDs, s.leafCost), nil
+	return buildRolledUpUsage(leaves, parentMap, s.countIDs(), s.leafCost), nil
 }
 
 // loadSubtreeUsageAndAllocations is loadSubtreeUsage plus, per budget, what it
@@ -111,7 +111,7 @@ func (s *Service) loadSubtreeUsageAndAllocations(ctx context.Context, roots []mo
 			}
 			out := allocated[a.BudgetID]
 			out.Projects++
-			out.Limit = quotaAdd(out.Limit, a.Limit, s.countIDs)
+			out.Limit = quotaAdd(out.Limit, a.Limit, s.countIDs())
 			// Availabilities never add up as capacity, but how many projects
 			// have one from here is exactly what this summary is for.
 			for rid, v := range a.Limit {
@@ -122,7 +122,7 @@ func (s *Service) loadSubtreeUsageAndAllocations(ctx context.Context, roots []mo
 			allocated[a.BudgetID] = out
 		}
 	}
-	return buildRolledUpUsage(leaves, parentMap, s.countIDs, s.leafCost), allocated, nil
+	return buildRolledUpUsage(leaves, parentMap, s.countIDs(), s.leafCost), allocated, nil
 }
 
 // buildRolledUpUsage attributes each leaf's limit and ID to its parent budget and
@@ -184,10 +184,10 @@ func (s *Service) ownerActiveUsage(ctx context.Context, budgetID string, ownerTo
 	if err != nil {
 		return nil, err
 	}
-	usage := make(common.ProjectQuota, len(s.countIDs))
+	usage := make(common.ProjectQuota, len(s.countIDs()))
 	for _, leaf := range leaves {
 		charged, _ := s.leafCost(leaf)
-		for _, id := range s.countIDs {
+		for _, id := range s.countIDs() {
 			usage[id] += charged[id]
 		}
 	}
@@ -218,9 +218,9 @@ type leafCostFunc func(leaf model.Node) (own common.ProjectQuota, withAllocation
 // it still holds, everything else costs its chargedQuota plus its allocations.
 func (s *Service) leafCost(leaf model.Node) (common.ProjectQuota, bool) {
 	if leaf.Status == model.StatusArchived {
-		return archivedQuota(leaf, s.storageIDs), false
+		return archivedQuota(leaf, s.storageIDs()), false
 	}
-	return chargedQuota(leaf, s.countIDs, s.accounting.ChargeInUse), true
+	return chargedQuota(leaf, s.countIDs(), s.accounting.ChargeInUse), true
 }
 
 // archivedQuota is the storage an archived leaf still holds: what OpenStack

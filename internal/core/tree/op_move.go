@@ -76,7 +76,7 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor model.A
 			if err != nil {
 				return model.Node{}, fmt.Errorf("compute subtree usage for move: %w", err)
 			}
-			moved := subtreeUsage[current.ID].Total(s.countIDs)
+			moved := subtreeUsage[current.ID].Total(s.countIDs())
 			if err := s.checkCapacity(ctx, newParentChain, moved, nil); err != nil {
 				return model.Node{}, err
 			}

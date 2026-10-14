@@ -34,19 +34,6 @@ type Service struct {
 	// admins add and withdraw availabilities at runtime (package catalog).
 	catalog common.ResourceCatalog
 
-	// countIDs are the resources that take part in arithmetic — summing across
-	// siblings, capacity checks, usage roll-ups. Availabilities are absent.
-	//
-	// Precomputed and kept beside the catalogue rather than filtered at each
-	// call site, because it is read on every rollup. Fixed for the service's
-	// life: what changes at runtime are availabilities, never quantities. The name is the guard rail:
-	// a plain `resourceIDs` was what let an availability slip into a sum, since
-	// nothing at the call site said which set it was.
-	countIDs []string
-	// storageIDs are the count resources that account as storage — what an
-	// archived leaf still holds (see Accounting.ChargeArchived).
-	storageIDs []string
-
 	rootAdminTokens common.TokenList
 	requestTimeout  time.Duration
 	// maxAuthorizedUsers bounds how many participants one node may list.
@@ -121,16 +108,6 @@ func NewService(store nodestore.Store, roles roles.Provider, resources []common.
 	if len(resources) == 0 {
 		panic("tree.NewService requires at least one configured resource type")
 	}
-	countIDs := make([]string, 0, len(resources))
-	var storageIDs []string
-	for _, r := range resources {
-		if r.IsCount() {
-			countIDs = append(countIDs, r.ID)
-			if r.Accounts == common.AccountsStorage {
-				storageIDs = append(storageIDs, r.ID)
-			}
-		}
-	}
 	if requestTimeout <= 0 {
 		requestTimeout = 30 * time.Second
 	}
@@ -142,8 +119,6 @@ func NewService(store nodestore.Store, roles roles.Provider, resources []common.
 		roles:              roles,
 		ownerTokens:        newTokenCache(2 * time.Minute),
 		catalog:            common.StaticCatalog(resources),
-		countIDs:           countIDs,
-		storageIDs:         storageIDs,
 		rootAdminTokens:    common.CanonicalTokens(rootAdminTokens),
 		requestTimeout:     requestTimeout,
 		maxAuthorizedUsers: maxAuthorizedUsers,
@@ -155,11 +130,40 @@ func NewService(store nodestore.Store, roles roles.Provider, resources []common.
 }
 
 // UseCatalog replaces the catalogue given to NewService with one that changes
-// at runtime. Its quantities must be the same as the ones NewService was given.
+// at runtime: root admins add availabilities, and the AI service adds GPU
+// classes (quantities). A quantity once in the catalogue never leaves it.
 func (s *Service) UseCatalog(c common.ResourceCatalog) { s.catalog = c }
 
 // resources is the current catalogue.
 func (s *Service) resources() []common.Resource { return s.catalog.Resources() }
+
+// countIDs are the resources that take part in arithmetic — summing across
+// siblings, capacity checks, usage roll-ups. Availabilities are absent. Read
+// from the catalogue each time: GPU classes of the AI service join it while
+// the service runs. The name is the guard rail: a plain `resourceIDs` was what
+// let an availability slip into a sum, since nothing at the call site said
+// which set it was.
+func (s *Service) countIDs() []string {
+	var out []string
+	for _, r := range s.resources() {
+		if r.IsCount() {
+			out = append(out, r.ID)
+		}
+	}
+	return out
+}
+
+// storageIDs are the count resources that account as storage — what an
+// archived leaf still holds (see Accounting.ChargeArchived).
+func (s *Service) storageIDs() []string {
+	var out []string
+	for _, r := range s.resources() {
+		if r.IsCount() && r.Accounts == common.AccountsStorage {
+			out = append(out, r.ID)
+		}
+	}
+	return out
+}
 
 // newCtx returns a context with the configured request deadline.
 func (s *Service) newCtx() (context.Context, context.CancelFunc) {

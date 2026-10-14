@@ -127,12 +127,12 @@ func (s *Service) checkCapacity(ctx context.Context, ancestors []model.Node, add
 		if ancestor.InheritsLimit {
 			continue
 		}
-		committed := subtreeUsage[ancestor.ID].Total(s.countIDs)
-		for _, resourceID := range s.countIDs {
+		committed := subtreeUsage[ancestor.ID].Total(s.countIDs())
+		for _, resourceID := range s.countIDs() {
 			committed[resourceID] -= subtractLimit[resourceID]
 		}
-		needed := quotaAdd(committed, addLimit, s.countIDs)
-		if id, ok := shortfall(needed, ancestor.Limit, s.countIDs); ok {
+		needed := quotaAdd(committed, addLimit, s.countIDs())
+		if id, ok := shortfall(needed, ancestor.Limit, s.countIDs()); ok {
 			// Named, with the numbers: "capacity exceeded" alone leaves a
 			// request with ten resources to guess which one did not fit.
 			free := ancestor.Limit[id] - (needed[id] - addLimit[id])
@@ -346,8 +346,8 @@ func (s *Service) checkBudgetLimit(ctx context.Context, n model.Node, chain []mo
 	if err != nil {
 		return fmt.Errorf("compute subtree usage for limit check: %w", err)
 	}
-	inUse := subtreeUsage[n.ID].Total(s.countIDs)
-	for _, id := range s.countIDs {
+	inUse := subtreeUsage[n.ID].Total(s.countIDs())
+	for _, id := range s.countIDs() {
 		if limit[id] != common.UnlimitedQuota && inUse[id] > limit[id] {
 			return fmt.Errorf("new limit for %q (%d) is below current active usage (%d)", id, limit[id], inUse[id])
 		}

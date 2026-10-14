@@ -258,10 +258,11 @@
                 "type": "array",
                 "items": {
                   "type": "object",
-                  "required": ["id", "name"],
+                  "required": ["id", "name", "area"],
                   "properties": {
                     "id": { "type": "string", "minLength": 1 },
                     "name": { "type": "string", "minLength": 1 },
+                    "area": { "enum": ["cloud", "workspaces", "llm"], "description": "The concern the resource serves; the UI arranges projects by it." },
                     "kind": { "enum": ["count", "window", "bool"] },
                     "window": { "enum": ["24h", "7d", "30d"] },
                     "group": { "type": "string" },

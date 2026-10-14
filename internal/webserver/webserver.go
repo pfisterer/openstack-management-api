@@ -326,6 +326,8 @@ type uiResource struct {
 	// Provider is the system that carries the resource out (openstack,
 	// workspaces), so the UI can group by it.
 	Provider string `json:"provider,omitempty"`
+	// Area is the concern it serves (cloud, workspaces, llm): the UI arranges projects and forms by it.
+	Area string `json:"area,omitempty"`
 	// Window is the time window of an amount per window (kind window): 24h, 7d or 30d.
 	Window string `json:"window,omitempty"`
 }
@@ -344,6 +346,7 @@ func uiResourceFrom(r common.Resource) uiResource {
 		ShowOnUI:  r.ShowOnUI,
 		GrantType: r.GrantType,
 		Provider:  r.Provider,
+		Area:      r.InArea(),
 		Window:    r.Window,
 	}
 }

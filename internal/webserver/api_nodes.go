@@ -64,7 +64,7 @@ func getNode(cfg APIConfig) gin.HandlerFunc {
 //	@Param			order		query		string	false	"Sort order"	Enums(asc, desc)
 //	@Param			allocated	query		bool	false	"Instead of the direct children: the projects anywhere below that draw an allocation from this budget"
 //	@Param			deep		query		bool	false	"Instead of the direct children: the projects of the whole subtree, sub-budgets included"
-//	@Param			provider	query		string	false	"Only the projects of one provider (holding or asking for any of its resources), and those holding nothing yet"	Enums(openstack, aiaas)
+//	@Param			area		query		string	false	"Only the projects of one area (holding or asking for any of its resources), and those holding nothing yet"	Enums(cloud, workspaces, llm)
 //	@Success		200	{object}	tree.NodePage	"List of child nodes, with the total number of matches."
 //	@Failure		400	{object}	map[string]any	"Invalid filter."
 //	@Failure		401	{object}	map[string]any	"Unauthorized."
@@ -94,7 +94,7 @@ func listNodeChildren(cfg APIConfig) gin.HandlerFunc {
 			Desc:      c.Query("order") == "desc",
 			Allocated: c.Query("allocated") == "true",
 			Deep:      c.Query("deep") == "true",
-			Provider:  c.Query("provider"),
+			Area:      c.Query("area"),
 		}
 		for _, st := range strings.Split(c.Query("status"), ",") {
 			if st = strings.TrimSpace(st); st != "" {

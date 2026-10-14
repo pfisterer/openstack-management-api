@@ -70,6 +70,9 @@ type Resource struct {
 	// before providers existed, and then it counts for every provider.
 	Provider string `json:"provider,omitempty"`
 
+	// Area is the concern the resource serves (AreaCloud, AreaWorkspaces, AreaLLM): the UI arranges projects and forms by it, and a project belongs to every area it holds more than zero of. Independent of the provider: the AI service carries out two areas. Empty means cloud for OpenStack's resources (see InArea); every other provider's resources name it.
+	Area string `json:"area,omitempty"`
+
 	// Window is the time window of a KindWindow resource (see Windows); empty
 	// for every other kind.
 	Window string `json:"window,omitempty"`
@@ -140,6 +143,27 @@ func (c CombinedCatalog) Resources() []Resource {
 		out = append(out, part.Resources()...)
 	}
 	return out
+}
+
+// The areas of resources.
+const (
+	AreaCloud      = "cloud"
+	AreaWorkspaces = "workspaces"
+	AreaLLM        = "llm"
+)
+
+// Areas are the areas in their display order.
+var Areas = []string{AreaCloud, AreaWorkspaces, AreaLLM}
+
+// InArea is the resource's area: its own, or cloud for OpenStack's (the catalogue of the portal has no field for it, and OpenStack serves nothing else).
+func (m Resource) InArea() string {
+	if m.Area != "" {
+		return m.Area
+	}
+	if m.Provider == "" || m.Provider == "openstack" {
+		return AreaCloud
+	}
+	return ""
 }
 
 // BelongsTo reports whether the resource is provider's to carry out. One

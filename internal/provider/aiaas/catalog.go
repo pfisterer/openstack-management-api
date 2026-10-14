@@ -251,9 +251,9 @@ func (g *GPUCatalog) Resources() []common.Resource {
 		info := &common.GPUClassInfo{Pool: c.Pool, PoolName: c.PoolName, Tier: c.Tier, TierName: c.TierName, Products: c.Products, Lends: c.Lends}
 		for _, r := range []common.Resource{
 			{ID: prefixGPUHours + c.ID, Name: name + ": GPU hours", Unit: "GPU h", Kind: common.KindWindow, Window: "30d", Group: "Workspaces GPU",
-				Max: 20000, ShowOnUI: true, Provider: Provider, Message: "GPU hours per 30 days on GPUs of the class " + name, GPUClass: info},
+				Max: 20000, ShowOnUI: true, Provider: Provider, Message: "GPU hours per 30 days on GPUs of the class " + name, GPUClass: info, Area: common.AreaWorkspaces},
 			{ID: prefixGPUs + c.ID, Name: name + ": GPUs at the same time", Unit: "GPU", Group: "Workspaces GPU",
-				Max: 64, ShowOnUI: true, Provider: Provider, Message: "how many GPUs of the class " + name + " the project may use at the same time", GPUClass: info},
+				Max: 64, ShowOnUI: true, Provider: Provider, Message: "how many GPUs of the class " + name + " the project may use at the same time", GPUClass: info, Area: common.AreaWorkspaces},
 		} {
 			if !have[r.ID] {
 				out = append(out, r)

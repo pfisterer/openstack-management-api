@@ -396,7 +396,7 @@ type AIaaSConfig struct {
 
 // providerResourcesEnv holds the resources of the providers besides OpenStack
 // as a JSON object from provider name to an array of resources, e.g.
-// {"aiaas": [{"id": "ws-gpu-hours-l4-3q", "name": "GPU L4 (3Q)", "kind": "window", "window": "30d"}]}.
+// {"aiaas": [{"id": "ws-vcpu-hours", "name": "Workspace CPU", "kind": "window", "window": "30d", "area": "workspaces"}]}; every resource names its area.
 const providerResourcesEnv = "PROVIDER_RESOURCES"
 
 // loadProviderResources reads them and checks them together with OpenStack's,
@@ -420,6 +420,9 @@ func loadProviderResources(openstack []common.Resource) ([]common.Resource, erro
 		// Availabilities are allowed here too: for another provider they are a switch the provider interprets (the AI service: which extra models a project gets), not an object in OpenStack, so they come from this list rather than from the portal's catalogue.
 		for _, r := range byProvider[provider] {
 			r.Provider = provider
+			if !slices.Contains(common.Areas, r.Area) {
+				return nil, fmt.Errorf("%s: resource %q of %s has no area (%s)", providerResourcesEnv, r.ID, provider, strings.Join(common.Areas, ", "))
+			}
 			out = append(out, r)
 		}
 	}

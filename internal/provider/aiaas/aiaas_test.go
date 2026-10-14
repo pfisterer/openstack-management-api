@@ -28,10 +28,10 @@ var catalog = []common.Resource{
 func TestProjectFor(t *testing.T) {
 	end := "2027-03-31"
 	n := model.Node{ID: "p_1", Name: "Kurs", Owner: "user:o@dhbw.de", AdminScope: common.TokenList{"group:mgr"},
-		AuthorizedUsers: []common.AuthorizedUser{{Token: "group:k"}, {Token: "user:o@dhbw.de"}}, TerminationDate: &end,
+		AuthorizedUsers: []common.AuthorizedUser{{Token: "group:k", OpenstackRole: "reader"}, {Token: "user:o@dhbw.de"}, {Token: "user:tutor@dhbw.de", OpenstackRole: "member"}}, TerminationDate: &end,
 		Limit: common.ProjectQuota{"cores": 4, "ws-vcpu-hours": 1000, "ws-gpu-hours-l4-3q": common.UnlimitedQuota, "ws-gpus-l4-3q": 2, "llm-mtokens": 80}}
 	p := ProjectFor(n, catalog)
-	if p.Name != "Kurs" || len(p.Members) != 3 || p.Members[0].Role != "manager" || p.Members[1].Role != "manager" || p.Members[2].Token != "group:k" {
+	if p.Name != "Kurs" || len(p.Members) != 4 || p.Members[0].Role != "manager" || p.Members[1].Role != "manager" || p.Members[2].Token != "group:k" || p.Members[2].Role != "reader" || p.Members[3].Role != "member" {
 		t.Errorf("name/members = %q %+v", p.Name, p.Members)
 	}
 	if p.EndsAt == nil || p.EndsAt.Format(time.DateOnly) != end {

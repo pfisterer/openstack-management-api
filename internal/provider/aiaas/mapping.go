@@ -109,7 +109,7 @@ func ProjectFor(n model.Node, resources []common.Resource) Project {
 	return p
 }
 
-// membersOf: the owner and the leaf's admins manage the project at the AI service, everybody the leaf authorizes uses it.
+// membersOf: the owner and the leaf's admins manage the project at the AI service, everybody the leaf authorizes uses it with the token's role: reader only reads the project's shared folder, member writes it too (the same role as in OpenStack).
 func membersOf(n model.Node) []Member {
 	var out []Member
 	seen := map[string]bool{}
@@ -126,7 +126,11 @@ func membersOf(n model.Node) []Member {
 		add(t, "manager")
 	}
 	for _, u := range n.AuthorizedUsers {
-		add(u.Token, "member")
+		role := "member"
+		if u.OpenstackRole == "reader" {
+			role = "reader"
+		}
+		add(u.Token, role)
 	}
 	return out
 }

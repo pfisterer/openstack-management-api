@@ -95,6 +95,32 @@ func (s *Service) ForgetResource(ctx context.Context, id string) (int, error) {
 	})
 }
 
+// RenameResources moves every stored amount from an old resource id to a new
+// one (a GPU class of the AI service that replaced one from before pools).
+// Where a node has both, the new one stays. Idempotent: nothing to do once no
+// node holds an old id.
+func (s *Service) RenameResources(ctx context.Context, renames map[string]string) error {
+	n, err := s.rewriteAll(ctx, func(q common.ProjectQuota) bool {
+		touched := false
+		for old, nw := range renames {
+			v, ok := q[old]
+			if !ok {
+				continue
+			}
+			if _, has := q[nw]; !has {
+				q[nw] = v
+			}
+			delete(q, old)
+			touched = true
+		}
+		return touched
+	})
+	if n > 0 {
+		s.log.Infow("renamed resources in the tree", "renames", renames, "nodes", n)
+	}
+	return err
+}
+
 // AdoptNewResources gives the root what the catalogue gained while the service
 // runs (GPU classes of the AI service): quantities unlimited, availabilities
 // granted — what Bootstrap does at startup.

@@ -50,9 +50,19 @@ func TestGPUCatalog(t *testing.T) {
 	if err := again.Load(ctx); err != nil || len(again.Resources()) != 5 {
 		t.Errorf("classes not kept: %v %d", err, len(again.Resources()))
 	}
+	// A class that replaced one from before pools: the tree renames once.
+	svc.err = nil
+	svc.classes = append(svc.classes, GPUClass{ID: "allgemein-gross", Name: "Allgemein · groß", Replaces: "h100"})
+	var renames []map[string]string
+	g.OnRename = func(_ context.Context, r map[string]string) error { renames = append(renames, r); return nil }
+	_, _ = g.Refresh(ctx)
+	_, _ = g.Refresh(ctx)
+	if len(renames) != 1 || renames[0]["ws-gpus-h100"] != "ws-gpus-allgemein-gross" || renames[0]["ws-gpu-hours-h100"] != "ws-gpu-hours-allgemein-gross" {
+		t.Errorf("renames: %v", renames)
+	}
 	// A class the AI service no longer lists stays (projects hold it).
 	svc.err, svc.classes = nil, []GPUClass{{ID: "l4-3q", Name: "Allgemein · klein"}}
-	if _, err := g.Refresh(ctx); err != nil || len(g.Resources()) != 5 {
+	if _, err := g.Refresh(ctx); err != nil || len(g.Resources()) != 7 {
 		t.Errorf("class dropped: %d", len(g.Resources()))
 	}
 }

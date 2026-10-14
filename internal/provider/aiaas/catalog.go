@@ -24,6 +24,8 @@ type GPUClass struct {
 	Name string `json:"name" gorm:"column:name"`
 	Pool string `json:"pool" gorm:"column:pool"`
 	Tier string `json:"tier" gorm:"column:tier"`
+	// Replaces is the id of a class from before pools this one took over: the tree's resources of that id are renamed to this one's.
+	Replaces string `json:"replaces,omitempty" gorm:"column:replaces"`
 }
 
 func (GPUClass) TableName() string { return "aiaas_gpu_classes" }
@@ -95,14 +97,44 @@ type GPUCatalog struct {
 
 	mu      sync.RWMutex
 	classes []GPUClass
+	renamed map[string]bool
 	// OnNew is told when the catalogue gained classes (the tree gives them to the root).
 	OnNew func(ctx context.Context) error
+	// OnRename is told the resource ids of replaced classes, old to new (the tree rewrites its nodes); idempotent, so it runs after every refresh with renames.
+	OnRename func(ctx context.Context, renames map[string]string) error
+}
+
+// pendingRenames are the renames not yet carried out since the start: once per process is enough, the tree keeps no old id afterwards.
+func (g *GPUCatalog) pendingRenames() map[string]string {
+	out := g.Renames()
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	for id := range out {
+		if g.renamed[id] {
+			delete(out, id)
+		}
+	}
+	return out
+}
+
+// Renames are the resource ids of replaced classes, old to new.
+func (g *GPUCatalog) Renames() map[string]string {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	out := map[string]string{}
+	for _, c := range g.classes {
+		if c.Replaces != "" && c.Replaces != c.ID {
+			out[prefixGPUs+c.Replaces] = prefixGPUs + c.ID
+			out[prefixGPUHours+c.Replaces] = prefixGPUHours + c.ID
+		}
+	}
+	return out
 }
 
 func NewGPUCatalog(static []common.Resource, store ClassStore, service interface {
 	Catalog(ctx context.Context) ([]GPUClass, error)
 }, log *zap.SugaredLogger) *GPUCatalog {
-	return &GPUCatalog{static: static, store: store, service: service, log: log}
+	return &GPUCatalog{static: static, store: store, service: service, log: log, renamed: map[string]bool{}}
 }
 
 // Load reads the classes seen before; run once before the tree starts.
@@ -151,6 +183,22 @@ func (g *GPUCatalog) Refresh(ctx context.Context) (bool, error) {
 	}
 	all := slices.Clone(g.classes)
 	g.mu.Unlock()
+	if renames := g.pendingRenames(); len(renames) > 0 && g.OnRename != nil {
+		if added && g.OnNew != nil {
+			// The new ids first, so the root holds them when the old ones move over.
+			if err := g.OnNew(ctx); err != nil {
+				return added, err
+			}
+		}
+		if err := g.OnRename(ctx, renames); err != nil {
+			return added, err
+		}
+		g.mu.Lock()
+		for id := range renames {
+			g.renamed[id] = true
+		}
+		g.mu.Unlock()
+	}
 	if !changed {
 		return false, nil
 	}

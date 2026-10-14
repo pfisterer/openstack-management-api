@@ -282,6 +282,7 @@ func RunApplication() {
 		go syncer.Run(ctx)
 		// New GPU classes reach the tree within five minutes; the root gets them unlimited, to be granted down like any quantity.
 		gpuCatalog.OnNew = treeSvc.AdoptNewResources
+		gpuCatalog.OnRename = treeSvc.RenameResources
 		go gpuCatalog.Run(ctx, 5*time.Minute)
 	}
 

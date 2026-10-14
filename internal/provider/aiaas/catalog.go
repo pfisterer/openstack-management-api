@@ -26,6 +26,11 @@ type GPUClass struct {
 	Tier string `json:"tier" gorm:"column:tier"`
 	// Replaces is the id of a class from before pools this one took over: the tree's resources of that id are renamed to this one's.
 	Replaces string `json:"replaces,omitempty" gorm:"column:replaces"`
+	// For the UI: the names of pool and tier, the GPU types of its nodes and whether its pool lends idle GPUs to the other pools of the tier.
+	PoolName string `json:"pool_name" gorm:"column:pool_name"`
+	TierName string `json:"tier_name" gorm:"column:tier_name"`
+	Products string `json:"products" gorm:"column:products"`
+	Lends    bool   `json:"lends" gorm:"column:lends"`
 }
 
 func (GPUClass) TableName() string { return "aiaas_gpu_classes" }
@@ -243,11 +248,12 @@ func (g *GPUCatalog) Resources() []common.Resource {
 		if name == "" {
 			name = c.ID
 		}
+		info := &common.GPUClassInfo{Pool: c.Pool, PoolName: c.PoolName, Tier: c.Tier, TierName: c.TierName, Products: c.Products, Lends: c.Lends}
 		for _, r := range []common.Resource{
 			{ID: prefixGPUHours + c.ID, Name: name + ": GPU hours", Unit: "GPU h", Kind: common.KindWindow, Window: "30d", Group: "Workspaces GPU",
-				Max: 20000, ShowOnUI: true, Provider: Provider, Message: "GPU hours per 30 days on GPUs of the class " + name},
+				Max: 20000, ShowOnUI: true, Provider: Provider, Message: "GPU hours per 30 days on GPUs of the class " + name, GPUClass: info},
 			{ID: prefixGPUs + c.ID, Name: name + ": GPUs at the same time", Unit: "GPU", Group: "Workspaces GPU",
-				Max: 64, ShowOnUI: true, Provider: Provider, Message: "how many GPUs of the class " + name + " the project may use at the same time"},
+				Max: 64, ShowOnUI: true, Provider: Provider, Message: "how many GPUs of the class " + name + " the project may use at the same time", GPUClass: info},
 		} {
 			if !have[r.ID] {
 				out = append(out, r)

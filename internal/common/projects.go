@@ -79,6 +79,9 @@ type Resource struct {
 	// fifty entries can still be read at the root of the tree.
 	Group string `json:"group,omitempty"`
 
+	// GPUClass is set on the two resources of a GPU class of the AI service: its pool and tier, so the UI can arrange them by pool.
+	GPUClass *GPUClassInfo `json:"gpu_class,omitempty"`
+
 	// ShowOnUI controls whether this resource is returned to the frontend via
 	// /v1/config. Set to true for user-configurable resources; leave false for
 	// static infrastructure quotas that should not be exposed in the UI.
@@ -103,6 +106,16 @@ type Resource struct {
 	// GrantType is the kind of an availability (a network, a flavour, an
 	// image), for showing how its use is counted. The target is not here.
 	GrantType string `json:"-"`
+}
+
+// GPUClassInfo is what the UI shows of a GPU class: the pool it belongs to (with the GPU types of its nodes and whether it lends idle GPUs to the other pools of the tier) and its tier.
+type GPUClassInfo struct {
+	Pool     string `json:"pool"`
+	PoolName string `json:"pool_name"`
+	Tier     string `json:"tier"`
+	TierName string `json:"tier_name"`
+	Products string `json:"products,omitempty"`
+	Lends    bool   `json:"lends"`
 }
 
 // ResourceCatalog is where the current catalogue is read. Root admins add and

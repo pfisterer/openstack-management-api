@@ -243,7 +243,17 @@ func (g *GPUCatalog) Resources() []common.Resource {
 	}
 	g.mu.RLock()
 	defer g.mu.RUnlock()
+	// A class another one replaces (its pool or tier renamed) stays in the store for the rename, but is no resource any more: the tree moved its amounts to the new id.
+	replaced := map[string]bool{}
 	for _, c := range g.classes {
+		if c.Replaces != "" && c.Replaces != c.ID {
+			replaced[c.Replaces] = true
+		}
+	}
+	for _, c := range g.classes {
+		if replaced[c.ID] {
+			continue
+		}
 		name := c.Name
 		if name == "" {
 			name = c.ID

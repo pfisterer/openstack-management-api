@@ -69,4 +69,19 @@ func TestGPUCatalog(t *testing.T) {
 	if _, err := g.Refresh(ctx); err != nil || len(g.Resources()) != 7 {
 		t.Errorf("class dropped: %d", len(g.Resources()))
 	}
+	// A renamed pool: the old class stays in the store for the rename, but is no resource any more.
+	svc.classes = []GPUClass{{ID: "maarm64-large", Pool: "maarm64", Tier: "large"}}
+	_, _ = g.Refresh(ctx)
+	svc.classes = []GPUClass{{ID: "ma-arm64-large", Pool: "ma-arm64", Tier: "large", Replaces: "maarm64-large"}}
+	_, _ = g.Refresh(ctx)
+	have := map[string]bool{}
+	for _, r := range g.Resources() {
+		have[r.ID] = true
+	}
+	if have["ws-gpus-maarm64-large"] || have["ws-gpu-hours-maarm64-large"] || !have["ws-gpus-ma-arm64-large"] {
+		t.Errorf("renamed pool: %v", have)
+	}
+	if r := g.Renames(); r["ws-gpus-maarm64-large"] != "ws-gpus-ma-arm64-large" {
+		t.Errorf("rename of the pool's class: %v", r)
+	}
 }

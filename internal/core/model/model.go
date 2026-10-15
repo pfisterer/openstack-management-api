@@ -15,6 +15,8 @@
 package model
 
 import (
+	"encoding/json"
+	"math"
 	"slices"
 	"time"
 
@@ -320,12 +322,20 @@ type StatusUsage struct {
 // UsageByStatus maps leaf status → aggregated usage for that status.
 type UsageByStatus map[string]StatusUsage
 
-// Total collapses all status buckets into a single quota by summing each resource.
+// Total collapses all status buckets into a single quota by summing each resource. A sum past the int range stays at its end instead of wrapping negative, which would read as free capacity.
 func (u UsageByStatus) Total(resourceIDs []string) common.ProjectQuota {
 	out := make(common.ProjectQuota)
 	for _, statusUsage := range u {
 		for _, id := range resourceIDs {
-			out[id] += statusUsage.Limit[id]
+			a, b := out[id], statusUsage.Limit[id]
+			sum := a + b
+			switch {
+			case b > 0 && sum < a:
+				sum = math.MaxInt
+			case b < 0 && sum > a:
+				sum = math.MinInt
+			}
+			out[id] = sum
 		}
 	}
 	return out
@@ -438,7 +448,12 @@ type Node struct {
 
 	Pending *PendingChanges `json:"pending,omitempty"`
 	History []HistoryEntry  `json:"history,omitempty"`
-	Flags   []string        `json:"flags,omitempty"`
+	// HistoryDropped counts the oldest history entries dropped to keep History within common.MaxHistoryEntries (see CapHistory).
+	HistoryDropped int      `json:"history_dropped,omitempty"`
+	Flags          []string `json:"flags,omitempty"`
+
+	// Revision is how many history entries the node has had, dropped ones included (see CurrentRevision). Every change of a request writes one, so it changes whenever what a manager is deciding on does. Set on every serialisation; the value read in is ignored. A client approving a request sends back the revision it showed (ApproveNodeRequest.ExpectedRevision), and an approval of a request that changed since is refused.
+	Revision int `json:"revision"`
 
 	CreatedBy string `json:"created_by,omitempty"`
 	CreatedAt string `json:"created_at,omitempty"`
@@ -506,6 +521,25 @@ type Node struct {
 	// validateKnownResources and validateChildBudgetLimit; hiding a field has
 	// never been a permission check.
 	AvailableResources []string `json:"available_resources,omitempty"`
+}
+
+// CurrentRevision is the number of history entries the node has ever had: what it holds plus what CapHistory dropped. Unchanged by trimming, so it only ever grows.
+func (n *Node) CurrentRevision() int { return n.HistoryDropped + len(n.History) }
+
+// MarshalJSON writes the node with its current revision.
+func (n Node) MarshalJSON() ([]byte, error) {
+	type plain Node
+	out := plain(n)
+	out.Revision = n.CurrentRevision()
+	return json.Marshal(out)
+}
+
+// CapHistory drops the oldest history entries beyond common.MaxHistoryEntries and counts them in HistoryDropped. The stores call it on every write, so no path can grow a node's history without bound — a requester amending a request in a loop would otherwise make every read of the node, and every listing that carries it, larger without end.
+func CapHistory(n *Node) {
+	if over := len(n.History) - common.MaxHistoryEntries; over > 0 {
+		n.History = slices.Clone(n.History[over:])
+		n.HistoryDropped += over
+	}
 }
 
 // IsLeaf reports whether the node is a project leaf.

@@ -72,7 +72,7 @@ func mkLeaf(t *testing.T, h http.Handler, actor, parentID string, c int) (id, st
 
 func approveNode(t *testing.T, h http.Handler, actor, nodeID string) {
 	t.Helper()
-	rr := do(t, h, http.MethodPost, "/v1/nodes/"+nodeID+"/approve", actor, tree.ApproveNodeRequest{})
+	rr := do(t, h, http.MethodPost, "/v1/nodes/"+nodeID+"/approve", actor, approval(t, h, nodeID, nil))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("approve %s as %s: want 200, got %d: %s", nodeID, actor, rr.Code, rr.Body.String())
 	}
@@ -210,7 +210,7 @@ func TestScenario_DHBWTreeLifecycle(t *testing.T) {
 
 	// F-2 regression: a consumer (student) holds no admin scope — they can
 	// neither approve their own over-cap request nor even list the budget's children.
-	if rr := do(t, h, http.MethodPost, "/v1/nodes/"+p2+"/approve", userStudent, tree.ApproveNodeRequest{}); rr.Code != http.StatusForbidden {
+	if rr := do(t, h, http.MethodPost, "/v1/nodes/"+p2+"/approve", userStudent, approval(t, h, p2, nil)); rr.Code != http.StatusForbidden {
 		t.Errorf("student approving own over-cap request should be 403, got %d: %s", rr.Code, rr.Body.String())
 	}
 	if rr := do(t, h, http.MethodGet, "/v1/nodes/"+studBudget+"/children", userStudent, nil); rr.Code != http.StatusForbidden {
@@ -257,7 +257,7 @@ func TestScenario_DHBWTreeLifecycle(t *testing.T) {
 
 	// a request that would overbook the pool cannot be approved
 	p4, _ := mkLeaf(t, h, userFaculty, csPool, 100)
-	if rr := do(t, h, http.MethodPost, "/v1/nodes/"+p4+"/approve", userCSAdmin, tree.ApproveNodeRequest{}); rr.Code != http.StatusBadRequest {
+	if rr := do(t, h, http.MethodPost, "/v1/nodes/"+p4+"/approve", userCSAdmin, approval(t, h, p4, nil)); rr.Code != http.StatusBadRequest {
 		t.Errorf("approving 100 cores into a 40-core pool should be 400 (capacity), got %d: %s", rr.Code, rr.Body.String())
 	}
 	if rr := do(t, h, http.MethodPost, "/v1/nodes/"+p4+"/reject", userCSAdmin, nil); rr.Code != http.StatusOK {
@@ -325,12 +325,12 @@ func TestScenario_DHBWTreeLifecycle(t *testing.T) {
 		t.Fatalf("budget request by an eligible non-manager should be pending, got %q", expansion.Status)
 	}
 	// The requesting admin cannot approve their own budget request (parent-chain rule).
-	if rr := do(t, h, http.MethodPost, "/v1/nodes/"+expansion.ID+"/approve", userCSAdmin, tree.ApproveNodeRequest{}); rr.Code != http.StatusForbidden {
+	if rr := do(t, h, http.MethodPost, "/v1/nodes/"+expansion.ID+"/approve", userCSAdmin, approval(t, h, expansion.ID, nil)); rr.Code != http.StatusForbidden {
 		t.Errorf("CS admin approving own budget request should be 403, got %d", rr.Code)
 	}
 	modified := cores(20)
 	if rr := do(t, h, http.MethodPost, "/v1/nodes/"+expansion.ID+"/approve", userRoot,
-		tree.ApproveNodeRequest{ModifiedLimit: &modified}); rr.Code != http.StatusOK {
+		approval(t, h, expansion.ID, &modified)); rr.Code != http.StatusOK {
 		t.Fatalf("root approving budget request: want 200, got %d: %s", rr.Code, rr.Body.String())
 	}
 	// Budget limits are caps, not consumption — usage is unchanged.

@@ -15,6 +15,10 @@ import (
 // of the parent chain may release. With req.Delete the leaf is marked for
 // deletion in the same write — see RequestDeletion.
 func (s *Service) ReleaseNode(id string, req ReleaseNodeRequest, actor model.Actor, userTokens common.TokenList) (model.Node, error) {
+	// Releasing changes what a budget is charged for, which the approvals must not see half done.
+	s.approvalMu.Lock()
+	defer s.approvalMu.Unlock()
+
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
@@ -35,21 +39,29 @@ func (s *Service) ReleaseNode(id string, req ReleaseNodeRequest, actor model.Act
 		return model.Node{}, err
 	}
 
-	historyEntry := model.NewHistoryEntry("released", actor, model.StatusReleased)
-	historyEntry.StatusFrom = new(model.StatusApproved)
-	historyEntry.LimitFrom = &current.Limit
-
-	updated := *current
-	updated.Status = model.StatusReleased
-	updated.Pending = nil
-	updated.History = append(slices.Clone(current.History), historyEntry)
-	if req.Delete {
-		updated.Flags = append(slices.Clone(current.Flags), model.FlagDeleteRequested)
-		updated.History = append(updated.History, model.NewHistoryEntry("deletion_requested", actor, model.StatusReleased))
+	// Written on the node as it is now, with the status checked again there: the reconciler's last report is kept, and a node that left approved meanwhile is not released.
+	var updated model.Node
+	if _, err := s.store.UpdateNode(ctx, id, func(n *model.Node) error {
+		if n.Status != model.StatusApproved {
+			return fmt.Errorf("%w: cannot release node in status %q", common.ErrConflict, n.Status)
+		}
+		historyEntry := model.NewHistoryEntry("released", actor, model.StatusReleased)
+		historyEntry.StatusFrom = new(model.StatusApproved)
+		historyEntry.LimitFrom = new(n.Limit)
+		n.Status = model.StatusReleased
+		n.Pending = nil
+		n.History = append(slices.Clone(n.History), historyEntry)
+		if req.Delete && !slices.Contains(n.Flags, model.FlagDeleteRequested) {
+			n.Flags = append(slices.Clone(n.Flags), model.FlagDeleteRequested)
+			n.History = append(n.History, model.NewHistoryEntry("deletion_requested", actor, model.StatusReleased))
+		}
+		updated = *n
+		return nil
+	}); err != nil {
+		return model.Node{}, err
 	}
-
-	if err := s.store.UpsertNode(ctx, updated); err != nil {
-		return model.Node{}, fmt.Errorf("persist node: %w", err)
+	if updated.ID == "" {
+		return model.Node{}, fmt.Errorf("node %w", common.ErrNotFound)
 	}
 	return updated, nil
 }
@@ -148,8 +160,12 @@ func (s *Service) deletable(n model.Node) bool {
 // DeleteNode removes a budget subtree. Refused while any node in the subtree is
 // still pending, awaiting a change decision, active, or an unpromoted import —
 // those must be decided/released first so nothing is silently discarded.
+//
+// Under the approval lock: a request created under the budget while its subtree is being collected would otherwise be deleted with it, unseen. Nothing of the subtree remains to carry a history entry, so who deleted it is written to the log.
 func (s *Service) DeleteNode(id string, actor model.Actor, userTokens common.TokenList) error {
-	_ = actor
+	s.approvalMu.Lock()
+	defer s.approvalMu.Unlock()
+
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
@@ -199,6 +215,9 @@ func (s *Service) DeleteNode(id string, actor model.Actor, userTokens common.Tok
 
 	if err := s.store.DeleteNodes(ctx, deleteIDs); err != nil {
 		return fmt.Errorf("delete subtree: %w", err)
+	}
+	if s.log != nil {
+		s.log.Infow("budget subtree deleted", "node_id", current.ID, "name", current.Name, "actor", actor.Email, "acted_by", actor.ActedBy, "via", actor.Channel(), "deleted_ids", deleteIDs)
 	}
 	return nil
 }

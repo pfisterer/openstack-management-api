@@ -164,6 +164,8 @@ type APIConfig struct {
 	Usage UsageReader
 	// UsagePrices put a euro value on the root admins' evaluation; nil for none.
 	UsagePrices *usage.Prices
+	// Log receives the detail of internal errors, which callers only see as "internal error". SetupGinWebserver fills it in.
+	Log *zap.SugaredLogger
 }
 
 // SetupGinWebserver configures and returns the application router.
@@ -189,6 +191,7 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 	gin.DefaultWriter = ginLogWriter
 	gin.DefaultErrorWriter = ginLogWriter
 	router.Use(ginzap.RecoveryWithZap(cfg.Log.Desugar(), true))
+	router.Use(LimitRequestBody(MaxRequestBodyBytes))
 
 	// Setup static file serving routes
 	staticGroup := router.Group("/")
@@ -204,6 +207,8 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 		staticGroup.Use(ginweb.DisableCaching())
 	}
 	RegisterStaticRoutes(staticGroup, cfg.StaticConfig)
+
+	cfg.API.Log = cfg.Log
 
 	// Setup API v1 routes
 	apiV1Group := router.Group("/v1")
@@ -244,12 +249,31 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 	// cannot say whether an operation writes — the tool does, and mcp.go checks
 	// it there. No CORS: this is for a local MCP client, not a browser.
 	mcpGroup := router.Group("/mcp")
+	// /mcp has no CORS group of its own, so the cross-origin guard EnableCORS brings to /v1 is mounted here.
+	mcpGroup.Use(ginweb.RejectCrossOriginWrites(ginweb.CrossOriginOptions{DevMode: cfg.DevMode, Log: cfg.Log}))
 	if cfg.AuthMiddleware != nil {
 		mcpGroup.Use(cfg.AuthMiddleware)
 	}
 	RegisterMCPRoutes(mcpGroup, cfg.API, cfg.Log)
 
 	return router
+}
+
+// MaxRequestBodyBytes bounds a request body. The largest legitimate one — a project with its full list of members and a long reason — is a few kilobytes; without a bound a single request could make the server read and decode as much as it is sent.
+const MaxRequestBodyBytes = 1 << 20
+
+// LimitRequestBody refuses a body larger than limit: at once with 413 where the request announces its length, and by failing the read (MaxBytesReader) where it does not.
+func LimitRequestBody(limit int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.ContentLength > limit {
+			c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{"error": fmt.Sprintf("request body larger than %d bytes", limit)})
+			return
+		}
+		if c.Request.Body != nil {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
+		}
+		c.Next()
+	}
 }
 
 // resources is the current catalogue; none where no catalogue is configured.

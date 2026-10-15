@@ -259,3 +259,15 @@ func nodeIDs(ns []model.Node) []string {
 func testIdentity(store nodestore.Store, sugar *zap.SugaredLogger) *identity.Service {
 	return identity.NewService(store, dev.NewMockRoleProvider(), 10*time.Second, sugar)
 }
+
+// approval is the body of an approval of node id as the UI sends it: with the revision the node has now (read as the root admin) and, where given, a modified limit.
+func approval(t *testing.T, h http.Handler, id string, modified *common.ProjectQuota) tree.ApproveNodeRequest {
+	t.Helper()
+	rr := do(t, h, http.MethodGet, "/v1/nodes/"+id, "", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("read %s for its revision: %d %s", id, rr.Code, rr.Body.String())
+	}
+	var n model.Node
+	mustDecode(t, rr, &n)
+	return tree.ApproveNodeRequest{ModifiedLimit: modified, ExpectedRevision: new(n.Revision)}
+}

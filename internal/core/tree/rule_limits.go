@@ -131,7 +131,10 @@ func (s *Service) checkCapacity(ctx context.Context, ancestors []model.Node, add
 		for _, resourceID := range s.countIDs() {
 			committed[resourceID] -= subtractLimit[resourceID]
 		}
-		needed := quotaAdd(committed, addLimit, s.countIDs())
+		needed, err := quotaAddChecked(committed, addLimit, s.countIDs())
+		if err != nil {
+			return fmt.Errorf("budget %q (%s) capacity exceeded: %w", ancestor.ID, ancestor.Name, err)
+		}
 		if id, ok := shortfall(needed, ancestor.Limit, s.countIDs()); ok {
 			// Named, with the numbers: "capacity exceeded" alone leaves a
 			// request with ten resources to guess which one did not fit.
@@ -142,11 +145,18 @@ func (s *Service) checkCapacity(ctx context.Context, ancestors []model.Node, add
 	return nil
 }
 
-// validateLeafLimit rejects a leaf limit that is negative, set on an unmanaged
-// resource, or empty. A leaf limit is a concrete allocation with no "unlimited"
-// sentinel: a negative value would lower the tracked usage and map to Nova's
-// unlimited, letting a request grab unbounded resources.
+// validateLeafLimit rejects a leaf limit that is negative, above its bound, set on an unmanaged resource, or empty. A leaf limit is a concrete allocation with no "unlimited" sentinel: a negative value would lower the tracked usage and map to Nova's unlimited, letting a request grab unbounded resources. The bound is the catalogue's maximum for a project where it has one (see leafBound).
 func (s *Service) validateLeafLimit(q common.ProjectQuota) error {
+	return s.validateCounts(q, s.leafBound)
+}
+
+// validateRequesterLimit is validateLeafLimit for the per-requester limit of an auto-approve policy: what one person may hold in several projects together, so it is not held to the maximum of one project.
+func (s *Service) validateRequesterLimit(q common.ProjectQuota) error {
+	return s.validateCounts(q, func(string) int { return common.MaxQuotaValue })
+}
+
+// validateCounts is the leaf rule for every count of q: not negative and at most bound(id).
+func (s *Service) validateCounts(q common.ProjectQuota, bound func(id string) int) error {
 	if err := s.validateKnownResources(q); err != nil {
 		return err
 	}
@@ -160,12 +170,24 @@ func (s *Service) validateLeafLimit(q common.ProjectQuota) error {
 		if val < 0 {
 			return fmt.Errorf("limit for %q must not be negative (got %d)", key, val)
 		}
+		if limit := bound(key); val > limit {
+			return fmt.Errorf("limit for %q must not exceed %d (got %d)", key, limit, val)
+		}
 	}
 	return nil
 }
 
-// validateBudgetLimit rejects unknown resources and negative values other than the
-// UnlimitedQuota sentinel. Missing keys count as 0 — an intentionally hard cap.
+// leafBound is the most a single project may hold of a count: the catalogue's maximum where it names one, never more than common.MaxQuotaValue.
+func (s *Service) leafBound(id string) int {
+	for _, r := range s.resources() {
+		if r.ID == id && r.Max > 0 && r.Max < common.MaxQuotaValue {
+			return r.Max
+		}
+	}
+	return common.MaxQuotaValue
+}
+
+// validateBudgetLimit rejects unknown resources, values above common.MaxQuotaValue and negative values other than the UnlimitedQuota sentinel. Missing keys count as 0 — an intentionally hard cap. A budget is not held to the catalogue's maximum: that is the most for one project, and a budget holds many.
 func (s *Service) validateBudgetLimit(q common.ProjectQuota) error {
 	if err := s.validateKnownResources(q); err != nil {
 		return err
@@ -179,6 +201,9 @@ func (s *Service) validateBudgetLimit(q common.ProjectQuota) error {
 		}
 		if val < 0 && val != common.UnlimitedQuota {
 			return fmt.Errorf("limit for %q must be >= 0 or %d for unlimited (got %d)", key, common.UnlimitedQuota, val)
+		}
+		if val > common.MaxQuotaValue {
+			return fmt.Errorf("limit for %q must not exceed %d (got %d)", key, common.MaxQuotaValue, val)
 		}
 	}
 	return nil

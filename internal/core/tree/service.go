@@ -38,6 +38,8 @@ type Service struct {
 	requestTimeout  time.Duration
 	// maxAuthorizedUsers bounds how many participants one node may list.
 	maxAuthorizedUsers int
+	// maxProjectsPerOwner bounds the live projects one person may request under one budget (see checkProjectsPerOwner); 0 or less is no bound.
+	maxProjectsPerOwner int
 
 	// accounting decides what a budget is billed for. Both switches only ever
 	// make the books stricter when on; off is the older, more permissive
@@ -115,15 +117,16 @@ func NewService(store nodestore.Store, roles roles.Provider, resources []common.
 		maxAuthorizedUsers = common.DefaultMaxAuthorizedUsers
 	}
 	s := &Service{
-		plain:              store,
-		roles:              roles,
-		ownerTokens:        newTokenCache(2 * time.Minute),
-		catalog:            common.StaticCatalog(resources),
-		rootAdminTokens:    common.CanonicalTokens(rootAdminTokens),
-		requestTimeout:     requestTimeout,
-		maxAuthorizedUsers: maxAuthorizedUsers,
-		accounting:         accounting,
-		log:                log,
+		plain:               store,
+		roles:               roles,
+		ownerTokens:         newTokenCache(2 * time.Minute),
+		catalog:             common.StaticCatalog(resources),
+		rootAdminTokens:     common.CanonicalTokens(rootAdminTokens),
+		requestTimeout:      requestTimeout,
+		maxAuthorizedUsers:  maxAuthorizedUsers,
+		maxProjectsPerOwner: common.DefaultMaxProjectsPerOwner,
+		accounting:          accounting,
+		log:                 log,
 	}
 	s.store = signallingStore{Store: store, changed: s.signalChange}
 	return s
@@ -133,6 +136,9 @@ func NewService(store nodestore.Store, roles roles.Provider, resources []common.
 // at runtime: root admins add availabilities, and the AI service adds GPU
 // classes (quantities). A quantity once in the catalogue never leaves it.
 func (s *Service) UseCatalog(c common.ResourceCatalog) { s.catalog = c }
+
+// SetMaxProjectsPerOwner sets how many live projects one person may request under one budget; 0 or less lifts the bound. The default is common.DefaultMaxProjectsPerOwner.
+func (s *Service) SetMaxProjectsPerOwner(n int) { s.maxProjectsPerOwner = n }
 
 // resources is the current catalogue.
 func (s *Service) resources() []common.Resource { return s.catalog.Resources() }

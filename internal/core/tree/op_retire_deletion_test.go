@@ -33,7 +33,7 @@ func TestRequestDeletion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := svc.ApproveNode(p.ID, tree.ApproveNodeRequest{}, model.UIActor("root@x"), rootTokens); err != nil {
+		if _, err := svc.ApproveNode(p.ID, tree.ApproveNodeRequest{ExpectedRevision: new(p.CurrentRevision())}, model.UIActor("root@x"), rootTokens); err != nil {
 			t.Fatal(err)
 		}
 		return p

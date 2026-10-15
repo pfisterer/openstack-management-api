@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -162,9 +163,13 @@ func RunApplication() {
 	logger.Infof("Using storage backend: %s", config.Storage.Type)
 
 	// Create role provider based on ROLE_PROVIDER env var ("http" or "mock").
+	roleProviderType, err := resolveRoleProviderType(config.RoleProvider.Type, config.DevMode)
+	if err != nil {
+		logger.Fatalw("Refusing to start", "error", err)
+	}
 	var roleProvider roles.Provider
-	switch strings.ToLower(strings.TrimSpace(config.RoleProvider.Type)) {
-	case "http":
+	switch roleProviderType {
+	case roleProviderHTTP:
 		logger.Infow("Using HttpRoleProvider", "url", config.RoleProvider.URL)
 		rp, err := roleprovider.NewHttpRoleProvider(
 			config.RoleProvider.URL,
@@ -176,16 +181,10 @@ func RunApplication() {
 			logger.Fatalw("Failed to create HttpRoleProvider", zap.Error(err))
 		}
 		roleProvider = rp
-	case "mock", "":
-		// Built-in demo identities — for local/offline dev (pairs with dummy-auth).
-		// NOT for production: it silently grants fake group memberships. Warn so an
-		// accidental selection is visible in the logs (production sets ROLE_PROVIDER=http).
-		logger.Warn("Using MockRoleProvider (built-in demo identities) — do not use in production")
+	case roleProviderMock:
+		// Built-in demo identities — for local/offline dev (pairs with dummy-auth); resolveRoleProviderType refuses it in production.
+		logger.Warn("Using MockRoleProvider (built-in demo identities) — development only")
 		roleProvider = dev.NewMockRoleProvider()
-	default:
-		// Fail loud on a typo (e.g. "htpp") instead of silently falling back to the
-		// mock, which in production would run with wrong authorization data.
-		logger.Fatalw("invalid ROLE_PROVIDER: must be 'http' or 'mock'", "value", config.RoleProvider.Type)
 	}
 
 	requestTimeout := time.Duration(config.ServiceTimeoutSeconds) * time.Second
@@ -227,6 +226,7 @@ func RunApplication() {
 		deleting = append(deleting, aiaas.Provider)
 	}
 	treeSvc.SetDeletingProviders(deleting...)
+	treeSvc.SetMaxProjectsPerOwner(config.MaxProjectsPerOwner)
 
 	// Bootstrap: optional mock seed into an empty store, then ensure the
 	// structural root/unassigned nodes (root admin scope is synced from config).
@@ -290,6 +290,9 @@ func RunApplication() {
 	// which would make cfg.Reconciler != nil even when no reconciler exists.
 	var reconcilerAPI webserver.ReconcilerAPI
 	if config.Reconciler.Enabled {
+		if err := reconciler.ValidateGroupPrefix(config.Reconciler.GroupPrefix); err != nil {
+			logger.Fatalw("Invalid reconciler configuration", "error", err)
+		}
 		if err := reconciler.ValidateReleasedDelete(config.Reconciler.ReleasedDelete); err != nil {
 			logger.Fatalw("Invalid reconciler configuration", "error", err)
 		}
@@ -373,6 +376,7 @@ func RunApplication() {
 			Service: apiTokens,
 			TTL: token.TTLPolicy{
 				Default:    time.Duration(config.WebServer.APITokenTTLHours) * time.Hour,
+				Max:        time.Duration(config.WebServer.APITokenMaxTTLHours) * time.Hour,
 				AllowNever: config.WebServer.APITokenAllowNeverExpires,
 			},
 		},
@@ -382,13 +386,27 @@ func RunApplication() {
 		CORSAllowedOrigins: config.WebServer.CORSAllowedOrigins,
 	})
 
-	// Start the Web server
-	err = router.Run(config.WebServer.GinBindString)
-	if err != nil {
+	// Start the Web server. An http.Server of its own rather than router.Run, which sets no timeouts: a client that sends its headers or body one byte a minute would hold a connection for ever.
+	server := newHTTPServer(config.WebServer.GinBindString, router)
+	logger.Infow("Listening", "address", server.Addr)
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Fatal("Failed to start server", zap.Error(err))
 	}
 
 	logger.Info("Application completed successfully")
+}
+
+// newHTTPServer is the server the API runs in, with timeouts. The write timeout leaves room for the slowest legitimate answer — a usage report over a year, a listing that computes the rollup of a large subtree — and the service's own request deadline (SERVICE_TIMEOUT_SECONDS) ends work long before it.
+func newHTTPServer(addr string, handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      120 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
 }
 
 // activeProviders are the providers besides OpenStack configured here.

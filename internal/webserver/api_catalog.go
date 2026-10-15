@@ -26,8 +26,8 @@ func RegisterCatalogAdminRoutes(v1 *gin.RouterGroup, cfg APIConfig, rootAdminTok
 	}
 }
 
-// catalogError answers err with the status it stands for.
-func catalogError(c *gin.Context, err error) {
+// catalogError answers err with the status it stands for; anything the catalogue does not name is the service's own failure, answered with a generic message and logged.
+func (cfg APIConfig) catalogError(c *gin.Context, err error) {
 	status := http.StatusInternalServerError
 	switch {
 	case errors.Is(err, catalog.ErrNotFound):
@@ -38,6 +38,9 @@ func catalogError(c *gin.Context, err error) {
 		status = http.StatusBadRequest
 	case errors.Is(err, catalog.ErrUnavailable):
 		status = http.StatusServiceUnavailable
+	default:
+		cfg.respondInternal(c, err)
+		return
 	}
 	c.JSON(status, gin.H{"error": err.Error()})
 }
@@ -76,7 +79,7 @@ func listCatalog(cfg APIConfig) gin.HandlerFunc {
 		}
 		out, err := admin.List(c.Request.Context())
 		if err != nil {
-			catalogError(c, err)
+			cfg.catalogError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, out)
@@ -111,7 +114,7 @@ func addCatalogEntry(cfg APIConfig, log *zap.SugaredLogger) gin.HandlerFunc {
 		}
 		e, err := admin.Add(c.Request.Context(), in, actor)
 		if err != nil {
-			catalogError(c, err)
+			cfg.catalogError(c, err)
 			return
 		}
 		log.Infow("Availability added", "resource", e.ID, "grant_type", e.Grant.Type, "target", e.Grant.Target, "actor", actor)
@@ -139,7 +142,7 @@ func getCatalogEntry(cfg APIConfig) gin.HandlerFunc {
 		}
 		st, err := admin.Status(c.Request.Context(), c.Param("id"))
 		if err != nil {
-			catalogError(c, err)
+			cfg.catalogError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, st)
@@ -173,7 +176,7 @@ func updateCatalogEntry(cfg APIConfig) gin.HandlerFunc {
 		}
 		e, err := admin.Update(c.Request.Context(), c.Param("id"), in, actor)
 		if err != nil {
-			catalogError(c, err)
+			cfg.catalogError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, e)
@@ -207,7 +210,7 @@ func withdrawCatalogEntry(cfg APIConfig, log *zap.SugaredLogger) gin.HandlerFunc
 		}
 		e, n, err := admin.Withdraw(c.Request.Context(), c.Param("id"), actor)
 		if err != nil {
-			catalogError(c, err)
+			cfg.catalogError(c, err)
 			return
 		}
 		log.Infow("Availability withdrawn", "resource", e.ID, "nodes_changed", n, "actor", actor)
@@ -236,7 +239,7 @@ func restoreCatalogEntry(cfg APIConfig, log *zap.SugaredLogger) gin.HandlerFunc 
 		}
 		e, err := admin.Restore(c.Request.Context(), c.Param("id"), actor)
 		if err != nil {
-			catalogError(c, err)
+			cfg.catalogError(c, err)
 			return
 		}
 		log.Infow("Availability restored", "resource", e.ID, "actor", actor)
@@ -265,7 +268,7 @@ func removeCatalogEntry(cfg APIConfig, log *zap.SugaredLogger) gin.HandlerFunc {
 		}
 		id := c.Param("id")
 		if err := admin.Remove(c.Request.Context(), id, actor); err != nil {
-			catalogError(c, err)
+			cfg.catalogError(c, err)
 			return
 		}
 		log.Infow("Availability removed", "resource", id, "actor", actor)

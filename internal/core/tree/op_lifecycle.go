@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 )
 
 // ── Reads / views ─────────────────────────────────────────────────────────────
@@ -33,6 +34,12 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 	// name length.
 	if strings.TrimSpace(req.Name) == "" {
 		return model.Node{}, fmt.Errorf("a name is required")
+	}
+	if err := validateName(strings.TrimSpace(req.Name)); err != nil {
+		return model.Node{}, err
+	}
+	if err := validateReason(req.Reason); err != nil {
+		return model.Node{}, err
 	}
 	switch req.Kind {
 	case model.KindProject:
@@ -67,8 +74,9 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 	// Validated before the approval lock: checking the group tokens talks to the
 	// role provider, and that call has no business holding up every other
 	// approval in the process.
+	// Whether the caller manages the parent decides which groups they may add; it is decided again under the lock below, this read only serves the check of the members.
 	validateCtx, cancelValidate := s.newCtx()
-	normalizedAuthorizedUsers, err := s.normalizeAuthorizedUsers(validateCtx, req.AuthorizedUsers)
+	normalizedAuthorizedUsers, err := s.normalizeCreateMembers(validateCtx, req, userTokens)
 	cancelValidate()
 	if err != nil {
 		return model.Node{}, err
@@ -109,6 +117,11 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 	if req.Kind == model.KindProject {
 		if err := s.checkLeafLimit(ctx, model.Node{}, parentChain, req.Limit, nil, false); err != nil {
 			return model.Node{}, err
+		}
+		if !isManager {
+			if err := s.checkProjectsPerOwner(ctx, parent, userEmail); err != nil {
+				return model.Node{}, err
+			}
 		}
 	}
 	// Requesters may be limited to leaves: a course budget usually wants
@@ -205,6 +218,10 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		node.History = append(node.History, approvedEntry)
 
 	case req.Kind == model.KindProject && parent.AutoApprove != nil:
+		// A request for nothing at all is no allocation the policy could be about; granted on the spot, it would still be an OpenStack project with its groups, created on demand without anybody looking. It waits for a manager.
+		if allZero(node.Limit) {
+			break
+		}
 		ok, err := s.autoApprovable(ctx, parent, node.Owner, node.Limit, nil)
 		if err != nil {
 			return model.Node{}, err
@@ -222,6 +239,59 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 	}
 	return node, nil
 }
+
+// normalizeCreateMembers checks the members of a new project for CreateNode, with the parent's managers free to add any group.
+func (s *Service) normalizeCreateMembers(ctx context.Context, req CreateNodeRequest, userTokens common.TokenList) ([]common.AuthorizedUser, error) {
+	if len(req.AuthorizedUsers) == 0 {
+		return s.normalizeAuthorizedUsers(ctx, req.AuthorizedUsers, userTokens, false)
+	}
+	manager := false
+	if parent, err := s.store.GetNode(ctx, req.ParentID); err != nil {
+		return nil, fmt.Errorf("load parent node: %w", err)
+	} else if parent != nil {
+		if manager, err = s.managesNode(ctx, userTokens, parent); err != nil {
+			return nil, err
+		}
+	}
+	return s.normalizeAuthorizedUsers(ctx, req.AuthorizedUsers, userTokens, manager)
+}
+
+// allZero reports whether a limit asks for nothing: every value 0, availabilities included.
+func allZero(q common.ProjectQuota) bool {
+	for _, v := range q {
+		if v != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// checkProjectsPerOwner refuses a request that would give owner more live projects under budget than the configured maximum (see SetMaxProjectsPerOwner). Live are the ones that hold or wait for an OpenStack project: pending, active and released — released ones keep theirs until it is deleted. Rejected and archived ones do not count.
+func (s *Service) checkProjectsPerOwner(ctx context.Context, budget *model.Node, ownerEmail string) error {
+	if s.maxProjectsPerOwner <= 0 {
+		return nil
+	}
+	owner, err := normalizeOwnerToken(ownerEmail)
+	if err != nil {
+		return err
+	}
+	n, err := s.store.CountNodes(ctx, nodestore.NodeQuery{
+		ParentIDs: []string{budget.ID},
+		Kinds:     []string{model.KindProject},
+		Statuses:  liveProjectStatuses,
+		Owner:     owner,
+	})
+	if err != nil {
+		return fmt.Errorf("count projects of the requester: %w", err)
+	}
+	if n >= s.maxProjectsPerOwner {
+		return fmt.Errorf("%w: you already have %d projects in budget %q, at most %d are allowed — release one you no longer need or ask one of its managers", common.ErrForbidden, n, nodeLabel(*budget), s.maxProjectsPerOwner)
+	}
+	return nil
+}
+
+// liveProjectStatuses are the statuses a project counts in against checkProjectsPerOwner.
+var liveProjectStatuses = []string{model.StatusPending, model.StatusApproved, model.StatusChangePending, model.StatusReleased}
 
 // isLeafDirectEdit reports whether req touches nothing but the name and the
 // admin scope — the direct edits a project leaf accepts. Neither costs anything,
@@ -309,6 +379,9 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 	if req.Name != nil {
 		if strings.TrimSpace(*req.Name) == "" {
 			return model.Node{}, fmt.Errorf("a name is required")
+		}
+		if err := validateName(strings.TrimSpace(*req.Name)); err != nil {
+			return model.Node{}, err
 		}
 		updated.Name = strings.TrimSpace(*req.Name)
 	}
@@ -505,12 +578,24 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor model.Ac
 		}
 	}
 
+	if err := validateOptionalReason(req.Reason); err != nil {
+		return model.Node{}, err
+	}
+
 	var normalizedAuthorizedUsers *[]common.AuthorizedUser
 	if req.AuthorizedUsers != nil {
 		if !current.IsLeaf() {
 			return model.Node{}, fmt.Errorf("authorized_users can only be changed on project leaves")
 		}
-		normalized, err := s.normalizeAuthorizedUsers(ctx, *req.AuthorizedUsers)
+		manager, err := s.managesParentChain(ctx, userTokens, current)
+		if err != nil {
+			return model.Node{}, err
+		}
+		keep := [][]common.AuthorizedUser{current.AuthorizedUsers}
+		if current.Pending != nil && current.Pending.AuthorizedUsers != nil {
+			keep = append(keep, *current.Pending.AuthorizedUsers)
+		}
+		normalized, err := s.normalizeAuthorizedUsers(ctx, *req.AuthorizedUsers, userTokens, manager, keep...)
 		if err != nil {
 			return model.Node{}, err
 		}
@@ -688,6 +773,9 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor model.Act
 	} else if !manages {
 		return model.Node{}, common.ErrForbidden
 	}
+	if err := checkRevision(current, req.ExpectedRevision); err != nil {
+		return model.Node{}, err
+	}
 
 	// Resolve the final values: explicit modification > pending proposal > current.
 	finalLimit := current.Limit
@@ -751,16 +839,28 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor model.Act
 		historyEntry.TerminationDateTo = finalTerminationDate
 	}
 
-	updated := *current
-	updated.Status = model.StatusApproved
-	updated.Limit = finalLimit
-	updated.TerminationDate = finalTerminationDate
-	updated.AuthorizedUsers = finalAuthorizedUsers
-	updated.Pending = nil
-	updated.History = append(slices.Clone(current.History), historyEntry)
-
-	if err := s.store.UpsertNode(ctx, updated); err != nil {
-		return model.Node{}, fmt.Errorf("persist node: %w", err)
+	// Written on the node as it is now: a reconciler pass since the read is kept, and a request that changed after all is refused rather than overwritten.
+	var updated model.Node
+	if _, err := s.store.UpdateNode(ctx, id, func(n *model.Node) error {
+		if n.Status != current.Status {
+			return fmt.Errorf("%w: cannot approve node in status %q", common.ErrConflict, n.Status)
+		}
+		if err := checkRevision(n, req.ExpectedRevision); err != nil {
+			return err
+		}
+		n.Status = model.StatusApproved
+		n.Limit = finalLimit
+		n.TerminationDate = finalTerminationDate
+		n.AuthorizedUsers = finalAuthorizedUsers
+		n.Pending = nil
+		n.History = append(slices.Clone(n.History), historyEntry)
+		updated = *n
+		return nil
+	}); err != nil {
+		return model.Node{}, err
+	}
+	if updated.ID == "" {
+		return model.Node{}, fmt.Errorf("node %w", common.ErrNotFound)
 	}
 	if !current.IsLeaf() && finalTerminationDate != nil {
 		if _, err := s.shortenSubtreeEnds(ctx, []string{updated.ID}, *finalTerminationDate, actor, endsWithReason(updated)); err != nil {
@@ -768,6 +868,17 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor model.Act
 		}
 	}
 	return updated, nil
+}
+
+// checkRevision refuses to decide on a node whose revision is not the one the caller saw, and a decision that does not say which one that was.
+func checkRevision(n *model.Node, expected *int) error {
+	if expected == nil {
+		return fmt.Errorf("expected_revision is required: the revision of the request as it was shown")
+	}
+	if got := n.CurrentRevision(); got != *expected {
+		return fmt.Errorf("%w: the request changed since it was shown (revision %d, now %d) — reload it and decide again", common.ErrConflict, *expected, got)
+	}
+	return nil
 }
 
 // sameEnd reports whether two optional end dates are the same.
@@ -782,6 +893,13 @@ func sameEnd(a, b *string) bool {
 // changes of a change_pending node (→ back to approved — the previously approved
 // state stays valid; the old model killed the whole project here).
 func (s *Service) RejectNode(id string, req RejectNodeRequest, actor model.Actor, userTokens common.TokenList) (model.Node, error) {
+	if err := validateOptionalReason(req.Reason); err != nil {
+		return model.Node{}, err
+	}
+	// Serialized with the approvals, so an approval and a rejection of the same request cannot both pass their checks.
+	s.approvalMu.Lock()
+	defer s.approvalMu.Unlock()
+
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
@@ -799,25 +917,32 @@ func (s *Service) RejectNode(id string, req RejectNodeRequest, actor model.Actor
 		return model.Node{}, common.ErrForbidden
 	}
 
-	updated := *current
-	var historyEntry model.HistoryEntry
-	if current.Status == model.StatusPending {
-		historyEntry = model.NewHistoryEntry("rejected", actor, model.StatusRejected)
-		updated.Status = model.StatusRejected
-	} else {
-		historyEntry = model.NewHistoryEntry("change_rejected", actor, model.StatusApproved)
-		updated.Status = model.StatusApproved
+	var updated model.Node
+	if _, err := s.store.UpdateNode(ctx, id, func(n *model.Node) error {
+		if n.Status != current.Status || derefParent(n.ParentID) != derefParent(current.ParentID) {
+			return fmt.Errorf("%w: the node changed meanwhile (status %q); reload", common.ErrConflict, n.Status)
+		}
+		var historyEntry model.HistoryEntry
+		if n.Status == model.StatusPending {
+			historyEntry = model.NewHistoryEntry("rejected", actor, model.StatusRejected)
+			n.Status = model.StatusRejected
+		} else {
+			historyEntry = model.NewHistoryEntry("change_rejected", actor, model.StatusApproved)
+			n.Status = model.StatusApproved
+		}
+		historyEntry.StatusFrom = new(current.Status)
+		if req.Reason != nil && strings.TrimSpace(*req.Reason) != "" {
+			historyEntry.Reason = req.Reason
+		}
+		n.Pending = nil
+		n.History = append(slices.Clone(n.History), historyEntry)
+		updated = *n
+		return nil
+	}); err != nil {
+		return model.Node{}, err
 	}
-	historyEntry.StatusFrom = &current.Status
-	if req.Reason != nil && strings.TrimSpace(*req.Reason) != "" {
-		historyEntry.Reason = req.Reason
-	}
-
-	updated.Pending = nil
-	updated.History = append(slices.Clone(current.History), historyEntry)
-
-	if err := s.store.UpsertNode(ctx, updated); err != nil {
-		return model.Node{}, fmt.Errorf("persist node: %w", err)
+	if updated.ID == "" {
+		return model.Node{}, fmt.Errorf("node %w", common.ErrNotFound)
 	}
 	return updated, nil
 }

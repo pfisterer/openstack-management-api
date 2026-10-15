@@ -36,6 +36,8 @@ type AuthContext struct {
 	UserEmail       string
 	OriginalTokens  common.TokenList
 	EffectiveTokens common.TokenList
+	// ViaAPIToken says the caller authenticated with an API token rather than by signing in.
+	ViaAPIToken bool
 }
 
 // OnBehalf reports whether the request acts on behalf of somebody else.
@@ -60,7 +62,7 @@ func EffectiveAuthMiddleware(svc Effective, mayActAs common.TokenList, log *zap.
 		// Canonical spelling on the way in, so a role provider that hands back
 		// "user:A.B@x" still matches the "user:a.b@x" stored on a node.
 		originalTokens = common.CanonicalTokens(originalTokens)
-		auth := AuthContext{ActorEmail: actorEmail, UserEmail: actorEmail, OriginalTokens: originalTokens, EffectiveTokens: originalTokens}
+		auth := AuthContext{ActorEmail: actorEmail, UserEmail: actorEmail, OriginalTokens: originalTokens, EffectiveTokens: originalTokens, ViaAPIToken: viaAPIToken(c)}
 
 		if header := c.GetHeader(authn.ActAsHeader); header != "" {
 			if viaAPIToken(c) {
@@ -215,7 +217,7 @@ func CombinedAuthMiddleware(oidcVerifier *oidcauth.Verifier, tokenLookup TokenLo
 			// is a property of the OPERATION, and only the REST routes can read
 			// that off the HTTP method (see RejectWritesForReadOnlyTokens).
 			ginweb.SetReadOnly(c, token.ReadOnly)
-			c.Set(viaAPITokenKey, true)
+			MarkViaAPIToken(c)
 
 			// Email, not PreferredUsername. Claims.Identity prefers the e-mail
 			// and the role provider resolves groups by it, so a token filled
@@ -270,6 +272,9 @@ func CombinedAuthMiddleware(oidcVerifier *oidcauth.Verifier, tokenLookup TokenLo
 		c.Next()
 	}
 }
+
+// MarkViaAPIToken records that the request authenticated with an API token, which the API holds against acting on behalf of somebody and issuing further tokens.
+func MarkViaAPIToken(c *gin.Context) { c.Set(viaAPITokenKey, true) }
 
 // SetAuthenticated records an authenticated caller and the tokens resolved for
 // it, as the auth middlewares do; EffectiveAuthMiddleware reads them. For an

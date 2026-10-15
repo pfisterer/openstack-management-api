@@ -36,7 +36,7 @@ func TestProjectAdmins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	if _, err := svc.ApproveNode(project.ID, tree.ApproveNodeRequest{}, model.UIActor("root@x"), rootTokens); err != nil {
+	if _, err := svc.ApproveNode(project.ID, tree.ApproveNodeRequest{ExpectedRevision: new(project.CurrentRevision())}, model.UIActor("root@x"), rootTokens); err != nil {
 		t.Fatalf("approve: %v", err)
 	}
 
@@ -73,13 +73,14 @@ func TestProjectAdmins(t *testing.T) {
 	if _, err := svc.UpdateNode(project.ID, tree.UpdateNodeRequest{Limit: &more}, model.UIActor("co@x"), coTokens); err == nil {
 		t.Error("a limit must not be a direct edit on a project")
 	}
-	if _, err := svc.RequestChange(project.ID, tree.ChangeNodeRequest{Limit: &more}, model.UIActor("co@x"), coTokens); err != nil {
+	changed, err := svc.RequestChange(project.ID, tree.ChangeNodeRequest{Limit: &more}, model.UIActor("co@x"), coTokens)
+	if err != nil {
 		t.Fatalf("admin requests a change: %v", err)
 	}
-	if _, err := svc.ApproveNode(project.ID, tree.ApproveNodeRequest{}, model.UIActor("co@x"), coTokens); !errors.Is(err, common.ErrForbidden) {
+	if _, err := svc.ApproveNode(project.ID, tree.ApproveNodeRequest{ExpectedRevision: new(changed.CurrentRevision())}, model.UIActor("co@x"), coTokens); !errors.Is(err, common.ErrForbidden) {
 		t.Errorf("an admin must not approve the project's own request, got %v", err)
 	}
-	if _, err := svc.ApproveNode(project.ID, tree.ApproveNodeRequest{}, model.UIActor("root@x"), rootTokens); err != nil {
+	if _, err := svc.ApproveNode(project.ID, tree.ApproveNodeRequest{ExpectedRevision: new(changed.CurrentRevision())}, model.UIActor("root@x"), rootTokens); err != nil {
 		t.Fatalf("approve change: %v", err)
 	}
 

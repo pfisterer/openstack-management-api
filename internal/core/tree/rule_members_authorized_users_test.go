@@ -2,6 +2,7 @@ package tree_test
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -35,6 +36,8 @@ func TestAuthorizedUsersAreValidated(t *testing.T) {
 	svc, _ := newSvc(t, common.TokenList{"group:root"})
 	requester := common.TokenList{"user:student@x"}
 	budget := budgetForMembers(t, svc, requester)
+	// The groups the requester belongs to; only those may they add.
+	callerTokens := common.TokenList{"user:student@x", dev.DeptCSFaculty, dev.CourseDozentGroup}
 
 	tooMany := make([]common.AuthorizedUser, 0, common.DefaultMaxAuthorizedUsers+1)
 	for i := 0; i <= common.DefaultMaxAuthorizedUsers; i++ {
@@ -77,6 +80,21 @@ func TestAuthorizedUsersAreValidated(t *testing.T) {
 			wantErr: "unknown group",
 		},
 		{
+			name:    "a group the requester does not belong to is refused",
+			users:   []common.AuthorizedUser{{Token: dev.RootGroup, OpenstackRole: "member"}},
+			wantErr: "only members of group",
+		},
+		{
+			name:    "an address with a display name is refused",
+			users:   []common.AuthorizedUser{{Token: "user:Mallory <victim@x.example>", OpenstackRole: "member"}},
+			wantErr: "not a valid email",
+		},
+		{
+			name:    "an address with a comment is refused",
+			users:   []common.AuthorizedUser{{Token: "user:victim@x.example (mallory)", OpenstackRole: "member"}},
+			wantErr: "not a valid email",
+		},
+		{
 			name:    "a malformed address is refused",
 			users:   []common.AuthorizedUser{{Token: "user:not-an-address", OpenstackRole: "member"}},
 			wantErr: "not a valid email",
@@ -107,7 +125,7 @@ func TestAuthorizedUsersAreValidated(t *testing.T) {
 				Reason:          "lab work",
 				Limit:           cores(1),
 				AuthorizedUsers: tc.users,
-			}, model.UIActor("student@x"), "student@x", requester)
+			}, model.UIActor("student@x"), "student@x", callerTokens)
 
 			if tc.wantErr == "" {
 				if err != nil {
@@ -129,5 +147,38 @@ func TestAuthorizedUsersAreValidated(t *testing.T) {
 				t.Errorf("expected an error containing %q, got %v", tc.wantErr, err)
 			}
 		})
+	}
+}
+
+// A group grants its members access, so a requester adds only groups they belong to; the managers above the project may add any, and an owner editing the list keeps what a manager put there.
+func TestAuthorizedUsers_GroupsNeedMembershipOrAManager(t *testing.T) {
+	svc, _ := newSvc(t, common.TokenList{"group:root"})
+	requester := common.TokenList{"user:student@x"}
+	budget := budgetForMembers(t, svc, requester)
+	rootGroup := []common.AuthorizedUser{{Token: dev.RootGroup, OpenstackRole: "member"}}
+
+	if _, err := svc.CreateNode(tree.CreateNodeRequest{
+		ParentID: budget.ID, Kind: model.KindProject, Name: "p", Reason: "r", Limit: cores(1), AuthorizedUsers: rootGroup,
+	}, model.UIActor("student@x"), "student@x", requester); err == nil || !strings.Contains(err.Error(), "only members of group") {
+		t.Fatalf("a student put the root admins' group into a project: %v", err)
+	}
+
+	project, err := svc.CreateNode(tree.CreateNodeRequest{
+		ParentID: budget.ID, Kind: model.KindProject, Name: "p", Reason: "r", Limit: cores(1),
+	}, model.UIActor("student@x"), "student@x", requester)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := svc.RequestChange(project.ID, tree.ChangeNodeRequest{AuthorizedUsers: &rootGroup}, model.UIActor("student@x"), requester); err == nil || !strings.Contains(err.Error(), "only members of group") {
+		t.Fatalf("a student added the root admins' group by a change: %v", err)
+	}
+
+	// A manager of the budget may; the owner then edits the list and keeps the group.
+	if _, err := svc.RequestChange(project.ID, tree.ChangeNodeRequest{AuthorizedUsers: &rootGroup}, model.UIActor("root@x"), common.TokenList{"user:root@x", "group:root"}); err != nil {
+		t.Fatalf("a manager adds a group: %v", err)
+	}
+	both := append(slices.Clone(rootGroup), common.AuthorizedUser{Token: "user:friend@x.example", OpenstackRole: "member"})
+	if _, err := svc.RequestChange(project.ID, tree.ChangeNodeRequest{AuthorizedUsers: &both}, model.UIActor("student@x"), requester); err != nil {
+		t.Fatalf("the owner edits a list a manager extended: %v", err)
 	}
 }

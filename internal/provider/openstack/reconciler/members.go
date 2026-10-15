@@ -3,9 +3,11 @@ package reconciler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 
+	"github.com/gophercloud/gophercloud/openstack/identity/v3/groups"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 
@@ -170,6 +172,22 @@ func isRelationName(s string) bool {
 	return true
 }
 
+// managedGroupDescription is the description every Keystone group this service creates carries, and what tells it apart from a foreign group of the same name.
+const managedGroupDescription = "Managed by openstack-management-api"
+
+// isManagedGroup reports whether a Keystone group is one this service created and may therefore manage.
+func isManagedGroup(g *groups.Group) bool {
+	return g != nil && g.Description == managedGroupDescription
+}
+
+// ValidateGroupPrefix refuses an empty RECONCILER_GROUP_PREFIX at startup. The prefix is what keeps the groups this service creates apart from everyone else's; without it "group:admins" would be the Keystone group "admins".
+func ValidateGroupPrefix(prefix string) error {
+	if strings.TrimSpace(prefix) == "" {
+		return fmt.Errorf("RECONCILER_GROUP_PREFIX must not be empty: it keeps the Keystone groups of this service apart from all others")
+	}
+	return nil
+}
+
 // collectGroupTokens returns the set of unique group: tokens referenced by any
 // AuthorizedUsers entry across the given leaves.
 func collectGroupTokens(leaves []model.Node) map[string]struct{} {
@@ -210,6 +228,11 @@ func (r *Reconciler) syncGroups(ctx context.Context, activeLeaves []model.Node, 
 
 		var groupID string
 		if existing != nil {
+			// A group of that name that this service did not create is somebody else's: syncing it would replace its members with those of the role-provider group and grant it roles on our projects. The prefix alone does not make it ours — an operator may have used the same name.
+			if !isManagedGroup(existing) {
+				r.log.Warnw("Keystone group of that name is not managed by this service, leaving it alone", "group", osGroupName, "group_id", existing.ID, "description", existing.Description)
+				continue
+			}
 			groupID = existing.ID
 		} else {
 			r.log.Infow("Creating OS group", "group", osGroupName, "dry_run", r.cfg.DryRun)
@@ -217,7 +240,7 @@ func (r *Reconciler) syncGroups(ctx context.Context, activeLeaves []model.Node, 
 				res.groupsCreated++
 				continue
 			}
-			created, err := r.osClient.CreateGroup(osGroupName, "Managed by openstack-management-api")
+			created, err := r.osClient.CreateGroup(osGroupName, managedGroupDescription)
 			if err != nil {
 				r.log.Warnw("Failed to create OS group", "group", osGroupName, "error", err)
 				continue

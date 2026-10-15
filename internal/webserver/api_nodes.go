@@ -34,7 +34,7 @@ func getNode(cfg APIConfig) gin.HandlerFunc {
 		}
 		node, err := svc.GetNode(c.Param("id"), auth.EffectiveTokens)
 		if err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		if node == nil {
@@ -107,7 +107,7 @@ func listNodeChildren(cfg APIConfig) gin.HandlerFunc {
 		}
 		children, err := svc.ListChildren(c.Param("id"), filter, auth.EffectiveTokens, limit, offset)
 		if err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, children)
@@ -142,7 +142,7 @@ func listMyNodes(cfg APIConfig) gin.HandlerFunc {
 		}
 		nodes, err := svc.ListMine(auth.UserEmail, auth.EffectiveTokens, limit, offset)
 		if err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, nodes)
@@ -183,7 +183,7 @@ func listNodesToManage(cfg APIConfig) gin.HandlerFunc {
 		}
 		nodes, err := svc.ListToManage(auth.EffectiveTokens, scope == "subtree", limit, offset)
 		if err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, nodes)
@@ -218,7 +218,7 @@ func listMyBudgets(cfg APIConfig) gin.HandlerFunc {
 		}
 		nodes, err := svc.ListMyBudgets(auth.EffectiveTokens, limit, offset)
 		if err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, nodes)
@@ -253,7 +253,7 @@ func listEligibleBudgets(cfg APIConfig) gin.HandlerFunc {
 		}
 		nodes, err := svc.ListEligibleForMe(auth.EffectiveTokens, limit, offset)
 		if err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, nodes)
@@ -296,7 +296,7 @@ func listEligibleBudgetsForOwner(cfg APIConfig) gin.HandlerFunc {
 		}
 		nodes, err := svc.ListEligibleForOwner(auth.EffectiveTokens, common.TokenList(ownerTokens), limit, offset)
 		if err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, nodes)
@@ -338,7 +338,7 @@ func searchNodes(cfg APIConfig) gin.HandlerFunc {
 		}
 		page, err := svc.SearchNodes(auth.EffectiveTokens, query, limit, offset)
 		if err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, page)
@@ -377,7 +377,7 @@ func createNode(cfg APIConfig) gin.HandlerFunc {
 		}
 		node, err := svc.CreateNode(req, uiActor(auth), auth.UserEmail, auth.EffectiveTokens)
 		if err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		c.JSON(http.StatusCreated, node)
@@ -417,7 +417,7 @@ func updateNode(cfg APIConfig) gin.HandlerFunc {
 		}
 		node, err := svc.UpdateNode(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
 		if err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, node)
@@ -457,7 +457,7 @@ func requestNodeChange(cfg APIConfig) gin.HandlerFunc {
 		}
 		node, err := svc.RequestChange(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
 		if err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, node)
@@ -467,26 +467,30 @@ func requestNodeChange(cfg APIConfig) gin.HandlerFunc {
 // approveNode approves a pending node or the pending changes of a node.
 //
 //	@Summary		Approve node
-//	@Description	Approves a pending or change_pending node (budget or leaf). Only managers of the PARENT chain may approve. modified_limit lets the approver grant a different limit than requested.
+//	@Description	Approves a pending or change_pending node (budget or leaf). Only managers of the PARENT chain may approve. modified_limit lets the approver grant a different limit than requested. expected_revision is the node's revision as the approver saw it; if the request changed since (amended, replaced, shortened), the approval is refused with 409 and the request has to be reloaded and decided again.
 //	@Tags			nodes
 //	@Accept			json
 //	@Produce		json
 //	@Security		Bearer
 //	@Param			id		path		string					true	"Node ID"
-//	@Param			request	body		tree.ApproveNodeRequest	false	"Approval data"
+//	@Param			request	body		tree.ApproveNodeRequest	true	"Approval data"
 //	@Success		200		{object}	model.Node	"Approved node."
-//	@Failure		400		{object}	map[string]any	"Bad request or insufficient capacity."
+//	@Failure		400		{object}	map[string]any	"Bad request (expected_revision missing) or insufficient capacity."
 //	@Failure		401		{object}	map[string]any	"Unauthorized."
 //	@Failure		403		{object}	map[string]any	"Forbidden."
 //	@Failure		404		{object}	map[string]any	"Not found."
-//	@Failure		409		{object}	map[string]any	"Conflict: the node changed status; reload."
+//	@Failure		409		{object}	map[string]any	"Conflict: the node changed status, or the request changed since expected_revision; reload."
+//	@Failure		500		{object}	map[string]any	"Internal server error."
 //	@ID				approveNode
 //	@Router			/v1/nodes/{id}/approve [post]
 func approveNode(cfg APIConfig) gin.HandlerFunc {
 	svc := cfg.Service
 	return func(c *gin.Context) {
 		var req tree.ApproveNodeRequest
-		_ = c.ShouldBindJSON(&req)
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "expected_revision is required: the revision of the request as it was shown"})
+			return
+		}
 		auth, err := mustGetAuthContext(c)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
@@ -494,7 +498,7 @@ func approveNode(cfg APIConfig) gin.HandlerFunc {
 		}
 		node, err := svc.ApproveNode(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
 		if err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, node)
@@ -531,7 +535,7 @@ func rejectNode(cfg APIConfig) gin.HandlerFunc {
 		}
 		node, err := svc.RejectNode(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
 		if err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, node)
@@ -573,7 +577,7 @@ func releaseNode(cfg APIConfig) gin.HandlerFunc {
 		}
 		node, err := svc.ReleaseNode(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
 		if err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, node)
@@ -604,7 +608,7 @@ func requestNodeDeletion(cfg APIConfig) gin.HandlerFunc {
 		}
 		node, err := svc.RequestDeletion(c.Param("id"), uiActor(auth), auth.EffectiveTokens)
 		if err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, node)
@@ -644,7 +648,7 @@ func reparentNode(cfg APIConfig) gin.HandlerFunc {
 		}
 		node, err := svc.ReparentNode(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
 		if err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, node)
@@ -684,7 +688,7 @@ func transferNodeOwner(cfg APIConfig) gin.HandlerFunc {
 		}
 		node, err := svc.TransferOwner(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
 		if err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, node)
@@ -723,7 +727,7 @@ func setNodeAttributes(cfg APIConfig) gin.HandlerFunc {
 		}
 		node, err := svc.SetAttributes(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
 		if err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, node)
@@ -756,7 +760,7 @@ func removeNodeExternalGroup(cfg APIConfig) gin.HandlerFunc {
 		}
 		node, err := svc.RemoveExternalGroup(c.Param("id"), c.Param("groupId"), uiActor(auth), auth.EffectiveTokens)
 		if err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, node)
@@ -797,7 +801,7 @@ func setNodeAllocation(cfg APIConfig) gin.HandlerFunc {
 		}
 		node, err := svc.SetAllocation(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
 		if err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, node)
@@ -829,7 +833,7 @@ func listAllocationSources(cfg APIConfig) gin.HandlerFunc {
 		}
 		nodes, err := svc.AllocationSources(c.Param("id"), auth.EffectiveTokens)
 		if err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, nodes)
@@ -868,7 +872,7 @@ func promoteNode(cfg APIConfig) gin.HandlerFunc {
 		}
 		node, err := svc.PromoteNode(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
 		if err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		c.JSON(http.StatusOK, node)
@@ -898,7 +902,7 @@ func deleteNode(cfg APIConfig) gin.HandlerFunc {
 			return
 		}
 		if err := svc.DeleteNode(c.Param("id"), uiActor(auth), auth.EffectiveTokens); err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		c.Status(http.StatusNoContent)

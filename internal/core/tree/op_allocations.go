@@ -42,6 +42,9 @@ func (s *Service) SetAllocation(id string, req AllocationRequest, actor model.Ac
 	if err := s.validateLeafLimit(limit); err != nil {
 		return model.Node{}, err
 	}
+	if err := validateReason(req.Reason); err != nil {
+		return model.Node{}, err
+	}
 
 	s.approvalMu.Lock()
 	defer s.approvalMu.Unlock()

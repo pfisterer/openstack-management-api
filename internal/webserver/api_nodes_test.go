@@ -249,7 +249,7 @@ func TestLifecycle_Guards(t *testing.T) {
 	// this apart from "your input is wrong" and reload instead.
 
 	// Approving an already-approved node is rejected.
-	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_001/approve", userCSAdmin, tree.ApproveNodeRequest{}), http.StatusConflict)
+	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_001/approve", userCSAdmin, approval(t, h, "p_001", nil)), http.StatusConflict)
 	// Releasing a pending node is rejected.
 	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/release", userFaculty, nil), http.StatusConflict)
 	// Releasing a budget stays a 400: no status makes a budget releasable, so
@@ -258,7 +258,7 @@ func TestLifecycle_Guards(t *testing.T) {
 
 	// Rejecting a pending leaf is terminal; nothing can revive it.
 	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/reject", userFaculty, nil), http.StatusOK)
-	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/approve", userFaculty, tree.ApproveNodeRequest{}), http.StatusConflict)
+	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/approve", userFaculty, approval(t, h, "p_002", nil)), http.StatusConflict)
 	limit := cores(1)
 	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/request-change", userStudent, tree.ChangeNodeRequest{Limit: &limit}), http.StatusConflict)
 }
@@ -270,7 +270,7 @@ func TestLifecycle_ImportedIsReadOnly(t *testing.T) {
 	// These two have no dedicated "imported" check and fall through to the
 	// status guard, which now answers 409 (the imported status is what blocks
 	// them). The explicit checks above stay 403.
-	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_imported_001/approve", userRoot, tree.ApproveNodeRequest{}), http.StatusConflict)
+	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_imported_001/approve", userRoot, approval(t, h, "p_imported_001", nil)), http.StatusConflict)
 	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_imported_001/release", userRoot, nil), http.StatusConflict)
 	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_imported_001/reparent", userRoot, tree.ReparentNodeRequest{NewParentID: "b_dept_cs"}), http.StatusForbidden)
 	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_imported_001/transfer-owner", userRoot, tree.TransferOwnerRequest{NewOwner: userFaculty}), http.StatusForbidden)
@@ -296,7 +296,7 @@ func TestValidation_LeafLimits(t *testing.T) {
 
 	// Approve with a negative modified limit is rejected.
 	neg := common.ProjectQuota{"cores": -5}
-	rr = do(t, h, http.MethodPost, "/v1/nodes/p_002/approve", userFaculty, tree.ApproveNodeRequest{ModifiedLimit: &neg})
+	rr = do(t, h, http.MethodPost, "/v1/nodes/p_002/approve", userFaculty, approval(t, h, "p_002", &neg))
 	assertStatus(t, rr, http.StatusBadRequest)
 }
 
@@ -474,7 +474,7 @@ func TestApprove_ForeignAdminCannotAdoptPendingRequest(t *testing.T) {
 	h := setupRouter(t)
 	// p_002 is pending under b_cs_faculty. The bio admin manages a different
 	// branch and must not be able to approve (or reject) it, even knowing the ID.
-	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/approve", userBio, tree.ApproveNodeRequest{}), http.StatusForbidden)
+	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/approve", userBio, approval(t, h, "p_002", nil)), http.StatusForbidden)
 	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/reject", userBio, nil), http.StatusForbidden)
 	// Moving it into their own branch also fails: they do not manage the CURRENT parent chain.
 	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/reparent", userBio, tree.ReparentNodeRequest{NewParentID: "b_dept_bio"}), http.StatusForbidden)
@@ -486,7 +486,7 @@ func TestApprove_RootActsViaAncestorRule(t *testing.T) {
 	h := setupRouter(t)
 	// Root approves the pending student leaf deep in the CS branch — no special
 	// bypass, just the admin scope of the root node.
-	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/approve", userRoot, tree.ApproveNodeRequest{}), http.StatusOK)
+	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/approve", userRoot, approval(t, h, "p_002", nil)), http.StatusOK)
 	// And decides the pending BUDGET request directly under the university root.
-	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/b_cs_expansion/approve", userRoot, tree.ApproveNodeRequest{}), http.StatusOK)
+	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/b_cs_expansion/approve", userRoot, approval(t, h, "b_cs_expansion", nil)), http.StatusOK)
 }

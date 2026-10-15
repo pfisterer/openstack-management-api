@@ -102,7 +102,7 @@ func RegisterTokenRoutes(v1 *gin.RouterGroup, cfg TokenConfig, log *zap.SugaredL
 	}
 }
 
-// tokenSubject is the identity a token belongs to: the person the request acts as, like everything else in this API. An admin acting on somebody's behalf (X-Act-As) lists, issues and revokes THAT person's tokens — managing them for a ticket is one of the reasons to act on someone's behalf. Issuing one is logged with the admin.
+// tokenSubject is the identity a token belongs to: the person the request acts as, like everything else in this API. An admin acting on somebody's behalf (X-Act-As) lists and revokes THAT person's tokens — cleaning them up for a ticket is one of the reasons to act on someone's behalf. Issuing one is not: see createToken.
 func tokenSubject(c *gin.Context) (string, bool) {
 	auth, err := mustGetAuthContext(c)
 	if err != nil || auth.UserEmail == "" {
@@ -153,6 +153,7 @@ func listTokens(cfg TokenConfig, log *zap.SugaredLogger) gin.HandlerFunc {
 // @Param request body CreateTokenRequest true "Token options"
 // @Success 201 {object} Token
 // @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string "Acting on behalf of someone else, or authenticated with an API token."
 // @Failure 500 {object} map[string]string
 // @Security ApiKeyAuth
 // @ID createToken
@@ -161,6 +162,21 @@ func createToken(cfg TokenConfig, log *zap.SugaredLogger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		subject, ok := tokenSubject(c)
 		if !ok {
+			return
+		}
+		auth, err := mustGetAuthContext(c)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
+			return
+		}
+		// A token issued while acting on behalf would hand the admin a credential that IS the person, outliving the session and the act-as rule that allowed it; and the person would find a token they never made.
+		if auth.OnBehalf() {
+			c.JSON(http.StatusForbidden, gin.H{"error": "API tokens cannot be created while acting on behalf of someone else; the person has to create their own"})
+			return
+		}
+		// A token that mints tokens would let a leaked one renew itself forever, past every expiry.
+		if auth.ViaAPIToken {
+			c.JSON(http.StatusForbidden, gin.H{"error": "API tokens can only be created after signing in, not with another API token"})
 			return
 		}
 

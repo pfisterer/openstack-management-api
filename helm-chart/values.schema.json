@@ -200,6 +200,10 @@
               "type": "integer",
               "minimum": 1
             },
+            "tokenMaxTTLHours": {
+              "type": "integer",
+              "minimum": 0
+            },
             "tokenAllowNeverExpires": {
               "type": "boolean"
             },
@@ -216,6 +220,10 @@
             "maxAuthorizedUsers": {
               "type": "integer",
               "minimum": 1
+            },
+            "maxProjectsPerOwner": {
+              "type": "integer",
+              "minimum": 0
             },
             "resourceDefinitions": {
               "type": "array",

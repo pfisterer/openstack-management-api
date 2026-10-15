@@ -1,6 +1,8 @@
 package reconciler
 
 import (
+	"math"
+
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 )
@@ -58,8 +60,7 @@ func StaticProjectQuotaDefaults(resources []osclient.ManagedResource) osclient.Q
 		if !ok {
 			continue
 		}
-		converted := res.Default * multiplierOf(res)
-		fa.set(&qs, converted)
+		fa.set(&qs, toOSQuota(res.Default, multiplierOf(res)))
 	}
 	return qs
 }
@@ -72,6 +73,22 @@ func mergeStaticIntoQuotaSet(dst *osclient.QuotaSet, src osclient.QuotaSet) {
 			fa.set(dst, v)
 		}
 	}
+}
+
+// maxOSQuota is the largest quota value OpenStack stores: Nova and Cinder keep quotas in 32-bit integer columns, and a larger value is refused or wraps there.
+const maxOSQuota = math.MaxInt32
+
+// toOSQuota converts a domain value into OpenStack's unit: value × multiplier, clamped to what an OpenStack quota field holds. The clamp comes before the multiplication — a value that fits on its own may not once multiplied (RAM in GB × 1024), and an overflowing product would wrap negative, which OpenStack reads as unlimited. UnlimitedQuota stays -1; any other negative value, which the tree never stores, becomes 0 rather than unlimited.
+func toOSQuota(value, multiplier int) int {
+	switch {
+	case value == common.UnlimitedQuota:
+		return common.UnlimitedQuota
+	case value <= 0 || multiplier <= 0:
+		return 0
+	case value > maxOSQuota/multiplier:
+		return maxOSQuota
+	}
+	return value * multiplier
 }
 
 // ProjectQuotaToQuotaSet translates a ProjectQuota (domain model) into an OpenStack
@@ -93,7 +110,7 @@ func ProjectQuotaToQuotaSet(resources []osclient.ManagedResource, rq common.Proj
 		if !ok {
 			continue
 		}
-		converted := rq[res.ID] * multiplierOf(res)
+		converted := toOSQuota(rq[res.ID], multiplierOf(res))
 		fa.set(&qs, converted)
 
 		if res.OSLinkedField != "" {

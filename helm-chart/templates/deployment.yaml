@@ -147,6 +147,8 @@ spec:
               value: {{ .Values.openstackManagementApi.api.baseUrl | quote }}
             - name: API_TOKEN_TTL_HOURS
               value: {{ .Values.openstackManagementApi.api.tokenTTLHours | toString | quote }}
+            - name: API_TOKEN_MAX_TTL_HOURS
+              value: {{ .Values.openstackManagementApi.api.tokenMaxTTLHours | toString | quote }}
             - name: API_TOKEN_ALLOW_NEVER_EXPIRES
               value: {{ .Values.openstackManagementApi.api.tokenAllowNeverExpires | toString | quote }}
             - name: API_DUMMY_AUTH
@@ -158,6 +160,8 @@ spec:
             # request can trigger; a whole course goes in as ONE group token.
             - name: API_MAX_AUTHORIZED_USERS
               value: {{ .Values.openstackManagementApi.api.maxAuthorizedUsers | default 32 | toString | quote }}
+            - name: API_MAX_PROJECTS_PER_OWNER
+              value: {{ .Values.openstackManagementApi.api.maxProjectsPerOwner | toString | quote }}
             {{- /* Explicit rather than `| default true`: that helper treats
                    false as empty and would silently flip an intentional
                    opt-out back on. */}}
@@ -281,7 +285,7 @@ spec:
               value: {{ .Values.openstackManagementApi.serviceTimeoutSeconds | toString | quote }}
 
             # ── Role Provider (group/token resolution + group search) ────────
-            # "mock" = built-in demo identities; "http" = role-provider-service
+            # "http" = role-provider-service; "mock" = built-in demo identities (development only)
             # (real transitive group tokens + group search). For http, set
             # roleProvider.url and provide `role-provider-api-token` in the Secret.
             - name: ROLE_PROVIDER

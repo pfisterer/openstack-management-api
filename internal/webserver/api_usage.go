@@ -83,7 +83,7 @@ func getNodeUsage(cfg APIConfig) gin.HandlerFunc {
 		}
 		node, err := cfg.Service.UsageScope(c.Param("id"), auth.EffectiveTokens)
 		if err != nil {
-			c.JSON(errorToStatus(err), gin.H{"error": err.Error()})
+			cfg.respondError(c, err)
 			return
 		}
 		var rows []usage.Day
@@ -95,7 +95,7 @@ func getNodeUsage(cfg APIConfig) gin.HandlerFunc {
 				rows, err = cfg.Usage.Days(c.Request.Context(), []string{node.ID}, from, end)
 			}
 			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				cfg.respondInternal(c, err)
 				return
 			}
 		}
@@ -104,7 +104,7 @@ func getNodeUsage(cfg APIConfig) gin.HandlerFunc {
 		// attributes the caller cannot see.
 		visible, err := cfg.Service.AttributesVisible(node, auth.EffectiveTokens)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			cfg.respondInternal(c, err)
 			return
 		}
 		if !visible {
@@ -147,7 +147,7 @@ func getUsageReport(cfg APIConfig) gin.HandlerFunc {
 		var rows []usage.Day
 		if cfg.Usage != nil {
 			if rows, err = cfg.Usage.Days(c.Request.Context(), nil, from, to.AddDate(0, 0, 1)); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				cfg.respondInternal(c, err)
 				return
 			}
 		}

@@ -1,6 +1,7 @@
 package tree
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -71,6 +72,8 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor model.A
 				if err := s.checkBudgetLimit(ctx, *current, newParentChain, current.Limit, false); err != nil {
 					return model.Node{}, err
 				}
+			} else if err := s.checkInheritingMove(ctx, *current, newParent.ID, newParentChain); err != nil {
+				return model.Node{}, err
 			}
 			subtreeUsage, err := s.loadSubtreeUsage(ctx, []model.Node{*current})
 			if err != nil {
@@ -134,9 +137,45 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor model.A
 	return updated, nil
 }
 
+// checkInheritingMove checks a move of a budget that inherits its limit: the budgets below it that have a limit of their own were held to the limit that applied there, and after the move a different one applies — the new parent's, or the one it inherits. Each of them must fit it, as if it were created there. Budgets below that inherit as well pass the check on to their own children.
+func (s *Service) checkInheritingMove(ctx context.Context, moved model.Node, newParentID string, newParentChain []model.Node) error {
+	moved.ParentID = &newParentID
+	type level struct {
+		node  model.Node
+		chain []model.Node // nearest first, ending in the new parent's chain
+	}
+	queue := []level{{moved, append([]model.Node{moved}, newParentChain...)}}
+	for len(queue) > 0 {
+		next := queue[0]
+		queue = queue[1:]
+		children, err := s.store.ListNodes(ctx, nodestore.NodeQuery{ParentIDs: []string{next.node.ID}, Kinds: []string{model.KindBudget}}, 0, 0)
+		if err != nil {
+			return fmt.Errorf("load budgets below %q: %w", nodeLabel(next.node), err)
+		}
+		for _, child := range children {
+			// A request is held to the limit that applies when it is decided.
+			if !slices.Contains(model.ActiveStatuses, child.Status) {
+				continue
+			}
+			if child.InheritsLimit {
+				queue = append(queue, level{child, append([]model.Node{child}, next.chain...)})
+				continue
+			}
+			if err := s.checkBudgetLimit(ctx, child, next.chain, child.Limit, false); err != nil {
+				return fmt.Errorf("budget %q below does not fit there: %w", nodeLabel(child), err)
+			}
+		}
+	}
+	return nil
+}
+
 // TransferOwner hands a leaf to a new responsible person. Only managers of the
 // parent chain may transfer (e.g. when the current owner leaves the organization).
 func (s *Service) TransferOwner(id string, req TransferOwnerRequest, actor model.Actor, userTokens common.TokenList) (model.Node, error) {
+	// Serialized with the approvals: who owns a project decides whose share it counts against.
+	s.approvalMu.Lock()
+	defer s.approvalMu.Unlock()
+
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
@@ -158,22 +197,41 @@ func (s *Service) TransferOwner(id string, req TransferOwnerRequest, actor model
 	if err != nil {
 		return model.Node{}, err
 	}
-	if newOwner == current.Owner {
-		return model.Node{}, fmt.Errorf("%w: node is already owned by %s", common.ErrConflict, newOwner)
+
+	// Written on the node as it is now, not on the copy the checks read: a reconciler pass in between must not be undone. What was checked is checked again on that state.
+	var updated model.Node
+	if _, err := s.store.UpdateNode(ctx, id, func(n *model.Node) error {
+		if n.Status == model.StatusImported || model.IsTerminalStatus(n.Status) {
+			return fmt.Errorf("%w: a node in status %q cannot be changed", common.ErrConflict, n.Status)
+		}
+		if derefParent(n.ParentID) != derefParent(current.ParentID) {
+			return fmt.Errorf("%w: the project was moved meanwhile; reload", common.ErrConflict)
+		}
+		if newOwner == n.Owner {
+			return fmt.Errorf("%w: node is already owned by %s", common.ErrConflict, newOwner)
+		}
+		historyEntry := model.NewHistoryEntry("owner_transferred", actor, n.Status)
+		historyEntry.OwnerFrom = new(n.Owner)
+		historyEntry.OwnerTo = &newOwner
+		n.Owner = newOwner
+		n.History = append(slices.Clone(n.History), historyEntry)
+		updated = *n
+		return nil
+	}); err != nil {
+		return model.Node{}, err
 	}
-
-	historyEntry := model.NewHistoryEntry("owner_transferred", actor, current.Status)
-	historyEntry.OwnerFrom = &current.Owner
-	historyEntry.OwnerTo = &newOwner
-
-	updated := *current
-	updated.Owner = newOwner
-	updated.History = append(slices.Clone(current.History), historyEntry)
-
-	if err := s.store.UpsertNode(ctx, updated); err != nil {
-		return model.Node{}, fmt.Errorf("persist node: %w", err)
+	if updated.ID == "" {
+		return model.Node{}, fmt.Errorf("node %w", common.ErrNotFound)
 	}
 	return updated, nil
+}
+
+// derefParent is a parent id for comparison, "" for none.
+func derefParent(id *string) string {
+	if id == nil {
+		return ""
+	}
+	return *id
 }
 
 // PromoteNode converts an imported leaf into a managed request: it is reparented
@@ -221,7 +279,11 @@ func (s *Service) PromoteNode(id string, req PromoteNodeRequest, actor model.Act
 		return model.Node{}, err
 	}
 
-	normalizedAuthorizedUsers, err := s.normalizeAuthorizedUsers(ctx, req.AuthorizedUsers)
+	if err := validateReason(req.Reason); err != nil {
+		return model.Node{}, err
+	}
+	// loadTarget made sure the caller manages both the chain the node leaves and the budget it goes to.
+	normalizedAuthorizedUsers, err := s.normalizeAuthorizedUsers(ctx, req.AuthorizedUsers, userTokens, true)
 	if err != nil {
 		return model.Node{}, err
 	}

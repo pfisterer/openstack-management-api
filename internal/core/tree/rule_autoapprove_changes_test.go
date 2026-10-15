@@ -54,7 +54,7 @@ func (f changeFixture) approved(t *testing.T, n int, end *string) model.Node {
 	if node.Status == model.StatusApproved {
 		return node
 	}
-	node, err := f.svc.ApproveNode(node.ID, tree.ApproveNodeRequest{}, model.UIActor("root@x"), common.TokenList{"group:root"})
+	node, err := f.svc.ApproveNode(node.ID, tree.ApproveNodeRequest{ExpectedRevision: new(node.CurrentRevision())}, model.UIActor("root@x"), common.TokenList{"group:root"})
 	if err != nil {
 		t.Fatalf("approve: %v", err)
 	}

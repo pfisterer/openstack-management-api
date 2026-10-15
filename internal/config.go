@@ -149,6 +149,8 @@ type WebServerConfig struct {
 	// expiry (every token lists its description and last use, and revoking is
 	// one request).
 	APITokenAllowNeverExpires bool `json:"api_token_allow_never_expires"`
+	// APITokenMaxTTLHours is the longest lifetime a caller may ask for (a year by default); 0 or less is no bound. "Never" is governed by APITokenAllowNeverExpires alone.
+	APITokenMaxTTLHours int `json:"api_token_max_ttl_hours"`
 	// OpenstackDashboardURL is the public address of the OpenStack dashboard
 	// (Horizon), e.g. "https://newstack.dhbw.cloud". Set, the UI links every
 	// project that exists in OpenStack straight to it; empty, it links nothing.
@@ -160,7 +162,7 @@ type WebServerConfig struct {
 
 // RoleProviderConfig selects which RoleProvider implementation to use.
 type RoleProviderConfig struct {
-	// Type is "mock" (default) or "http" (group-auth-service).
+	// Type is "http" (role-provider-service) or "mock" (built-in demo identities, development only). It has no default: a service that silently ran on the demo identities would hand out their group memberships in production.
 	Type string `json:"type"`
 	// URL is the base URL of the group-auth-service, required when Type is "http".
 	URL string `json:"url"`
@@ -192,6 +194,8 @@ type AppConfiguration struct {
 	// per member), so the ceiling bounds what a single request can trigger.
 	// A course or department belongs in as ONE group token, not as N entries.
 	MaxAuthorizedUsers int `json:"max_authorized_users"`
+	// MaxProjectsPerOwner caps the live projects one person may request under one budget (tree.Service.SetMaxProjectsPerOwner); 0 or less is no cap.
+	MaxProjectsPerOwner int `json:"max_projects_per_owner"`
 	// ChargeOSInUse bills a project the LARGER of its declared limit and what
 	// OpenStack reports it actually consumes, in both the auto-approve check
 	// and the budget rollup. Default on: with it off, shrinking a limit after
@@ -281,6 +285,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			CORSAllowedOrigins:        parseCSVEnv(envconf.String("CORS_ALLOWED_ORIGINS", "")),
 			APITokenTTLHours:          envconf.Int("API_TOKEN_TTL_HOURS", 24),
 			APITokenAllowNeverExpires: envconf.Bool("API_TOKEN_ALLOW_NEVER_EXPIRES", false),
+			APITokenMaxTTLHours:       envconf.Int("API_TOKEN_MAX_TTL_HOURS", 365*24),
 			OpenstackDashboardURL:     strings.TrimRight(envconf.String("OPENSTACK_DASHBOARD_URL", ""), "/"),
 		},
 
@@ -309,7 +314,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			UsagePublicNetworks:      envconf.StringSlice("RECONCILER_USAGE_PUBLIC_NETWORKS", nil),
 		},
 		RoleProvider: RoleProviderConfig{
-			Type:     envconf.String("ROLE_PROVIDER", "mock"),
+			Type:     envconf.String("ROLE_PROVIDER", ""),
 			URL:      envconf.String("ROLE_PROVIDER_URL", ""),
 			APIToken: envconf.String("ROLE_PROVIDER_API_TOKEN", ""),
 		},
@@ -325,6 +330,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 		},
 		ServiceTimeoutSeconds: envconf.Int("SERVICE_TIMEOUT_SECONDS", 30),
 		MaxAuthorizedUsers:    envconf.Int("API_MAX_AUTHORIZED_USERS", common.DefaultMaxAuthorizedUsers),
+		MaxProjectsPerOwner:   envconf.Int("API_MAX_PROJECTS_PER_OWNER", common.DefaultMaxProjectsPerOwner),
 		ChargeOSInUse:         envconf.Bool("API_CHARGE_OS_IN_USE", true),
 		ChargeReleased:        envconf.Bool("API_CHARGE_RELEASED", true),
 		ChargeArchived:        envconf.Bool("API_CHARGE_ARCHIVED", false),
@@ -517,6 +523,29 @@ func parseCSVEnv(raw string) []string {
 		}
 	}
 	return out
+}
+
+// Role provider types (ROLE_PROVIDER).
+const (
+	roleProviderHTTP = "http"
+	roleProviderMock = "mock"
+)
+
+// resolveRoleProviderType checks ROLE_PROVIDER: it must be set, to "http" or "mock", and "mock" — built-in demo identities with made-up group memberships, the root admins' among them — only in development. Refusing to start is the point: falling back to the mock, as an unset value once did, would run production on fake authorization data without anybody noticing.
+func resolveRoleProviderType(raw string, devMode bool) (string, error) {
+	switch t := strings.ToLower(strings.TrimSpace(raw)); t {
+	case roleProviderHTTP:
+		return t, nil
+	case roleProviderMock:
+		if !devMode {
+			return "", fmt.Errorf("ROLE_PROVIDER=mock is not allowed when API_MODE=production — it grants the demo identities' group memberships")
+		}
+		return t, nil
+	case "":
+		return "", fmt.Errorf("ROLE_PROVIDER is not set: use 'http' (role-provider-service), or 'mock' in development")
+	default:
+		return "", fmt.Errorf("invalid ROLE_PROVIDER %q: must be 'http' or 'mock'", raw)
+	}
 }
 
 // retirementConfig tells the UI what releasing a project leads to here.

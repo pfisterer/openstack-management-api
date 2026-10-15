@@ -44,9 +44,18 @@ func normalizeOwnerToken(raw string) (string, error) {
 // let any requester materialize identities for people who never used the system,
 // and a typo left an empty group behind on every run. So a token must name
 // something that exists, and the list has a ceiling.
-func (s *Service) normalizeAuthorizedUsers(ctx context.Context, users []common.AuthorizedUser) ([]common.AuthorizedUser, error) {
+//
+// A group grants everyone in it access to the project, so whoever adds one must belong to it: callerTokens has to hold the group token. Otherwise any requester could put a whole faculty, or the root admins' group, into a project of theirs — and with a budget that auto-approves, nobody would ever look. manager exempts the managers of the budgets above the node (root admins included), who decide over access there anyway. Groups the node already lists (keep) stay allowed, so an owner can edit a list a manager extended.
+func (s *Service) normalizeAuthorizedUsers(ctx context.Context, users []common.AuthorizedUser, callerTokens common.TokenList, manager bool, keep ...[]common.AuthorizedUser) ([]common.AuthorizedUser, error) {
 	if len(users) > s.maxAuthorizedUsers {
 		return nil, fmt.Errorf("at most %d authorized users — use a group token to grant access to a whole course or department", s.maxAuthorizedUsers)
+	}
+	caller := common.NewTokenSet(common.CanonicalTokens(callerTokens))
+	kept := map[string]bool{}
+	for _, list := range keep {
+		for _, u := range list {
+			kept[u.Token] = true
+		}
 	}
 
 	out := make([]common.AuthorizedUser, 0, len(users))
@@ -66,7 +75,8 @@ func (s *Service) normalizeAuthorizedUsers(ctx context.Context, users []common.A
 		switch {
 		case strings.HasPrefix(token, common.UserPrefix):
 			email := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(token, common.UserPrefix)))
-			if _, err := mail.ParseAddress(email); err != nil {
+			// A plain address only: ParseAddress also accepts `Name <a@b>` and `a@b (comment)`, which would be stored and later resolved as a different person than the one displayed.
+			if addr, err := mail.ParseAddress(email); err != nil || addr.Address != email {
 				return nil, fmt.Errorf("invalid authorized_users: entry %d is not a valid email address", i)
 			}
 			token = common.UserPrefix + email
@@ -82,10 +92,13 @@ func (s *Service) normalizeAuthorizedUsers(ctx context.Context, users []common.A
 					// caller's own tokens, so if it is unreachable nothing else
 					// works either — better an honest error than a node whose
 					// members were never checked.
-					return nil, fmt.Errorf("cannot verify group %q right now: %w", token, err)
+					return nil, fmt.Errorf("cannot verify group %q right now: %w: %w", token, common.ErrInternal, err)
 				}
 				if !exists {
 					return nil, fmt.Errorf("invalid authorized_users: entry %d references unknown group %q", i, token)
+				}
+				if !manager && !kept[token] && !caller.Contains(token) {
+					return nil, fmt.Errorf("%w: authorized_users entry %d: only members of group %q may add it", common.ErrForbidden, i, token)
 				}
 				seenGroups[token] = true
 			}

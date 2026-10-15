@@ -26,11 +26,13 @@ openstackManagementApi:
   #------------------------------------
   # Role Provider (group/token resolution + group search)
   #------------------------------------
-  # "mock": built-in demo identities (no external dependency).
   # "http": call role-provider-service for real transitive group tokens and
   #         group search. Set url and apiToken below.
+  # "mock": built-in demo identities (no external dependency) — development
+  #         only; the service refuses to start with it when api.mode is
+  #         production.
   roleProvider:
-    type: "mock"
+    type: "http"
     url: ""
     # Read-only token for the role provider's API — must be one of ITS
     # `api.tokens`. Stored in a Secret. Only used for type=http; the deployment
@@ -58,11 +60,12 @@ openstackManagementApi:
   # Database
   #------------------------------------
   db:
-    # "postgres" or "memory"
-    type: "memory"
+    # "postgres" or "memory" (memory: development only, nothing survives a restart)
+    type: "postgres"
     # Full DSN — stored in a Secret
     connectionString: "host=localhost user=postgres password=postgres dbname=openstack_management_api port=5432 sslmode=disable TimeZone=UTC"
-    addMockData: true
+    # Seed the demo tree into an empty store (development only).
+    addMockData: false
 
   #------------------------------------
   # OpenStack Credentials
@@ -125,10 +128,10 @@ openstackManagementApi:
     bind: ":8083"
     baseUrl: "http://localhost:8083"
     # Lifetime of an API token when the request does not ask for one. A caller
-    # may ask for any other lifetime; there is no upper bound, because a token
-    # without expiry is allowed below and a cap on finite lifetimes would only
-    # push people towards it.
+    # may ask for any other lifetime up to tokenMaxTTLHours.
     tokenTTLHours: 720
+    # The longest finite lifetime a caller may ask for (a year); 0 = no bound. A token without expiry is governed by tokenAllowNeverExpires alone.
+    tokenMaxTTLHours: 8760
     # Whether a token may be issued with no expiry at all. On, because the
     # non-interactive callers this exists for — a CI job, a cron script, an
     # agent — have nobody to notice a silent expiry, and an expiry nobody is
@@ -141,11 +144,13 @@ openstackManagementApi:
     tokenAllowNeverExpires: true
     # Set to true to bypass OIDC (development only)
     dummyAuth: false
-    # "production" or "development"
-    mode: "development"
+    # "production" or "development" (development relaxes CORS and allows the mock role provider and dummyAuth)
+    mode: "production"
     # Maximum number of authorized_users entries per project. A course or
     # department belongs in as one group token, not as N individual entries.
     maxAuthorizedUsers: 32
+    # Maximum number of live projects (pending, active or released) one person may request under one budget; managers creating projects directly are not counted against it. 0 = no cap.
+    maxProjectsPerOwner: 10
     # The managed resources of this deployment. Empty uses the built-in set
     # (cores, ram, storage plus the static network/storage quotas).
     #

@@ -14,7 +14,7 @@ func (s *Service) validateAutoApprove(a *model.AutoApprove) error {
 	if a == nil || a.IsPool() {
 		return nil
 	}
-	return s.validateLeafLimit(a.PerRequesterLimit)
+	return s.validateRequesterLimit(a.PerRequesterLimit)
 }
 
 // autoApprovable reports whether budget's auto-approve policy grants a leaf of
@@ -33,7 +33,8 @@ func (s *Service) autoApprovable(ctx context.Context, budget *model.Node, owner 
 		for _, id := range s.countIDs() {
 			usage[id] -= subtractLimit[id]
 		}
-		if !quotaFits(quotaAdd(usage, addLimit, s.countIDs()), budget.AutoApprove.PerRequesterLimit, s.countIDs()) {
+		need, err := quotaAddChecked(usage, addLimit, s.countIDs())
+		if err != nil || !quotaFits(need, budget.AutoApprove.PerRequesterLimit, s.countIDs()) {
 			return false, nil
 		}
 	}

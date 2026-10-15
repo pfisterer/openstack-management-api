@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"math"
 	"slices"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
@@ -287,14 +288,49 @@ func chargedQuota(leaf model.Node, resourceIDs []string, chargeInUse bool) commo
 	return out
 }
 
-// quotaAdd sums configured resource types from two quota objects.
+// quotaAdd sums configured resource types from two quota objects, for what is shown and rolled up. A sum that would overflow saturates at the largest int instead of wrapping negative: a wrapped total reads as room in a budget that has none. Decisions use quotaAddChecked, which refuses instead.
 func quotaAdd(a, b common.ProjectQuota, resourceIDs []string) common.ProjectQuota {
 	out := make(common.ProjectQuota, len(a)+len(resourceIDs))
 	maps.Copy(out, a)
 	for _, resourceID := range resourceIDs {
-		out[resourceID] = a[resourceID] + b[resourceID]
+		sum, ok := addInts(a[resourceID], b[resourceID])
+		if !ok {
+			sum = saturate(a[resourceID])
+		}
+		out[resourceID] = sum
 	}
 	return out
+}
+
+// quotaAddChecked is quotaAdd for a decision: an overflow is an error, so a capacity or per-requester check can never be passed by a sum that wrapped around.
+func quotaAddChecked(a, b common.ProjectQuota, resourceIDs []string) (common.ProjectQuota, error) {
+	out := make(common.ProjectQuota, len(a)+len(resourceIDs))
+	maps.Copy(out, a)
+	for _, resourceID := range resourceIDs {
+		sum, ok := addInts(a[resourceID], b[resourceID])
+		if !ok {
+			return nil, fmt.Errorf("%q: %d + %d is out of range", resourceID, a[resourceID], b[resourceID])
+		}
+		out[resourceID] = sum
+	}
+	return out, nil
+}
+
+// addInts adds two ints and reports false where the sum overflows.
+func addInts(a, b int) (int, bool) {
+	sum := a + b
+	if (b > 0 && sum < a) || (b < 0 && sum > a) {
+		return 0, false
+	}
+	return sum, true
+}
+
+// saturate is the end of the int range an overflowing sum ran past, by the sign of a summand.
+func saturate(a int) int {
+	if a < 0 {
+		return math.MinInt
+	}
+	return math.MaxInt
 }
 
 // quotaFits checks whether the needed quota stays within the given limits.

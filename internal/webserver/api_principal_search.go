@@ -45,7 +45,7 @@ func searchPrincipals(cfg APIConfig) gin.HandlerFunc {
 
 		groups, users, err := svc.SearchPrincipals(c.Query("q"), limit)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			cfg.respondInternal(c, err)
 			return
 		}
 		if groups == nil {

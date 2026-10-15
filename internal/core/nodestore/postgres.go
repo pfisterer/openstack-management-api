@@ -120,6 +120,8 @@ func mustMarshalPG(v any) []byte {
 func toNodeRow(n model.Node) nodeRow {
 	// Usage is a response-only computed field — never persist it.
 	n.Usage = nil
+	// Every write passes here, so this is where no node's history outgrows its cap.
+	model.CapHistory(&n)
 	return nodeRow{
 		ID:                 n.ID,
 		ParentID:           n.ParentID,

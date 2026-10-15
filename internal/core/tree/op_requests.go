@@ -110,6 +110,8 @@ type ChangeNodeRequest struct {
 // lets the approver grant a different limit than requested.
 type ApproveNodeRequest struct {
 	ModifiedLimit *common.ProjectQuota `json:"modified_limit"`
+	// ExpectedRevision is the node's revision (Node.Revision) as the approver saw it. The approval is refused with a conflict when the request changed since — amended, replaced by another proposal — so nobody approves something they never saw.
+	ExpectedRevision *int `json:"expected_revision" binding:"required"`
 }
 
 // RejectNodeRequest rejects a pending node (→ rejected) or discards the pending

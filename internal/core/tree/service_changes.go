@@ -2,6 +2,8 @@ package tree
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
@@ -35,12 +37,55 @@ type signallingStore struct {
 	changed func()
 }
 
+// internal marks a failure of the store itself as common.ErrInternal: the request was fine, the service was not. Wrapped here, where every store call of the service passes, so no operation can return a database error as if it were a validation message.
+func internal(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w: %w", common.ErrInternal, err)
+}
+
+func (s signallingStore) IsEmpty(ctx context.Context) (bool, error) {
+	empty, err := s.Store.IsEmpty(ctx)
+	return empty, internal(err)
+}
+
+func (s signallingStore) ListIdentities(ctx context.Context) ([]common.Identity, error) {
+	out, err := s.Store.ListIdentities(ctx)
+	return out, internal(err)
+}
+
+func (s signallingStore) ListParticipants(ctx context.Context) ([]string, error) {
+	out, err := s.Store.ListParticipants(ctx)
+	return out, internal(err)
+}
+
+func (s signallingStore) GetNode(ctx context.Context, id string) (*model.Node, error) {
+	n, err := s.Store.GetNode(ctx, id)
+	return n, internal(err)
+}
+
+func (s signallingStore) ListNodes(ctx context.Context, q nodestore.NodeQuery, limit, offset int) ([]model.Node, error) {
+	out, err := s.Store.ListNodes(ctx, q, limit, offset)
+	return out, internal(err)
+}
+
+func (s signallingStore) CountNodes(ctx context.Context, q nodestore.NodeQuery) (int, error) {
+	n, err := s.Store.CountNodes(ctx, q)
+	return n, internal(err)
+}
+
+func (s signallingStore) CountChildren(ctx context.Context, parentIDs []string) (map[string]nodestore.ChildCounts, error) {
+	out, err := s.Store.CountChildren(ctx, parentIDs)
+	return out, internal(err)
+}
+
 func (s signallingStore) UpsertNode(ctx context.Context, n model.Node) error {
 	err := s.Store.UpsertNode(ctx, n)
 	if err == nil {
 		s.changed()
 	}
-	return err
+	return internal(err)
 }
 
 func (s signallingStore) DeleteNodes(ctx context.Context, ids []string) error {
@@ -48,13 +93,21 @@ func (s signallingStore) DeleteNodes(ctx context.Context, ids []string) error {
 	if err == nil && len(ids) > 0 {
 		s.changed()
 	}
-	return err
+	return internal(err)
 }
 
+// UpdateNode passes on what fn returned as it is: that is the operation's own verdict on the node (a conflict, a validation error), not a failure of the store.
 func (s signallingStore) UpdateNode(ctx context.Context, id string, fn func(n *model.Node) error) (bool, error) {
-	wrote, err := s.Store.UpdateNode(ctx, id, fn)
+	var fnErr error
+	wrote, err := s.Store.UpdateNode(ctx, id, func(n *model.Node) error {
+		fnErr = fn(n)
+		return fnErr
+	})
 	if err == nil && wrote {
 		s.changed()
+	}
+	if err != nil && (fnErr == nil || !errors.Is(err, fnErr)) {
+		err = internal(err)
 	}
 	return wrote, err
 }
@@ -64,7 +117,7 @@ func (s signallingStore) DeleteNodeIf(ctx context.Context, id string, pred func(
 	if err == nil && deleted {
 		s.changed()
 	}
-	return deleted, err
+	return deleted, internal(err)
 }
 
 func (s signallingStore) Seed(ctx context.Context, identities []common.Identity, nodes []model.Node) error {
@@ -72,5 +125,5 @@ func (s signallingStore) Seed(ctx context.Context, identities []common.Identity,
 	if err == nil {
 		s.changed()
 	}
-	return err
+	return internal(err)
 }

@@ -4,6 +4,7 @@ package webserver_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
@@ -65,7 +66,7 @@ func TestActAs_FaithfulAndRecorded(t *testing.T) {
 	}
 
 	// Root's own rights are gone: the student cannot decide the pending leaf.
-	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/approve", userStudent, tree.ApproveNodeRequest{}), http.StatusForbidden)
+	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/approve", userStudent, approval(t, h, "p_002", nil)), http.StatusForbidden)
 
 	// A request auto-approves as it would for the student, belongs to them, and the history names the admin who made it.
 	rr = do(t, h, http.MethodPost, "/v1/nodes", userStudent, tree.CreateNodeRequest{
@@ -86,30 +87,36 @@ func TestActAs_FaithfulAndRecorded(t *testing.T) {
 	}
 
 	// Without the header root is root again.
-	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/approve", "", tree.ApproveNodeRequest{}), http.StatusOK)
+	assertStatus(t, do(t, h, http.MethodPost, "/v1/nodes/p_002/approve", "", approval(t, h, "p_002", nil)), http.StatusOK)
 }
 
-// Acting on somebody's behalf manages that person's API tokens, not the admin's.
+// Acting on somebody's behalf lists that person's API tokens, not the admin's — but never issues one: a token made that way would be a credential of the person in the admin's hands.
 func TestActAs_APITokensAreThePersons(t *testing.T) {
 	h := setupRouter(t)
-	assertStatus(t, do(t, h, http.MethodPost, "/v1/tokens", userStudent, map[string]any{"description": "for the ticket"}), http.StatusCreated)
+	rr := do(t, h, http.MethodPost, "/v1/tokens", userStudent, map[string]any{"description": "for the ticket"})
+	assertStatus(t, rr, http.StatusForbidden)
+	if !strings.Contains(rr.Body.String(), "acting on behalf") {
+		t.Errorf("the refusal should say why, got %s", rr.Body.String())
+	}
 
 	var list struct {
 		Tokens []struct {
 			User string `json:"user"`
 		} `json:"tokens"`
 	}
-	rr := do(t, h, http.MethodGet, "/v1/tokens", userStudent, nil)
-	assertStatus(t, rr, http.StatusOK)
-	mustDecode(t, rr, &list)
-	if len(list.Tokens) != 1 || list.Tokens[0].User != userStudent {
-		t.Errorf("the student should own the token, got %+v", list.Tokens)
-	}
-	list.Tokens = nil
-	rr = do(t, h, http.MethodGet, "/v1/tokens", "", nil)
+	rr = do(t, h, http.MethodGet, "/v1/tokens", userStudent, nil)
 	assertStatus(t, rr, http.StatusOK)
 	mustDecode(t, rr, &list)
 	if len(list.Tokens) != 0 {
-		t.Errorf("the admin should have no tokens, got %+v", list.Tokens)
+		t.Errorf("no token should have been issued for the student, got %+v", list.Tokens)
+	}
+
+	// The admin's own tokens are still the admin's to create.
+	assertStatus(t, do(t, h, http.MethodPost, "/v1/tokens", "", map[string]any{"description": "mine"}), http.StatusCreated)
+	rr = do(t, h, http.MethodGet, "/v1/tokens", "", nil)
+	assertStatus(t, rr, http.StatusOK)
+	mustDecode(t, rr, &list)
+	if len(list.Tokens) != 1 || list.Tokens[0].User != userRoot {
+		t.Errorf("the admin should own exactly their token, got %+v", list.Tokens)
 	}
 }

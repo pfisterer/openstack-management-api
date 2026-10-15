@@ -201,7 +201,9 @@ func TestMaxTerm_ApprovalCaps(t *testing.T) {
 	if _, err := f.svc.UpdateNode(f.budget.ID, tree.UpdateNodeRequest{MaxProjectTermDays: days(60)}, rootActor(), rootTokens); err != nil {
 		t.Fatalf("set term: %v", err)
 	}
-	n, err := f.svc.ApproveNode(p.ID, tree.ApproveNodeRequest{}, rootActor(), rootTokens)
+	// Lowering the term shortened the request, which is a new revision of it.
+	shortened := f.get(t, p.ID)
+	n, err := f.svc.ApproveNode(p.ID, tree.ApproveNodeRequest{ExpectedRevision: new(shortened.CurrentRevision())}, rootActor(), rootTokens)
 	if err != nil {
 		t.Fatalf("approve: %v", err)
 	}

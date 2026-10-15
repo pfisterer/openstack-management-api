@@ -102,6 +102,7 @@ func (s *InMemoryStore) CountNodes(_ context.Context, q NodeQuery) (int, error) 
 func (s *InMemoryStore) UpsertNode(_ context.Context, n model.Node) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	model.CapHistory(&n)
 
 	for i := range s.nodes {
 		if s.nodes[i].ID == n.ID {
@@ -129,6 +130,7 @@ func (s *InMemoryStore) UpdateNode(_ context.Context, id string, fn func(n *mode
 			return false, err
 		}
 		n.ID = id
+		model.CapHistory(&n)
 		s.nodes[i] = n
 		return true, nil
 	}

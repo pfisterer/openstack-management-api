@@ -354,6 +354,8 @@ type uiResource struct {
 	Area string `json:"area,omitempty"`
 	// Window is the time window of an amount per window (kind window): 24h, 7d or 30d.
 	Window string `json:"window,omitempty"`
+	// GPUClass is the pool, tier, GPU types and lending of a GPU class's resources, so the UI can arrange them by pool.
+	GPUClass *common.GPUClassInfo `json:"gpu_class,omitempty"`
 }
 
 func uiResourceFrom(r common.Resource) uiResource {
@@ -372,6 +374,7 @@ func uiResourceFrom(r common.Resource) uiResource {
 		Provider:  r.Provider,
 		Area:      r.InArea(),
 		Window:    r.Window,
+		GPUClass:  r.GPUClass,
 	}
 }
 

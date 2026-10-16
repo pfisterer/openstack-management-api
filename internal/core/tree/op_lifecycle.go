@@ -115,6 +115,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		return model.Node{}, err
 	}
 	if req.Kind == model.KindProject {
+		req.Limit = s.withDefaultAvailabilities(parentChain, req.Limit)
 		if err := s.checkLeafLimit(ctx, model.Node{}, parentChain, req.Limit, nil, false); err != nil {
 			return model.Node{}, err
 		}

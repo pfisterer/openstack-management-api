@@ -282,6 +282,45 @@ func (s *Service) bindingBudget(ctx context.Context, n *model.Node) (*model.Node
 
 // bindingInChain is bindingBudget on a chain already loaded, nearest first:
 // its first node with a limit of its own, nil for an empty chain.
+// withDefaultAvailabilities gives a new project the availabilities whose default is 1 and that the budget it draws from holds, where the request does not name them — only in the areas the project asks something of (a cloud project gets no workspace server types). The project form presets them, but the start page, an auto-approve budget's preset and API clients send only quantities; so every way to a project gets them (e.g. the server types ws-profile-*), and an explicit 0 stays 0.
+func (s *Service) withDefaultAvailabilities(chain []model.Node, limit common.ProjectQuota) common.ProjectQuota {
+	binding := bindingInChain(chain)
+	if binding == nil {
+		return limit
+	}
+	areas := map[string]bool{}
+	for _, r := range s.resources() {
+		if !r.IsBool() && limit[r.ID] != 0 {
+			areas[r.InArea()] = true
+		}
+	}
+	var out common.ProjectQuota
+	for _, r := range s.resources() {
+		if !r.IsBool() || r.Withdrawn || r.Default != 1 || !areas[r.InArea()] {
+			continue
+		}
+		if _, named := limit[r.ID]; named {
+			continue
+		}
+		if binding.ID != model.RootNodeID {
+			if held := binding.Limit[r.ID]; held != 1 && held != common.UnlimitedQuota {
+				continue
+			}
+		}
+		if out == nil {
+			out = make(common.ProjectQuota, len(limit)+1)
+			for k, v := range limit {
+				out[k] = v
+			}
+		}
+		out[r.ID] = 1
+	}
+	if out == nil {
+		return limit
+	}
+	return out
+}
+
 func bindingInChain(chain []model.Node) *model.Node {
 	for i := range chain {
 		if !chain[i].InheritsLimit {

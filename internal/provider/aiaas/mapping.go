@@ -18,6 +18,7 @@ const (
 	idLLMTPM       = "llm-tpm"
 	idStorageGB    = "ws-storage-gb"
 	prefixLLMModel = "llm-model-"
+	prefixProfile  = "ws-profile-"
 	prefixGPUHours = "ws-gpu-hours-"
 	prefixGPUs     = "ws-gpus-"
 )
@@ -52,6 +53,13 @@ func budgetFor(r common.Resource) (Budget, bool) {
 // ProjectFor is what the AI service is told about a leaf: its name and people, its end, and its amounts of this provider's resources. An unlimited budget is sent with amount 0, which the AI service reads as no cap.
 func ProjectFor(n model.Node, resources []common.Resource) Project {
 	p := Project{Name: strings.TrimSpace(n.Name), GPUsByClass: map[string]int{}, Budgets: []Budget{}, LLMModels: []string{}}
+	// Server types only as granted: a project without any availability ws-profile-<slug> has none. Sent only when the catalogue has server types at all; without them the AI service keeps the project's own.
+	for _, r := range resources {
+		if r.BelongsTo(Provider) && r.IsBool() && strings.HasPrefix(r.ID, prefixProfile) {
+			p.Profiles = &[]string{}
+			break
+		}
+	}
 	if p.Name == "" {
 		p.Name = strings.TrimSpace(n.Reason)
 	}
@@ -84,6 +92,10 @@ func ProjectFor(n model.Node, resources []common.Resource) Project {
 		case r.IsBool() && strings.HasPrefix(r.ID, prefixLLMModel) && len(r.ID) > len(prefixLLMModel):
 			if v == 1 {
 				p.LLMModels = append(p.LLMModels, strings.TrimPrefix(r.ID, prefixLLMModel))
+			}
+		case r.IsBool() && strings.HasPrefix(r.ID, prefixProfile) && len(r.ID) > len(prefixProfile):
+			if v == 1 && p.Profiles != nil {
+				*p.Profiles = append(*p.Profiles, strings.TrimPrefix(r.ID, prefixProfile))
 			}
 		case r.ID == idLLMRPM || r.ID == idLLMTPM:
 			rate := v

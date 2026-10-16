@@ -2,6 +2,9 @@ package aiaas
 
 import (
 	"context"
+	"encoding/json"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -196,5 +199,28 @@ func TestExpiry(t *testing.T) {
 	fake.projects["p_old"] = Project{}
 	if res, _ := s.Pass(ctx); res.Expired != 0 {
 		t.Errorf("grace 0 deleted: %+v", res)
+	}
+}
+
+// The server types go as granted (availabilities ws-profile-<slug>); without any the project has none, and the list is sent then too.
+func TestProjectForProfiles(t *testing.T) {
+	res := append(slices.Clone(catalog),
+		common.Resource{ID: "ws-profile-cpu", Kind: common.KindBool, Provider: Provider, Area: common.AreaWorkspaces},
+		common.Resource{ID: "ws-profile-cpu-gpukernel", Kind: common.KindBool, Provider: Provider, Area: common.AreaWorkspaces},
+		common.Resource{ID: "ws-profile-gpu", Kind: common.KindBool, Provider: Provider, Area: common.AreaWorkspaces})
+	p := ProjectFor(model.Node{ID: "p_1", Name: "Kurs", Limit: common.ProjectQuota{"ws-profile-cpu-gpukernel": 1, "ws-profile-gpu": 0}}, res)
+	if p.Profiles == nil || !slices.Equal(*p.Profiles, []string{"cpu-gpukernel"}) {
+		t.Fatalf("profiles %v", p.Profiles)
+	}
+	p = ProjectFor(model.Node{ID: "p_2", Name: "Ohne", Limit: common.ProjectQuota{"llm-mtokens": 10}}, res)
+	if p.Profiles == nil || len(*p.Profiles) != 0 {
+		t.Fatalf("no grant: %v", p.Profiles)
+	}
+	if b, _ := json.Marshal(p); !strings.Contains(string(b), `"profiles":[]`) {
+		t.Fatalf("empty list not sent: %s", b)
+	}
+	// A catalogue without server types sends none: the AI service keeps the project's own.
+	if p := ProjectFor(model.Node{ID: "p_3", Name: "Alt"}, catalog); p.Profiles != nil {
+		t.Fatalf("profiles without server types in the catalogue: %v", *p.Profiles)
 	}
 }

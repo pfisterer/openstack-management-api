@@ -236,3 +236,31 @@ func TestProjectGrantUse(t *testing.T) {
 		t.Error("unread use must stay nil")
 	}
 }
+
+// A deleted project loses every availability of the catalogue: Keystone leaves the RBAC policies behind, and they count against the quota of the project the reconciler works from (incident 19.10.2026: 5 of 10 were for deleted projects).
+func TestRevokeGrants_RemovesEveryCatalogueGrantOfTheDeletedProject(t *testing.T) {
+	f := newFakeGrants()
+	f.held[key(netGrant, "gone")] = true
+	f.held[key(flavorGrant, "gone")] = true
+	f.held[key(netGrant, "other")] = true
+
+	n := revokeGrants(f, grantCatalogue, "gone", false, zap.NewNop().Sugar())
+
+	if n != 2 || f.held[key(netGrant, "gone")] || f.held[key(flavorGrant, "gone")] {
+		t.Fatalf("removed %d, left %v", n, f.held)
+	}
+	if !f.held[key(netGrant, "other")] {
+		t.Fatal("another project's grant was touched")
+	}
+}
+
+func TestRevokeGrants_DryRunAndNoProjectChangeNothing(t *testing.T) {
+	f := newFakeGrants()
+	f.held[key(netGrant, "gone")] = true
+	if n := revokeGrants(f, grantCatalogue, "gone", true, zap.NewNop().Sugar()); n != 0 || len(f.removed) != 0 {
+		t.Fatalf("dry run removed %d (%v)", n, f.removed)
+	}
+	if n := revokeGrants(f, grantCatalogue, "", false, zap.NewNop().Sugar()); n != 0 || len(f.removed) != 0 {
+		t.Fatalf("empty project id removed %d (%v)", n, f.removed)
+	}
+}

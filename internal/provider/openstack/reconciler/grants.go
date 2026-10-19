@@ -120,6 +120,38 @@ func syncGrants(c grantClient, defs []osclient.ManagedResource, leaf model.Node,
 	}
 }
 
+// revokeGrants takes every availability of the catalogue away from a project that was just deleted. Keystone deletes the project and nothing else: a Neutron RBAC policy sharing a network with it stays behind, owned by the project the reconciler works from and counted against that project's rbac_policy quota, and once enough of them pile up every new grant fails with OverQuota. Image members and flavour access are left behind the same way, harmless but stale.
+//
+// Only the catalogue's targets, like syncGrants, and for a project the reconciler itself deleted, so there is nobody whose access this could take away. A failure is logged and left to the orphan sweep (sweepOrphanedGrants) on a later pass. Returns how many grants were removed.
+func revokeGrants(c grantClient, defs []osclient.ManagedResource, osProjectID string, dryRun bool, log *zap.SugaredLogger) int {
+	if osProjectID == "" {
+		return 0
+	}
+	removed := 0
+	for _, def := range defs {
+		if !def.IsBool() || def.Grant == nil {
+			continue
+		}
+		if dryRun {
+			log.Infow("Dry run: would remove the availability of the deleted project",
+				"os_project_id", osProjectID, "resource", def.ID, "grant_type", def.Grant.Type, "target", def.Grant.Target)
+			continue
+		}
+		changed, err := c.RemoveGrant(*def.Grant, osProjectID)
+		if err != nil {
+			log.Warnw("Could not remove the availability of the deleted project; the orphan sweep retries",
+				"os_project_id", osProjectID, "resource", def.ID, "error", err)
+			continue
+		}
+		if changed {
+			removed++
+			log.Infow("Removed availability of the deleted project",
+				"os_project_id", osProjectID, "resource", def.ID, "grant_type", def.Grant.Type, "target", def.Grant.Target)
+		}
+	}
+	return removed
+}
+
 // readGrantUse reads what uses the availabilities of the catalogue, for all
 // projects; nil when OpenStack could not be read, so no project's last known
 // values are overwritten with "nothing".

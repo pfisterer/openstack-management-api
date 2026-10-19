@@ -197,6 +197,8 @@ func (r *Reconciler) purgeRetiredProject(ctx context.Context, osProject osclient
 		return
 	}
 	res.projectsDeleted++
+	// What the project was granted outlives it in Neutron, Glance and Nova.
+	revokeGrants(r.osClient, r.resources(), osProject.ID, r.cfg.DryRun, log)
 	// The project is gone; the leaf goes with it. Should this fail, the next
 	// pass finds the project missing and removes the leaf there.
 	if _, err := r.nodes.RemoveRetired(ctx, leaf.ID); err != nil {

@@ -143,8 +143,10 @@ type Status struct {
 	// ReleasedLeavesRemoved counts released records dropped because their
 	// OpenStack project has been deleted — the end of the handover that the
 	// pending-deletion tag starts.
-	ReleasedLeavesRemoved     int `json:"released_leaves_removed"`
-	OrphanedUsersRemoved      int `json:"orphaned_users_removed"`
+	ReleasedLeavesRemoved int `json:"released_leaves_removed"`
+	OrphanedUsersRemoved  int `json:"orphaned_users_removed"`
+	// OrphanedGrantsRemoved counts network shares deleted because their project no longer exists (sweepOrphanedGrants).
+	OrphanedGrantsRemoved     int `json:"orphaned_grants_removed"`
 	GroupsCreated             int `json:"groups_created"`
 	GroupsSynced              int `json:"groups_synced"`
 	ProjectsTaggedForDeletion int `json:"projects_tagged_for_deletion"`
@@ -341,6 +343,7 @@ func (r *Reconciler) runOnce(ctx context.Context) {
 		r.status.ImportedRemoved = result.importedRemoved
 		r.status.ReleasedLeavesRemoved = result.releasedLeavesRemoved
 		r.status.OrphanedUsersRemoved = result.orphanedUsersRemoved
+		r.status.OrphanedGrantsRemoved = result.orphanedGrantsRemoved
 		r.status.GroupsCreated = result.groupsCreated
 		r.status.GroupsSynced = result.groupsSynced
 		r.status.ProjectsTaggedForDeletion = result.projectsTaggedForDeletion
@@ -358,6 +361,7 @@ func (r *Reconciler) runOnce(ctx context.Context) {
 			"imported_removed", result.importedRemoved,
 			"released_removed", result.releasedLeavesRemoved,
 			"orphaned_users_removed", result.orphanedUsersRemoved,
+			"orphaned_grants_removed", result.orphanedGrantsRemoved,
 			"groups_created", result.groupsCreated,
 			"groups_synced", result.groupsSynced,
 			"tagged_for_deletion", result.projectsTaggedForDeletion,
@@ -378,6 +382,7 @@ type reconcileResult struct {
 	importedRemoved           int
 	releasedLeavesRemoved     int
 	orphanedUsersRemoved      int
+	orphanedGrantsRemoved     int
 	groupsCreated             int
 	groupsSynced              int
 	projectsTaggedForDeletion int
@@ -611,6 +616,11 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 	// deletion is handed to OpenStack via the pending-deletion and contact tags,
 	// so the honest end of that record is the moment the project is really gone.
 	r.removeReleasedLeavesWithoutProject(ctx, releasedLeafByID, osProjectByOSID, &res)
+
+	// ── Phase 5.5: Network shares of projects that no longer exist ───────────
+	//
+	// After Phase 5, which may have deleted projects, and against the listing of Phase 1: a project in it exists, so only the others are asked about.
+	r.sweepOrphanedGrants(osProjectByOSID, &res)
 
 	// ── Phase 6: Remove auto-created Keystone users with no project memberships ─
 	//

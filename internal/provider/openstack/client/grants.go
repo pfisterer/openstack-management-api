@@ -5,6 +5,8 @@ import (
 
 	"github.com/gophercloud/gophercloud"
 	"github.com/gophercloud/gophercloud/openstack/compute/v2/flavors"
+	"github.com/gophercloud/gophercloud/openstack/identity/v3/projects"
+	"github.com/gophercloud/gophercloud/openstack/identity/v3/tokens"
 	"github.com/gophercloud/gophercloud/openstack/imageservice/v2/members"
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/extensions/rbacpolicies"
 	"github.com/gophercloud/gophercloud/pagination"
@@ -153,6 +155,81 @@ func (c *OpenStackClient) findNetworkRBAC(networkID, projectID string) (string, 
 		return "", fmt.Errorf("list network rbac policies for %s: %w", networkID, err)
 	}
 	return found, nil
+}
+
+// NetworkShare is one RBAC policy sharing a network with a project (access_as_shared).
+type NetworkShare struct {
+	PolicyID  string
+	NetworkID string
+	// TargetProject is the project the network is shared with, "*" for everyone.
+	TargetProject string
+	// OwnerProject is the project that owns the policy: the one the token that created it was scoped to, and the one whose rbac_policy quota it counts against.
+	OwnerProject string
+}
+
+// ListNetworkShares lists the policies sharing a network as access_as_shared, whoever created them.
+func (c *OpenStackClient) ListNetworkShares(networkID string) ([]NetworkShare, error) {
+	var out []NetworkShare
+	err := rbacpolicies.List(c.networkSvc(), rbacpolicies.ListOpts{ObjectType: "network", ObjectID: networkID}).
+		EachPage(func(page pagination.Page) (bool, error) {
+			ps, err := rbacpolicies.ExtractRBACPolicies(page)
+			if err != nil {
+				return false, err
+			}
+			for _, p := range ps {
+				if p.Action != rbacpolicies.ActionAccessShared || p.ObjectType != "network" || p.ObjectID != networkID {
+					continue
+				}
+				owner := p.ProjectID
+				if owner == "" {
+					owner = p.TenantID
+				}
+				out = append(out, NetworkShare{PolicyID: p.ID, NetworkID: p.ObjectID, TargetProject: p.TargetTenant, OwnerProject: owner})
+			}
+			return true, nil
+		})
+	return out, wrapList("network rbac policies", networkID, err)
+}
+
+// DeleteNetworkShare deletes one RBAC policy; one that is gone already counts as deleted.
+func (c *OpenStackClient) DeleteNetworkShare(policyID string) error {
+	if err := ignoreNotFound(rbacpolicies.Delete(c.networkSvc(), policyID).Err); err != nil {
+		return fmt.Errorf("delete network rbac policy %s: %w", policyID, err)
+	}
+	return nil
+}
+
+// GrantOwnerProject is the project the network client's token is scoped to: the owner of every RBAC policy this service creates. "" when the token is not scoped to a project or cannot be read.
+func (c *OpenStackClient) GrantOwnerProject() string {
+	svc := c.networkSvc()
+	if svc == nil || svc.ProviderClient == nil {
+		return ""
+	}
+	var project *tokens.Project
+	switch r := svc.ProviderClient.GetAuthResult().(type) {
+	case tokens.CreateResult:
+		project, _ = r.ExtractProject()
+	case *tokens.CreateResult:
+		project, _ = r.ExtractProject()
+	case tokens.GetResult:
+		project, _ = r.ExtractProject()
+	}
+	if project == nil {
+		return ""
+	}
+	return project.ID
+}
+
+// ProjectExists asks Keystone whether a project exists. Only a 404 counts as "does not exist": a refusal (403) or any other error is returned as an error, so a caller deleting things for projects that are gone never acts on a project it merely may not see.
+func (c *OpenStackClient) ProjectExists(projectID string) (bool, error) {
+	_, err := projects.Get(c.userLookupSvc(), projectID).Extract()
+	if err == nil {
+		return true, nil
+	}
+	if _, notFound := err.(gophercloud.ErrDefault404); notFound {
+		return false, nil
+	}
+	return false, fmt.Errorf("get project %s: %w", projectID, err)
 }
 
 func (c *OpenStackClient) hasImageMember(imageID, projectID string) (bool, error) {

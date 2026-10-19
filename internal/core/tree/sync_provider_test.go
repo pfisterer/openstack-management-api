@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
@@ -289,5 +290,54 @@ func TestRemoveRetired_LeavesTheOtherProvider(t *testing.T) {
 	ai := NewProviderSync(store, "aiaas")
 	if gone, err := ai.RemoveRetired(ctx, "p_both"); err != nil || !gone {
 		t.Errorf("the last provider done removes the leaf: %v %v", gone, err)
+	}
+}
+
+// A resource that failed shows its error until a pass carries it out; one the pass did not get to keeps what it had; an error that persists keeps the day it started.
+func TestApplySyncErrors(t *testing.T) {
+	day1 := time.Date(2026, 10, 19, 8, 0, 0, 0, time.UTC)
+	day2 := day1.Add(24 * time.Hour)
+	over := model.SyncError{Kind: model.SyncKindAvailability, Reason: model.SyncOverQuota, Detail: "409"}
+	var b model.Binding
+
+	if !ApplySyncErrors(&b, []string{"net", "flavor"}, map[string]model.SyncError{"net": over}, day1) {
+		t.Fatal("a new error is a change")
+	}
+	if e := b.SyncErrors["net"]; e.Reason != model.SyncOverQuota || e.Since != day1.Format(time.RFC3339) || len(b.SyncErrors) != 1 {
+		t.Fatalf("errors = %+v", b.SyncErrors)
+	}
+	if ApplySyncErrors(&b, []string{"net"}, map[string]model.SyncError{"net": over}, day2) {
+		t.Fatal("the same error again is no change")
+	}
+	again := over
+	again.Detail = "409 again"
+	if !ApplySyncErrors(&b, []string{"net"}, map[string]model.SyncError{"net": again}, day2) || b.SyncErrors["net"].Since != day1.Format(time.RFC3339) || b.SyncErrors["net"].Detail != "409 again" {
+		t.Fatalf("a new detail keeps since: %+v", b.SyncErrors)
+	}
+	// A pass that only did the quota leaves the availability's error alone.
+	if ApplySyncErrors(&b, []string{"cores"}, nil, day2) || b.SyncErrors["net"].Reason != model.SyncOverQuota {
+		t.Fatalf("an unattempted resource lost its error: %+v", b.SyncErrors)
+	}
+	if !ApplySyncErrors(&b, []string{"net"}, nil, day2) || b.SyncErrors != nil {
+		t.Fatalf("success clears: %+v", b.SyncErrors)
+	}
+}
+
+// Recorded through the store, on the provider's own binding.
+func TestProviderSync_RecordSyncErrors(t *testing.T) {
+	ctx := context.Background()
+	p, store := providerSyncWith(t, model.Node{ID: "p_1", Kind: model.KindProject, Status: model.StatusApproved})
+	err := p.RecordSyncErrors(ctx, "p_1", []string{"net"}, map[string]model.SyncError{"net": {Kind: model.SyncKindAvailability, Reason: model.SyncOverQuota}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e := nodeIn(t, store, "p_1").Binding("openstack").SyncErrors["net"]; e.Reason != model.SyncOverQuota || e.Since == "" {
+		t.Fatalf("stored = %+v", e)
+	}
+	if err := p.RecordSyncErrors(ctx, "p_1", []string{"net"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := nodeIn(t, store, "p_1").Binding("openstack").SyncErrors; got != nil {
+		t.Fatalf("not cleared: %+v", got)
 	}
 }

@@ -150,6 +150,48 @@ func (p *ProviderSync) RecordPurgeProgress(ctx context.Context, leafID string, r
 	return err
 }
 
+// RecordSyncErrors writes which resources of a leaf the provider could not carry out on this pass. attempted are the resources it tried: each is set to its error in found, or cleared when it has none. The others keep what an earlier pass found — a pass that did not get as far as them knows nothing new. Only on a change.
+func (p *ProviderSync) RecordSyncErrors(ctx context.Context, leafID string, attempted []string, found map[string]model.SyncError) error {
+	_, err := p.store.UpdateNode(ctx, leafID, func(n *model.Node) error {
+		b := n.Binding(p.provider)
+		if !ApplySyncErrors(&b, attempted, found, time.Now()) {
+			return nodestore.ErrSkipUpdate
+		}
+		n.EditBinding(p.provider, func(nb *model.Binding) { *nb = b })
+		return nil
+	})
+	return err
+}
+
+// ApplySyncErrors is RecordSyncErrors on one binding; reports whether anything changed. An error that persists keeps its Since — that it has failed for days is what an admin wants to know —, while its detail follows the latest message.
+func ApplySyncErrors(b *model.Binding, attempted []string, found map[string]model.SyncError, now time.Time) bool {
+	next := maps.Clone(b.SyncErrors)
+	if next == nil {
+		next = map[string]model.SyncError{}
+	}
+	for _, id := range attempted {
+		e, failed := found[id]
+		if !failed {
+			delete(next, id)
+			continue
+		}
+		if prev, ok := next[id]; ok && prev.Kind == e.Kind && prev.Reason == e.Reason {
+			e.Since = prev.Since
+		} else {
+			e.Since = now.UTC().Format(time.RFC3339)
+		}
+		next[id] = e
+	}
+	if len(next) == 0 {
+		next = nil
+	}
+	if maps.Equal(b.SyncErrors, next) {
+		return false
+	}
+	b.SyncErrors = next
+	return true
+}
+
 // RemoveRetired is for a released or archived leaf whose project is gone at
 // this provider: the leaf is deleted when no other provider carries it out,
 // else only this provider's binding is dropped and the others finish theirs.

@@ -78,6 +78,7 @@
             "url": { "type": "string" },
             "treeToken": { "type": "string" },
             "intervalSeconds": { "type": "integer", "minimum": 10 },
+            "classIntervalSeconds": { "type": "integer", "minimum": 5 },
             "deleteGraceDays": { "type": "integer", "minimum": 0 }
           },
           "additionalProperties": false

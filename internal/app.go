@@ -280,10 +280,10 @@ func RunApplication() {
 		}
 		logger.Infow("Starting the AI service provider", "url", config.AIaaS.URL, "interval_seconds", config.AIaaS.IntervalSeconds)
 		go syncer.Run(ctx)
-		// New GPU classes reach the tree within five minutes; the root gets them unlimited, to be granted down like any quantity.
+		// New GPU classes reach the tree within AIAAS_CLASS_INTERVAL_SECONDS (30 s); the root gets them unlimited, to be granted down like any quantity.
 		gpuCatalog.OnNew = treeSvc.AdoptNewResources
 		gpuCatalog.OnRename = treeSvc.RenameResources
-		go gpuCatalog.Run(ctx, 5*time.Minute)
+		go gpuCatalog.Run(ctx, time.Duration(max(config.AIaaS.ClassIntervalSeconds, 5))*time.Second)
 	}
 
 	// A local ReconcilerAPI variable avoids passing a typed nil as the interface,

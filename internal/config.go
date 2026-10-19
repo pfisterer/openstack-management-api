@@ -323,10 +323,11 @@ func loadAppConfiguration() (AppConfiguration, error) {
 		ProjectDefinitions: resourceCatalogue,
 		ProviderResources:  providerResources,
 		AIaaS: AIaaSConfig{
-			URL:             envconf.String("AIAAS_URL", ""),
-			Token:           envconf.String("AIAAS_TREE_TOKEN", ""),
-			IntervalSeconds: envconf.Int("AIAAS_INTERVAL_SECONDS", 300),
-			DeleteGraceDays: envconf.Int("AIAAS_DELETE_GRACE_DAYS", 14),
+			URL:                  envconf.String("AIAAS_URL", ""),
+			Token:                envconf.String("AIAAS_TREE_TOKEN", ""),
+			IntervalSeconds:      envconf.Int("AIAAS_INTERVAL_SECONDS", 300),
+			ClassIntervalSeconds: envconf.Int("AIAAS_CLASS_INTERVAL_SECONDS", 30),
+			DeleteGraceDays:      envconf.Int("AIAAS_DELETE_GRACE_DAYS", 14),
 		},
 		ServiceTimeoutSeconds: envconf.Int("SERVICE_TIMEOUT_SECONDS", 30),
 		MaxAuthorizedUsers:    envconf.Int("API_MAX_AUTHORIZED_USERS", common.DefaultMaxAuthorizedUsers),
@@ -396,6 +397,8 @@ type AIaaSConfig struct {
 	URL             string `json:"url"`
 	Token           string `json:"token"`
 	IntervalSeconds int    `json:"interval_seconds"`
+	// ClassIntervalSeconds is how often the GPU classes are asked for: one cheap request that writes only on a change, so an admin's new class shows up in the tree within seconds.
+	ClassIntervalSeconds int `json:"class_interval_seconds"`
 	// DeleteGraceDays is how long a Lab/AI project's workspaces and their files outlive its end (termination date, or release if earlier) before they are deleted; 0 = never.
 	DeleteGraceDays int `json:"delete_grace_days"`
 }

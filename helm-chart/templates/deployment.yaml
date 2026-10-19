@@ -191,6 +191,8 @@ spec:
               value: {{ .url | quote }}
             - name: AIAAS_INTERVAL_SECONDS
               value: {{ .intervalSeconds | default 300 | quote }}
+            - name: AIAAS_CLASS_INTERVAL_SECONDS
+              value: {{ .classIntervalSeconds | default 30 | quote }}
             - name: AIAAS_DELETE_GRACE_DAYS
               value: {{ (hasKey . "deleteGraceDays" | ternary .deleteGraceDays 14) | quote }}
             - name: AIAAS_TREE_TOKEN

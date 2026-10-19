@@ -45,8 +45,8 @@ type grantClient interface {
 	RemoveGrant(grant osclient.Grant, projectID string) (bool, error)
 }
 
-func (r *Reconciler) syncGrants(leaf model.Node, osProjectID string) {
-	syncGrants(r.osClient, r.resources(), leaf, osProjectID, r.cfg.DryRun, r.log)
+func (r *Reconciler) syncGrants(leaf model.Node, osProjectID string) map[string]model.SyncError {
+	return syncGrants(r.osClient, r.resources(), leaf, osProjectID, r.cfg.DryRun, r.log)
 }
 
 // syncGrants brings a project's availabilities in line with what the leaf was
@@ -62,7 +62,10 @@ func (r *Reconciler) syncGrants(leaf model.Node, osProjectID string) {
 // Failures are logged per resource and do not abort the pass. One unreachable
 // service must not stop the other twenty projects from being reconciled, and the
 // next run tries again — the desired state is in the tree, not in this call.
-func syncGrants(c grantClient, defs []osclient.ManagedResource, leaf model.Node, osProjectID string, dryRun bool, log *zap.SugaredLogger) {
+//
+// Returns the availabilities that failed, by resource id, for the node (recordSyncErrors); nil in a dry run, which attempts nothing.
+func syncGrants(c grantClient, defs []osclient.ManagedResource, leaf model.Node, osProjectID string, dryRun bool, log *zap.SugaredLogger) map[string]model.SyncError {
+	var failed map[string]model.SyncError
 	holds := leaf.EffectiveLimit()
 	for _, def := range defs {
 		if !def.IsBool() || def.Grant == nil {
@@ -104,6 +107,10 @@ func syncGrants(c grantClient, defs []osclient.ManagedResource, leaf model.Node,
 			log.Warnw("Failed to sync availability",
 				"node_id", leaf.ID, "os_project_id", osProjectID,
 				"resource", def.ID, "granted", wanted, "error", err)
+			if failed == nil {
+				failed = map[string]model.SyncError{}
+			}
+			failed[def.ID] = syncErrorFor(model.SyncKindAvailability, err)
 			continue
 		}
 		if changed {
@@ -118,6 +125,7 @@ func syncGrants(c grantClient, defs []osclient.ManagedResource, leaf model.Node,
 				"resource", def.ID, "grant_type", def.Grant.Type, "target", def.Grant.Target)
 		}
 	}
+	return failed
 }
 
 // revokeGrants takes every availability of the catalogue away from a project that was just deleted. Keystone deletes the project and nothing else: a Neutron RBAC policy sharing a network with it stays behind, owned by the project the reconciler works from and counted against that project's rbac_policy quota, and once enough of them pile up every new grant fails with OverQuota. Image members and flavour access are left behind the same way, harmless but stale.

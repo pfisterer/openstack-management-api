@@ -25,6 +25,7 @@ package reconciler
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -49,6 +50,7 @@ type TreeSync interface {
 	RecordObservation(ctx context.Context, leafID, externalID string, o *tree.Observation) error
 	MarkArchived(ctx context.Context, leafID string) error
 	RecordPurgeProgress(ctx context.Context, leafID string, r tree.PurgeReport) error
+	RecordSyncErrors(ctx context.Context, leafID string, attempted []string, found map[string]model.SyncError) error
 	RemoveRetired(ctx context.Context, leafID string) (bool, error)
 	BoundElsewhere(n model.Node) bool
 	RemoveImport(ctx context.Context, leafID string) (bool, error)
@@ -564,6 +566,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 			m, err := r.syncQuota(leaf, osProject, description)
 			if err != nil {
 				r.log.Warnw("Failed to sync quota for leaf", "node_id", leaf.ID, "os_project_id", osProject.ID, "error", err)
+				r.recordSyncErrors(ctx, leaf, quotaResourceIDs(r.resources()), quotaSyncErrors(r.resources(), err))
 				continue
 			}
 			if m != nil {
@@ -574,7 +577,9 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 			}
 			r.syncMembers(leaf, osProject.ID)
 			r.syncGroupAssignments(leaf, osProject.ID, groupTokenToOSID)
-			r.syncGrants(leaf, osProject.ID)
+			grantErrs := r.syncGrants(leaf, osProject.ID)
+			// The quota went through, so its resources are cleared along with the availabilities.
+			r.recordSyncErrors(ctx, leaf, slices.Concat(quotaResourceIDs(r.resources()), grantResourceIDs(r.resources())), grantErrs)
 			res.projectsSynced++
 		}
 	}

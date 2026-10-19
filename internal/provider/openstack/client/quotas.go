@@ -79,7 +79,7 @@ func (c *OpenStackClient) UpdateProjectQuotas(projectID string, quotas QuotaSet)
 		RAM:       &quotas.RAM,
 	}
 	if _, err := computequotas.Update(c.computeSvc(), projectID, computeOpts).Extract(); err != nil {
-		return fmt.Errorf("compute quotas: %w", err)
+		return &QuotaUpdateError{Service: QuotaServiceCompute, Err: err}
 	}
 
 	networkOpts := networkquotas.UpdateOpts{
@@ -100,7 +100,7 @@ func (c *OpenStackClient) UpdateProjectQuotas(projectID string, quotas QuotaSet)
 		Gigabytes: &quotas.Gigabytes,
 	}
 	if _, err := blockquotas.Update(c.blockSvc(), projectID, blockOpts).Extract(); err != nil {
-		return fmt.Errorf("block storage quotas: %w", err)
+		return &QuotaUpdateError{Service: QuotaServiceBlockStorage, Err: err}
 	}
 
 	c.logger.Info("Quotas updated",
@@ -112,6 +112,27 @@ func (c *OpenStackClient) UpdateProjectQuotas(projectID string, quotas QuotaSet)
 	return nil
 }
 
+// The services a quota is set in, and the QuotaSet fields each one takes.
+const (
+	QuotaServiceCompute      = "compute"
+	QuotaServiceBlockStorage = "block storage"
+)
+
+// QuotaServiceFields names the quota fields (ManagedResource.OSQuotaField) each service sets, so a failure in one can be pinned on the resources it concerns.
+var QuotaServiceFields = map[string][]string{
+	QuotaServiceCompute:      {"cores", "ram", "instances"},
+	QuotaServiceBlockStorage: {"gigabytes", "volumes", "snapshots"},
+}
+
+// QuotaUpdateError says which service refused a quota update.
+type QuotaUpdateError struct {
+	Service string
+	Err     error
+}
+
+func (e *QuotaUpdateError) Error() string { return e.Service + " quotas: " + e.Err.Error() }
+func (e *QuotaUpdateError) Unwrap() error { return e.Err }
+
 // UpdateManagedQuotas updates only the quota fields controlled by the resource management
 // system (compute cores/RAM/instances and block-storage gigabytes). Network quotas and
 // other unmanaged fields are intentionally left untouched.
@@ -122,14 +143,14 @@ func (c *OpenStackClient) UpdateManagedQuotas(projectID string, quotas QuotaSet)
 		RAM:       &quotas.RAM,
 	}
 	if _, err := computequotas.Update(c.computeSvc(), projectID, computeOpts).Extract(); err != nil {
-		return fmt.Errorf("compute quotas: %w", err)
+		return &QuotaUpdateError{Service: QuotaServiceCompute, Err: err}
 	}
 
 	blockOpts := blockquotas.UpdateOpts{
 		Gigabytes: &quotas.Gigabytes,
 	}
 	if _, err := blockquotas.Update(c.blockSvc(), projectID, blockOpts).Extract(); err != nil {
-		return fmt.Errorf("block storage quotas: %w", err)
+		return &QuotaUpdateError{Service: QuotaServiceBlockStorage, Err: err}
 	}
 
 	c.logger.Info("Managed quotas updated",

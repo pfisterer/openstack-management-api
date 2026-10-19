@@ -223,7 +223,7 @@ func (s *Service) attachAncestorIDs(ctx context.Context, nodes []model.Node) ([]
 }
 
 // attachUsage adds the derived fields every view needs on top of the stored
-// node: the subtree usage rollup, the direct child count, the parent's name and
+// node: the subtree usage rollup, what of it is measurably used, the direct child count, the parent's name and
 // the resources in scope at that node.
 func (s *Service) attachUsage(ctx context.Context, nodes []model.Node, viewer common.TokenList) ([]model.Node, error) {
 	budgets := make([]model.Node, 0, len(nodes))
@@ -232,7 +232,7 @@ func (s *Service) attachUsage(ctx context.Context, nodes []model.Node, viewer co
 			budgets = append(budgets, n)
 		}
 	}
-	usage, allocated, err := s.loadSubtreeUsageAndAllocations(ctx, budgets)
+	usage, allocated, inUse, err := s.loadSubtreeUsageAndAllocations(ctx, budgets)
 	if err != nil {
 		return nil, fmt.Errorf("compute subtree usage: %w", err)
 	}
@@ -243,6 +243,7 @@ func (s *Service) attachUsage(ctx context.Context, nodes []model.Node, viewer co
 			if a, ok := allocated[n.ID]; ok {
 				n.AllocatedOut = &a
 			}
+			n.SubtreeInUse = inUse[n.ID]
 		}
 		out = append(out, n)
 	}

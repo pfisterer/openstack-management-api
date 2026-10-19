@@ -75,15 +75,16 @@ func (s *Service) loadSubtreeUsage(ctx context.Context, roots []model.Node) (mod
 }
 
 // loadSubtreeUsageAndAllocations is loadSubtreeUsage plus, per budget, what it
-// has allocated to projects further down (see Node.AllocatedOut) — from the
-// same leaves, so the two cannot disagree.
-func (s *Service) loadSubtreeUsageAndAllocations(ctx context.Context, roots []model.Node) (model.UsagePerNode, map[string]model.AllocatedOut, error) {
+// has allocated to projects further down (see Node.AllocatedOut) and what the
+// projects below measurably use (see Node.SubtreeInUse) — from the same
+// leaves, so the three cannot disagree.
+func (s *Service) loadSubtreeUsageAndAllocations(ctx context.Context, roots []model.Node) (model.UsagePerNode, map[string]model.AllocatedOut, map[string]common.ProjectQuota, error) {
 	if len(roots) == 0 {
-		return make(model.UsagePerNode), nil, nil
+		return make(model.UsagePerNode), nil, nil, nil
 	}
 	parentMap, err := s.buildSubtreeParentMap(ctx, roots)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	budgetIDs := make([]string, 0, len(parentMap))
 	for id := range parentMap {
@@ -95,7 +96,7 @@ func (s *Service) loadSubtreeUsageAndAllocations(ctx context.Context, roots []mo
 		Statuses:  s.chargedStatuses(),
 	}, 0, 0)
 	if err != nil {
-		return nil, nil, fmt.Errorf("load active leaves for usage rollup: %w", err)
+		return nil, nil, nil, fmt.Errorf("load active leaves for usage rollup: %w", err)
 	}
 	wanted := make(map[string]bool, len(roots))
 	for _, r := range roots {
@@ -123,7 +124,46 @@ func (s *Service) loadSubtreeUsageAndAllocations(ctx context.Context, roots []mo
 			allocated[a.BudgetID] = out
 		}
 	}
-	return buildRolledUpUsage(leaves, parentMap, s.countIDs(), s.leafCost), allocated, nil
+	return buildRolledUpUsage(leaves, parentMap, s.countIDs(), s.leafCost), allocated, rollUpInUse(leaves, parentMap), nil
+}
+
+// rollUpInUse sums what each leaf measurably uses (its providers' in_use) into its parent budget and every tracked budget above, so a budget can show what of its handed-out capacity is really used. A leaf's whole consumption goes up its own chain: in_use is not split by where its limit came from, and every budget on that chain has the project in its subtree. Keys no leaf measures stay absent rather than 0, as in Binding.InUse.
+func rollUpInUse(leaves []model.Node, parentMap map[string]*string) map[string]common.ProjectQuota {
+	out := map[string]common.ProjectQuota{}
+	for _, leaf := range leaves {
+		if leaf.ParentID == nil {
+			continue
+		}
+		used := leaf.InUse()
+		if len(used) == 0 {
+			continue
+		}
+		seen := map[string]bool{}
+		for current := *leaf.ParentID; !seen[current]; {
+			if _, tracked := parentMap[current]; !tracked {
+				break
+			}
+			seen[current] = true
+			sum := out[current]
+			if sum == nil {
+				sum = common.ProjectQuota{}
+			}
+			for id, v := range used {
+				total, ok := addInts(sum[id], v)
+				if !ok {
+					total = saturate(sum[id])
+				}
+				sum[id] = total
+			}
+			out[current] = sum
+			parent := parentMap[current]
+			if parent == nil {
+				break
+			}
+			current = *parent
+		}
+	}
+	return out
 }
 
 // buildRolledUpUsage attributes each leaf's limit and ID to its parent budget and

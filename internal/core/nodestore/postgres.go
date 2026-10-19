@@ -120,6 +120,8 @@ func mustMarshalPG(v any) []byte {
 func toNodeRow(n model.Node) nodeRow {
 	// Usage is a response-only computed field — never persist it.
 	n.Usage = nil
+	// So is what the projects below use: it changes with every provider pass.
+	n.SubtreeInUse = nil
 	// So are the release maximums inherited from above: a stored copy would go stale the moment a budget above changes its own.
 	n.InheritedReleaseMax = nil
 	// Every write passes here, so this is where no node's history outgrows its cap.

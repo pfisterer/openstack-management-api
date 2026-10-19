@@ -498,6 +498,8 @@ type Node struct {
 	// Usage is attached to API responses (never persisted): the rollup of active
 	// descendant leaves for budgets.
 	Usage UsageByStatus `json:"usage,omitempty"`
+	// SubtreeInUse is attached to API responses for budgets (never persisted): what the projects below actually consume, summed per resource over the whole subtree from their providers' in_use. Usage says what is handed out, this what of it is used, so a budget that is fully allocated but idle does not read as a shortage. Only resources some project measures appear; a missing key means "not measured", not zero.
+	SubtreeInUse common.ProjectQuota `json:"subtree_in_use,omitempty"`
 	// ParentName is attached to API responses (never persisted): the display name
 	// of ParentID, so a client can name the budget a node is paid from without
 	// fetching each parent separately. Empty for roots.

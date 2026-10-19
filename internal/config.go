@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
@@ -15,7 +16,6 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/joho/godotenv"
 	"github.com/pfisterer/cloud-self-service-golib/envconf"
-	"github.com/pfisterer/cloud-self-service-golib/redact"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/usage"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
@@ -441,16 +441,71 @@ func loadProviderResources(openstack []common.Resource) ([]common.Resource, erro
 	return out, nil
 }
 
+// redactedConfig is the configuration as it may be logged: every secret replaced by whether it is set. Not even a prefix and a length — redact.Secret shows the first four characters, which on a short database password is a good part of it.
+func redactedConfig(appConfig AppConfiguration) AppConfiguration {
+	appConfig.Openstack.ApplicationCredentialSecret = secretState(appConfig.Openstack.ApplicationCredentialSecret)
+	appConfig.Openstack.Password = secretState(appConfig.Openstack.Password)
+	appConfig.RoleProvider.APIToken = secretState(appConfig.RoleProvider.APIToken)
+	appConfig.AIaaS.Token = secretState(appConfig.AIaaS.Token)
+	appConfig.Storage.ConnectionString = redactConnString(appConfig.Storage.ConnectionString)
+	return appConfig
+}
+
+// secretState says whether a secret is set, and nothing else about it.
+func secretState(s string) string {
+	if s == "" {
+		return "empty"
+	}
+	return "set"
+}
+
+// redactConnString keeps host, user and database of a DSN, so a broken connection can still be told from the log, and replaces the password by secretState — in the key/value form ("host=db password=…") as in the URL form ("postgres://user:…@db/name"). A URL that does not parse is replaced as a whole, since there is no telling where its password is.
+func redactConnString(dsn string) string {
+	if dsn == "" {
+		return ""
+	}
+	if strings.Contains(dsn, "://") {
+		u, err := url.Parse(dsn)
+		if err != nil {
+			return "unparseable connection string (" + secretState(dsn) + ")"
+		}
+		if _, has := u.User.Password(); has {
+			u.User = url.UserPassword(u.User.Username(), "set")
+		}
+		q := u.Query()
+		for k := range q {
+			if strings.EqualFold(k, "password") {
+				q.Set(k, "set")
+			}
+		}
+		u.RawQuery = q.Encode()
+		return u.String()
+	}
+	// A quoted value ('a b') runs over several fields; all of them go.
+	var out []string
+	fields := strings.Fields(dsn)
+	for i := 0; i < len(fields); i++ {
+		k, v, ok := strings.Cut(fields[i], "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(k), "password") {
+			out = append(out, fields[i])
+			continue
+		}
+		if strings.HasPrefix(v, "'") {
+			for !(len(v) > 1 && strings.HasSuffix(v, "'") && !strings.HasSuffix(v, `\'`)) && i+1 < len(fields) {
+				i++
+				v += " " + fields[i]
+			}
+		}
+		out = append(out, k+"="+secretState(v))
+	}
+	return strings.Join(out, " ")
+}
+
 func logAppConfig(appConfig AppConfiguration, log *zap.SugaredLogger) {
 	var appConfigJson []byte
 	var err error
 
-	// Redact ALL secrets before marshalling — the whole config is logged below.
-	appConfig.Openstack.ApplicationCredentialSecret = redact.Secret(appConfig.Openstack.ApplicationCredentialSecret)
-	appConfig.Openstack.Password = redact.Secret(appConfig.Openstack.Password)
-	appConfig.RoleProvider.APIToken = redact.Secret(appConfig.RoleProvider.APIToken)
-	appConfig.AIaaS.Token = redact.Secret(appConfig.AIaaS.Token)
-	appConfig.Storage.ConnectionString = redact.ConnString(appConfig.Storage.ConnectionString)
+	appConfig = redactedConfig(appConfig)
 
 	if appConfig.DevMode {
 		appConfigJson, err = json.MarshalIndent(appConfig, "", "  ")

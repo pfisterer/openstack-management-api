@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -48,6 +49,9 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		}
 		if req.MaxProjectTermDays != nil {
 			return model.Node{}, fmt.Errorf("max_project_term_days is a budget setting")
+		}
+		if req.ReleaseMax != nil {
+			return model.Node{}, fmt.Errorf("release_max is a budget setting")
 		}
 		if req.InheritsLimit {
 			return model.Node{}, fmt.Errorf("inherits_limit is a budget setting")
@@ -152,6 +156,10 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		if err == nil {
 			maxTerm, err = fitMaxTerm(req.MaxProjectTermDays, chainMaxTerm(parentChain))
 		}
+		if err == nil {
+			// Unlike the term, nothing is copied down: what the budgets above set applies anyway (strictest along the chain), and copying would freeze it here.
+			err = model.ValidateReleaseMax(req.ReleaseMax, model.ResolveReleaseMax(parentChain))
+		}
 	}
 	if err != nil {
 		return model.Node{}, err
@@ -194,6 +202,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		node.AllowRequestsBeyondAutoApprove = req.AllowRequestsBeyondAutoApprove
 		node.AutoApproveExtensions = req.AutoApproveExtensions
 		node.MaxProjectTermDays = maxTerm
+		node.ReleaseMax = req.ReleaseMax.Normalized()
 		node.InheritsLimit = req.InheritsLimit
 	}
 	node.History = []model.HistoryEntry{createdEntry}
@@ -303,6 +312,7 @@ func isLeafDirectEdit(req UpdateNodeRequest) bool {
 		req.AutoApprove == nil && !req.ClearAutoApprove &&
 		req.AllowSubBudgetRequests == nil && req.AllowRequestsBeyondAutoApprove == nil &&
 		req.AutoApproveExtensions == nil && req.MaxProjectTermDays == nil && !req.ClearMaxProjectTermDays &&
+		req.ReleaseMax == nil &&
 		req.Limit == nil && req.TerminationDate == nil && !req.ClearTerminationDate &&
 		req.InheritsLimit == nil
 }
@@ -343,7 +353,7 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 	wantsPolicyEdit := req.Name != nil || req.AdminScope != nil || req.EligibleRequesters != nil ||
 		req.AutoApprove != nil || req.ClearAutoApprove || req.AllowSubBudgetRequests != nil ||
 		req.AllowRequestsBeyondAutoApprove != nil || req.AutoApproveExtensions != nil ||
-		req.MaxProjectTermDays != nil || req.ClearMaxProjectTermDays
+		req.MaxProjectTermDays != nil || req.ClearMaxProjectTermDays || req.ReleaseMax != nil
 	wantsCapacityEdit := req.Limit != nil || req.TerminationDate != nil || req.ClearTerminationDate || req.InheritsLimit != nil
 
 	if wantsPolicyEdit {
@@ -410,7 +420,7 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 		updated.AutoApprove = req.AutoApprove
 	}
 	var chain []model.Node
-	if wantsCapacityEdit || req.ClearMaxProjectTermDays || req.MaxProjectTermDays != nil {
+	if wantsCapacityEdit || req.ClearMaxProjectTermDays || req.MaxProjectTermDays != nil || req.ReleaseMax != nil {
 		if chain, err = s.parentChainNodes(ctx, current); err != nil {
 			return model.Node{}, err
 		}
@@ -425,6 +435,13 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 			return model.Node{}, err
 		}
 		updated.MaxProjectTermDays = req.MaxProjectTermDays
+	}
+	// A budget's release maximums only tighten what the budgets above allow. Lowering them needs nothing carried down: what applies below is the strictest along the chain, so a budget below with longer times of its own simply gets these.
+	if req.ReleaseMax != nil {
+		if err := model.ValidateReleaseMax(req.ReleaseMax, model.ResolveReleaseMax(chain)); err != nil {
+			return model.Node{}, err
+		}
+		updated.ReleaseMax = req.ReleaseMax.Normalized()
 	}
 	if req.ClearTerminationDate || req.TerminationDate != nil {
 		if bound := chainEnd(chain); req.ClearTerminationDate && bound != nil {
@@ -446,6 +463,10 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 	if req.ClearTerminationDate || req.TerminationDate != nil {
 		historyEntry.TerminationDateFrom = current.TerminationDate
 		historyEntry.TerminationDateTo = updated.TerminationDate
+	}
+	if req.ReleaseMax != nil && !reflect.DeepEqual(current.ReleaseMax, updated.ReleaseMax) {
+		historyEntry.ReleaseMaxFrom = current.ReleaseMax.Clone()
+		historyEntry.ReleaseMaxTo = updated.ReleaseMax.Clone()
 	}
 
 	// An inherited limit is the one of the budget above and cannot be set by

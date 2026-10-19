@@ -55,6 +55,8 @@ type CreateNodeRequest struct {
 	// MaxProjectTermDays may not exceed the cap of a budget above; omitted
 	// under a budget with a cap, it is that cap.
 	MaxProjectTermDays *int `json:"max_project_term_days"`
+	// ReleaseMax are the budget's own release maximums (model.ReleaseMax); each value at most what the budgets above allow. Omitted or empty, the budget sets none of its own and those above apply.
+	ReleaseMax *model.ReleaseMax `json:"release_max"`
 	// InheritsLimit creates a budget that passes on the limit of its parent
 	// (Node.InheritsLimit); Limit is then ignored. Managers only.
 	InheritsLimit bool `json:"inherits_limit"`
@@ -77,10 +79,12 @@ type UpdateNodeRequest struct {
 	// projects ending later than that many days from today are shortened.
 	// ClearMaxProjectTermDays removes the cap, only where no budget above has
 	// one.
-	MaxProjectTermDays      *int                 `json:"max_project_term_days"`
-	ClearMaxProjectTermDays bool                 `json:"clear_max_project_term_days"`
-	Limit                   *common.ProjectQuota `json:"limit"`
-	TerminationDate         *string              `json:"termination_date"`
+	MaxProjectTermDays      *int `json:"max_project_term_days"`
+	ClearMaxProjectTermDays bool `json:"clear_max_project_term_days"`
+	// ReleaseMax replaces the budget's own release maximums as a whole (model.ReleaseMax); a field left out is not set here, so the budgets above decide it, and an empty object removes them all. Each value at most what the budgets above allow (Node.InheritedReleaseMax). Managers of the budget or above, like the other policy fields. Omitted, they stay as they are.
+	ReleaseMax      *model.ReleaseMax    `json:"release_max"`
+	Limit           *common.ProjectQuota `json:"limit"`
+	TerminationDate *string              `json:"termination_date"`
 	// TerminationDate may not lie after the end of any budget above. A budget's
 	// new end is carried down: every node below it that ends later, or never,
 	// ends with it, waiting requests and proposals included.

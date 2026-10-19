@@ -224,3 +224,41 @@ func TestProjectForProfiles(t *testing.T) {
 		t.Fatalf("profiles without server types in the catalogue: %v", *p.Profiles)
 	}
 }
+
+// Every project is sent the strictest release maximums along its chain, root included; without any set anywhere the release is sent empty, so the AI service keeps its defaults but no longer takes values from its admins.
+func TestPassSendsReleaseMax(t *testing.T) {
+	ctx := context.Background()
+	log := zap.NewNop().Sugar()
+	store := nodestore.NewInMemoryStore(log)
+	svc := tree.NewService(store, nil, catalog, nil, time.Second, 0, tree.Accounting{}, log)
+	iv := func(n int) *int { return &n }
+	root, b1, b2 := "r", "b1", "b2"
+	for _, n := range []model.Node{
+		{ID: root, Kind: model.KindBudget, Status: model.StatusApproved, ReleaseMax: &model.ReleaseMax{CPU: model.ReleaseTimes{IdleOpenMinutes: iv(120), IdleClosedMinutes: iv(120), MaxHours: iv(12)}, GPU: model.ReleaseTimes{IdleOpenMinutes: iv(30), IdleClosedMinutes: iv(5), MaxHours: iv(4)}}},
+		{ID: b1, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &root},
+		{ID: b2, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &b1, ReleaseMax: &model.ReleaseMax{CPU: model.ReleaseTimes{IdleOpenMinutes: iv(60), MaxHours: iv(24)}, GPU: model.ReleaseTimes{MaxHours: iv(2)}}},
+		{ID: "lone", Kind: model.KindBudget, Status: model.StatusApproved},
+		{ID: "p_deep", Kind: model.KindProject, Status: model.StatusApproved, ParentID: &b2, Name: "Deep", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
+		{ID: "p_free", Kind: model.KindProject, Status: model.StatusApproved, ParentID: new("lone"), Name: "Free", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
+	} {
+		if err := store.UpsertNode(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fake := &fakeService{projects: map[string]Project{}}
+	s := &Syncer{Tree: svc.ProviderSync(Provider), Service: fake, Resources: func() []common.Resource { return catalog }, Log: log}
+	if _, err := s.Pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	r := fake.projects["p_deep"].Release
+	if r == nil || *r.CPU.IdleOpenMinutes != 60 || *r.CPU.IdleClosedMinutes != 120 || *r.CPU.MaxHours != 12 || *r.GPU.IdleOpenMinutes != 30 || *r.GPU.IdleClosedMinutes != 5 || *r.GPU.MaxHours != 2 {
+		t.Errorf("release = %+v, want the strictest along the chain", r)
+	}
+	free := fake.projects["p_free"].Release
+	if free == nil {
+		t.Fatal("the release should always be sent")
+	}
+	if b, _ := json.Marshal(free); string(b) != `{"cpu":{},"gpu":{}}` {
+		t.Errorf("release without maximums = %s", b)
+	}
+}

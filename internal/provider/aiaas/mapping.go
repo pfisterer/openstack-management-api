@@ -187,3 +187,31 @@ func InUseFrom(st Status, resources []common.Resource) common.ProjectQuota {
 	}
 	return out
 }
+
+// ReleaseFor is what the AI service is told about a leaf's release times: the strictest maximums of the budgets above it (chain, in any order). Never nil, also when no budget sets any: then every field is left out and the AI service applies its defaults.
+func ReleaseFor(chain []model.Node) *Release {
+	r := model.ResolveReleaseMax(chain)
+	if r == nil {
+		return &Release{}
+	}
+	conv := func(t model.ReleaseTimes) ReleaseTimes {
+		return ReleaseTimes{IdleOpenMinutes: t.IdleOpenMinutes, IdleClosedMinutes: t.IdleClosedMinutes, MaxHours: t.MaxHours}
+	}
+	return &Release{CPU: conv(r.CPU), GPU: conv(r.GPU)}
+}
+
+// chainOf is the budgets above a leaf, parent first, from the budgets by id; it stops at a budget it does not know or at a cycle.
+func chainOf(leaf model.Node, budgets map[string]model.Node) []model.Node {
+	var out []model.Node
+	seen := map[string]bool{}
+	for id := leaf.ParentID; id != nil && !seen[*id]; {
+		seen[*id] = true
+		b, ok := budgets[*id]
+		if !ok {
+			break
+		}
+		out = append(out, b)
+		id = b.ParentID
+	}
+	return out
+}

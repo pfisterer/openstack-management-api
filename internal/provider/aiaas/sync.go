@@ -15,6 +15,7 @@ import (
 // Tree is what the syncer needs of the tree (tree.ProviderSync).
 type Tree interface {
 	Leaves(ctx context.Context, statuses []string) ([]model.Node, error)
+	Budgets(ctx context.Context) ([]model.Node, error)
 	RecordObservation(ctx context.Context, leafID, externalID string, o *tree.Observation) error
 	RemoveRetired(ctx context.Context, leafID string) (bool, error)
 	Changes() <-chan struct{}
@@ -87,6 +88,15 @@ func (s *Syncer) Pass(ctx context.Context) (Result, error) {
 	if err != nil {
 		return res, err
 	}
+	// The budgets, for the release maximums each project inherits along its chain: loaded once per pass rather than per leaf.
+	list, err := s.Tree.Budgets(ctx)
+	if err != nil {
+		return res, err
+	}
+	budgets := make(map[string]model.Node, len(list))
+	for _, b := range list {
+		budgets[b.ID] = b
+	}
 	resources := s.Resources()
 	now := time.Now
 	if s.now != nil {
@@ -127,6 +137,7 @@ func (s *Syncer) Pass(ctx context.Context) (Result, error) {
 			continue
 		}
 		p := ProjectFor(leaf, resources)
+		p.Release = ReleaseFor(chainOf(leaf, budgets))
 		if at, ok := s.deleteAt(leaf); ok {
 			p.DeleteAt = &at
 		}

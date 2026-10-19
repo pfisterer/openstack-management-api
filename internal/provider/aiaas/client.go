@@ -49,6 +49,20 @@ type Project struct {
 	DeleteAt *time.Time `json:"delete_at,omitempty"`
 	// Workspaces tells whether the project holds anything of the area workspaces: only then it is a workspace project (start form, servers); one with LLM tokens only is not.
 	Workspaces bool `json:"workspaces"`
+	// Release are the most the project may choose as release times: the strictest release maximums along its chain of budgets, root included (model.ResolveReleaseMax). Always sent, so they belong to the tree there and nobody sets them at the AI service; a field no budget sets is left out and the AI service keeps its own default for it.
+	Release *Release `json:"release"`
+}
+
+// ReleaseTimes and Release are the AI service's release times (its workspace.ReleaseTimes and Release): per kind of use, minutes without activity with and without an open tab, and an upper bound in hours (0 = none).
+type ReleaseTimes struct {
+	IdleOpenMinutes   *int `json:"idle_open_minutes,omitempty"`
+	IdleClosedMinutes *int `json:"idle_closed_minutes,omitempty"`
+	MaxHours          *int `json:"max_hours,omitempty"`
+}
+
+type Release struct {
+	CPU ReleaseTimes `json:"cpu"`
+	GPU ReleaseTimes `json:"gpu"`
 }
 
 type Use struct {

@@ -310,7 +310,10 @@ type HistoryEntry struct {
 	// after an "attributes_changed" entry.
 	AttributesFrom Attributes `json:"attributes_from,omitempty"`
 	AttributesTo   Attributes `json:"attributes_to,omitempty"`
-	Reason         *string    `json:"reason,omitempty"`
+	// ReleaseMaxFrom and ReleaseMaxTo are the budget's own release maximums before and after an "updated" entry that changed them; nil on one side means none.
+	ReleaseMaxFrom *ReleaseMax `json:"release_max_from,omitempty"`
+	ReleaseMaxTo   *ReleaseMax `json:"release_max_to,omitempty"`
+	Reason         *string     `json:"reason,omitempty"`
 }
 
 // StatusUsage groups the aggregated limits and contributing leaf IDs for one status.
@@ -406,6 +409,8 @@ type Node struct {
 	// sub-budget may tighten it, never loosen it; lowering it shortens the
 	// projects below. nil means no cap of its own.
 	MaxProjectTermDays *int `json:"max_project_term_days,omitempty"`
+	// ReleaseMax are the most the projects below this budget may choose as release times of their workspaces at the AI service (see ReleaseMax). Not a quantity: it holds for every project below, a budget below may only tighten it, and what applies to a project is the strictest value along its chain (ResolveReleaseMax). Set by the budget's managers like the other policy fields. nil means nothing of its own.
+	ReleaseMax *ReleaseMax `json:"release_max,omitempty"`
 
 	// InheritsLimit makes a budget a node for structure only: it has no limit
 	// of its own but passes on the one of the budget above — a campus that
@@ -506,6 +511,8 @@ type Node struct {
 	// the node it comes from. Like Attributes, only for those who look after the
 	// node — its managers and those above, on a project its owner and admins.
 	EffectiveAttributes map[string]AttributeGroup `json:"effective_attributes,omitempty"`
+	// InheritedReleaseMax is attached to API responses (never persisted): the strictest release maximums of the budgets above this node (ResolveReleaseMax over its ancestors). On a budget it is what its own ReleaseMax may only tighten; on a project, what applies to it. Nil when no budget above sets any.
+	InheritedReleaseMax *ReleaseMax `json:"inherited_release_max,omitempty"`
 
 	// AvailableResources is attached to API responses (never persisted): the
 	// resources that are in scope AT THIS NODE, root-most first as the catalogue

@@ -124,6 +124,8 @@ func toNodeRow(n model.Node) nodeRow {
 	n.SubtreeInUse = nil
 	// So are the release maximums inherited from above: a stored copy would go stale the moment a budget above changes its own.
 	n.InheritedReleaseMax = nil
+	// And how the caller of a listing sees the node.
+	n.ViewerRelation = ""
 	// Every write passes here, so this is where no node's history outgrows its cap.
 	model.CapHistory(&n)
 	return nodeRow{
@@ -190,6 +192,20 @@ func jsonbContainsAnyCond(column string, tokens []string) (string, []any) {
 	for i, token := range tokens {
 		conds[i] = column + " @> ?::jsonb"
 		args[i] = string(mustMarshalPG([]string{token}))
+	}
+	return "(" + strings.Join(conds, " OR ") + ")", args
+}
+
+// authorizedUsersContainAnyCond matches a node whose authorized users (inside the data blob, [{"token": …, "openstack_role": …}]) hold any of the tokens.
+func authorizedUsersContainAnyCond(tokens []string) (string, []any) {
+	if len(tokens) == 0 {
+		return "FALSE", nil
+	}
+	conds := make([]string, len(tokens))
+	args := make([]any, len(tokens))
+	for i, token := range tokens {
+		conds[i] = "data->'authorized_users' @> ?::jsonb"
+		args[i] = string(mustMarshalPG([]map[string]string{{"token": token}}))
 	}
 	return "(" + strings.Join(conds, " OR ") + ")", args
 }
@@ -303,8 +319,10 @@ func applyNodeQuery(db *gorm.DB, q NodeQuery) *gorm.DB {
 		db = jsonbContainsAny(db, "eligible_requesters", q.EligibleAny)
 	}
 	if r := q.Responsible; r != nil {
-		adminCond, args := jsonbContainsAnyCond("admin_scope", r.AdminAny)
-		db = db.Where("(owner = ? OR "+adminCond+")", append([]any{r.Owner}, args...)...)
+		adminCond, adminArgs := jsonbContainsAnyCond("admin_scope", r.AdminAny)
+		memberCond, memberArgs := authorizedUsersContainAnyCond(r.MemberAny)
+		args := append(append([]any{r.Owner}, adminArgs...), memberArgs...)
+		db = db.Where("(owner = ? OR "+adminCond+" OR "+memberCond+")", args...)
 	}
 	return db
 }

@@ -390,7 +390,7 @@ type mcpDeleteBudgetInput struct {
 func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *zap.SugaredLogger) {
 	mcpserve.AddTool(s, caller, false, &mcp.Tool{
 		Name:        "list_my_projects",
-		Description: "List the cloud projects the calling user owns or administers, with their status and granted resources.",
+		Description: "List the cloud projects the calling user owns, administers or is a member of, with their status and granted resources.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpPageInput) (*mcp.CallToolResult, mcpProjectList, error) {
 		limit, offset := in.resolve()
 		page, err := cfg.Service.ListMine(caller.userEmail, caller.tokens, limit, offset)

@@ -47,7 +47,10 @@ func TestProjectAdmins(t *testing.T) {
 			t.Fatalf("list mine for %s: %v", who, err)
 		}
 		if mine.Total != 1 || mine.Items[0].ID != project.ID {
-			t.Errorf("%s: expected the project in My Projects, got %d", who, mine.Total)
+			t.Fatalf("%s: expected the project in My Projects, got %d", who, mine.Total)
+		}
+		if want := map[string]string{"owner@x": "owner", "co@x": "admin", "member@x": "admin"}[who]; mine.Items[0].ViewerRelation != want {
+			t.Errorf("%s: expected viewer_relation %q, got %q", who, want, mine.Items[0].ViewerRelation)
 		}
 	}
 	if mine, _ := svc.ListMine("stranger@x", strangerTokens, 0, 0); mine.Total != 0 {
@@ -97,5 +100,44 @@ func TestProjectAdmins(t *testing.T) {
 	}
 	if released.Status != model.StatusReleased {
 		t.Errorf("expected released, got %s", released.Status)
+	}
+}
+
+// "My Projects" also lists the projects a person is a member of (authorized user), by name or through a group, so a member finds the projects they work in; the client tells them apart from their own by owner and admin scope.
+func TestListMineIncludesMembers(t *testing.T) {
+	svc, _ := newSvc(t, common.TokenList{"group:root"})
+	rootTokens := common.TokenList{"user:root@x", "group:root"}
+	ownerTokens := common.TokenList{"user:owner@x", "group:cs-student"}
+
+	budget, err := svc.CreateNode(tree.CreateNodeRequest{
+		ParentID: model.RootNodeID, Kind: model.KindBudget, Name: "Chair", Reason: "test",
+		Limit: cores(10), AdminScope: common.TokenList{"group:root"},
+		EligibleRequesters: common.TokenList{"user:owner@x"},
+	}, model.UIActor("root@x"), "root@x", rootTokens)
+	if err != nil {
+		t.Fatalf("create budget: %v", err)
+	}
+	project, err := svc.CreateNode(tree.CreateNodeRequest{
+		ParentID: budget.ID, Kind: model.KindProject, Name: "Lab", Reason: "lab", Limit: cores(2),
+		AuthorizedUsers: []common.AuthorizedUser{{Token: "user:member@x", OpenstackRole: "member"}, {Token: "group:cs-student", OpenstackRole: "reader"}},
+	}, model.UIActor("owner@x"), "owner@x", ownerTokens)
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+
+	for who, tokens := range map[string]common.TokenList{"member@x": {"user:member@x"}, "student@x": {"user:student@x", "group:cs-student"}} {
+		mine, err := svc.ListMine(who, tokens, 0, 0)
+		if err != nil {
+			t.Fatalf("list mine for %s: %v", who, err)
+		}
+		if mine.Total != 1 || mine.Items[0].ID != project.ID {
+			t.Fatalf("%s: expected the project they are a member of, got %d", who, mine.Total)
+		}
+		if r := mine.Items[0].ViewerRelation; r != "member" {
+			t.Errorf("%s: expected viewer_relation member, got %q", who, r)
+		}
+	}
+	if mine, _ := svc.ListMine("stranger@x", common.TokenList{"user:stranger@x"}, 0, 0); mine.Total != 0 {
+		t.Errorf("a stranger must not see the project, got %d", mine.Total)
 	}
 }

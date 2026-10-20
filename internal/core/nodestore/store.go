@@ -29,15 +29,16 @@ type NodeQuery struct {
 	AdminScopeAny common.TokenList
 	// EligibleAny restricts to nodes whose EligibleRequesters contains any of these tokens.
 	EligibleAny common.TokenList
-	// Responsible restricts to nodes owned by its Owner OR administered by any of
-	// its AdminAny tokens — the projects a person answers for, alone or together.
+	// Responsible restricts to nodes owned by its Owner OR administered by any of its AdminAny tokens OR naming any of its MemberAny tokens as an authorized user — the projects a person answers for, alone or together, and the ones they work in.
 	Responsible *ResponsibleQuery
 }
 
-// ResponsibleQuery is the OR of an owner and an admin scope, see NodeQuery.Responsible.
+// ResponsibleQuery is the OR of an owner, an admin scope and the authorized users, see NodeQuery.Responsible.
 type ResponsibleQuery struct {
 	Owner    string
 	AdminAny common.TokenList
+	// MemberAny matches a node whose AuthorizedUsers hold any of these tokens.
+	MemberAny common.TokenList
 }
 
 // ErrSkipUpdate is returned from an UpdateNode callback to leave the node unchanged.
@@ -160,7 +161,7 @@ func matchesQuery(n model.Node, q NodeQuery) bool {
 		return false
 	}
 	if r := q.Responsible; r != nil &&
-		!(r.Owner != "" && n.Owner == r.Owner) && !(len(r.AdminAny) > 0 && tokenListContainsAny(n.AdminScope, r.AdminAny)) {
+		!(r.Owner != "" && n.Owner == r.Owner) && !(len(r.AdminAny) > 0 && tokenListContainsAny(n.AdminScope, r.AdminAny)) && !authorizesAny(n, r.MemberAny) {
 		return false
 	}
 	return true
@@ -168,6 +169,20 @@ func matchesQuery(n model.Node, q NodeQuery) bool {
 
 func containsString(haystack []string, needle string) bool {
 	return slices.Contains(haystack, needle)
+}
+
+// authorizesAny reports whether the node's authorized users hold any of the tokens.
+func authorizesAny(n model.Node, tokens common.TokenList) bool {
+	if len(tokens) == 0 {
+		return false
+	}
+	set := common.NewTokenSet(tokens)
+	for _, au := range n.AuthorizedUsers {
+		if set.Contains(au.Token) {
+			return true
+		}
+	}
+	return false
 }
 
 func tokenListContainsAny(list common.TokenList, any common.TokenList) bool {

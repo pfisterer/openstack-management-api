@@ -508,6 +508,8 @@ type Node struct {
 	// from below the root down to ParentID, root-most first, so a client can
 	// tell two budgets of the same name apart. Empty when the parent is the root.
 	ParentPath []PathEntry `json:"parent_path,omitempty"`
+	// ViewerRelation is attached to the caller's own project list (never persisted): how the caller comes to see the project — "owner", "admin" (its admin scope names them or a group of theirs) or "member" (only an authorized user, who reads it and works in it but cannot change it). Only the server knows the caller's group tokens, so only it can tell an admin by group from a member by group.
+	ViewerRelation string `json:"viewer_relation,omitempty" enums:"owner,admin,member"`
 	// EffectiveAttributes is attached to API responses (never persisted): the
 	// attribute groups that apply at this node, its own and inherited, each with
 	// the node it comes from. Like Attributes, only for those who look after the

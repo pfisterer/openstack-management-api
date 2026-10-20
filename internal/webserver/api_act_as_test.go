@@ -57,12 +57,12 @@ func TestActAs_FaithfulAndRecorded(t *testing.T) {
 		}
 	}
 
-	// Email-scoped views follow the person: "mine" shows the student's leaves (p_002 in the mock seed).
+	// Email-scoped views follow the person: "mine" shows the student's leaves (p_002 in the mock seed, and p_001 they are a reader of).
 	rr = do(t, h, http.MethodGet, "/v1/nodes/mine", userStudent, nil)
 	assertStatus(t, rr, http.StatusOK)
 	mine := decodePage(t, rr)
-	if len(mine) != 1 || mine[0].ID != "p_002" {
-		t.Errorf("the student owns exactly [p_002], got %v", nodeIDs(mine))
+	if ids := nodeIDs(mine); len(ids) != 2 || ids[0] != "p_001" || ids[1] != "p_002" {
+		t.Errorf("the student sees exactly [p_001 p_002], got %v", ids)
 	}
 
 	// Root's own rights are gone: the student cannot decide the pending leaf.

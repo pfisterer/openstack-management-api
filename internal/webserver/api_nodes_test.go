@@ -22,9 +22,10 @@ func TestViews_Mine(t *testing.T) {
 	rr := do(t, h, http.MethodGet, "/v1/nodes/mine", userFaculty, nil)
 	assertStatus(t, rr, http.StatusOK)
 	nodes := decodePage(t, rr)
-	want := map[string]bool{"p_001": true, "p_003": true}
+	// p_001 and p_003 are faculty's own, p_imported_001 names faculty as an authorized user (member).
+	want := map[string]bool{"p_001": true, "p_003": true, "p_imported_001": true}
 	if len(nodes) != len(want) {
-		t.Fatalf("faculty should own exactly %d leaves, got %v", len(want), nodeIDs(nodes))
+		t.Fatalf("faculty should see exactly %d leaves, got %v", len(want), nodeIDs(nodes))
 	}
 	for _, n := range nodes {
 		if !want[n.ID] {

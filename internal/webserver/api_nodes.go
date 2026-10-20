@@ -117,7 +117,7 @@ func listNodeChildren(cfg APIConfig) gin.HandlerFunc {
 // listMyNodes returns the project leaves the current user owns or administers.
 //
 //	@Summary		List my project leaves
-//	@Description	Retrieves the project leaves the current (effective) user owns, or administers through the project's admin scope (directly or through a group).
+//	@Description	Retrieves the project leaves the current (effective) user owns, administers through the project's admin scope, or is an authorized user (member) of — directly or through a group. Which of these applies follows from owner, admin_scope and authorized_users of each node.
 //	@Tags			nodes
 //	@Produce		json
 //	@Security		Bearer

@@ -50,8 +50,7 @@ func (s *Service) GetNode(id string, userTokens common.TokenList) (*model.Node, 
 	return &withUsage[0], nil
 }
 
-// ListMine returns the leaves the user answers for: the ones they own, and the
-// ones whose admin scope names them or one of their groups.
+// ListMine returns the leaves the user answers for or works in: the ones they own, the ones whose admin scope names them or one of their groups, and the ones whose authorized users do (members, who may read them, see GetNode). Which of these the caller is, the client reads from owner, admin_scope and authorized_users of each node.
 func (s *Service) ListMine(userEmail string, userTokens common.TokenList, limit, offset int) (NodePage, error) {
 	if strings.TrimSpace(userEmail) == "" {
 		return NodePage{}, fmt.Errorf("missing user email")
@@ -64,10 +63,29 @@ func (s *Service) ListMine(userEmail string, userTokens common.TokenList, limit,
 	if err != nil {
 		return NodePage{}, err
 	}
-	return s.listPage(ctx, nodestore.NodeQuery{
+	page, err := s.listPage(ctx, nodestore.NodeQuery{
 		Kinds:       []string{model.KindProject},
-		Responsible: &nodestore.ResponsibleQuery{Owner: owner, AdminAny: userTokens},
+		Responsible: &nodestore.ResponsibleQuery{Owner: owner, AdminAny: userTokens, MemberAny: append(slices.Clone(userTokens), owner)},
 	}, limit, offset, append(slices.Clone(userTokens), owner))
+	if err != nil {
+		return NodePage{}, err
+	}
+	for i := range page.Items {
+		page.Items[i].ViewerRelation = viewerRelation(&page.Items[i], owner, userTokens)
+	}
+	return page, nil
+}
+
+// viewerRelation is how the caller comes to see a project of ListMine: as its owner, as one of its admins, or only as a member.
+func viewerRelation(n *model.Node, owner string, userTokens common.TokenList) string {
+	switch {
+	case n.Owner == owner:
+		return "owner"
+	case common.NewTokenSet(n.AdminScope).ContainsAny(userTokens):
+		return "admin"
+	default:
+		return "member"
+	}
 }
 
 // listPage runs one query twice — the page itself and the number of rows it was

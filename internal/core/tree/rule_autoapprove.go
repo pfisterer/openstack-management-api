@@ -25,24 +25,57 @@ func (s *Service) autoApprovable(ctx context.Context, budget *model.Node, owner 
 	if budget == nil || budget.AutoApprove == nil || budget.Status != model.StatusApproved {
 		return false, nil
 	}
-	if !budget.AutoApprove.IsPool() {
-		usage, err := s.ownerActiveUsage(ctx, budget.ID, owner)
-		if err != nil {
-			return false, fmt.Errorf("compute per-requester usage: %w", err)
-		}
-		for _, id := range s.countIDs() {
-			usage[id] -= subtractLimit[id]
-		}
-		need, err := quotaAddChecked(usage, addLimit, s.countIDs())
-		if err != nil || !quotaFits(need, budget.AutoApprove.PerRequesterLimit, s.countIDs()) {
-			return false, nil
-		}
+	if ok, err := s.withinRequesterShare(ctx, budget, owner, addLimit, subtractLimit); err != nil || !ok {
+		return false, err
 	}
 	ancestors, err := s.nodeChain(ctx, budget.ID)
 	if err != nil {
 		return false, err
 	}
 	return s.checkCapacity(ctx, ancestors, addLimit, subtractLimit) == nil, nil
+}
+
+// subBudgetAutoApprovable reports whether budget's auto-approve policy grants a sub-budget requested by requester (an owner token). Budget limits are caps, not reservations: a sub-budget consumes nothing of the budgets above, and the projects in it are held to every ancestor's capacity when they are granted (checkCapacity). So a pool policy grants any sub-budget the edge rule allows, while a per-requester policy counts its full limit against the requester's share (see ownerActiveUsage). Who manages it is free — handing it to others is the point of a sub-budget —, it still counts against the one who asked. Not granted: a request for nothing at all, as with projects, one the edge rule refuses (checkBudgetLimit), and under a per-requester policy a limit with no finite size, which no share can measure.
+func (s *Service) subBudgetAutoApprovable(ctx context.Context, budget *model.Node, chain []model.Node, node model.Node, requester string) (bool, error) {
+	if budget == nil || budget.AutoApprove == nil || budget.Status != model.StatusApproved {
+		return false, nil
+	}
+	if node.InheritsLimit || allZero(node.Limit) {
+		return false, nil
+	}
+	if err := s.checkBudgetLimit(ctx, node, chain, node.Limit, false); err != nil {
+		return false, nil
+	}
+	if !budget.AutoApprove.IsPool() {
+		for _, id := range s.countIDs() {
+			if node.Limit[id] == common.UnlimitedQuota {
+				return false, nil
+			}
+		}
+	}
+	return s.withinRequesterShare(ctx, budget, requester, node.Limit, nil)
+}
+
+// withinRequesterShare reports whether owner, going from subtractLimit to addLimit, stays within budget's per-requester limit; a pool policy has none.
+func (s *Service) withinRequesterShare(ctx context.Context, budget *model.Node, owner string, addLimit, subtractLimit common.ProjectQuota) (bool, error) {
+	if budget.AutoApprove.IsPool() {
+		return true, nil
+	}
+	usage, bounded, err := s.ownerActiveUsage(ctx, budget.ID, owner)
+	if err != nil {
+		return false, fmt.Errorf("compute per-requester usage: %w", err)
+	}
+	if !bounded {
+		return false, nil
+	}
+	for _, id := range s.countIDs() {
+		usage[id] -= subtractLimit[id]
+	}
+	need, err := quotaAddChecked(usage, addLimit, s.countIDs())
+	if err != nil || !quotaFits(need, budget.AutoApprove.PerRequesterLimit, s.countIDs()) {
+		return false, nil
+	}
+	return true, nil
 }
 
 // autoApproveReason is the history note of a grant made by budget's policy.

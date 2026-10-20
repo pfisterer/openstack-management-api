@@ -242,6 +242,33 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		} else if !parent.RequestsBeyondAutoApproveAllowed() {
 			return model.Node{}, errBeyondAutoApprove
 		}
+
+	case req.Kind == model.KindBudget && parent.AutoApprove != nil:
+		// As with projects: a request for nothing at all waits for a manager.
+		if allZero(node.Limit) {
+			break
+		}
+		// What a manager's approval would refuse is not granted either: it waits, and a manager may trim it — or, where the budget takes no requests beyond its policy, it is refused with the reason.
+		if err := s.checkBudgetLimit(ctx, node, parentChain, node.Limit, false); err != nil {
+			if !parent.RequestsBeyondAutoApproveAllowed() {
+				return model.Node{}, err
+			}
+			break
+		}
+		requester, err := normalizeOwnerToken(userEmail)
+		if err != nil {
+			return model.Node{}, err
+		}
+		ok, err := s.subBudgetAutoApprovable(ctx, parent, parentChain, node, requester)
+		if err != nil {
+			return model.Node{}, err
+		}
+		if ok {
+			node.Status = model.StatusApproved
+			node.History = append(node.History, autoApprovedEntry(actor, model.StatusPending, autoApproveReason(parent)))
+		} else if !parent.RequestsBeyondAutoApproveAllowed() {
+			return model.Node{}, errBeyondAutoApprove
+		}
 	}
 
 	if err := s.store.UpsertNode(ctx, node); err != nil {

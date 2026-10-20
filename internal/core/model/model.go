@@ -12,6 +12,8 @@
 //     pending. If N carries an AutoApprove policy and the requester's cumulative
 //     active usage under N stays within the per-requester limit, if it has one
 //     (and every ancestor has capacity), the request is approved immediately.
+//     Sub-budget requests too: their full limit counts against the requester's
+//     share, but no capacity, since a budget limit is a cap, not a reservation.
 package model
 
 import (
@@ -140,8 +142,13 @@ var KnownStatuses = []string{
 //     bound — the shape of a budget handed to one person, or to a team that
 //     shares it, where a per-person cap would only restate the budget.
 //   - individual limits (PerRequesterLimit set): additionally, the requester's
-//     cumulative active usage under this budget (matched by Owner) must stay
-//     within it — the shape of a course budget split among its students.
+//     cumulative active usage under this budget (projects matched by Owner,
+//     plus the full limits of the sub-budgets they requested, matched by
+//     CreatedBy) must stay within it — the shape of a course budget split
+//     among its students.
+//
+// Sub-budget requests are granted by the same policy (see
+// tree.subBudgetAutoApprovable).
 //
 // The per-requester cap and the budget's own total Limit are two separate,
 // independently meaningful values.

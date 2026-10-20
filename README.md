@@ -158,7 +158,8 @@ matters when a sourced `openrc` is in the same shell.
 | `OIDC_JWKS_URL` | — | The provider's key set (`…/protocol/openid-connect/certs` on Keycloak). Set it and startup asks the provider nothing; empty discovers it from the issuer, which needs the provider to be up right then |
 | `API_TOKEN_TTL_HOURS`, `API_TOKEN_ALLOW_NEVER_EXPIRES` | `24`, `false` | API token lifetime when a request names none (any other lifetime may be requested), and whether tokens without expiry may be issued |
 | `OPENSTACK_DASHBOARD_URL` | — | Public address of the OpenStack dashboard (Horizon); set, the UI links each project that exists in OpenStack to it |
-| `API_MAX_AUTHORIZED_USERS` | `32` | Cap on additional members per project |
+| `API_MAX_AUTHORIZED_USERS` | `32` | Cap on additional members per project that involves OpenStack (holds an OpenStack resource, also through an allocation or a waiting change, or has an OpenStack project) |
+| `API_MAX_AUTHORIZED_USERS_OTHER` | `200` | Cap on additional members per project without anything in OpenStack (workspaces, LLM); their members cost no Keystone work |
 | `API_CHARGE_OS_IN_USE` | `true` | Charge a leaf the larger of its limit and its measured OpenStack usage |
 | `API_CHARGE_RELEASED` | `true` | Keep a released leaf charged until its OpenStack project is archived or gone |
 | `API_CHARGE_ARCHIVED` | `false` | Charge an archived leaf the volume storage it still holds; the usage history records it either way |

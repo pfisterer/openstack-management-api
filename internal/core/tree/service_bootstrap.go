@@ -3,6 +3,7 @@ package tree
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"time"
 
@@ -158,27 +159,8 @@ func (s *Service) ensureBootstrapNodes(ctx context.Context) error {
 			return fmt.Errorf("bootstrap root node: %w", err)
 		}
 		s.log.Infow("bootstrapped root node", "admin_scope", rootNode.AdminScope)
-	} else {
-		updated := *root
-		changed := false
-
-		if !tokenListsEqual(root.AdminScope, s.rootAdminTokens) {
-			updated.AdminScope = append(common.TokenList{}, s.rootAdminTokens...)
-			changed = true
-			s.log.Infow("synchronized root admin scope from configuration",
-				"previous", root.AdminScope, "current", updated.AdminScope)
-		}
-
-		if added := s.adoptNewCatalogueResources(&updated); len(added) > 0 {
-			changed = true
-			s.log.Infow("root adopted resources new to the catalogue", "resources", added)
-		}
-
-		if changed {
-			if err := s.store.UpsertNode(ctx, updated); err != nil {
-				return fmt.Errorf("sync root node: %w", err)
-			}
-		}
+	} else if err := s.syncRoot(ctx); err != nil {
+		return err
 	}
 
 	unassigned, err := s.store.GetNode(ctx, model.UnassignedNodeID)
@@ -214,8 +196,32 @@ func (s *Service) ensureBootstrapNodes(ctx context.Context) error {
 	return nil
 }
 
-// nodeChain returns the chain of nodes starting at startID (inclusive) walking up
-// to the root. Guards against cycles.
+// syncRoot brings an existing root in line with the configuration and the catalogue: the admin scope from ROOT_ADMIN_TOKENS, and every resource the catalogue has but the root's limit lacks (adoptNewCatalogueResources). It goes through UpdateNode, so it changes the root as it is stored at that moment rather than writing back a copy read earlier — during a rolling update the old pod still serves, and a root edit it made in between must survive. Idempotent: nothing is written when nothing is missing.
+func (s *Service) syncRoot(ctx context.Context) error {
+	s.approvalMu.Lock()
+	defer s.approvalMu.Unlock()
+	_, err := s.store.UpdateNode(ctx, model.RootNodeID, func(root *model.Node) error {
+		changed := false
+		if !tokenListsEqual(root.AdminScope, s.rootAdminTokens) {
+			s.log.Infow("synchronized root admin scope from configuration", "previous", root.AdminScope, "current", s.rootAdminTokens)
+			root.AdminScope = append(common.TokenList{}, s.rootAdminTokens...)
+			changed = true
+		}
+		if added := s.adoptNewCatalogueResources(root); len(added) > 0 {
+			s.log.Infow("root adopted resources new to the catalogue", "resources", added)
+			changed = true
+		}
+		if !changed {
+			return nodestore.ErrSkipUpdate
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("sync root node: %w", err)
+	}
+	return nil
+}
+
 // adoptNewCatalogueResources gives the root whatever the catalogue has gained
 // since the root was created, and returns what it added.
 //
@@ -228,21 +234,28 @@ func (s *Service) ensureBootstrapNodes(ctx context.Context) error {
 //
 // It only ADDS keys. An operator who capped the root at a hundred cores meant it,
 // and this is not the place to overrule them.
+//
+// Quantities of every provider come in unlimited (common.UnlimitedQuota), availabilities granted (1): an availability is 0 or 1, and -1 would be refused on it. A withdrawn availability is not adopted. The limit is replaced by a copy rather than edited in place, since the map may be shared with whoever read the node before.
 func (s *Service) adoptNewCatalogueResources(root *model.Node) []string {
-	if root.Limit == nil {
-		root.Limit = common.ProjectQuota{}
-	}
 	var added []string
+	limit := root.Limit
 	for _, r := range s.resources() {
 		if _, present := root.Limit[r.ID]; present || r.Withdrawn {
 			continue
 		}
+		if added == nil {
+			limit = maps.Clone(root.Limit)
+			if limit == nil {
+				limit = common.ProjectQuota{}
+			}
+		}
 		if r.IsBool() {
-			root.Limit[r.ID] = 1
+			limit[r.ID] = 1
 		} else {
-			root.Limit[r.ID] = common.UnlimitedQuota
+			limit[r.ID] = common.UnlimitedQuota
 		}
 		added = append(added, r.ID)
 	}
+	root.Limit = limit
 	return added
 }

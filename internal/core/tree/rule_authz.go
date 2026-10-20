@@ -9,6 +9,7 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 )
 
+// nodeChain returns the chain of nodes starting at startID (inclusive) walking up to the root. Guards against cycles.
 func (s *Service) nodeChain(ctx context.Context, startID string) ([]model.Node, error) {
 	var chain []model.Node
 	seen := map[string]struct{}{}

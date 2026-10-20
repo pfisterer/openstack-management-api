@@ -283,7 +283,8 @@ func (s *Service) PromoteNode(id string, req PromoteNodeRequest, actor model.Act
 		return model.Node{}, err
 	}
 	// loadTarget made sure the caller manages both the chain the node leaves and the budget it goes to.
-	normalizedAuthorizedUsers, err := s.normalizeAuthorizedUsers(ctx, req.AuthorizedUsers, userTokens, true)
+	// An import is an OpenStack project by definition.
+	normalizedAuthorizedUsers, err := s.normalizeAuthorizedUsers(ctx, req.AuthorizedUsers, true, userTokens, true)
 	if err != nil {
 		return model.Node{}, err
 	}

@@ -59,13 +59,19 @@ var OpenstackRoles = []string{"member", "reader"}
 // platform, not through Horizon.
 const OwnerOpenstackRole = "member"
 
-// DefaultMaxAuthorizedUsers caps how many participants one project may list.
+// DefaultMaxAuthorizedUsers caps how many participants one project that involves OpenStack may list.
 //
 // Real projects have a handful; a course or department goes in as ONE group
 // token, which is why the ceiling can sit far above normal use and still bound
 // the work a single request creates: every group entry costs the reconciler a
 // Keystone group plus a FindOrCreateUser per member of that group, on every run.
 const DefaultMaxAuthorizedUsers = 32
+
+// DefaultMaxAuthorizedUsersOther caps the participants of a project without anything in OpenStack (workspaces, LLM). Those members cost no Keystone work, so the cap only bounds the size of one request and of the lists handed to the AI service; a course of 30–40 students listed one by one fits several times over.
+const DefaultMaxAuthorizedUsersOther = 200
+
+// ProviderOpenStack is the provider name of OpenStack, as resources (Resource.Provider) and bindings (Node.Bindings) name it.
+const ProviderOpenStack = "openstack"
 
 // MaxQuotaValue bounds every count value of a limit, budget or project, unless the catalogue gives a resource a smaller maximum for projects. The amounts are summed across a whole subtree and multiplied by a provider's unit (RAM in MB); without a bound a single request for 9223372036854775807 cores wraps the sum negative and fits every budget. A billion of anything is beyond any real allocation and leaves the sum of a billion of them far from overflowing.
 const MaxQuotaValue = 1_000_000_000

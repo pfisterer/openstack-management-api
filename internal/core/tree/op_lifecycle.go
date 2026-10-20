@@ -268,10 +268,11 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 	return node, nil
 }
 
-// normalizeCreateMembers checks the members of a new project for CreateNode, with the parent's managers free to add any group.
+// normalizeCreateMembers checks the members of a new project for CreateNode, with the parent's managers free to add any group. Their ceiling depends on whether the requested limit holds anything of OpenStack.
 func (s *Service) normalizeCreateMembers(ctx context.Context, req CreateNodeRequest, userTokens common.TokenList) ([]common.AuthorizedUser, error) {
+	openstack := s.involvesOpenStack(model.Node{}, req.Limit)
 	if len(req.AuthorizedUsers) == 0 {
-		return s.normalizeAuthorizedUsers(ctx, req.AuthorizedUsers, userTokens, false)
+		return s.normalizeAuthorizedUsers(ctx, req.AuthorizedUsers, openstack, userTokens, false)
 	}
 	manager := false
 	if parent, err := s.store.GetNode(ctx, req.ParentID); err != nil {
@@ -281,7 +282,7 @@ func (s *Service) normalizeCreateMembers(ctx context.Context, req CreateNodeRequ
 			return nil, err
 		}
 	}
-	return s.normalizeAuthorizedUsers(ctx, req.AuthorizedUsers, userTokens, manager)
+	return s.normalizeAuthorizedUsers(ctx, req.AuthorizedUsers, openstack, userTokens, manager)
 }
 
 // allZero reports whether a limit asks for nothing: every value 0, availabilities included.
@@ -627,6 +628,18 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor model.Ac
 		return model.Node{}, err
 	}
 
+	// The ceiling on members is the one of the project as it will be: a limit that brings OpenStack in brings its ceiling in too, also for the members it already has.
+	var requestedLimit []common.ProjectQuota
+	if req.Limit != nil {
+		requestedLimit = append(requestedLimit, *req.Limit)
+	}
+	openstack := current.IsLeaf() && s.involvesOpenStack(*current, requestedLimit...)
+	if req.AuthorizedUsers == nil && openstack && !s.involvesOpenStack(*current) {
+		if err := s.checkAuthorizedUserCount(len(current.AuthorizedUsers), true); err != nil {
+			return model.Node{}, err
+		}
+	}
+
 	var normalizedAuthorizedUsers *[]common.AuthorizedUser
 	if req.AuthorizedUsers != nil {
 		if !current.IsLeaf() {
@@ -640,7 +653,7 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor model.Ac
 		if current.Pending != nil && current.Pending.AuthorizedUsers != nil {
 			keep = append(keep, *current.Pending.AuthorizedUsers)
 		}
-		normalized, err := s.normalizeAuthorizedUsers(ctx, *req.AuthorizedUsers, userTokens, manager, keep...)
+		normalized, err := s.normalizeAuthorizedUsers(ctx, *req.AuthorizedUsers, openstack, userTokens, manager, keep...)
 		if err != nil {
 			return model.Node{}, err
 		}

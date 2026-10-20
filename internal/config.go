@@ -189,11 +189,10 @@ type AppConfiguration struct {
 	// AIaaS is where the AI service (aiaas-management-api) is and the token of the tree there; no URL = the provider is off.
 	AIaaS                 AIaaSConfig `json:"aiaas"`
 	ServiceTimeoutSeconds int         `json:"service_timeout_seconds"`
-	// MaxAuthorizedUsers caps the participants one project may list. Each entry
-	// costs the reconciler Keystone work on every run (a group plus an account
-	// per member), so the ceiling bounds what a single request can trigger.
-	// A course or department belongs in as ONE group token, not as N entries.
+	// MaxAuthorizedUsers caps the participants one project that involves OpenStack may list. Each entry costs the reconciler Keystone work on every run (a group plus an account per member), so the ceiling bounds what a single request can trigger. A course or department belongs in as ONE group token, not as N entries.
 	MaxAuthorizedUsers int `json:"max_authorized_users"`
+	// MaxAuthorizedUsersOther caps the participants of a project without anything in OpenStack (workspaces, LLM): no Keystone work, so it may be far higher.
+	MaxAuthorizedUsersOther int `json:"max_authorized_users_other"`
 	// MaxProjectsPerOwner caps the live projects one person may request under one budget (tree.Service.SetMaxProjectsPerOwner); 0 or less is no cap.
 	MaxProjectsPerOwner int `json:"max_projects_per_owner"`
 	// ChargeOSInUse bills a project the LARGER of its declared limit and what
@@ -329,12 +328,13 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			ClassIntervalSeconds: envconf.Int("AIAAS_CLASS_INTERVAL_SECONDS", 30),
 			DeleteGraceDays:      envconf.Int("AIAAS_DELETE_GRACE_DAYS", 14),
 		},
-		ServiceTimeoutSeconds: envconf.Int("SERVICE_TIMEOUT_SECONDS", 30),
-		MaxAuthorizedUsers:    envconf.Int("API_MAX_AUTHORIZED_USERS", common.DefaultMaxAuthorizedUsers),
-		MaxProjectsPerOwner:   envconf.Int("API_MAX_PROJECTS_PER_OWNER", common.DefaultMaxProjectsPerOwner),
-		ChargeOSInUse:         envconf.Bool("API_CHARGE_OS_IN_USE", true),
-		ChargeReleased:        envconf.Bool("API_CHARGE_RELEASED", true),
-		ChargeArchived:        envconf.Bool("API_CHARGE_ARCHIVED", false),
+		ServiceTimeoutSeconds:   envconf.Int("SERVICE_TIMEOUT_SECONDS", 30),
+		MaxAuthorizedUsers:      envconf.Int("API_MAX_AUTHORIZED_USERS", common.DefaultMaxAuthorizedUsers),
+		MaxAuthorizedUsersOther: envconf.Int("API_MAX_AUTHORIZED_USERS_OTHER", common.DefaultMaxAuthorizedUsersOther),
+		MaxProjectsPerOwner:     envconf.Int("API_MAX_PROJECTS_PER_OWNER", common.DefaultMaxProjectsPerOwner),
+		ChargeOSInUse:           envconf.Bool("API_CHARGE_OS_IN_USE", true),
+		ChargeReleased:          envconf.Bool("API_CHARGE_RELEASED", true),
+		ChargeArchived:          envconf.Bool("API_CHARGE_ARCHIVED", false),
 	}
 	// A JSON object rather than three numbers: envconf reads no floats, and the
 	// prices belong together.

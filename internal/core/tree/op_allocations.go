@@ -145,6 +145,12 @@ func (s *Service) SetAllocation(id string, req AllocationRequest, actor model.Ac
 	if len(updated.Allocations) == 0 {
 		updated.Allocations = nil
 	}
+	// OpenStack resources drawn from above make the project OpenStack's business, with that ceiling on its members.
+	if raises && !s.involvesOpenStack(*current) && s.involvesOpenStack(updated) {
+		if err := s.checkAuthorizedUserCount(len(current.AuthorizedUsers), true); err != nil {
+			return model.Node{}, err
+		}
+	}
 	updated.History = append(slices.Clone(current.History), entry)
 	if err := s.store.UpsertNode(ctx, updated); err != nil {
 		return model.Node{}, fmt.Errorf("persist node: %w", err)

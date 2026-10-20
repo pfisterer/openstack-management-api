@@ -155,11 +155,12 @@ spec:
               value: {{ .Values.openstackManagementApi.api.dummyAuth | toString | quote }}
             - name: API_MODE
               value: {{ .Values.openstackManagementApi.api.mode | quote }}
-            # Ceiling for authorized_users per project. Each entry costs the
-            # reconciler Keystone work on every run, so this bounds what one
-            # request can trigger; a whole course goes in as ONE group token.
+            # Ceiling for authorized_users per project that involves OpenStack. Each entry costs the reconciler Keystone work on every run, so this bounds what one request can trigger; a whole course goes in as ONE group token.
             - name: API_MAX_AUTHORIZED_USERS
               value: {{ .Values.openstackManagementApi.api.maxAuthorizedUsers | default 32 | toString | quote }}
+            # Ceiling for projects without anything in OpenStack (workspaces, LLM).
+            - name: API_MAX_AUTHORIZED_USERS_OTHER
+              value: {{ .Values.openstackManagementApi.api.maxAuthorizedUsersOther | default 200 | toString | quote }}
             - name: API_MAX_PROJECTS_PER_OWNER
               value: {{ .Values.openstackManagementApi.api.maxProjectsPerOwner | toString | quote }}
             {{- /* Explicit rather than `| default true`: that helper treats

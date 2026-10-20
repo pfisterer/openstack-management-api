@@ -148,9 +148,10 @@ openstackManagementApi:
     dummyAuth: false
     # "production" or "development" (development relaxes CORS and allows the mock role provider and dummyAuth)
     mode: "production"
-    # Maximum number of authorized_users entries per project. A course or
-    # department belongs in as one group token, not as N individual entries.
+    # Maximum number of authorized_users entries per project that involves OpenStack (holds an OpenStack resource or has an OpenStack project). Each entry costs the reconciler Keystone work on every run; a course or department belongs in as one group token, not as N individual entries.
     maxAuthorizedUsers: 32
+    # The same for projects without anything in OpenStack (workspaces, LLM), whose members cost no Keystone work.
+    maxAuthorizedUsersOther: 200
     # Maximum number of live projects (pending, active or released) one person may request under one budget; managers creating projects directly are not counted against it. 0 = no cap.
     maxProjectsPerOwner: 10
     # The managed resources of this deployment. Empty uses the built-in set

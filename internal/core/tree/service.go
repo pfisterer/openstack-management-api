@@ -36,8 +36,9 @@ type Service struct {
 
 	rootAdminTokens common.TokenList
 	requestTimeout  time.Duration
-	// maxAuthorizedUsers bounds how many participants one node may list.
-	maxAuthorizedUsers int
+	// maxAuthorizedUsers bounds how many participants a project that involves OpenStack may list; maxAuthorizedUsersOther the participants of any other project (see maxAuthorizedUsersFor).
+	maxAuthorizedUsers      int
+	maxAuthorizedUsersOther int
 	// maxProjectsPerOwner bounds the live projects one person may request under one budget (see checkProjectsPerOwner); 0 or less is no bound.
 	maxProjectsPerOwner int
 
@@ -117,16 +118,17 @@ func NewService(store nodestore.Store, roles roles.Provider, resources []common.
 		maxAuthorizedUsers = common.DefaultMaxAuthorizedUsers
 	}
 	s := &Service{
-		plain:               store,
-		roles:               roles,
-		ownerTokens:         newTokenCache(2 * time.Minute),
-		catalog:             common.StaticCatalog(resources),
-		rootAdminTokens:     common.CanonicalTokens(rootAdminTokens),
-		requestTimeout:      requestTimeout,
-		maxAuthorizedUsers:  maxAuthorizedUsers,
-		maxProjectsPerOwner: common.DefaultMaxProjectsPerOwner,
-		accounting:          accounting,
-		log:                 log,
+		plain:                   store,
+		roles:                   roles,
+		ownerTokens:             newTokenCache(2 * time.Minute),
+		catalog:                 common.StaticCatalog(resources),
+		rootAdminTokens:         common.CanonicalTokens(rootAdminTokens),
+		requestTimeout:          requestTimeout,
+		maxAuthorizedUsers:      maxAuthorizedUsers,
+		maxAuthorizedUsersOther: common.DefaultMaxAuthorizedUsersOther,
+		maxProjectsPerOwner:     common.DefaultMaxProjectsPerOwner,
+		accounting:              accounting,
+		log:                     log,
 	}
 	s.store = signallingStore{Store: store, changed: s.signalChange}
 	return s
@@ -136,6 +138,14 @@ func NewService(store nodestore.Store, roles roles.Provider, resources []common.
 // at runtime: root admins add availabilities, and the AI service adds GPU
 // classes (quantities). A quantity once in the catalogue never leaves it.
 func (s *Service) UseCatalog(c common.ResourceCatalog) { s.catalog = c }
+
+// SetMaxAuthorizedUsersOther sets how many participants a project without anything in OpenStack may list; 0 or less keeps the default, common.DefaultMaxAuthorizedUsersOther. The ceiling for projects that involve OpenStack is the one given to NewService.
+func (s *Service) SetMaxAuthorizedUsersOther(n int) {
+	if n <= 0 {
+		n = common.DefaultMaxAuthorizedUsersOther
+	}
+	s.maxAuthorizedUsersOther = n
+}
 
 // SetMaxProjectsPerOwner sets how many live projects one person may request under one budget; 0 or less lifts the bound. The default is common.DefaultMaxProjectsPerOwner.
 func (s *Service) SetMaxProjectsPerOwner(n int) { s.maxProjectsPerOwner = n }

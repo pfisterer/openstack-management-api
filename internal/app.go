@@ -227,6 +227,7 @@ func RunApplication() {
 	}
 	treeSvc.SetDeletingProviders(deleting...)
 	treeSvc.SetMaxProjectsPerOwner(config.MaxProjectsPerOwner)
+	treeSvc.SetMaxAuthorizedUsersOther(config.MaxAuthorizedUsersOther)
 
 	// Bootstrap: optional mock seed into an empty store, then ensure the
 	// structural root/unassigned nodes (root admin scope is synced from config).

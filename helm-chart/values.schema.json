@@ -222,6 +222,10 @@
               "type": "integer",
               "minimum": 1
             },
+            "maxAuthorizedUsersOther": {
+              "type": "integer",
+              "minimum": 1
+            },
             "maxProjectsPerOwner": {
               "type": "integer",
               "minimum": 0

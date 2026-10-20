@@ -46,7 +46,7 @@ type CreateNodeRequest struct {
 	AdminScope         common.TokenList   `json:"admin_scope"`
 	EligibleRequesters common.TokenList   `json:"eligible_requesters"`
 	AutoApprove        *model.AutoApprove `json:"auto_approve"`
-	// AllowSubBudgetRequests defaults to true when omitted.
+	// AllowSubBudgetRequests defaults to true when omitted; it must be false where AutoApprove has a per-requester limit.
 	AllowSubBudgetRequests *bool `json:"allow_sub_budget_requests"`
 	// AllowRequestsBeyondAutoApprove defaults to true when omitted.
 	AllowRequestsBeyondAutoApprove *bool `json:"allow_requests_beyond_auto_approve"`

@@ -71,6 +71,9 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		if err := s.validateAutoApprove(req.AutoApprove); err != nil {
 			return model.Node{}, err
 		}
+		if err := validateSubBudgetRequests(req.AutoApprove, req.AllowSubBudgetRequests); err != nil {
+			return model.Node{}, err
+		}
 	default:
 		return model.Node{}, fmt.Errorf("invalid kind %q", req.Kind)
 	}
@@ -243,8 +246,8 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 			return model.Node{}, errBeyondAutoApprove
 		}
 
-	case req.Kind == model.KindBudget && parent.AutoApprove != nil:
-		// As with projects: a request for nothing at all waits for a manager.
+	case req.Kind == model.KindBudget && parent.AutoApprove.IsPool():
+		// A pool grants a sub-budget whenever the edge rule allows it: a budget limit is a cap, not a reservation, and the projects below it are held to every ancestor when they are granted. A budget with a per-requester limit takes no sub-budget requests at all (validateSubBudgetRequests). As with projects, a request for nothing at all waits for a manager.
 		if allZero(node.Limit) {
 			break
 		}
@@ -255,20 +258,8 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 			}
 			break
 		}
-		requester, err := normalizeOwnerToken(userEmail)
-		if err != nil {
-			return model.Node{}, err
-		}
-		ok, err := s.subBudgetAutoApprovable(ctx, parent, parentChain, node, requester)
-		if err != nil {
-			return model.Node{}, err
-		}
-		if ok {
-			node.Status = model.StatusApproved
-			node.History = append(node.History, autoApprovedEntry(actor, model.StatusPending, autoApproveReason(parent)))
-		} else if !parent.RequestsBeyondAutoApproveAllowed() {
-			return model.Node{}, errBeyondAutoApprove
-		}
+		node.Status = model.StatusApproved
+		node.History = append(node.History, autoApprovedEntry(actor, model.StatusPending, autoApproveReason(parent)))
 	}
 
 	if err := s.store.UpsertNode(ctx, node); err != nil {
@@ -445,6 +436,11 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 			return model.Node{}, err
 		}
 		updated.AutoApprove = req.AutoApprove
+	}
+	if req.AutoApprove != nil || req.AllowSubBudgetRequests != nil {
+		if err := validateSubBudgetRequests(updated.AutoApprove, updated.AllowSubBudgetRequests); err != nil {
+			return model.Node{}, err
+		}
 	}
 	var chain []model.Node
 	if wantsCapacityEdit || req.ClearMaxProjectTermDays || req.MaxProjectTermDays != nil || req.ReleaseMax != nil {

@@ -343,7 +343,7 @@ type mcpCreateBudgetInput struct {
 	// down once. Found the first time this ran against staging.
 	AdminScope         []string       `json:"admin_scope" jsonschema:"tokens that may approve requests here, e.g. group:dept_cs_admin or user:a@b.c"`
 	EligibleRequesters []string       `json:"eligible_requesters,omitempty" jsonschema:"tokens that may request something here, without any say over decisions"`
-	AutoApproveLimit   map[string]int `json:"auto_approve_limit,omitempty" jsonschema:"optional: requests up to this size per requester are approved without a human; {} approves any request the budget has room for"`
+	AutoApproveLimit   map[string]int `json:"auto_approve_limit,omitempty" jsonschema:"optional: requests up to this size per requester are approved without a human; {} approves any request the budget has room for; with a per-requester limit the budget takes no sub-budget requests"`
 	// A pointer: absent means the default (extensions are covered), false is
 	// a real answer.
 	AutoApproveExtensions *bool `json:"auto_approve_extensions,omitempty" jsonschema:"optional, with auto_approve_limit: false sends every later end date of a project to a manager; default true"`
@@ -692,6 +692,10 @@ func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log 
 		// nil is "no auto-approve"; an empty map is the pool flavour.
 		if in.AutoApproveLimit != nil {
 			req.AutoApprove = &model.AutoApprove{PerRequesterLimit: common.ProjectQuota(in.AutoApproveLimit)}
+			// A budget with a per-requester limit takes no sub-budget requests.
+			if !req.AutoApprove.IsPool() {
+				req.AllowSubBudgetRequests = new(false)
+			}
 		}
 		log.Infow("MCP create_budget", "actor", caller.actorEmail, "parent_id", in.ParentID)
 		node, err := cfg.Service.CreateNode(req, caller.serviceActor(), caller.userEmail, caller.tokens)

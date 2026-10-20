@@ -131,12 +131,13 @@ func DefaultMockTreeState() ([]common.Identity, []model.Node) {
 			// consumers deliberately hold no admin scope), consumable by students
 			// up to 2 cores each, capped at 10 cores overall.
 			ID: studentsID, Kind: model.KindBudget, ParentID: &facultyID, Status: model.StatusApproved,
-			Name:               "CS Students (Small VM)",
-			AdminScope:         common.TokenList{DeptCSFaculty},
-			EligibleRequesters: common.TokenList{CSStudentGroup},
-			AutoApprove:        &model.AutoApprove{PerRequesterLimit: common.ProjectQuota{"cores": 2, "ram": 4, "storage": 20}},
-			Limit:              common.ProjectQuota{"cores": 10, "ram": 20, "storage": 100},
-			CreatedBy:          "faculty@cs.example", CreatedAt: "2025-09-01T09:00:00Z",
+			Name:                   "CS Students (Small VM)",
+			AdminScope:             common.TokenList{DeptCSFaculty},
+			EligibleRequesters:     common.TokenList{CSStudentGroup},
+			AutoApprove:            &model.AutoApprove{PerRequesterLimit: common.ProjectQuota{"cores": 2, "ram": 4, "storage": 20}},
+			AllowSubBudgetRequests: new(false),
+			Limit:                  common.ProjectQuota{"cores": 10, "ram": 20, "storage": 100},
+			CreatedBy:              "faculty@cs.example", CreatedAt: "2025-09-01T09:00:00Z",
 		},
 		{
 			ID: bioID, Kind: model.KindBudget, ParentID: &rootID, Status: model.StatusApproved,

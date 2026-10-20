@@ -212,8 +212,10 @@ func buildRolledUpUsage(leaves []model.Node, parentMap map[string]*string, resou
 	return result
 }
 
-// ownerActiveUsage sums what owner holds directly under the given budget, so auto-approval enforces a cumulative per-requester cap: the charged limits of their projects (matched by the single Owner token — group memberships do not blur the count) plus the full limits of the active sub-budgets they requested (matched by CreatedBy, which a hand-over of the sub-budget's management leaves alone, so delegating it to someone else still counts against the requester). A sub-budget's limit is a cap, not a reservation, but under a per-requester policy it is the share it hands out, so without counting it a requester could take their whole share as a sub-budget and again as projects. bounded is false when one of those sub-budgets has no finite limit — it inherits the limit above or holds a resource unlimited —, which leaves no share to measure against.
-func (s *Service) ownerActiveUsage(ctx context.Context, budgetID string, ownerToken string) (usage common.ProjectQuota, bounded bool, err error) {
+// ownerActiveUsage sums the owner's committed (active) leaf limits directly under
+// the given budget, so auto-approval enforces a cumulative per-requester cap.
+// Matching is by the single Owner token — group memberships do not blur the count.
+func (s *Service) ownerActiveUsage(ctx context.Context, budgetID string, ownerToken string) (common.ProjectQuota, error) {
 	leaves, err := s.store.ListNodes(ctx, nodestore.NodeQuery{
 		ParentIDs: []string{budgetID},
 		Kinds:     []string{model.KindProject},
@@ -221,43 +223,16 @@ func (s *Service) ownerActiveUsage(ctx context.Context, budgetID string, ownerTo
 		Owner:     ownerToken,
 	}, 0, 0)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	usage = make(common.ProjectQuota, len(s.countIDs()))
+	usage := make(common.ProjectQuota, len(s.countIDs()))
 	for _, leaf := range leaves {
 		charged, _ := s.leafCost(leaf)
 		for _, id := range s.countIDs() {
 			usage[id] += charged[id]
 		}
 	}
-	// Budgets carry no Owner and the store cannot filter by CreatedBy, so the sub-budgets are matched here; a budget has few of them.
-	subBudgets, err := s.store.ListNodes(ctx, nodestore.NodeQuery{
-		ParentIDs: []string{budgetID},
-		Kinds:     []string{model.KindBudget},
-		Statuses:  model.ActiveStatuses,
-	}, 0, 0)
-	if err != nil {
-		return nil, false, err
-	}
-	for _, b := range subBudgets {
-		if requester, err := normalizeOwnerToken(b.CreatedBy); err != nil || requester != ownerToken {
-			continue
-		}
-		if b.InheritsLimit {
-			return usage, false, nil
-		}
-		for _, id := range s.countIDs() {
-			if b.Limit[id] == common.UnlimitedQuota {
-				return usage, false, nil
-			}
-			sum, ok := addInts(usage[id], b.Limit[id])
-			if !ok {
-				return usage, false, nil
-			}
-			usage[id] = sum
-		}
-	}
-	return usage, true, nil
+	return usage, nil
 }
 
 // chargedStatuses are the leaf states whose limits count against a budget. The

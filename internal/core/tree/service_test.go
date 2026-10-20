@@ -84,14 +84,15 @@ func TestAutoApprove_CountsPerOwnerNotPerGroup(t *testing.T) {
 
 	// Root creates an auto-approve budget: total 10, 2 per requester.
 	budget, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID:           model.RootNodeID,
-		Kind:               model.KindBudget,
-		Name:               "Selfservice",
-		Reason:             "test",
-		Limit:              cores(10),
-		AdminScope:         common.TokenList{"group:root"},
-		EligibleRequesters: common.TokenList{"group:students"},
-		AutoApprove:        &model.AutoApprove{PerRequesterLimit: cores(2)},
+		ParentID:               model.RootNodeID,
+		Kind:                   model.KindBudget,
+		Name:                   "Selfservice",
+		Reason:                 "test",
+		Limit:                  cores(10),
+		AdminScope:             common.TokenList{"group:root"},
+		EligibleRequesters:     common.TokenList{"group:students"},
+		AutoApprove:            &model.AutoApprove{PerRequesterLimit: cores(2)},
+		AllowSubBudgetRequests: new(false),
 	}, model.UIActor("root@x"), "root@x", rootTokens)
 	if err != nil {
 		t.Fatalf("create budget: %v", err)
@@ -148,14 +149,15 @@ func TestAutoApprove_BudgetTotalLimitCaps(t *testing.T) {
 	rootTokens := common.TokenList{"user:root@x", "group:root"}
 
 	budget, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID:           model.RootNodeID,
-		Kind:               model.KindBudget,
-		Name:               "Small selfservice",
-		Reason:             "test",
-		Limit:              cores(3), // total for everyone
-		AdminScope:         common.TokenList{"group:root"},
-		EligibleRequesters: common.TokenList{"group:students"},
-		AutoApprove:        &model.AutoApprove{PerRequesterLimit: cores(2)},
+		ParentID:               model.RootNodeID,
+		Kind:                   model.KindBudget,
+		Name:                   "Small selfservice",
+		Reason:                 "test",
+		Limit:                  cores(3), // total for everyone
+		AdminScope:             common.TokenList{"group:root"},
+		EligibleRequesters:     common.TokenList{"group:students"},
+		AutoApprove:            &model.AutoApprove{PerRequesterLimit: cores(2)},
+		AllowSubBudgetRequests: new(false),
 	}, model.UIActor("root@x"), "root@x", rootTokens)
 	if err != nil {
 		t.Fatalf("create budget: %v", err)

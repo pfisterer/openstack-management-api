@@ -174,12 +174,13 @@ func TestScenario_DHBWTreeLifecycle(t *testing.T) {
 	// Student auto-approve: managed by faculty, consumable by students. The
 	// per-requester auto-approve cap (2) and the total limit (10) are independent.
 	studBudget := mkBudget(t, h, userFaculty, tree.CreateNodeRequest{
-		ParentID:           csFacPool,
-		Name:               "CS Studi-Selfservice",
-		Limit:              cores(10),
-		AdminScope:         common.TokenList{"group:dept_cs_faculty"},
-		EligibleRequesters: common.TokenList{"group:cs-student"},
-		AutoApprove:        &model.AutoApprove{PerRequesterLimit: cores(2)},
+		ParentID:               csFacPool,
+		Name:                   "CS Studi-Selfservice",
+		Limit:                  cores(10),
+		AdminScope:             common.TokenList{"group:dept_cs_faculty"},
+		EligibleRequesters:     common.TokenList{"group:cs-student"},
+		AutoApprove:            &model.AutoApprove{PerRequesterLimit: cores(2)},
+		AllowSubBudgetRequests: new(false),
 	})
 
 	// checkAll asserts the rolled-up cores usage reported at EVERY level of the
@@ -233,9 +234,10 @@ func TestScenario_DHBWTreeLifecycle(t *testing.T) {
 	})
 	allowB := mkBudget(t, h, userCSAdmin, tree.CreateNodeRequest{
 		ParentID: poolB, Name: "Selfservice B", Limit: cores(3),
-		AdminScope:         common.TokenList{"group:dept_cs_admin"},
-		EligibleRequesters: common.TokenList{"group:cs-student"},
-		AutoApprove:        &model.AutoApprove{PerRequesterLimit: cores(3)},
+		AdminScope:             common.TokenList{"group:dept_cs_admin"},
+		EligibleRequesters:     common.TokenList{"group:cs-student"},
+		AutoApprove:            &model.AutoApprove{PerRequesterLimit: cores(3)},
+		AllowSubBudgetRequests: new(false),
 	})
 	fill, _ := mkLeaf(t, h, userFaculty, poolB, 2)
 	approveNode(t, h, userCSAdmin, fill) // poolB now uses 2 of 3

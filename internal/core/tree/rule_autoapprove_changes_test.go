@@ -25,6 +25,8 @@ func newChangeFixture(t *testing.T, policy *model.AutoApprove, budgetEnd *string
 		EligibleRequesters: common.TokenList{"user:stud@x"},
 		AutoApprove:        policy,
 		TerminationDate:    budgetEnd,
+		// A per-requester limit takes no sub-budget requests; these fixtures are about projects.
+		AllowSubBudgetRequests: new(false),
 	}, model.UIActor("root@x"), "root@x", common.TokenList{"user:root@x", "group:root"})
 	if err != nil {
 		t.Fatalf("create budget: %v", err)

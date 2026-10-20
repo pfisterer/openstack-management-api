@@ -63,7 +63,7 @@ func newAllocationFixture(t *testing.T) allocationFixture {
 	stud := create(tree.CreateNodeRequest{ParentID: uni.ID, Kind: model.KindBudget, Name: "Students",
 		Limit: common.ProjectQuota{"cores": 10}, AdminScope: common.TokenList{"group:stud"},
 		EligibleRequesters: common.TokenList{"user:stud@x"},
-		AutoApprove:        &model.AutoApprove{PerRequesterLimit: common.ProjectQuota{"cores": 4}}}, "uni@x", uniTokens)
+		AutoApprove:        &model.AutoApprove{PerRequesterLimit: common.ProjectQuota{"cores": 4}}, AllowSubBudgetRequests: new(false)}, "uni@x", uniTokens)
 	p := create(tree.CreateNodeRequest{ParentID: stud.ID, Kind: model.KindProject, Name: "Thesis",
 		Limit: common.ProjectQuota{"cores": 4}}, "stud@x", ownerToken)
 	if p.Status != model.StatusApproved {

@@ -57,6 +57,8 @@ type CreateNodeRequest struct {
 	MaxProjectTermDays *int `json:"max_project_term_days"`
 	// ReleaseMax are the budget's own release maximums (model.ReleaseMax); each value at most what the budgets above allow. Omitted or empty, the budget sets none of its own and those above apply.
 	ReleaseMax *model.ReleaseMax `json:"release_max"`
+	// WorkspaceScratchGB is the budget's own local storage per workspace in GB (model.WorkspaceScratchGB), 1 to model.MaxWorkspaceScratchGB and at most what the budgets above allow. Omitted, the budget sets none of its own and those above apply.
+	WorkspaceScratchGB *int `json:"workspace_scratch_gb" example:"5"`
 	// InheritsLimit creates a budget that passes on the limit of its parent
 	// (Node.InheritsLimit); Limit is then ignored. Managers only.
 	InheritsLimit bool `json:"inherits_limit"`
@@ -82,9 +84,12 @@ type UpdateNodeRequest struct {
 	MaxProjectTermDays      *int `json:"max_project_term_days"`
 	ClearMaxProjectTermDays bool `json:"clear_max_project_term_days"`
 	// ReleaseMax replaces the budget's own release maximums as a whole (model.ReleaseMax); a field left out is not set here, so the budgets above decide it, and an empty object removes them all. Each value at most what the budgets above allow (Node.InheritedReleaseMax). Managers of the budget or above, like the other policy fields. Omitted, they stay as they are.
-	ReleaseMax      *model.ReleaseMax    `json:"release_max"`
-	Limit           *common.ProjectQuota `json:"limit"`
-	TerminationDate *string              `json:"termination_date"`
+	ReleaseMax *model.ReleaseMax `json:"release_max"`
+	// WorkspaceScratchGB sets the budget's own local storage per workspace in GB (model.WorkspaceScratchGB): 1 to model.MaxWorkspaceScratchGB and at most what the budgets above allow (Node.InheritedWorkspaceScratchGB). ClearWorkspaceScratchGB removes it, so the budgets above (or the AI service's default) apply. Managers of the budget or above, like the other policy fields. Omitted, it stays as it is.
+	WorkspaceScratchGB      *int                 `json:"workspace_scratch_gb" example:"5"`
+	ClearWorkspaceScratchGB bool                 `json:"clear_workspace_scratch_gb"`
+	Limit                   *common.ProjectQuota `json:"limit"`
+	TerminationDate         *string              `json:"termination_date"`
 	// TerminationDate may not lie after the end of any budget above. A budget's
 	// new end is carried down: every node below it that ends later, or never,
 	// ends with it, waiting requests and proposals included.

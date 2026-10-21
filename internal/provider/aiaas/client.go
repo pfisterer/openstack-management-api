@@ -51,6 +51,8 @@ type Project struct {
 	Workspaces bool `json:"workspaces"`
 	// Release are the most the project may choose as release times: the strictest release maximums along its chain of budgets, root included (model.ResolveReleaseMax). Always sent, so they belong to the tree there and nobody sets them at the AI service; a field no budget sets is left out and the AI service keeps its own default for it.
 	Release *Release `json:"release"`
+	// WorkspaceScratchGB is the local storage (GB) a workspace or GPU kernel of the project may write outside its home: the smallest value along its chain of budgets, root included (model.ResolveWorkspaceScratchGB); 0 = no budget sets one, the AI service applies its default.
+	WorkspaceScratchGB int `json:"workspace_scratch_gb"`
 }
 
 // ReleaseTimes and Release are the AI service's release times (its workspace.ReleaseTimes and Release): per kind of use, minutes without activity with and without an open tab, and an upper bound in hours (0 = none).

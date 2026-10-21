@@ -53,6 +53,9 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		if req.ReleaseMax != nil {
 			return model.Node{}, fmt.Errorf("release_max is a budget setting")
 		}
+		if req.WorkspaceScratchGB != nil {
+			return model.Node{}, fmt.Errorf("workspace_scratch_gb is a budget setting")
+		}
 		if req.InheritsLimit {
 			return model.Node{}, fmt.Errorf("inherits_limit is a budget setting")
 		}
@@ -163,6 +166,9 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 			// Unlike the term, nothing is copied down: what the budgets above set applies anyway (strictest along the chain), and copying would freeze it here.
 			err = model.ValidateReleaseMax(req.ReleaseMax, model.ResolveReleaseMax(parentChain))
 		}
+		if err == nil {
+			err = model.ValidateWorkspaceScratchGB(req.WorkspaceScratchGB, model.ResolveWorkspaceScratchGB(parentChain))
+		}
 	}
 	if err != nil {
 		return model.Node{}, err
@@ -206,6 +212,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		node.AutoApproveExtensions = req.AutoApproveExtensions
 		node.MaxProjectTermDays = maxTerm
 		node.ReleaseMax = req.ReleaseMax.Normalized()
+		node.WorkspaceScratchGB = cloneIntPtr(req.WorkspaceScratchGB)
 		node.InheritsLimit = req.InheritsLimit
 	}
 	node.History = []model.HistoryEntry{createdEntry}
@@ -331,7 +338,7 @@ func isLeafDirectEdit(req UpdateNodeRequest) bool {
 		req.AutoApprove == nil && !req.ClearAutoApprove &&
 		req.AllowSubBudgetRequests == nil && req.AllowRequestsBeyondAutoApprove == nil &&
 		req.AutoApproveExtensions == nil && req.MaxProjectTermDays == nil && !req.ClearMaxProjectTermDays &&
-		req.ReleaseMax == nil &&
+		req.ReleaseMax == nil && req.WorkspaceScratchGB == nil && !req.ClearWorkspaceScratchGB &&
 		req.Limit == nil && req.TerminationDate == nil && !req.ClearTerminationDate &&
 		req.InheritsLimit == nil
 }
@@ -372,7 +379,8 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 	wantsPolicyEdit := req.Name != nil || req.AdminScope != nil || req.EligibleRequesters != nil ||
 		req.AutoApprove != nil || req.ClearAutoApprove || req.AllowSubBudgetRequests != nil ||
 		req.AllowRequestsBeyondAutoApprove != nil || req.AutoApproveExtensions != nil ||
-		req.MaxProjectTermDays != nil || req.ClearMaxProjectTermDays || req.ReleaseMax != nil
+		req.MaxProjectTermDays != nil || req.ClearMaxProjectTermDays || req.ReleaseMax != nil ||
+		req.WorkspaceScratchGB != nil || req.ClearWorkspaceScratchGB
 	wantsCapacityEdit := req.Limit != nil || req.TerminationDate != nil || req.ClearTerminationDate || req.InheritsLimit != nil
 
 	if wantsPolicyEdit {
@@ -444,7 +452,7 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 		}
 	}
 	var chain []model.Node
-	if wantsCapacityEdit || req.ClearMaxProjectTermDays || req.MaxProjectTermDays != nil || req.ReleaseMax != nil {
+	if wantsCapacityEdit || req.ClearMaxProjectTermDays || req.MaxProjectTermDays != nil || req.ReleaseMax != nil || req.WorkspaceScratchGB != nil {
 		if chain, err = s.parentChainNodes(ctx, current); err != nil {
 			return model.Node{}, err
 		}
@@ -466,6 +474,15 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 			return model.Node{}, err
 		}
 		updated.ReleaseMax = req.ReleaseMax.Normalized()
+	}
+	// The same for the local storage per workspace: only lower than above; removing it is always allowed, the budgets above apply anyway.
+	if req.ClearWorkspaceScratchGB {
+		updated.WorkspaceScratchGB = nil
+	} else if req.WorkspaceScratchGB != nil {
+		if err := model.ValidateWorkspaceScratchGB(req.WorkspaceScratchGB, model.ResolveWorkspaceScratchGB(chain)); err != nil {
+			return model.Node{}, err
+		}
+		updated.WorkspaceScratchGB = cloneIntPtr(req.WorkspaceScratchGB)
 	}
 	if req.ClearTerminationDate || req.TerminationDate != nil {
 		if bound := chainEnd(chain); req.ClearTerminationDate && bound != nil {
@@ -491,6 +508,10 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 	if req.ReleaseMax != nil && !reflect.DeepEqual(current.ReleaseMax, updated.ReleaseMax) {
 		historyEntry.ReleaseMaxFrom = current.ReleaseMax.Clone()
 		historyEntry.ReleaseMaxTo = updated.ReleaseMax.Clone()
+	}
+	if (req.WorkspaceScratchGB != nil || req.ClearWorkspaceScratchGB) && !reflect.DeepEqual(current.WorkspaceScratchGB, updated.WorkspaceScratchGB) {
+		historyEntry.WorkspaceScratchGBFrom = cloneIntPtr(current.WorkspaceScratchGB)
+		historyEntry.WorkspaceScratchGBTo = cloneIntPtr(updated.WorkspaceScratchGB)
 	}
 
 	// An inherited limit is the one of the budget above and cannot be set by
@@ -1003,4 +1024,13 @@ func (s *Service) RejectNode(id string, req RejectNodeRequest, actor model.Actor
 		return model.Node{}, fmt.Errorf("node %w", common.ErrNotFound)
 	}
 	return updated, nil
+}
+
+// cloneIntPtr is a copy of v that shares nothing with it; nil stays nil.
+func cloneIntPtr(v *int) *int {
+	if v == nil {
+		return nil
+	}
+	n := *v
+	return &n
 }

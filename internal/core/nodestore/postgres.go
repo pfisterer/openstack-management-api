@@ -124,6 +124,7 @@ func toNodeRow(n model.Node) nodeRow {
 	n.SubtreeInUse = nil
 	// So are the release maximums inherited from above: a stored copy would go stale the moment a budget above changes its own.
 	n.InheritedReleaseMax = nil
+	n.InheritedWorkspaceScratchGB = nil
 	// And how the caller of a listing sees the node.
 	n.ViewerRelation = ""
 	// Every write passes here, so this is where no node's history outgrows its cap.

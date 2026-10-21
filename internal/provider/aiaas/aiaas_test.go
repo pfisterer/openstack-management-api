@@ -262,3 +262,39 @@ func TestPassSendsReleaseMax(t *testing.T) {
 		t.Errorf("release without maximums = %s", b)
 	}
 }
+
+// Every project is sent the smallest local storage per workspace along its chain, root included; 0 where no budget sets one, so the AI service applies its default.
+func TestPassSendsWorkspaceScratch(t *testing.T) {
+	ctx := context.Background()
+	log := zap.NewNop().Sugar()
+	store := nodestore.NewInMemoryStore(log)
+	svc := tree.NewService(store, nil, catalog, nil, time.Second, 0, tree.Accounting{}, log)
+	iv := func(n int) *int { return &n }
+	root, b1, b2 := "r", "b1", "b2"
+	for _, n := range []model.Node{
+		{ID: root, Kind: model.KindBudget, Status: model.StatusApproved, WorkspaceScratchGB: iv(20)},
+		{ID: b1, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &root, WorkspaceScratchGB: iv(4)},
+		{ID: b2, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &b1, WorkspaceScratchGB: iv(10)},
+		{ID: "lone", Kind: model.KindBudget, Status: model.StatusApproved},
+		{ID: "p_deep", Kind: model.KindProject, Status: model.StatusApproved, ParentID: &b2, Name: "Deep", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
+		{ID: "p_free", Kind: model.KindProject, Status: model.StatusApproved, ParentID: new("lone"), Name: "Free", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
+	} {
+		if err := store.UpsertNode(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fake := &fakeService{projects: map[string]Project{}}
+	s := &Syncer{Tree: svc.ProviderSync(Provider), Service: fake, Resources: func() []common.Resource { return catalog }, Log: log}
+	if _, err := s.Pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := fake.projects["p_deep"].WorkspaceScratchGB; got != 4 {
+		t.Errorf("workspace_scratch_gb = %d, want the smallest along the chain, 4", got)
+	}
+	if got := fake.projects["p_free"].WorkspaceScratchGB; got != 0 {
+		t.Errorf("workspace_scratch_gb without a value = %d, want 0", got)
+	}
+	if b, _ := json.Marshal(fake.projects["p_free"]); !strings.Contains(string(b), `"workspace_scratch_gb":0`) {
+		t.Errorf("the value should always be sent, got %s", b)
+	}
+}

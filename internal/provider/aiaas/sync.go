@@ -88,7 +88,7 @@ func (s *Syncer) Pass(ctx context.Context) (Result, error) {
 	if err != nil {
 		return res, err
 	}
-	// The budgets, for the release maximums each project inherits along its chain: loaded once per pass rather than per leaf.
+	// The budgets, for the release maximums and the local storage per workspace each project inherits along its chain: loaded once per pass rather than per leaf.
 	list, err := s.Tree.Budgets(ctx)
 	if err != nil {
 		return res, err
@@ -137,7 +137,9 @@ func (s *Syncer) Pass(ctx context.Context) (Result, error) {
 			continue
 		}
 		p := ProjectFor(leaf, resources)
-		p.Release = ReleaseFor(chainOf(leaf, budgets))
+		chain := chainOf(leaf, budgets)
+		p.Release = ReleaseFor(chain)
+		p.WorkspaceScratchGB = ScratchFor(chain)
 		if at, ok := s.deleteAt(leaf); ok {
 			p.DeleteAt = &at
 		}

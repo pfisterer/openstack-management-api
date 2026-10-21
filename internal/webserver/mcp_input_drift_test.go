@@ -46,6 +46,7 @@ var toolInputContracts = []toolInputContract{
 			"max_project_term_days":              "budget-only",
 			"inherits_limit":                     "budget-only",
 			"release_max":                        "budget-only",
+			"workspace_scratch_gb":               "budget-only",
 		},
 	},
 	{
@@ -58,6 +59,7 @@ var toolInputContracts = []toolInputContract{
 			"allow_sub_budget_requests":          "defaults to allowed; a tool that changes it can be added when somebody wants it",
 			"allow_requests_beyond_auto_approve": "defaults to allowed; a hard limit is a policy decision made in the UI",
 			"release_max":                        "release maximums of the AI service's workspaces are set in the UI; without them the budgets above apply",
+			"workspace_scratch_gb":               "local storage per workspace at the AI service is set in the UI; without it the budgets above apply",
 		},
 	},
 	{
@@ -101,6 +103,8 @@ var toolInputContracts = []toolInputContract{
 			"max_project_term_days":              "policy, not a value; it shortens projects below when lowered",
 			"clear_max_project_term_days":        "see max_project_term_days",
 			"release_max":                        "policy of a budget, set in the UI",
+			"workspace_scratch_gb":               "policy of a budget, set in the UI",
+			"clear_workspace_scratch_gb":         "see workspace_scratch_gb",
 			"limit":                              "resources change through request_project_change, which records a reason",
 			"termination_date":                   "not offered yet",
 			"clear_termination_date":             "see termination_date",
@@ -127,6 +131,8 @@ var toolInputContracts = []toolInputContract{
 			"max_project_term_days":              "budget-only",
 			"clear_max_project_term_days":        "budget-only",
 			"release_max":                        "budget-only",
+			"workspace_scratch_gb":               "budget-only",
+			"clear_workspace_scratch_gb":         "budget-only",
 			"inherits_limit":                     "budget-only",
 			"limit":                              "request_project_change",
 			"termination_date":                   "not offered yet",

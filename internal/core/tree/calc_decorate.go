@@ -75,6 +75,7 @@ func (s *Service) attachParentNames(ctx context.Context, nodes []model.Node, vie
 			nodes[i].EffectiveAttributes = nil
 		}
 		nodes[i].InheritedReleaseMax = tree.inheritedReleaseMax(nodes[i])
+		nodes[i].InheritedWorkspaceScratchGB = tree.inheritedScratch(nodes[i])
 		if nodes[i].ParentID != nil {
 			nodes[i].ParentName = tree.name[*nodes[i].ParentID]
 			nodes[i].ParentPath = tree.path(*nodes[i].ParentID)
@@ -104,6 +105,18 @@ func (a ancestry) inheritedReleaseMax(n model.Node) *model.ReleaseMax {
 	return out
 }
 
+// inheritedScratch is the smallest local storage per workspace the budgets above n set; nil for the root or when none of them sets one.
+func (a ancestry) inheritedScratch(n model.Node) *int {
+	if n.ParentID == nil {
+		return nil
+	}
+	var out *int
+	for _, id := range append([]string{*n.ParentID}, a.chain(*n.ParentID)...) {
+		out = model.StricterScratch(out, a.scratch[id])
+	}
+	return out
+}
+
 // maxAncestorDepth bounds the upward walk in walkAncestors. A tree this deep is
 // already a bug; the cap is here so a cycle that slipped past the cycle guard
 // cannot turn into an endless query loop.
@@ -118,6 +131,8 @@ type ancestry struct {
 	admins map[string]common.TokenList
 	// release holds each loaded node's own release maximums.
 	release map[string]*model.ReleaseMax
+	// scratch holds each loaded node's own local storage per workspace.
+	scratch map[string]*int
 	log     interface{ Warnw(string, ...any) }
 }
 
@@ -164,7 +179,7 @@ func (a ancestry) path(id string) []model.PathEntry {
 // each level of the tree costs one query no matter how many nodes are on it,
 // and the levels above the first are shared by nearly all of them anyway.
 func (s *Service) walkAncestors(ctx context.Context, start []string) (ancestry, error) {
-	a := ancestry{parent: map[string]string{}, name: map[string]string{}, attrs: map[string]model.Attributes{}, admins: map[string]common.TokenList{}, release: map[string]*model.ReleaseMax{}, log: s.log}
+	a := ancestry{parent: map[string]string{}, name: map[string]string{}, attrs: map[string]model.Attributes{}, admins: map[string]common.TokenList{}, release: map[string]*model.ReleaseMax{}, scratch: map[string]*int{}, log: s.log}
 	var frontier []string
 	for _, id := range start {
 		if !slices.Contains(frontier, id) {
@@ -181,6 +196,7 @@ func (s *Service) walkAncestors(ctx context.Context, start []string) (ancestry, 
 			a.name[n.ID] = n.Name
 			a.attrs[n.ID] = n.Attributes
 			a.release[n.ID] = n.ReleaseMax
+			a.scratch[n.ID] = n.WorkspaceScratchGB
 			a.admins[n.ID] = n.AdminScope
 			if n.ParentID == nil {
 				continue

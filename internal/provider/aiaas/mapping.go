@@ -200,6 +200,14 @@ func ReleaseFor(chain []model.Node) *Release {
 	return &Release{CPU: conv(r.CPU), GPU: conv(r.GPU)}
 }
 
+// ScratchFor is what the AI service is told about a leaf's local storage per workspace: the smallest value of the budgets above it (chain, in any order), 0 when none sets one.
+func ScratchFor(chain []model.Node) int {
+	if v := model.ResolveWorkspaceScratchGB(chain); v != nil {
+		return *v
+	}
+	return 0
+}
+
 // chainOf is the budgets above a leaf, parent first, from the budgets by id; it stops at a budget it does not know or at a cycle.
 func chainOf(leaf model.Node, budgets map[string]model.Node) []model.Node {
 	var out []model.Node

@@ -318,7 +318,10 @@ type HistoryEntry struct {
 	// ReleaseMaxFrom and ReleaseMaxTo are the budget's own release maximums before and after an "updated" entry that changed them; nil on one side means none.
 	ReleaseMaxFrom *ReleaseMax `json:"release_max_from,omitempty"`
 	ReleaseMaxTo   *ReleaseMax `json:"release_max_to,omitempty"`
-	Reason         *string     `json:"reason,omitempty"`
+	// WorkspaceScratchGBFrom and WorkspaceScratchGBTo are the budget's own local storage per workspace before and after an "updated" entry that changed it; nil on one side means none.
+	WorkspaceScratchGBFrom *int    `json:"workspace_scratch_gb_from,omitempty"`
+	WorkspaceScratchGBTo   *int    `json:"workspace_scratch_gb_to,omitempty"`
+	Reason                 *string `json:"reason,omitempty"`
 }
 
 // StatusUsage groups the aggregated limits and contributing leaf IDs for one status.
@@ -416,6 +419,8 @@ type Node struct {
 	MaxProjectTermDays *int `json:"max_project_term_days,omitempty"`
 	// ReleaseMax are the most the projects below this budget may choose as release times of their workspaces at the AI service (see ReleaseMax). Not a quantity: it holds for every project below, a budget below may only tighten it, and what applies to a project is the strictest value along its chain (ResolveReleaseMax). Set by the budget's managers like the other policy fields. nil means nothing of its own.
 	ReleaseMax *ReleaseMax `json:"release_max,omitempty"`
+	// WorkspaceScratchGB is the most local storage (GB) a workspace or GPU kernel of the projects below this budget may write outside its home at the AI service (see scratch.go). Like ReleaseMax no quantity: it holds for every project below, a budget below may only lower it, and what applies to a project is the smallest value along its chain (ResolveWorkspaceScratchGB). nil means nothing of its own.
+	WorkspaceScratchGB *int `json:"workspace_scratch_gb,omitempty" example:"5"`
 
 	// InheritsLimit makes a budget a node for structure only: it has no limit
 	// of its own but passes on the one of the budget above — a campus that
@@ -522,6 +527,8 @@ type Node struct {
 	EffectiveAttributes map[string]AttributeGroup `json:"effective_attributes,omitempty"`
 	// InheritedReleaseMax is attached to API responses (never persisted): the strictest release maximums of the budgets above this node (ResolveReleaseMax over its ancestors). On a budget it is what its own ReleaseMax may only tighten; on a project, what applies to it. Nil when no budget above sets any.
 	InheritedReleaseMax *ReleaseMax `json:"inherited_release_max,omitempty"`
+	// InheritedWorkspaceScratchGB is attached to API responses (never persisted): the smallest local storage per workspace the budgets above this node set (ResolveWorkspaceScratchGB over its ancestors). On a budget it is what its own value may only lower; on a project, what applies to it. Nil when no budget above sets one (the AI service's default applies).
+	InheritedWorkspaceScratchGB *int `json:"inherited_workspace_scratch_gb,omitempty"`
 
 	// AvailableResources is attached to API responses (never persisted): the
 	// resources that are in scope AT THIS NODE, root-most first as the catalogue

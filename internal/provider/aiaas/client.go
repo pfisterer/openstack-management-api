@@ -53,6 +53,8 @@ type Project struct {
 	Release *Release `json:"release"`
 	// WorkspaceScratchGB is the local storage (GB) a workspace or GPU kernel of the project may write outside its home: the smallest value along its chain of budgets, root included (model.ResolveWorkspaceScratchGB); 0 = no budget sets one, the AI service applies its default.
 	WorkspaceScratchGB int `json:"workspace_scratch_gb"`
+	// BatchPriority is how the project's batch jobs run: "guaranteed" or "preemptible", the strictest value along its chain of budgets, root included (model.ResolveBatchPriority); empty = no budget sets one, the AI service treats it as preemptible.
+	BatchPriority string `json:"batch_priority,omitempty" example:"preemptible" enums:"guaranteed,preemptible"`
 }
 
 // ReleaseTimes and Release are the AI service's release times (its workspace.ReleaseTimes and Release): per kind of use, minutes without activity with and without an open tab, and an upper bound in hours (0 = none).

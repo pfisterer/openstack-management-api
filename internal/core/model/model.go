@@ -319,9 +319,12 @@ type HistoryEntry struct {
 	ReleaseMaxFrom *ReleaseMax `json:"release_max_from,omitempty"`
 	ReleaseMaxTo   *ReleaseMax `json:"release_max_to,omitempty"`
 	// WorkspaceScratchGBFrom and WorkspaceScratchGBTo are the budget's own local storage per workspace before and after an "updated" entry that changed it; nil on one side means none.
-	WorkspaceScratchGBFrom *int    `json:"workspace_scratch_gb_from,omitempty"`
-	WorkspaceScratchGBTo   *int    `json:"workspace_scratch_gb_to,omitempty"`
-	Reason                 *string `json:"reason,omitempty"`
+	WorkspaceScratchGBFrom *int `json:"workspace_scratch_gb_from,omitempty"`
+	WorkspaceScratchGBTo   *int `json:"workspace_scratch_gb_to,omitempty"`
+	// BatchPriorityFrom and BatchPriorityTo are the budget's own batch priority before and after an "updated" entry that changed it; nil on one side means none.
+	BatchPriorityFrom *string `json:"batch_priority_from,omitempty"`
+	BatchPriorityTo   *string `json:"batch_priority_to,omitempty"`
+	Reason            *string `json:"reason,omitempty"`
 }
 
 // StatusUsage groups the aggregated limits and contributing leaf IDs for one status.
@@ -421,6 +424,8 @@ type Node struct {
 	ReleaseMax *ReleaseMax `json:"release_max,omitempty"`
 	// WorkspaceScratchGB is the most local storage (GB) a workspace or GPU kernel of the projects below this budget may write outside its home at the AI service (see scratch.go). Like ReleaseMax no quantity: it holds for every project below, a budget below may only lower it, and what applies to a project is the smallest value along its chain (ResolveWorkspaceScratchGB). nil means nothing of its own.
 	WorkspaceScratchGB *int `json:"workspace_scratch_gb,omitempty" example:"5"`
+	// BatchPriority is how the batch jobs of the projects below this budget run at the AI service: BatchPriorityGuaranteed or BatchPriorityPreemptible (see batch_priority.go). Like WorkspaceScratchGB no quantity: it holds for every project below, a budget below may only tighten it (preemptible is stricter), and what applies to a project is the strictest value along its chain (ResolveBatchPriority). nil means nothing of its own.
+	BatchPriority *string `json:"batch_priority,omitempty" example:"preemptible" enums:"guaranteed,preemptible"`
 
 	// InheritsLimit makes a budget a node for structure only: it has no limit
 	// of its own but passes on the one of the budget above — a campus that
@@ -529,6 +534,8 @@ type Node struct {
 	InheritedReleaseMax *ReleaseMax `json:"inherited_release_max,omitempty"`
 	// InheritedWorkspaceScratchGB is attached to API responses (never persisted): the smallest local storage per workspace the budgets above this node set (ResolveWorkspaceScratchGB over its ancestors). On a budget it is what its own value may only lower; on a project, what applies to it. Nil when no budget above sets one (the AI service's default applies).
 	InheritedWorkspaceScratchGB *int `json:"inherited_workspace_scratch_gb,omitempty"`
+	// InheritedBatchPriority is attached to API responses (never persisted): the strictest batch priority the budgets above this node set (ResolveBatchPriority over its ancestors). On a budget it is what its own value may only tighten; on a project, what applies to it. Nil when no budget above sets one (the AI service treats the project as preemptible).
+	InheritedBatchPriority *string `json:"inherited_batch_priority,omitempty" enums:"guaranteed,preemptible"`
 
 	// AvailableResources is attached to API responses (never persisted): the
 	// resources that are in scope AT THIS NODE, root-most first as the catalogue

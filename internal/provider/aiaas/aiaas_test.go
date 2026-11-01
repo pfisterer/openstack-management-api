@@ -298,3 +298,43 @@ func TestPassSendsWorkspaceScratch(t *testing.T) {
 		t.Errorf("the value should always be sent, got %s", b)
 	}
 }
+
+// Every project is sent the strictest batch priority along its chain, root included; nothing where no budget sets one, so the AI service treats it as preemptible.
+func TestPassSendsBatchPriority(t *testing.T) {
+	ctx := context.Background()
+	log := zap.NewNop().Sugar()
+	store := nodestore.NewInMemoryStore(log)
+	svc := tree.NewService(store, nil, catalog, nil, time.Second, 0, tree.Accounting{}, log)
+	root, b1, b2, g := "r", "b1", "b2", "g"
+	for _, n := range []model.Node{
+		{ID: root, Kind: model.KindBudget, Status: model.StatusApproved, BatchPriority: new(model.BatchPriorityGuaranteed)},
+		{ID: b1, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &root, BatchPriority: new(model.BatchPriorityPreemptible)},
+		{ID: b2, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &b1, BatchPriority: new(model.BatchPriorityGuaranteed)},
+		{ID: g, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &root},
+		{ID: "lone", Kind: model.KindBudget, Status: model.StatusApproved},
+		{ID: "p_deep", Kind: model.KindProject, Status: model.StatusApproved, ParentID: &b2, Name: "Deep", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
+		{ID: "p_guar", Kind: model.KindProject, Status: model.StatusApproved, ParentID: &g, Name: "Guaranteed", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
+		{ID: "p_free", Kind: model.KindProject, Status: model.StatusApproved, ParentID: new("lone"), Name: "Free", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
+	} {
+		if err := store.UpsertNode(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fake := &fakeService{projects: map[string]Project{}}
+	s := &Syncer{Tree: svc.ProviderSync(Provider), Service: fake, Resources: func() []common.Resource { return catalog }, Log: log}
+	if _, err := s.Pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := fake.projects["p_deep"].BatchPriority; got != model.BatchPriorityPreemptible {
+		t.Errorf("batch_priority = %q, want the strictest along the chain, preemptible", got)
+	}
+	if got := fake.projects["p_guar"].BatchPriority; got != model.BatchPriorityGuaranteed {
+		t.Errorf("batch_priority = %q, want the root's guaranteed", got)
+	}
+	if got := fake.projects["p_free"].BatchPriority; got != "" {
+		t.Errorf("batch_priority without a value = %q, want empty", got)
+	}
+	if b, _ := json.Marshal(fake.projects["p_free"]); strings.Contains(string(b), `"batch_priority"`) {
+		t.Errorf("an unset value should be left out, got %s", b)
+	}
+}

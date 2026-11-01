@@ -140,6 +140,7 @@ func (s *Syncer) Pass(ctx context.Context) (Result, error) {
 		chain := chainOf(leaf, budgets)
 		p.Release = ReleaseFor(chain)
 		p.WorkspaceScratchGB = ScratchFor(chain)
+		p.BatchPriority = BatchPriorityFor(chain)
 		if at, ok := s.deleteAt(leaf); ok {
 			p.DeleteAt = &at
 		}

@@ -208,6 +208,14 @@ func ScratchFor(chain []model.Node) int {
 	return 0
 }
 
+// BatchPriorityFor is what the AI service is told about a leaf's batch priority: the strictest value of the budgets above it (chain, in any order), empty when none sets one.
+func BatchPriorityFor(chain []model.Node) string {
+	if v := model.ResolveBatchPriority(chain); v != nil {
+		return *v
+	}
+	return ""
+}
+
 // chainOf is the budgets above a leaf, parent first, from the budgets by id; it stops at a budget it does not know or at a cycle.
 func chainOf(leaf model.Node, budgets map[string]model.Node) []model.Node {
 	var out []model.Node

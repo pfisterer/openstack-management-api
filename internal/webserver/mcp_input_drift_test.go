@@ -47,6 +47,7 @@ var toolInputContracts = []toolInputContract{
 			"inherits_limit":                     "budget-only",
 			"release_max":                        "budget-only",
 			"workspace_scratch_gb":               "budget-only",
+			"batch_priority":                     "budget-only",
 		},
 	},
 	{
@@ -60,6 +61,7 @@ var toolInputContracts = []toolInputContract{
 			"allow_requests_beyond_auto_approve": "defaults to allowed; a hard limit is a policy decision made in the UI",
 			"release_max":                        "release maximums of the AI service's workspaces are set in the UI; without them the budgets above apply",
 			"workspace_scratch_gb":               "local storage per workspace at the AI service is set in the UI; without it the budgets above apply",
+			"batch_priority":                     "the batch priority at the AI service is set in the UI; without it the budgets above apply",
 		},
 	},
 	{
@@ -105,6 +107,8 @@ var toolInputContracts = []toolInputContract{
 			"release_max":                        "policy of a budget, set in the UI",
 			"workspace_scratch_gb":               "policy of a budget, set in the UI",
 			"clear_workspace_scratch_gb":         "see workspace_scratch_gb",
+			"batch_priority":                     "policy of a budget, set in the UI",
+			"clear_batch_priority":               "see batch_priority",
 			"limit":                              "resources change through request_project_change, which records a reason",
 			"termination_date":                   "not offered yet",
 			"clear_termination_date":             "see termination_date",
@@ -133,6 +137,8 @@ var toolInputContracts = []toolInputContract{
 			"release_max":                        "budget-only",
 			"workspace_scratch_gb":               "budget-only",
 			"clear_workspace_scratch_gb":         "budget-only",
+			"batch_priority":                     "budget-only",
+			"clear_batch_priority":               "budget-only",
 			"inherits_limit":                     "budget-only",
 			"limit":                              "request_project_change",
 			"termination_date":                   "not offered yet",

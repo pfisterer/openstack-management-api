@@ -56,6 +56,9 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		if req.WorkspaceScratchGB != nil {
 			return model.Node{}, fmt.Errorf("workspace_scratch_gb is a budget setting")
 		}
+		if req.BatchPriority != nil {
+			return model.Node{}, fmt.Errorf("batch_priority is a budget setting")
+		}
 		if req.InheritsLimit {
 			return model.Node{}, fmt.Errorf("inherits_limit is a budget setting")
 		}
@@ -169,6 +172,9 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		if err == nil {
 			err = model.ValidateWorkspaceScratchGB(req.WorkspaceScratchGB, model.ResolveWorkspaceScratchGB(parentChain))
 		}
+		if err == nil {
+			err = model.ValidateBatchPriority(req.BatchPriority, model.ResolveBatchPriority(parentChain))
+		}
 	}
 	if err != nil {
 		return model.Node{}, err
@@ -213,6 +219,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		node.MaxProjectTermDays = maxTerm
 		node.ReleaseMax = req.ReleaseMax.Normalized()
 		node.WorkspaceScratchGB = cloneIntPtr(req.WorkspaceScratchGB)
+		node.BatchPriority = cloneStringPtr(req.BatchPriority)
 		node.InheritsLimit = req.InheritsLimit
 	}
 	node.History = []model.HistoryEntry{createdEntry}
@@ -339,6 +346,7 @@ func isLeafDirectEdit(req UpdateNodeRequest) bool {
 		req.AllowSubBudgetRequests == nil && req.AllowRequestsBeyondAutoApprove == nil &&
 		req.AutoApproveExtensions == nil && req.MaxProjectTermDays == nil && !req.ClearMaxProjectTermDays &&
 		req.ReleaseMax == nil && req.WorkspaceScratchGB == nil && !req.ClearWorkspaceScratchGB &&
+		req.BatchPriority == nil && !req.ClearBatchPriority &&
 		req.Limit == nil && req.TerminationDate == nil && !req.ClearTerminationDate &&
 		req.InheritsLimit == nil
 }
@@ -380,7 +388,7 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 		req.AutoApprove != nil || req.ClearAutoApprove || req.AllowSubBudgetRequests != nil ||
 		req.AllowRequestsBeyondAutoApprove != nil || req.AutoApproveExtensions != nil ||
 		req.MaxProjectTermDays != nil || req.ClearMaxProjectTermDays || req.ReleaseMax != nil ||
-		req.WorkspaceScratchGB != nil || req.ClearWorkspaceScratchGB
+		req.WorkspaceScratchGB != nil || req.ClearWorkspaceScratchGB || req.BatchPriority != nil || req.ClearBatchPriority
 	wantsCapacityEdit := req.Limit != nil || req.TerminationDate != nil || req.ClearTerminationDate || req.InheritsLimit != nil
 
 	if wantsPolicyEdit {
@@ -452,7 +460,7 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 		}
 	}
 	var chain []model.Node
-	if wantsCapacityEdit || req.ClearMaxProjectTermDays || req.MaxProjectTermDays != nil || req.ReleaseMax != nil || req.WorkspaceScratchGB != nil {
+	if wantsCapacityEdit || req.ClearMaxProjectTermDays || req.MaxProjectTermDays != nil || req.ReleaseMax != nil || req.WorkspaceScratchGB != nil || req.BatchPriority != nil {
 		if chain, err = s.parentChainNodes(ctx, current); err != nil {
 			return model.Node{}, err
 		}
@@ -484,6 +492,15 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 		}
 		updated.WorkspaceScratchGB = cloneIntPtr(req.WorkspaceScratchGB)
 	}
+	// And for the batch priority: only stricter than above; removing it is always allowed.
+	if req.ClearBatchPriority {
+		updated.BatchPriority = nil
+	} else if req.BatchPriority != nil {
+		if err := model.ValidateBatchPriority(req.BatchPriority, model.ResolveBatchPriority(chain)); err != nil {
+			return model.Node{}, err
+		}
+		updated.BatchPriority = cloneStringPtr(req.BatchPriority)
+	}
 	if req.ClearTerminationDate || req.TerminationDate != nil {
 		if bound := chainEnd(chain); req.ClearTerminationDate && bound != nil {
 			return model.Node{}, fmt.Errorf("the budget above ends on %s, so this one needs an end date too", dateOnly(*bound))
@@ -512,6 +529,10 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 	if (req.WorkspaceScratchGB != nil || req.ClearWorkspaceScratchGB) && !reflect.DeepEqual(current.WorkspaceScratchGB, updated.WorkspaceScratchGB) {
 		historyEntry.WorkspaceScratchGBFrom = cloneIntPtr(current.WorkspaceScratchGB)
 		historyEntry.WorkspaceScratchGBTo = cloneIntPtr(updated.WorkspaceScratchGB)
+	}
+	if (req.BatchPriority != nil || req.ClearBatchPriority) && !reflect.DeepEqual(current.BatchPriority, updated.BatchPriority) {
+		historyEntry.BatchPriorityFrom = cloneStringPtr(current.BatchPriority)
+		historyEntry.BatchPriorityTo = cloneStringPtr(updated.BatchPriority)
 	}
 
 	// An inherited limit is the one of the budget above and cannot be set by
@@ -1033,4 +1054,13 @@ func cloneIntPtr(v *int) *int {
 	}
 	n := *v
 	return &n
+}
+
+// cloneStringPtr is a copy of v that shares nothing with it; nil stays nil.
+func cloneStringPtr(v *string) *string {
+	if v == nil {
+		return nil
+	}
+	s := *v
+	return &s
 }

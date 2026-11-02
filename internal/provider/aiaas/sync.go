@@ -73,8 +73,8 @@ var statuses = []string{model.StatusApproved, model.StatusChangePending, model.S
 
 // Pass brings the AI service in line with the tree:
 //   - an approved project gets its project there, with its amounts, people and end;
-//   - a released or archived one ends there (nobody can start any more) and is deleted when its deletion was requested — then the leaf goes too, unless OpenStack still carries it out;
-//   - GraceDays after a project's end (EndOf) its Lab/AI part is deleted there and not carried out again; the leaf and its cloud part stay. Until then the project carries the day (DeleteAt) for the warnings;
+//   - a released or archived one ends there (nobody can start any more) and is deleted when its deletion was requested or GraceDays after its release — then the leaf goes too, unless OpenStack still carries it out;
+//   - GraceDays after an approved project's end (EndOf) its Lab/AI part is deleted there and not carried out again; the leaf and its cloud part stay. Until then the project carries the day (DeleteAt) for the warnings;
 //   - a project there whose leaf is gone is deleted.
 //
 // What was used comes back as the leaf's in-use, per window resource.
@@ -110,13 +110,18 @@ func (s *Syncer) Pass(ctx context.Context) (Result, error) {
 	for _, leaf := range leaves {
 		known[leaf.ID] = true
 		retired := model.IsRetiredStatus(leaf.Status)
-		if retired && slices.Contains(leaf.Flags, model.FlagDeleteRequested) {
-			if err := s.Service.Delete(ctx, leaf.ID); err != nil && !errors.Is(err, ErrNotFound) {
-				s.Log.Warnw("aiaas: delete failed", "node_id", leaf.ID, "error", err)
-				res.Failed++
-				continue
+		at, planned := s.deleteAt(leaf)
+		expired := planned && !now().Before(at)
+		// A retired project goes for good when its deletion was requested or its grace period is over: its part here, then the leaf, unless OpenStack still carries it out.
+		if retired && (expired || slices.Contains(leaf.Flags, model.FlagDeleteRequested)) {
+			if there[leaf.ID] {
+				if err := s.Service.Delete(ctx, leaf.ID); err != nil && !errors.Is(err, ErrNotFound) {
+					s.Log.Warnw("aiaas: delete failed", "node_id", leaf.ID, "error", err)
+					res.Failed++
+					continue
+				}
+				res.Deleted++
 			}
-			res.Deleted++
 			if gone, err := s.Tree.RemoveRetired(ctx, leaf.ID); err != nil {
 				s.Log.Warnw("aiaas: remove leaf failed", "node_id", leaf.ID, "error", err)
 			} else if gone {
@@ -124,7 +129,7 @@ func (s *Syncer) Pass(ctx context.Context) (Result, error) {
 			}
 			continue
 		}
-		if at, ok := s.deleteAt(leaf); ok && !now().Before(at) {
+		if expired {
 			if !there[leaf.ID] {
 				continue // deleted on an earlier pass
 			}
@@ -142,7 +147,7 @@ func (s *Syncer) Pass(ctx context.Context) (Result, error) {
 		p.WorkspaceScratchGB = ScratchFor(chain)
 		p.BatchPriority = BatchPriorityFor(chain)
 		p.BatchJobs = BatchJobsFor(chain)
-		if at, ok := s.deleteAt(leaf); ok {
+		if planned {
 			p.DeleteAt = &at
 		}
 		if retired {
@@ -178,7 +183,7 @@ func (s *Syncer) Pass(ctx context.Context) (Result, error) {
 	return res, nil
 }
 
-// EndOf is the last day of a leaf's Lab/AI part: its termination date, or the day it was released if that came first. false without either (a released leaf without a recorded release and without an end).
+// EndOf is the last day of a leaf's Lab/AI part: its termination date, or the day before it was released if that came first — a released project ends the day before (see Pass), so its part here is deleted GraceDays after the release day, the day OpenStack's pending-deletion tag names. false without either (a released leaf without a recorded release and without an end).
 func EndOf(leaf model.Node) (time.Time, bool) {
 	var end time.Time
 	ok := false
@@ -192,7 +197,7 @@ func EndOf(leaf model.Node) (time.Time, bool) {
 				continue
 			}
 			if t, err := time.Parse(time.RFC3339, h.Timestamp); err == nil {
-				day := t.UTC().Truncate(24 * time.Hour)
+				day := t.UTC().Truncate(24*time.Hour).AddDate(0, 0, -1)
 				if !ok || day.Before(end) {
 					end, ok = day, true
 				}

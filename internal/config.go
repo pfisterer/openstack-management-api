@@ -399,7 +399,7 @@ type AIaaSConfig struct {
 	IntervalSeconds int    `json:"interval_seconds"`
 	// ClassIntervalSeconds is how often the GPU classes are asked for: one cheap request that writes only on a change, so an admin's new class shows up in the tree within seconds.
 	ClassIntervalSeconds int `json:"class_interval_seconds"`
-	// DeleteGraceDays is how long a Lab/AI project's workspaces and their files outlive its end (termination date, or release if earlier) before they are deleted; 0 = never.
+	// DeleteGraceDays is how long a Lab/AI project's workspaces and their files outlive its end (termination date) or its release before they are deleted — a released project's leaf goes with them, unless OpenStack still carries it out; 0 = never. Meant to equal Reconciler.ReleasedDeleteGraceDays, so a released project goes everywhere on the same day.
 	DeleteGraceDays int `json:"delete_grace_days"`
 }
 

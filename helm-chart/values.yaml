@@ -55,7 +55,7 @@ openstackManagementApi:
     intervalSeconds: 300
     # How often the AI service's GPU classes are fetched, so a new class is in the tree within seconds (one request, a write only on a change).
     classIntervalSeconds: 30
-    # Days after a project's end (or its release, if earlier) when its Lab/AI part — workspaces, homes, shared folder — is deleted; 0 = never.
+    # Days after a project's end (or its release, if earlier) when its Lab/AI part — workspaces, homes, shared folder — is deleted, and a released project's leaf with it unless OpenStack still carries it out; 0 = never. Keep it equal to reconciler.releasedDeleteGraceDays.
     deleteGraceDays: 14
 
   #------------------------------------

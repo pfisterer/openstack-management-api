@@ -154,7 +154,7 @@ func TestStorage(t *testing.T) {
 	}
 }
 
-// GraceDays after its end a project's Lab/AI part is deleted and not carried out again; before that it carries the day for the warnings. A release before the end counts as the end.
+// GraceDays after its end a project's Lab/AI part is deleted and not carried out again; before that it carries the day for the warnings. A released project goes GraceDays after its release day — the day OpenStack's pending-deletion tag names — and its leaf with it, unless OpenStack still carries it out.
 func TestExpiry(t *testing.T) {
 	ctx := context.Background()
 	log := zap.NewNop().Sugar()
@@ -167,25 +167,46 @@ func TestExpiry(t *testing.T) {
 		{ID: "p_rel", Kind: model.KindProject, Status: model.StatusReleased, Name: "Released", TerminationDate: day("2027-03-31"), Limit: common.ProjectQuota{"ws-storage-gb": 5},
 			History: []model.HistoryEntry{{Timestamp: "2026-09-01T10:00:00Z", StatusTo: model.StatusReleased}}},
 		{ID: "p_open", Kind: model.KindProject, Status: model.StatusApproved, Name: "Open", Limit: common.ProjectQuota{"ws-storage-gb": 5}},
+		{ID: "p_both", Kind: model.KindProject, Status: model.StatusArchived, Name: "Both", Limit: common.ProjectQuota{"ws-storage-gb": 5, "cores": 2},
+			Bindings: map[string]model.Binding{Provider: {ExternalID: "t-p_both"}, "openstack": {ExternalID: "os-both"}},
+			History:  []model.HistoryEntry{{Timestamp: "2026-09-01T10:00:00Z", StatusTo: model.StatusReleased}}},
+		{ID: "p_fresh", Kind: model.KindProject, Status: model.StatusReleased, Name: "Fresh", Limit: common.ProjectQuota{"ws-storage-gb": 5},
+			History: []model.HistoryEntry{{Timestamp: "2026-10-10T23:30:00Z", StatusTo: model.StatusReleased}}},
 	} {
 		if err := store.UpsertNode(ctx, n); err != nil {
 			t.Fatal(err)
 		}
 	}
-	fake := &fakeService{projects: map[string]Project{"p_old": {}, "p_rel": {}}}
+	fake := &fakeService{projects: map[string]Project{"p_old": {}, "p_rel": {}, "p_both": {}}}
 	s := &Syncer{Tree: svc.ProviderSync(Provider), Service: fake, Resources: func() []common.Resource { return catalog }, Log: log, GraceDays: 14,
 		now: func() time.Time { return time.Date(2026, 10, 13, 9, 0, 0, 0, time.UTC) }}
 	res, err := s.Pass(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Expired != 2 {
+	if res.Expired != 1 || res.Deleted != 2 || res.Removed != 1 {
 		t.Errorf("result = %+v", res)
 	}
-	for _, gone := range []string{"p_old", "p_rel"} {
+	for _, gone := range []string{"p_old", "p_rel", "p_both"} {
 		if _, ok := fake.projects[gone]; ok {
 			t.Errorf("%s should be deleted", gone)
 		}
+	}
+	// The approved one keeps its leaf; the released one without an OpenStack project goes; the one OpenStack still carries keeps its leaf, without this provider's binding.
+	if n, _ := store.GetNode(ctx, "p_old"); n == nil {
+		t.Error("an expired approved project lost its leaf")
+	}
+	if n, _ := store.GetNode(ctx, "p_rel"); n != nil {
+		t.Error("an expired released project without an OpenStack project kept its leaf")
+	}
+	if n, _ := store.GetNode(ctx, "p_both"); n == nil {
+		t.Error("an expired archived project lost its leaf while OpenStack still carries it")
+	} else if _, bound := n.Bindings[Provider]; bound {
+		t.Error("the expired archived project kept this provider's binding")
+	}
+	// Released 10 Oct: deleted on 24 Oct (release day plus grace), as OpenStack tags it.
+	if at := fake.projects["p_fresh"].DeleteAt; at == nil || at.Format(time.DateOnly) != "2026-10-24" {
+		t.Errorf("p_fresh delete_at = %v", at)
 	}
 	// Ended 5 Oct: deleted on 20 Oct, announced until then.
 	if at := fake.projects["p_soon"].DeleteAt; at == nil || at.Format(time.DateOnly) != "2026-10-20" {

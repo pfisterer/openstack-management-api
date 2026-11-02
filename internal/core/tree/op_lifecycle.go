@@ -59,6 +59,9 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		if req.BatchPriority != nil {
 			return model.Node{}, fmt.Errorf("batch_priority is a budget setting")
 		}
+		if req.BatchJobs != nil {
+			return model.Node{}, fmt.Errorf("batch_jobs is a budget setting")
+		}
 		if req.InheritsLimit {
 			return model.Node{}, fmt.Errorf("inherits_limit is a budget setting")
 		}
@@ -175,6 +178,13 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		if err == nil {
 			err = model.ValidateBatchPriority(req.BatchPriority, model.ResolveBatchPriority(parentChain))
 		}
+		if err == nil {
+			if req.InheritsLimit && req.BatchJobs != nil {
+				err = fmt.Errorf("batch_jobs: a budget that inherits the limit of the budget above passes on its batch jobs too")
+			} else {
+				err = model.ValidateBatchJobs(req.BatchJobs, model.ResolveBatchJobs(parentChain), false)
+			}
+		}
 	}
 	if err != nil {
 		return model.Node{}, err
@@ -220,6 +230,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		node.ReleaseMax = req.ReleaseMax.Normalized()
 		node.WorkspaceScratchGB = cloneIntPtr(req.WorkspaceScratchGB)
 		node.BatchPriority = cloneStringPtr(req.BatchPriority)
+		node.BatchJobs = req.BatchJobs.Clone()
 		node.InheritsLimit = req.InheritsLimit
 	}
 	node.History = []model.HistoryEntry{createdEntry}
@@ -347,6 +358,7 @@ func isLeafDirectEdit(req UpdateNodeRequest) bool {
 		req.AutoApproveExtensions == nil && req.MaxProjectTermDays == nil && !req.ClearMaxProjectTermDays &&
 		req.ReleaseMax == nil && req.WorkspaceScratchGB == nil && !req.ClearWorkspaceScratchGB &&
 		req.BatchPriority == nil && !req.ClearBatchPriority &&
+		req.BatchJobs == nil && !req.ClearBatchJobs &&
 		req.Limit == nil && req.TerminationDate == nil && !req.ClearTerminationDate &&
 		req.InheritsLimit == nil
 }
@@ -388,7 +400,8 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 		req.AutoApprove != nil || req.ClearAutoApprove || req.AllowSubBudgetRequests != nil ||
 		req.AllowRequestsBeyondAutoApprove != nil || req.AutoApproveExtensions != nil ||
 		req.MaxProjectTermDays != nil || req.ClearMaxProjectTermDays || req.ReleaseMax != nil ||
-		req.WorkspaceScratchGB != nil || req.ClearWorkspaceScratchGB || req.BatchPriority != nil || req.ClearBatchPriority
+		req.WorkspaceScratchGB != nil || req.ClearWorkspaceScratchGB || req.BatchPriority != nil || req.ClearBatchPriority ||
+		req.BatchJobs != nil || req.ClearBatchJobs
 	wantsCapacityEdit := req.Limit != nil || req.TerminationDate != nil || req.ClearTerminationDate || req.InheritsLimit != nil
 
 	if wantsPolicyEdit {
@@ -460,7 +473,7 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 		}
 	}
 	var chain []model.Node
-	if wantsCapacityEdit || req.ClearMaxProjectTermDays || req.MaxProjectTermDays != nil || req.ReleaseMax != nil || req.WorkspaceScratchGB != nil || req.BatchPriority != nil {
+	if wantsCapacityEdit || req.ClearMaxProjectTermDays || req.MaxProjectTermDays != nil || req.ReleaseMax != nil || req.WorkspaceScratchGB != nil || req.BatchPriority != nil || req.BatchJobs != nil {
 		if chain, err = s.parentChainNodes(ctx, current); err != nil {
 			return model.Node{}, err
 		}
@@ -501,6 +514,18 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 		}
 		updated.BatchPriority = cloneStringPtr(req.BatchPriority)
 	}
+	// The batch jobs: on only where the budgets above have them, at most their values; nothing carried down (a budget below with more of its own simply gets these). Removing them switches them off here and below. A budget that inherits its limit has none of its own (handled with InheritsLimit below).
+	if req.ClearBatchJobs {
+		updated.BatchJobs = nil
+	} else if req.BatchJobs != nil {
+		if current.InheritsLimit || (req.InheritsLimit != nil && *req.InheritsLimit) {
+			return model.Node{}, fmt.Errorf("batch_jobs: a budget that inherits the limit of the budget above passes on its batch jobs too")
+		}
+		if err := model.ValidateBatchJobs(req.BatchJobs, model.ResolveBatchJobs(chain), current.ParentID == nil); err != nil {
+			return model.Node{}, err
+		}
+		updated.BatchJobs = req.BatchJobs.Clone()
+	}
 	if req.ClearTerminationDate || req.TerminationDate != nil {
 		if bound := chainEnd(chain); req.ClearTerminationDate && bound != nil {
 			return model.Node{}, fmt.Errorf("the budget above ends on %s, so this one needs an end date too", dateOnly(*bound))
@@ -534,6 +559,10 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 		historyEntry.BatchPriorityFrom = cloneStringPtr(current.BatchPriority)
 		historyEntry.BatchPriorityTo = cloneStringPtr(updated.BatchPriority)
 	}
+	if (req.BatchJobs != nil || req.ClearBatchJobs) && !reflect.DeepEqual(current.BatchJobs, updated.BatchJobs) {
+		historyEntry.BatchJobsFrom = current.BatchJobs.Clone()
+		historyEntry.BatchJobsTo = updated.BatchJobs.Clone()
+	}
 
 	// An inherited limit is the one of the budget above and cannot be set by
 	// hand. Switched on, the budget's own limit is dropped: the one above
@@ -556,9 +585,21 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 		historyEntry.LimitFrom = &current.Limit
 		historyEntry.Reason = new("Inherits the limit of the budget above")
 		updated.Limit = common.ProjectQuota{}
+		// Its batch jobs are those above now, like its limit.
+		if updated.BatchJobs != nil {
+			historyEntry.BatchJobsFrom, historyEntry.BatchJobsTo = current.BatchJobs.Clone(), nil
+			updated.BatchJobs = nil
+		}
 	}
 	if !inherits && current.InheritsLimit && req.Limit == nil && binding != nil {
 		req.Limit = new(maps.Clone(binding.Limit))
+	}
+	// Switched off, it keeps the batch jobs it passed on, unless given others: nothing changes below until somebody changes them.
+	if !inherits && current.InheritsLimit && req.BatchJobs == nil && !req.ClearBatchJobs && chain != nil {
+		if above := model.ResolveBatchJobs(chain); above != nil {
+			updated.BatchJobs = above
+			historyEntry.BatchJobsFrom, historyEntry.BatchJobsTo = nil, above.Clone()
+		}
 	}
 	updated.InheritsLimit = inherits
 

@@ -324,7 +324,10 @@ type HistoryEntry struct {
 	// BatchPriorityFrom and BatchPriorityTo are the budget's own batch priority before and after an "updated" entry that changed it; nil on one side means none.
 	BatchPriorityFrom *string `json:"batch_priority_from,omitempty"`
 	BatchPriorityTo   *string `json:"batch_priority_to,omitempty"`
-	Reason            *string `json:"reason,omitempty"`
+	// BatchJobsFrom and BatchJobsTo are the budget's own batch jobs before and after an "updated" entry that changed them; nil on one side means none.
+	BatchJobsFrom *BatchJobs `json:"batch_jobs_from,omitempty"`
+	BatchJobsTo   *BatchJobs `json:"batch_jobs_to,omitempty"`
+	Reason        *string    `json:"reason,omitempty"`
 }
 
 // StatusUsage groups the aggregated limits and contributing leaf IDs for one status.
@@ -426,6 +429,8 @@ type Node struct {
 	WorkspaceScratchGB *int `json:"workspace_scratch_gb,omitempty" example:"5"`
 	// BatchPriority is how the batch jobs of the projects below this budget run at the AI service: BatchPriorityGuaranteed or BatchPriorityPreemptible (see batch_priority.go). Like WorkspaceScratchGB no quantity: it holds for every project below, a budget below may only tighten it (preemptible is stricter), and what applies to a project is the strictest value along its chain (ResolveBatchPriority). nil means nothing of its own.
 	BatchPriority *string `json:"batch_priority,omitempty" example:"preemptible" enums:"guaranteed,preemptible"`
+	// BatchJobs switch batch jobs at the AI service on for the projects below this budget, with their bounds (see batch_jobs.go). Like a resource they are there or not: nil means none, here and below, unless the budget inherits its limit (then it passes on those above). A budget below may have them only where this one does, with values at most these; what applies to a project is the strictest value along its chain (ResolveBatchJobs).
+	BatchJobs *BatchJobs `json:"batch_jobs,omitempty"`
 
 	// InheritsLimit makes a budget a node for structure only: it has no limit
 	// of its own but passes on the one of the budget above — a campus that
@@ -536,6 +541,8 @@ type Node struct {
 	InheritedWorkspaceScratchGB *int `json:"inherited_workspace_scratch_gb,omitempty"`
 	// InheritedBatchPriority is attached to API responses (never persisted): the strictest batch priority the budgets above this node set (ResolveBatchPriority over its ancestors). On a budget it is what its own value may only tighten; on a project, what applies to it. Nil when no budget above sets one (the AI service treats the project as preemptible).
 	InheritedBatchPriority *string `json:"inherited_batch_priority,omitempty" enums:"guaranteed,preemptible"`
+	// InheritedBatchJobs is attached to API responses (never persisted): what the budgets above this node allow of batch jobs (ResolveBatchJobs over its ancestors). On a budget, what its own value may be at most; on a project, what applies to it. Nil for the root and where the budgets above have none (then the projects have none either).
+	InheritedBatchJobs *BatchJobs `json:"inherited_batch_jobs,omitempty"`
 
 	// AvailableResources is attached to API responses (never persisted): the
 	// resources that are in scope AT THIS NODE, root-most first as the catalogue

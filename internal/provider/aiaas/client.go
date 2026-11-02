@@ -55,6 +55,14 @@ type Project struct {
 	WorkspaceScratchGB int `json:"workspace_scratch_gb"`
 	// BatchPriority is how the project's batch jobs run: "guaranteed" or "preemptible", the strictest value along its chain of budgets, root included (model.ResolveBatchPriority); empty = no budget sets one, the AI service treats it as preemptible.
 	BatchPriority string `json:"batch_priority,omitempty" example:"preemptible" enums:"guaranteed,preemptible"`
+	// BatchJobs are the project's batch jobs: the strictest values along its chain of budgets, root included (model.ResolveBatchJobs); {0, 0} where they have none. Always sent: the tree decides the job limits of its projects at the AI service.
+	BatchJobs *BatchJobs `json:"batch_jobs"`
+}
+
+// BatchJobs are the AI service's batch jobs from the tree (its workspace.TreeJobs): jobs per person (0 = none) and the longest run time in hours (0 when none).
+type BatchJobs struct {
+	JobsPerPerson int `json:"jobs_per_person" example:"2"`
+	MaxHours      int `json:"max_hours" example:"4"`
 }
 
 // ReleaseTimes and Release are the AI service's release times (its workspace.ReleaseTimes and Release): per kind of use, minutes without activity with and without an open tab, and an upper bound in hours (0 = none).

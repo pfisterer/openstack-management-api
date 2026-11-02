@@ -126,6 +126,7 @@ func toNodeRow(n model.Node) nodeRow {
 	n.InheritedReleaseMax = nil
 	n.InheritedWorkspaceScratchGB = nil
 	n.InheritedBatchPriority = nil
+	n.InheritedBatchJobs = nil
 	// And how the caller of a listing sees the node.
 	n.ViewerRelation = ""
 	// Every write passes here, so this is where no node's history outgrows its cap.

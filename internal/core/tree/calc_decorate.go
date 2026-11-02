@@ -77,6 +77,7 @@ func (s *Service) attachParentNames(ctx context.Context, nodes []model.Node, vie
 		nodes[i].InheritedReleaseMax = tree.inheritedReleaseMax(nodes[i])
 		nodes[i].InheritedWorkspaceScratchGB = tree.inheritedScratch(nodes[i])
 		nodes[i].InheritedBatchPriority = tree.inheritedBatchPriority(nodes[i])
+		nodes[i].InheritedBatchJobs = tree.inheritedBatchJobs(nodes[i])
 		if nodes[i].ParentID != nil {
 			nodes[i].ParentName = tree.name[*nodes[i].ParentID]
 			nodes[i].ParentPath = tree.path(*nodes[i].ParentID)
@@ -130,6 +131,19 @@ func (a ancestry) inheritedBatchPriority(n model.Node) *string {
 	return out
 }
 
+// inheritedBatchJobs is what the budgets above n allow of batch jobs (model.ResolveBatchJobs over them); nil for the root or where they have none.
+func (a ancestry) inheritedBatchJobs(n model.Node) *model.BatchJobs {
+	if n.ParentID == nil {
+		return nil
+	}
+	ids := append([]string{*n.ParentID}, a.chain(*n.ParentID)...)
+	chain := make([]model.Node, 0, len(ids))
+	for _, id := range ids {
+		chain = append(chain, model.Node{BatchJobs: a.batchJobs[id], InheritsLimit: a.inherits[id]})
+	}
+	return model.ResolveBatchJobs(chain)
+}
+
 // maxAncestorDepth bounds the upward walk in walkAncestors. A tree this deep is
 // already a bug; the cap is here so a cycle that slipped past the cycle guard
 // cannot turn into an endless query loop.
@@ -148,7 +162,11 @@ type ancestry struct {
 	scratch map[string]*int
 	// batchPriority holds each loaded node's own batch priority.
 	batchPriority map[string]*string
-	log           interface{ Warnw(string, ...any) }
+	// batchJobs holds each loaded node's own batch jobs.
+	batchJobs map[string]*model.BatchJobs
+	// inherits tells which loaded nodes pass on the limit (and the batch jobs) of the budget above.
+	inherits map[string]bool
+	log      interface{ Warnw(string, ...any) }
 }
 
 // chain returns the nodes above id, parent first, stopping at a cycle.
@@ -194,7 +212,7 @@ func (a ancestry) path(id string) []model.PathEntry {
 // each level of the tree costs one query no matter how many nodes are on it,
 // and the levels above the first are shared by nearly all of them anyway.
 func (s *Service) walkAncestors(ctx context.Context, start []string) (ancestry, error) {
-	a := ancestry{parent: map[string]string{}, name: map[string]string{}, attrs: map[string]model.Attributes{}, admins: map[string]common.TokenList{}, release: map[string]*model.ReleaseMax{}, scratch: map[string]*int{}, batchPriority: map[string]*string{}, log: s.log}
+	a := ancestry{parent: map[string]string{}, name: map[string]string{}, attrs: map[string]model.Attributes{}, admins: map[string]common.TokenList{}, release: map[string]*model.ReleaseMax{}, scratch: map[string]*int{}, batchPriority: map[string]*string{}, batchJobs: map[string]*model.BatchJobs{}, inherits: map[string]bool{}, log: s.log}
 	var frontier []string
 	for _, id := range start {
 		if !slices.Contains(frontier, id) {
@@ -213,6 +231,8 @@ func (s *Service) walkAncestors(ctx context.Context, start []string) (ancestry, 
 			a.release[n.ID] = n.ReleaseMax
 			a.scratch[n.ID] = n.WorkspaceScratchGB
 			a.batchPriority[n.ID] = n.BatchPriority
+			a.batchJobs[n.ID] = n.BatchJobs
+			a.inherits[n.ID] = n.InheritsLimit
 			a.admins[n.ID] = n.AdminScope
 			if n.ParentID == nil {
 				continue

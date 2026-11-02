@@ -338,3 +338,39 @@ func TestPassSendsBatchPriority(t *testing.T) {
 		t.Errorf("an unset value should be left out, got %s", b)
 	}
 }
+
+// Every project is sent its batch jobs: the strictest of each bound along its chain, root included, an inheriting budget passing on those above; off ({0, 0}, sent, not left out) where a budget of the chain has none.
+func TestPassSendsBatchJobs(t *testing.T) {
+	ctx := context.Background()
+	log := zap.NewNop().Sugar()
+	store := nodestore.NewInMemoryStore(log)
+	svc := tree.NewService(store, nil, catalog, nil, time.Second, 0, tree.Accounting{}, log)
+	root, b1, b2, inh, off := "r", "b1", "b2", "inh", "off"
+	for _, n := range []model.Node{
+		{ID: root, Kind: model.KindBudget, Status: model.StatusApproved, BatchJobs: &model.BatchJobs{JobsPerPerson: 4, MaxHours: 8}},
+		{ID: b1, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &root, BatchJobs: &model.BatchJobs{JobsPerPerson: 2, MaxHours: 8}},
+		{ID: b2, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &b1, BatchJobs: &model.BatchJobs{JobsPerPerson: 3, MaxHours: 4}},
+		{ID: inh, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &b1, InheritsLimit: true},
+		{ID: off, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &root},
+		{ID: "p_deep", Kind: model.KindProject, Status: model.StatusApproved, ParentID: &b2, Name: "Deep", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
+		{ID: "p_inh", Kind: model.KindProject, Status: model.StatusApproved, ParentID: &inh, Name: "Inherits", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
+		{ID: "p_off", Kind: model.KindProject, Status: model.StatusApproved, ParentID: &off, Name: "Off", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
+	} {
+		if err := store.UpsertNode(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fake := &fakeService{projects: map[string]Project{}}
+	s := &Syncer{Tree: svc.ProviderSync(Provider), Service: fake, Resources: func() []common.Resource { return catalog }, Log: log}
+	if _, err := s.Pass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[string]BatchJobs{"p_deep": {JobsPerPerson: 2, MaxHours: 4}, "p_inh": {JobsPerPerson: 2, MaxHours: 8}, "p_off": {}} {
+		if got := fake.projects[id].BatchJobs; got == nil || *got != want {
+			t.Errorf("%s: batch_jobs = %+v, want %+v", id, got, want)
+		}
+	}
+	if b, _ := json.Marshal(fake.projects["p_off"]); !strings.Contains(string(b), `"batch_jobs":{"jobs_per_person":0,"max_hours":0}`) {
+		t.Errorf("off must be sent, not left out, got %s", b)
+	}
+}

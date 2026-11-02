@@ -61,6 +61,8 @@ type CreateNodeRequest struct {
 	WorkspaceScratchGB *int `json:"workspace_scratch_gb" example:"5"`
 	// BatchPriority is the budget's own batch priority (model.BatchPriority), "guaranteed" or "preemptible"; it may not guarantee what the budgets above make preemptible. Omitted, the budget sets none of its own and those above apply.
 	BatchPriority *string `json:"batch_priority" example:"preemptible" enums:"guaranteed,preemptible"`
+	// BatchJobs switches batch jobs on for the projects below the budget (model.BatchJobs): jobs per person and the longest run time in hours, only where the budgets above have them and each at most what they allow. Omitted, the budget has none, unless it inherits its limit (InheritsLimit): then it passes on those above and must not set any.
+	BatchJobs *model.BatchJobs `json:"batch_jobs"`
 	// InheritsLimit creates a budget that passes on the limit of its parent
 	// (Node.InheritsLimit); Limit is then ignored. Managers only.
 	InheritsLimit bool `json:"inherits_limit"`
@@ -91,10 +93,13 @@ type UpdateNodeRequest struct {
 	WorkspaceScratchGB      *int `json:"workspace_scratch_gb" example:"5"`
 	ClearWorkspaceScratchGB bool `json:"clear_workspace_scratch_gb"`
 	// BatchPriority sets the budget's own batch priority (model.BatchPriority): "guaranteed" or "preemptible", and not "guaranteed" where the budgets above make it preemptible (Node.InheritedBatchPriority). ClearBatchPriority removes it, so the budgets above apply (none: preemptible). Managers of the budget or above, like the other policy fields. Omitted, it stays as it is.
-	BatchPriority      *string              `json:"batch_priority" example:"preemptible" enums:"guaranteed,preemptible"`
-	ClearBatchPriority bool                 `json:"clear_batch_priority"`
-	Limit              *common.ProjectQuota `json:"limit"`
-	TerminationDate    *string              `json:"termination_date"`
+	BatchPriority      *string `json:"batch_priority" example:"preemptible" enums:"guaranteed,preemptible"`
+	ClearBatchPriority bool    `json:"clear_batch_priority"`
+	// BatchJobs switches batch jobs on for the projects below the budget or changes their bounds (model.BatchJobs): jobs per person and the longest run time in hours, only where the budgets above have them (Node.InheritedBatchJobs) and each at most what they allow; the root sets the most anybody gets. ClearBatchJobs switches them off here and below. Not on a budget that inherits its limit: it passes on those above. Managers of the budget or above, like the other policy fields. Omitted, they stay as they are.
+	BatchJobs       *model.BatchJobs     `json:"batch_jobs"`
+	ClearBatchJobs  bool                 `json:"clear_batch_jobs"`
+	Limit           *common.ProjectQuota `json:"limit"`
+	TerminationDate *string              `json:"termination_date"`
 	// TerminationDate may not lie after the end of any budget above. A budget's
 	// new end is carried down: every node below it that ends later, or never,
 	// ends with it, waiting requests and proposals included.

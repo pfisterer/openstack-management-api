@@ -70,6 +70,7 @@ const (
 	// ChildSortReservedPrefix and ChildSortUsedPrefix are followed by a
 	// resource id: "reserved:cores" orders by what was granted (own share plus
 	// special allocations), "used:cores" by what OpenStack measured in use.
+	// "used:a,b" orders by the sum of several in use (the budget table's summary columns, e.g. the GPU hours of all classes).
 	ChildSortReservedPrefix = "reserved:"
 	ChildSortUsedPrefix     = "used:"
 )
@@ -97,13 +98,22 @@ func numericSort(key string) (func(model.Node) float64, bool) {
 			return float64(v)
 		}, true
 	case strings.HasPrefix(key, ChildSortUsedPrefix) && len(key) > len(ChildSortUsedPrefix):
-		id := strings.TrimPrefix(key, ChildSortUsedPrefix)
+		ids := strings.Split(strings.TrimPrefix(key, ChildSortUsedPrefix), ",")
+		if slices.Contains(ids, "") {
+			return nil, false
+		}
 		return func(n model.Node) float64 {
-			v, ok := n.InUse()[id]
-			if !ok {
+			inUse := n.InUse()
+			sum, measured := 0, false
+			for _, id := range ids {
+				if v, ok := inUse[id]; ok {
+					sum, measured = sum+v, true
+				}
+			}
+			if !measured {
 				return -1
 			}
-			return float64(v)
+			return float64(sum)
 		}, true
 	}
 	return nil, false

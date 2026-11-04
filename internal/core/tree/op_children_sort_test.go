@@ -43,12 +43,33 @@ func TestSortChildren_ByResource(t *testing.T) {
 			t.Errorf("%s desc=%v: %v, want %v", tc.key, tc.desc, ids(got), tc.want)
 		}
 	}
-	for _, key := range []string{"reserved:", "used:", "cores", "servers:x"} {
+	for _, key := range []string{"reserved:", "used:", "used:cores,", "cores", "servers:x"} {
 		if err := (ChildFilter{Sort: key}).Validate(); err == nil {
 			t.Errorf("sort %q accepted", key)
 		}
 	}
 	if err := (ChildFilter{Sort: "used:ram"}).Validate(); err != nil {
 		t.Errorf("used:ram refused: %v", err)
+	}
+}
+
+// Several ids sort by their sum in use; a project with none of them measured stays below every measured one.
+func TestSortChildren_BySumInUse(t *testing.T) {
+	inUse := func(q common.ProjectQuota) map[string]model.Binding {
+		return map[string]model.Binding{"aiaas": {InUse: q}}
+	}
+	nodes := []model.Node{
+		{ID: "a", Bindings: inUse(common.ProjectQuota{"gpu-h-small": 5, "gpu-h-large": 1})},
+		{ID: "b", Bindings: inUse(common.ProjectQuota{"gpu-h-large": 8})},
+		{ID: "c"},
+		{ID: "d", Bindings: inUse(common.ProjectQuota{"gpu-h-small": 0})},
+	}
+	got := slices.Clone(nodes)
+	sortChildren(got, "used:gpu-h-small,gpu-h-large", true)
+	if want := []string{"b", "a", "d", "c"}; !slices.Equal(ids(got), want) {
+		t.Errorf("sum desc: %v, want %v", ids(got), want)
+	}
+	if err := (ChildFilter{Sort: "used:gpu-h-small,gpu-h-large"}).Validate(); err != nil {
+		t.Errorf("a sum refused: %v", err)
 	}
 }

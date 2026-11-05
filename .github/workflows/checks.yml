@@ -44,6 +44,11 @@ jobs:
         if: '!cancelled()'
         run: make test
 
+      # Known vulnerabilities in the code and its dependencies, from the Go vulnerability database. Fails only for what the code actually reaches; a vulnerable module it never calls is listed, not failed. Pinned so a new scanner release cannot break the run on its own.
+      - name: govulncheck
+        if: '!cancelled()'
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
       # internal/roleprovider/api/swagger.json is the input the Go client is
       # generated from, and it is committed. Nothing used to notice when it fell
       # behind the service it describes: the generating target read a sibling

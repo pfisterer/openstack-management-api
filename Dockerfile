@@ -1,7 +1,7 @@
 ## Stage 1: Builder image
 # The build stage runs on the machine that builds (BUILDPLATFORM) and cross-compiles for the target: on an arm64 Mac that is native speed instead of emulation. No cgo is needed, so the binary is static.
 # Pinned to exact versions: a floating tag rebuilds the image on whatever compiler and base happen to be current, so a release cannot be reproduced and a security fix of the toolchain (Go >= 1.27.2) is not guaranteed to be in it. Bump deliberately.
-FROM --platform=$BUILDPLATFORM golang:1.27.2-alpine3.24 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine3.24@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS builder
 ARG TARGETOS TARGETARCH
 
 RUN apk add --no-cache git nodejs npm make build-base

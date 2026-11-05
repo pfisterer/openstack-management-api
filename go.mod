@@ -2,6 +2,8 @@ module github.com/pfisterer/openstack-management-api
 
 go 1.26.0
 
+toolchain go1.27.3
+
 require (
 	github.com/gin-contrib/cors v1.7.7
 	github.com/gin-contrib/zap v1.1.7

@@ -70,12 +70,7 @@ func (a ancestry) attributesVisible(n model.Node, viewer common.TokenSet) bool {
 	if n.ParentID == nil {
 		return false
 	}
-	for _, b := range a.budgetsAbove(n) {
-		if viewer.ContainsAny(b.AdminScope) {
-			return true
-		}
-	}
-	return false
+	return managesInChain(viewer, a.budgetsAbove(n))
 }
 
 // AttributesVisible is attributesVisible for one node already loaded.

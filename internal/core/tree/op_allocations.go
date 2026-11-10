@@ -84,14 +84,8 @@ func (s *Service) SetAllocation(id string, req AllocationRequest, actor model.Ac
 
 	raises := !s.limitShrinks(held, limit)
 	callerSet := common.NewTokenSet(userTokens)
-	managesSource := false
-	for _, n := range chain[at:] {
-		if callerSet.ContainsAny(n.AdminScope) {
-			managesSource = true
-			break
-		}
-	}
-	if !managesSource {
+	// The source and the budgets above it, the way managesNode would walk from the source.
+	if !managesInChain(callerSet, chain[at:]) {
 		// Giving back is the holder's right, as it is for the project's own
 		// limit; anything else belongs to whoever holds what is handed out.
 		holder := isOwner(userTokens, current) || callerSet.ContainsAny(current.AdminScope)
@@ -189,12 +183,8 @@ func (s *Service) AllocationSources(id string, userTokens common.TokenList) ([]m
 		}
 	}
 	if len(out) == 0 {
-		if !isOwner(userTokens, project) && !callerSet.ContainsAny(project.AdminScope) {
-			if manages, err := s.managesNode(ctx, userTokens, project); err != nil {
-				return nil, err
-			} else if !manages {
-				return nil, common.ErrForbidden
-			}
+		if !isOwner(userTokens, project) && !managesNodeIn(callerSet, project, chain) {
+			return nil, common.ErrForbidden
 		}
 		return []model.Node{}, nil
 	}

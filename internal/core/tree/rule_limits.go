@@ -469,9 +469,8 @@ func (s *Service) loadTarget(ctx context.Context, userTokens common.TokenList, c
 	} else if !manages {
 		return nil, nil, common.ErrForbidden
 	}
-	if manages, err := s.managesNode(ctx, userTokens, target); err != nil {
-		return nil, nil, err
-	} else if !manages {
+	// chain starts at the target, so this is managesNode on it.
+	if !managesInChain(common.NewTokenSet(userTokens), chain) {
 		return nil, nil, common.ErrForbidden
 	}
 	return target, chain, nil

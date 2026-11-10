@@ -123,16 +123,14 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		return model.Node{}, fmt.Errorf("%w: cannot create nodes under a budget in status %q", common.ErrConflict, parent.Status)
 	}
 
-	isManager, err := s.managesNode(ctx, userTokens, parent)
-	if err != nil {
-		return model.Node{}, err
-	}
-	if !isManager && !isEligibleRequester(userTokens, parent) {
-		return model.Node{}, common.ErrForbidden
-	}
+	// The parent and the budgets above it: who manages the parent, and what bounds the new node.
 	parentChain, err := s.nodeChain(ctx, parent.ID)
 	if err != nil {
 		return model.Node{}, err
+	}
+	isManager := managesInChain(common.NewTokenSet(userTokens), parentChain)
+	if !isManager && !isEligibleRequester(userTokens, parent) {
+		return model.Node{}, common.ErrForbidden
 	}
 	if req.Kind == model.KindProject {
 		req.Limit = s.withDefaultAvailabilities(parentChain, req.Limit)
@@ -300,14 +298,12 @@ func (s *Service) normalizeCreateMembers(ctx context.Context, req CreateNodeRequ
 	if len(req.AuthorizedUsers) == 0 {
 		return s.normalizeAuthorizedUsers(ctx, req.AuthorizedUsers, openstack, userTokens, false)
 	}
-	manager := false
-	if parent, err := s.store.GetNode(ctx, req.ParentID); err != nil {
-		return nil, fmt.Errorf("load parent node: %w", err)
-	} else if parent != nil {
-		if manager, err = s.managesNode(ctx, userTokens, parent); err != nil {
-			return nil, err
-		}
+	// The parent and the budgets above it; empty when there is no such parent, which CreateNode refuses next.
+	parentChain, err := s.nodeChain(ctx, req.ParentID)
+	if err != nil {
+		return nil, err
 	}
+	manager := managesInChain(common.NewTokenSet(userTokens), parentChain)
 	return s.normalizeAuthorizedUsers(ctx, req.AuthorizedUsers, openstack, userTokens, manager)
 }
 
@@ -409,28 +405,24 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 		req.BatchJobs != nil || req.ClearBatchJobs
 	wantsCapacityEdit := req.Limit != nil || req.TerminationDate != nil || req.ClearTerminationDate || req.InheritsLimit != nil
 
+	// The budgets above: they decide who may make the edit and bound what it sets.
+	var chain []model.Node
+	if wantsPolicyEdit || wantsCapacityEdit {
+		if chain, err = s.parentChainNodes(ctx, current); err != nil {
+			return model.Node{}, err
+		}
+	}
+	caller := common.NewTokenSet(userTokens)
 	if wantsPolicyEdit {
 		// Renaming their own project and choosing who administers it with them
 		// is the owner's business; a project's admins pass managesNode through
 		// its own admin scope. Every edit on a budget belongs to a manager.
-		allowed := current.IsLeaf() && isOwner(userTokens, current)
-		if !allowed {
-			manages, err := s.managesNode(ctx, userTokens, current)
-			if err != nil {
-				return model.Node{}, err
-			}
-			allowed = manages
-		}
-		if !allowed {
+		if !(current.IsLeaf() && isOwner(userTokens, current)) && !managesNodeIn(caller, current, chain) {
 			return model.Node{}, common.ErrForbidden
 		}
 	}
-	if wantsCapacityEdit {
-		if manages, err := s.managesParentChain(ctx, userTokens, current); err != nil {
-			return model.Node{}, err
-		} else if !manages {
-			return model.Node{}, common.ErrForbidden
-		}
+	if wantsCapacityEdit && !managesInChain(caller, chain) {
+		return model.Node{}, common.ErrForbidden
 	}
 
 	// The root node's admin scope is owned by the configuration (synced on every
@@ -474,12 +466,6 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 	}
 	if req.AutoApprove != nil || req.AllowSubBudgetRequests != nil {
 		if err := validateSubBudgetRequests(updated.AutoApprove, updated.AllowSubBudgetRequests); err != nil {
-			return model.Node{}, err
-		}
-	}
-	var chain []model.Node
-	if wantsCapacityEdit || req.ClearMaxProjectTermDays || req.MaxProjectTermDays != nil || req.ReleaseMax != nil || req.WorkspaceScratchGB != nil || req.BatchPriority != nil || req.BatchJobs != nil {
-		if chain, err = s.parentChainNodes(ctx, current); err != nil {
 			return model.Node{}, err
 		}
 	}
@@ -581,8 +567,8 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 	if inherits && req.Limit != nil {
 		return model.Node{}, fmt.Errorf("the limit of this budget is inherited from the budget above; switch inheriting off to set one")
 	}
-	// Only where the chain was loaded: an edit of access or policy alone does
-	// not load it, and an inheriting budget then looked like the root.
+	// Only for an edit of the limit or of inheriting it: an edit of access or
+	// policy alone has nothing to inherit, and must not fail on it.
 	if inherits && wantsCapacityEdit && binding == nil {
 		return model.Node{}, fmt.Errorf("the root budget has nothing to inherit from")
 	}
@@ -661,27 +647,16 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor model.Ac
 
 	// Authorization: the leaf owner, a budget's own managers (asking their parent
 	// for more), or a manager of the parent chain.
-	allowed := false
-	if current.IsLeaf() {
-		allowed = isOwner(userTokens, current)
-	}
-	if !allowed {
-		if manages, err := s.managesNode(ctx, userTokens, current); err != nil {
-			return model.Node{}, err
-		} else {
-			allowed = manages
-		}
-	}
-	if !allowed {
-		return model.Node{}, common.ErrForbidden
-	}
-
-	// The budgets above: they bound a new limit and end, and the policy of
-	// the one a leaf draws from decides whether the change needs anybody's
-	// approval.
+	// The budgets above: they decide who may ask, bound a new limit and end,
+	// and the policy of the one a leaf draws from decides whether the change
+	// needs anybody's approval.
 	chain, err := s.parentChainNodes(ctx, current)
 	if err != nil {
 		return model.Node{}, err
+	}
+	caller := common.NewTokenSet(userTokens)
+	if !(current.IsLeaf() && isOwner(userTokens, current)) && !managesNodeIn(caller, current, chain) {
+		return model.Node{}, common.ErrForbidden
 	}
 	var parent *model.Node
 	if current.IsLeaf() && len(chain) > 0 {
@@ -732,10 +707,7 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor model.Ac
 		if !current.IsLeaf() {
 			return model.Node{}, fmt.Errorf("authorized_users can only be changed on project leaves")
 		}
-		manager, err := s.managesParentChain(ctx, userTokens, current)
-		if err != nil {
-			return model.Node{}, err
-		}
+		manager := managesInChain(caller, chain)
 		keep := [][]common.AuthorizedUser{current.AuthorizedUsers}
 		if current.Pending != nil && current.Pending.AuthorizedUsers != nil {
 			keep = append(keep, *current.Pending.AuthorizedUsers)
@@ -815,11 +787,7 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor model.Ac
 	if beyondPolicy && !parent.RequestsBeyondAutoApproveAllowed() {
 		// A manager of the budget may still propose — and then approve — it;
 		// the hard limit is for the people who request from it.
-		manages, err := s.managesParentChain(ctx, userTokens, current)
-		if err != nil {
-			return model.Node{}, err
-		}
-		if !manages {
+		if !managesInChain(caller, chain) {
 			return model.Node{}, errBeyondAutoApprove
 		}
 	}
@@ -913,9 +881,11 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor model.Act
 		return model.Node{}, fmt.Errorf("%w: cannot approve node in status %q", common.ErrConflict, current.Status)
 	}
 
-	if manages, err := s.managesParentChain(ctx, userTokens, current); err != nil {
+	ancestors, err := s.parentChainNodes(ctx, current)
+	if err != nil {
 		return model.Node{}, err
-	} else if !manages {
+	}
+	if !managesInChain(common.NewTokenSet(userTokens), ancestors) {
 		return model.Node{}, common.ErrForbidden
 	}
 	if err := checkRevision(current, req.ExpectedRevision); err != nil {
@@ -940,10 +910,6 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor model.Act
 		finalAuthorizedUsers = *current.Pending.AuthorizedUsers
 	}
 
-	ancestors, err := s.parentChainNodes(ctx, current)
-	if err != nil {
-		return model.Node{}, err
-	}
 	// Requests made before the budget above got (or moved up) its end still
 	// ask for more: they are granted to the budget's end, not refused whole.
 	// The same for a project's maximum term, counted from today.

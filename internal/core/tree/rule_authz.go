@@ -51,6 +51,7 @@ func (s *Service) managesParentChain(ctx context.Context, userTokens common.Toke
 	return s.managesChainFrom(ctx, common.NewTokenSet(userTokens), node.ParentID)
 }
 
+// managesChainFrom loads the chain from startID upward and applies managesInChain to it; nil startID manages nothing.
 func (s *Service) managesChainFrom(ctx context.Context, callerSet common.TokenSet, startID *string) (bool, error) {
 	if startID == nil {
 		return false, nil
@@ -59,12 +60,22 @@ func (s *Service) managesChainFrom(ctx context.Context, callerSet common.TokenSe
 	if err != nil {
 		return false, err
 	}
+	return managesInChain(callerSet, chain), nil
+}
+
+// managesInChain is the management rule on a chain already loaded: the caller holds a token in the AdminScope of any node of it. With the chain above a node (parentChainNodes) it is managesParentChain, the authority to decide on the node; with the chain from a node upward (nodeChain) it is managesNode. managesNode and managesParentChain load the chain for operations that do not have it; an operation that loaded it under its lock asks here, so the rule is decided on the same nodes the operation goes on to check against.
+func managesInChain(caller common.TokenSet, chain []model.Node) bool {
 	for _, n := range chain {
-		if callerSet.ContainsAny(n.AdminScope) {
-			return true, nil
+		if caller.ContainsAny(n.AdminScope) {
+			return true
 		}
 	}
-	return false, nil
+	return false
+}
+
+// managesNodeIn is managesNode with the chain above n (parent upward, parentChainNodes) already loaded.
+func managesNodeIn(caller common.TokenSet, n *model.Node, chain []model.Node) bool {
+	return caller.ContainsAny(n.AdminScope) || managesInChain(caller, chain)
 }
 
 // isOwner reports whether the caller holds the leaf's owner token.

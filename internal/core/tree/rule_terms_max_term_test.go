@@ -285,3 +285,28 @@ func TestMaxTerm_Promote(t *testing.T) {
 		t.Fatalf("a promoted project without an end should run the full term, got %s", endOf(n))
 	}
 }
+
+// Lowering the term leaves a sub-budget that is already shorter alone: no new term, no entry in its history; a sub-budget with a longer one takes the new term once.
+func TestMaxTerm_LoweringSkipsShorterSubBudgets(t *testing.T) {
+	f := newTermFixture(t, nil, nil, 180)
+	short := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: f.budget.ID, Kind: model.KindBudget, Limit: cores(1), MaxProjectTermDays: days(30)})
+	long := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: f.budget.ID, Kind: model.KindBudget, Limit: cores(1)})
+	if _, err := f.svc.UpdateNode(f.budget.ID, tree.UpdateNodeRequest{MaxProjectTermDays: days(90)}, rootActor(), rootTokens); err != nil {
+		t.Fatalf("lower term: %v", err)
+	}
+	count := func(n model.Node) int {
+		c := 0
+		for _, h := range n.History {
+			if h.Event == "term_shortened" {
+				c++
+			}
+		}
+		return c
+	}
+	if n := mustGet(t, f.svc, short.ID); *n.MaxProjectTermDays != 30 || count(n) != 0 {
+		t.Errorf("a shorter sub-budget should be left alone, got %d days and %d term_shortened entries", *n.MaxProjectTermDays, count(n))
+	}
+	if n := mustGet(t, f.svc, long.ID); *n.MaxProjectTermDays != 90 || count(n) != 1 {
+		t.Errorf("a longer sub-budget should take the term once, got %d days and %d term_shortened entries", *n.MaxProjectTermDays, count(n))
+	}
+}

@@ -217,7 +217,7 @@ func (s *Service) validateAllocationAvailabilities(project, source model.Node, l
 		if !s.isBool(rid) || v != 1 {
 			continue
 		}
-		if held := source.Limit[rid]; source.ID != model.RootNodeID && held != 1 && held != common.UnlimitedQuota {
+		if source.ID != model.RootNodeID && source.Limit[rid] != 1 {
 			return fmt.Errorf("%q is not available in budget %q", rid, nodeLabel(source))
 		}
 		if from := availabilitySource(project, rid, source.ID); from != "" {

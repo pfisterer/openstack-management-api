@@ -343,12 +343,13 @@ type mcpCreateBudgetInput struct {
 	// down once. Found the first time this ran against staging.
 	AdminScope         []string       `json:"admin_scope" jsonschema:"tokens that may approve requests here, e.g. group:dept_cs_admin or user:a@b.c"`
 	EligibleRequesters []string       `json:"eligible_requesters,omitempty" jsonschema:"tokens that may request something here, without any say over decisions"`
-	AutoApproveLimit   map[string]int `json:"auto_approve_limit,omitempty" jsonschema:"optional: requests up to this size per requester are approved without a human; {} approves any request the budget has room for; with a per-requester limit the budget takes no sub-budget requests"`
+	AutoApproveLimit   map[string]int `json:"auto_approve_limit,omitempty" jsonschema:"optional: requests up to this size per requester are approved without a human; {} approves any request the budget has room for; with a per-requester limit allow_sub_budget_requests must be false"`
 	// A pointer: absent means the default (extensions are covered), false is
 	// a real answer.
-	AutoApproveExtensions *bool `json:"auto_approve_extensions,omitempty" jsonschema:"optional, with auto_approve_limit: false sends every later end date of a project to a manager; default true"`
-	MaxProjectTermDays    int   `json:"max_project_term_days,omitempty" jsonschema:"optional: a project below may end at most this many days after the day it is requested or extended; at most the cap of the budget above, which is also the default"`
-	InheritsLimit         bool  `json:"inherits_limit,omitempty" jsonschema:"optional: a budget for structure only, which passes on the limit of the budget above and follows it when it changes; limit is then ignored"`
+	AllowSubBudgetRequests *bool `json:"allow_sub_budget_requests,omitempty" jsonschema:"optional: false means requesters may ask for projects only, not for sub-budgets; required as false with a per-requester auto_approve_limit, else refused; default true"`
+	AutoApproveExtensions  *bool `json:"auto_approve_extensions,omitempty" jsonschema:"optional, with auto_approve_limit: false sends every later end date of a project to a manager; default true"`
+	MaxProjectTermDays     int   `json:"max_project_term_days,omitempty" jsonschema:"optional: a project below may end at most this many days after the day it is requested or extended; at most the cap of the budget above, which is also the default"`
+	InheritsLimit          bool  `json:"inherits_limit,omitempty" jsonschema:"optional: a budget for structure only, which passes on the limit of the budget above and follows it when it changes; limit is then ignored"`
 }
 
 type mcpMoveInput struct {
@@ -676,26 +677,24 @@ func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log 
 			return nil, mcpProject{}, fmt.Errorf("reason must not be empty")
 		}
 		req := tree.CreateNodeRequest{
-			ParentID:              in.ParentID,
-			Kind:                  model.KindBudget,
-			Name:                  in.Name,
-			Reason:                in.Reason,
-			Limit:                 common.ProjectQuota(in.Limit),
-			AdminScope:            common.TokenList(in.AdminScope),
-			EligibleRequesters:    common.TokenList(in.EligibleRequesters),
-			AutoApproveExtensions: in.AutoApproveExtensions,
-			InheritsLimit:         in.InheritsLimit,
+			ParentID:               in.ParentID,
+			Kind:                   model.KindBudget,
+			Name:                   in.Name,
+			Reason:                 in.Reason,
+			Limit:                  common.ProjectQuota(in.Limit),
+			AdminScope:             common.TokenList(in.AdminScope),
+			EligibleRequesters:     common.TokenList(in.EligibleRequesters),
+			AutoApproveExtensions:  in.AutoApproveExtensions,
+			AllowSubBudgetRequests: in.AllowSubBudgetRequests,
+			InheritsLimit:          in.InheritsLimit,
 		}
 		if in.MaxProjectTermDays != 0 {
 			req.MaxProjectTermDays = &in.MaxProjectTermDays
 		}
 		// nil is "no auto-approve"; an empty map is the pool flavour.
 		if in.AutoApproveLimit != nil {
+			// With a per-requester limit, allow_sub_budget_requests has to be false, else the service refuses the budget, as over HTTP (decided 10.11.2026: no silent default).
 			req.AutoApprove = &model.AutoApprove{PerRequesterLimit: common.ProjectQuota(in.AutoApproveLimit)}
-			// A budget with a per-requester limit takes no sub-budget requests.
-			if !req.AutoApprove.IsPool() {
-				req.AllowSubBudgetRequests = new(false)
-			}
 		}
 		log.Infow("MCP create_budget", "actor", caller.actorEmail, "parent_id", in.ParentID)
 		node, err := cfg.Service.CreateNode(req, caller.serviceActor(), caller.userEmail, caller.tokens)

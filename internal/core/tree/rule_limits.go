@@ -303,7 +303,7 @@ func (s *Service) withDefaultAvailabilities(chain []model.Node, limit common.Pro
 			continue
 		}
 		if binding.ID != model.RootNodeID {
-			if held := binding.Limit[r.ID]; held != 1 && held != common.UnlimitedQuota {
+			if binding.Limit[r.ID] != 1 { // an availability is 0 or 1 (validateAvailabilities; the root grants with 1)
 				continue
 			}
 		}
@@ -375,7 +375,7 @@ func (s *Service) validateLeafAvailabilities(parent *model.Node, limit common.Pr
 		if parent.ID == model.RootNodeID {
 			continue
 		}
-		if held := parent.Limit[r.ID]; held == 1 || held == common.UnlimitedQuota {
+		if parent.Limit[r.ID] == 1 {
 			continue
 		}
 		return fmt.Errorf("%q is not available in budget %q — it has to be delegated to that budget first", r.ID, nodeLabel(*parent))

@@ -105,7 +105,7 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor model.A
 	if term != nil {
 		reason = termReason(*newParent, *term)
 	}
-	maxTerm := chainMaxTerm(newParentChain)
+	maxTerm := model.ResolveMaxProjectTermDays(newParentChain)
 	if bound != nil {
 		if err := shortenEnd(&updated, *bound, actor, reason); err != nil && !errors.Is(err, nodestore.ErrSkipUpdate) {
 			return model.Node{}, err

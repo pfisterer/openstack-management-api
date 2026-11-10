@@ -56,13 +56,7 @@ func validateAttributes(a model.Attributes) error {
 // effectiveAttributes resolves the attributes of a node from what walkAncestors
 // loaded above it.
 func (a ancestry) effectiveAttributes(n model.Node) map[string]model.AttributeGroup {
-	chain := []model.Node{n}
-	if n.ParentID != nil {
-		for _, id := range append([]string{*n.ParentID}, a.chain(*n.ParentID)...) {
-			chain = append(chain, model.Node{ID: id, Name: a.name[id], Attributes: a.attrs[id]})
-		}
-	}
-	return model.ResolveAttributes(chain)
+	return model.ResolveAttributes(append([]model.Node{n}, a.budgetsAbove(n)...))
 }
 
 // attributesVisible says whether the viewer looks after the node and so sees
@@ -76,8 +70,8 @@ func (a ancestry) attributesVisible(n model.Node, viewer common.TokenSet) bool {
 	if n.ParentID == nil {
 		return false
 	}
-	for _, id := range append([]string{*n.ParentID}, a.chain(*n.ParentID)...) {
-		if viewer.ContainsAny(a.admins[id]) {
+	for _, b := range a.budgetsAbove(n) {
+		if viewer.ContainsAny(b.AdminScope) {
 			return true
 		}
 	}

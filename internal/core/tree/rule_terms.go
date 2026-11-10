@@ -56,18 +56,6 @@ func fitEnd(end, bound *string) (*string, error) {
 	return end, nil
 }
 
-// chainMaxTerm is the shortest maximum project term along a chain of budgets —
-// the one every project below them obeys. Nil when none of them sets one.
-func chainMaxTerm(chain []model.Node) *int {
-	var shortest *int
-	for _, n := range chain {
-		if n.MaxProjectTermDays != nil && (shortest == nil || *n.MaxProjectTermDays < *shortest) {
-			shortest = n.MaxProjectTermDays
-		}
-	}
-	return shortest
-}
-
 // termEnd is the latest end a term of days allows for a project created or
 // extended at now: that day, counted in Berlin like every end date. A day rather
 // than a second, so a date picked in a browser whose clock runs a little ahead —
@@ -82,7 +70,7 @@ func termEnd(now time.Time, days int) string {
 // first. term reports which of the two it is, for the message that names it.
 func projectBound(chain []model.Node, now time.Time) (bound *string, term *int) {
 	end := chainEnd(chain)
-	days := chainMaxTerm(chain)
+	days := model.ResolveMaxProjectTermDays(chain)
 	if days == nil {
 		return end, nil
 	}

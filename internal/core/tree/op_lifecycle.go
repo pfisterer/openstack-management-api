@@ -167,7 +167,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 	terminationDate, err := s.fitNodeEnd(req.Kind, req.TerminationDate, parentChain)
 	if req.Kind == model.KindBudget {
 		if err == nil {
-			maxTerm, err = fitMaxTerm(req.MaxProjectTermDays, chainMaxTerm(parentChain))
+			maxTerm, err = fitMaxTerm(req.MaxProjectTermDays, model.ResolveMaxProjectTermDays(parentChain))
 		}
 		if err == nil {
 			// Unlike the term, nothing is copied down: what the budgets above set applies anyway (strictest along the chain), and copying would freeze it here.
@@ -484,12 +484,12 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 		}
 	}
 	if req.ClearMaxProjectTermDays {
-		if bound := chainMaxTerm(chain); bound != nil {
+		if bound := model.ResolveMaxProjectTermDays(chain); bound != nil {
 			return model.Node{}, fmt.Errorf("projects can run at most %d days in the budget above, so this one needs that limit too", *bound)
 		}
 		updated.MaxProjectTermDays = nil
 	} else if req.MaxProjectTermDays != nil {
-		if _, err := fitMaxTerm(req.MaxProjectTermDays, chainMaxTerm(chain)); err != nil {
+		if _, err := fitMaxTerm(req.MaxProjectTermDays, model.ResolveMaxProjectTermDays(chain)); err != nil {
 			return model.Node{}, err
 		}
 		updated.MaxProjectTermDays = req.MaxProjectTermDays

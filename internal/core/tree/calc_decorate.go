@@ -74,19 +74,20 @@ func (s *Service) attachParentNames(ctx context.Context, nodes []model.Node, vie
 			nodes[i].Attributes = nil
 			nodes[i].EffectiveAttributes = nil
 		}
-		nodes[i].InheritedReleaseMax = tree.inheritedReleaseMax(nodes[i])
-		nodes[i].InheritedWorkspaceScratchGB = tree.inheritedScratch(nodes[i])
-		nodes[i].InheritedBatchPriority = tree.inheritedBatchPriority(nodes[i])
-		nodes[i].InheritedBatchJobs = tree.inheritedBatchJobs(nodes[i])
+		above := tree.budgetsAbove(nodes[i])
+		nodes[i].InheritedReleaseMax = model.ResolveReleaseMax(above)
+		nodes[i].InheritedWorkspaceScratchGB = model.ResolveWorkspaceScratchGB(above)
+		nodes[i].InheritedBatchPriority = model.ResolveBatchPriority(above)
+		nodes[i].InheritedBatchJobs = model.ResolveBatchJobs(above)
 		if nodes[i].ParentID != nil {
-			nodes[i].ParentName = tree.name[*nodes[i].ParentID]
+			nodes[i].ParentName = tree.nodes[*nodes[i].ParentID].Name
 			nodes[i].ParentPath = tree.path(*nodes[i].ParentID)
 		}
 		if len(nodes[i].Allocations) > 0 {
 			// A copy: the slice may be the store's own.
 			named := slices.Clone(nodes[i].Allocations)
 			for j := range named {
-				named[j].BudgetName = tree.name[named[j].BudgetID]
+				named[j].BudgetName = tree.nodes[named[j].BudgetID].Name
 				named[j].BudgetPath = tree.path(named[j].BudgetID)
 			}
 			nodes[i].Allocations = named
@@ -95,53 +96,19 @@ func (s *Service) attachParentNames(ctx context.Context, nodes []model.Node, vie
 	return nodes, nil
 }
 
-// inheritedReleaseMax is the strictest release maximums of the budgets above n; nil for the root or when none of them sets any.
-func (a ancestry) inheritedReleaseMax(n model.Node) *model.ReleaseMax {
-	if n.ParentID == nil {
-		return nil
-	}
-	var out *model.ReleaseMax
-	for _, id := range append([]string{*n.ParentID}, a.chain(*n.ParentID)...) {
-		out = model.StricterRelease(out, a.release[id])
-	}
-	return out
-}
-
-// inheritedScratch is the smallest local storage per workspace the budgets above n set; nil for the root or when none of them sets one.
-func (a ancestry) inheritedScratch(n model.Node) *int {
-	if n.ParentID == nil {
-		return nil
-	}
-	var out *int
-	for _, id := range append([]string{*n.ParentID}, a.chain(*n.ParentID)...) {
-		out = model.StricterScratch(out, a.scratch[id])
-	}
-	return out
-}
-
-// inheritedBatchPriority is the strictest batch priority the budgets above n set; nil for the root or when none of them sets one.
-func (a ancestry) inheritedBatchPriority(n model.Node) *string {
-	if n.ParentID == nil {
-		return nil
-	}
-	var out *string
-	for _, id := range append([]string{*n.ParentID}, a.chain(*n.ParentID)...) {
-		out = model.StricterBatchPriority(out, a.batchPriority[id])
-	}
-	return out
-}
-
-// inheritedBatchJobs is what the budgets above n allow of batch jobs (model.ResolveBatchJobs over them); nil for the root or where they have none.
-func (a ancestry) inheritedBatchJobs(n model.Node) *model.BatchJobs {
+// budgetsAbove are the budgets above n as walkAncestors loaded them, parent first: the chain the model.Resolve* functions take, as parentChainNodes would load it. Only the fields walkAncestors keeps (slimNode) are set; a budget it could not load is an empty node with its id. Nil for the root.
+func (a ancestry) budgetsAbove(n model.Node) []model.Node {
 	if n.ParentID == nil {
 		return nil
 	}
 	ids := append([]string{*n.ParentID}, a.chain(*n.ParentID)...)
-	chain := make([]model.Node, 0, len(ids))
+	out := make([]model.Node, 0, len(ids))
 	for _, id := range ids {
-		chain = append(chain, model.Node{BatchJobs: a.batchJobs[id], InheritsLimit: a.inherits[id]})
+		b := a.nodes[id]
+		b.ID = id
+		out = append(out, b)
 	}
-	return model.ResolveBatchJobs(chain)
+	return out
 }
 
 // maxAncestorDepth bounds the upward walk in walkAncestors. A tree this deep is
@@ -149,24 +116,20 @@ func (a ancestry) inheritedBatchJobs(n model.Node) *model.BatchJobs {
 // cannot turn into an endless query loop.
 const maxAncestorDepth = 64
 
-// ancestry is what walkAncestors learnt: each loaded node's parent, name and
-// own attributes.
+// ancestry is what walkAncestors learnt: each loaded node's parent, and the node itself as far as views need it (slimNode).
 type ancestry struct {
 	parent map[string]string
-	name   map[string]string
-	attrs  map[string]model.Attributes
-	admins map[string]common.TokenList
-	// release holds each loaded node's own release maximums.
-	release map[string]*model.ReleaseMax
-	// scratch holds each loaded node's own local storage per workspace.
-	scratch map[string]*int
-	// batchPriority holds each loaded node's own batch priority.
-	batchPriority map[string]*string
-	// batchJobs holds each loaded node's own batch jobs.
-	batchJobs map[string]*model.BatchJobs
-	// inherits tells which loaded nodes pass on the limit (and the batch jobs) of the budget above.
-	inherits map[string]bool
-	log      interface{ Warnw(string, ...any) }
+	nodes  map[string]model.Node
+	log    interface{ Warnw(string, ...any) }
+}
+
+// slimNode keeps of a loaded ancestor what views resolve along the chain: its name, attributes and managers, and the budget settings passed down (model.Resolve*). Anything added to those settings is added here, or the inherited value in a response silently ignores it.
+func slimNode(n model.Node) model.Node {
+	return model.Node{
+		ID: n.ID, ParentID: n.ParentID, Name: n.Name, Attributes: n.Attributes, AdminScope: n.AdminScope,
+		ReleaseMax: n.ReleaseMax, WorkspaceScratchGB: n.WorkspaceScratchGB, BatchPriority: n.BatchPriority, BatchJobs: n.BatchJobs,
+		InheritsLimit: n.InheritsLimit, MaxProjectTermDays: n.MaxProjectTermDays,
+	}
 }
 
 // chain returns the nodes above id, parent first, stopping at a cycle.
@@ -190,7 +153,7 @@ func (a ancestry) chain(id string) []string {
 // first. The root is left out — every path starts there, so it tells nobody
 // anything — and id being the root gives an empty path.
 func (a ancestry) path(id string) []model.PathEntry {
-	if _, ok := a.name[id]; !ok {
+	if _, ok := a.nodes[id]; !ok {
 		return nil
 	}
 	ids := append([]string{id}, a.chain(id)...)
@@ -199,7 +162,7 @@ func (a ancestry) path(id string) []model.PathEntry {
 		if _, hasParent := a.parent[x]; !hasParent {
 			continue // the root
 		}
-		out = append(out, model.PathEntry{ID: x, Name: a.name[x]})
+		out = append(out, model.PathEntry{ID: x, Name: a.nodes[x].Name})
 	}
 	slices.Reverse(out)
 	return out
@@ -212,7 +175,7 @@ func (a ancestry) path(id string) []model.PathEntry {
 // each level of the tree costs one query no matter how many nodes are on it,
 // and the levels above the first are shared by nearly all of them anyway.
 func (s *Service) walkAncestors(ctx context.Context, start []string) (ancestry, error) {
-	a := ancestry{parent: map[string]string{}, name: map[string]string{}, attrs: map[string]model.Attributes{}, admins: map[string]common.TokenList{}, release: map[string]*model.ReleaseMax{}, scratch: map[string]*int{}, batchPriority: map[string]*string{}, batchJobs: map[string]*model.BatchJobs{}, inherits: map[string]bool{}, log: s.log}
+	a := ancestry{parent: map[string]string{}, nodes: map[string]model.Node{}, log: s.log}
 	var frontier []string
 	for _, id := range start {
 		if !slices.Contains(frontier, id) {
@@ -226,19 +189,12 @@ func (s *Service) walkAncestors(ctx context.Context, start []string) (ancestry, 
 		}
 		var next []string
 		for _, n := range level {
-			a.name[n.ID] = n.Name
-			a.attrs[n.ID] = n.Attributes
-			a.release[n.ID] = n.ReleaseMax
-			a.scratch[n.ID] = n.WorkspaceScratchGB
-			a.batchPriority[n.ID] = n.BatchPriority
-			a.batchJobs[n.ID] = n.BatchJobs
-			a.inherits[n.ID] = n.InheritsLimit
-			a.admins[n.ID] = n.AdminScope
+			a.nodes[n.ID] = slimNode(n)
 			if n.ParentID == nil {
 				continue
 			}
 			a.parent[n.ID] = *n.ParentID
-			if _, known := a.name[*n.ParentID]; !known && !slices.Contains(next, *n.ParentID) {
+			if _, known := a.nodes[*n.ParentID]; !known && !slices.Contains(next, *n.ParentID) {
 				next = append(next, *n.ParentID)
 			}
 		}

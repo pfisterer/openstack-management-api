@@ -82,12 +82,7 @@ func (s *Service) SetAllocation(id string, req AllocationRequest, actor model.Ac
 		return model.Node{}, fmt.Errorf("the project draws nothing from budget %q", nodeLabel(source))
 	}
 
-	raises := false
-	for rid, v := range limit {
-		if v > held[rid] {
-			raises = true
-		}
-	}
+	raises := !s.limitShrinks(held, limit)
 	callerSet := common.NewTokenSet(userTokens)
 	managesSource := false
 	for _, n := range chain[at:] {
@@ -217,7 +212,7 @@ func (s *Service) validateAllocationAvailabilities(project, source model.Node, l
 		if !s.isBool(rid) || v != 1 {
 			continue
 		}
-		if source.ID != model.RootNodeID && source.Limit[rid] != 1 {
+		if !grantsAvailability(&source, rid) {
 			return fmt.Errorf("%q is not available in budget %q", rid, nodeLabel(source))
 		}
 		if from := availabilitySource(project, rid, source.ID); from != "" {
@@ -231,11 +226,11 @@ func (s *Service) validateAllocationAvailabilities(project, source model.Node, l
 // from, apart from the allocation of budget except: its own limit (or a
 // waiting proposal for it), or another allocation. Empty when nowhere.
 func availabilitySource(project model.Node, rid, except string) string {
-	if project.Limit[rid] == 1 || (project.Pending != nil && project.Pending.Limit != nil && (*project.Pending.Limit)[rid] == 1) {
+	if project.Limit.Grants(rid) || (project.Pending != nil && project.Pending.Limit != nil && project.Pending.Limit.Grants(rid)) {
 		return "its own budget"
 	}
 	for _, a := range project.Allocations {
-		if a.BudgetID != except && a.Limit[rid] == 1 {
+		if a.BudgetID != except && a.Limit.Grants(rid) {
 			return fmt.Sprintf("budget %q", cmp.Or(a.BudgetName, a.BudgetID))
 		}
 	}
@@ -250,7 +245,7 @@ func (s *Service) checkOwnLimitAgainstAllocations(project model.Node, limit comm
 			continue
 		}
 		for _, a := range project.Allocations {
-			if a.Limit[rid] == 1 {
+			if a.Limit.Grants(rid) {
 				return fmt.Errorf("the project already has %q from budget %q — an availability comes from one place", rid, cmp.Or(a.BudgetName, a.BudgetID))
 			}
 		}

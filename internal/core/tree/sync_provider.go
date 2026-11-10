@@ -69,7 +69,7 @@ func concerns(n model.Node, provider string, resourceIDs []string) bool {
 		return true
 	}
 	limit := n.EffectiveLimit()
-	return slices.ContainsFunc(resourceIDs, func(id string) bool { return limit[id] > 0 || limit[id] == common.UnlimitedQuota })
+	return slices.ContainsFunc(resourceIDs, limit.Holds)
 }
 
 // Budgets returns every budget, for naming a project's path in the tree.

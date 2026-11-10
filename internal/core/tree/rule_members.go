@@ -179,7 +179,7 @@ func (s *Service) involvesOpenStack(n model.Node, limits ...common.ProjectQuota)
 			continue
 		}
 		for _, l := range all {
-			if v := l[r.ID]; v > 0 || v == common.UnlimitedQuota {
+			if l.Holds(r.ID) {
 				return true
 			}
 		}

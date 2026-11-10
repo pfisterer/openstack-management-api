@@ -302,3 +302,21 @@ func TestAllocation_Sources(t *testing.T) {
 		t.Errorf("a stranger must be refused, got %v", err)
 	}
 }
+
+// Keeping an availability while giving back part of a quantity is giving back: the owner may do it without a reason, as for a pure decrease.
+func TestAllocation_KeepAvailabilityLowerQuantity(t *testing.T) {
+	f := newAllocationFixture(t)
+	if _, err := f.allocate(t, uniTokens, common.ProjectQuota{"gpu": 2, "ipv4": 1}, "x"); err != nil {
+		t.Fatalf("grant: %v", err)
+	}
+	p, err := f.allocate(t, ownerToken, common.ProjectQuota{"gpu": 1, "ipv4": 1}, "")
+	if err != nil {
+		t.Fatalf("the owner may lower a quantity and keep the availability: %v", err)
+	}
+	if got := p.EffectiveLimit(); got["gpu"] != 1 || got["ipv4"] != 1 {
+		t.Fatalf("effective limit = %v, want 1 gpu and ipv4", got)
+	}
+	if _, err := f.allocate(t, ownerToken, common.ProjectQuota{"gpu": 1, "ipv4": 1, "cores": 1}, ""); !errors.Is(err, common.ErrForbidden) {
+		t.Fatalf("adding a quantity is growth and not the owner's to do, got %v", err)
+	}
+}

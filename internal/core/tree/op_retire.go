@@ -142,7 +142,7 @@ func (s *Service) deletable(n model.Node) bool {
 	}
 	limit := n.EffectiveLimit()
 	for _, r := range s.resources() {
-		if r.Provider != "" && (limit[r.ID] > 0 || limit[r.ID] == common.UnlimitedQuota) {
+		if r.Provider != "" && limit.Holds(r.ID) {
 			concerned[r.Provider] = true
 		}
 	}

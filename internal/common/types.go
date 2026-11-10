@@ -95,6 +95,15 @@ const UnlimitedQuota = -1
 // ProjectQuota represents resource limits by resource ID.
 type ProjectQuota map[string]int
 
+// Holds reports whether the quota carries anything of resource id: a quantity above zero, an unlimited one (UnlimitedQuota) or a granted availability. A missing id holds nothing. What the tree shows as available, which provider a project concerns and whether a provider carries a deletion out all read this.
+func (q ProjectQuota) Holds(id string) bool {
+	v := q[id]
+	return v > 0 || v == UnlimitedQuota
+}
+
+// Grants reports whether the quota grants availability id: exactly 1. An availability is 0 or 1 (UnlimitedQuota is refused on one), so nothing else grants it, and a budget's -1 never stood for one (decided 10.11.2026). Only for availabilities; for quantities see Holds.
+func (q ProjectQuota) Grants(id string) bool { return q[id] == 1 }
+
 // AuthorizedUser represents a user/group authorization entry with an OpenStack role.
 type AuthorizedUser struct {
 	Token         string `json:"token"`

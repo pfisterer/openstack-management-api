@@ -45,22 +45,22 @@ func (s *Service) Holders(ctx context.Context, id string) ([]Holder, error) {
 			continue
 		}
 		h := Holder{NodeID: n.ID, Name: nodeLabel(n), Kind: n.Kind, Status: n.Status}
-		if n.Limit[id] == 1 {
+		if n.Limit.Grants(id) {
 			h.Via = "limit"
 			out = append(out, h)
 		}
 		for _, a := range n.Allocations {
-			if a.Limit[id] == 1 {
+			if a.Limit.Grants(id) {
 				h.Via, h.AllocationFrom = "allocation", a.BudgetID
 				out = append(out, h)
 			}
 		}
 		h.AllocationFrom = ""
-		if n.Pending != nil && n.Pending.Limit != nil && (*n.Pending.Limit)[id] == 1 {
+		if n.Pending != nil && n.Pending.Limit != nil && n.Pending.Limit.Grants(id) {
 			h.Via = "pending"
 			out = append(out, h)
 		}
-		if n.AutoApprove != nil && n.AutoApprove.PerRequesterLimit[id] == 1 {
+		if n.AutoApprove != nil && n.AutoApprove.PerRequesterLimit.Grants(id) {
 			h.Via = "auto_approve"
 			out = append(out, h)
 		}
@@ -144,7 +144,7 @@ func (s *Service) AdoptAvailability(ctx context.Context, id string) error {
 	s.approvalMu.Lock()
 	defer s.approvalMu.Unlock()
 	_, err := s.store.UpdateNode(ctx, model.RootNodeID, func(n *model.Node) error {
-		if n.Limit[id] == 1 {
+		if n.Limit.Grants(id) {
 			return nodestore.ErrSkipUpdate
 		}
 		if n.Limit == nil {

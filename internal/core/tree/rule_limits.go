@@ -28,7 +28,7 @@ func (s *Service) checkAvailabilityWithdrawal(ctx context.Context, node model.No
 		if !r.IsBool() {
 			continue
 		}
-		if node.Limit[r.ID] == 1 && newLimit[r.ID] != 1 {
+		if node.Limit.Grants(r.ID) && !newLimit.Grants(r.ID) {
 			withdrawn = append(withdrawn, r.ID)
 		}
 	}
@@ -76,11 +76,11 @@ func (s *Service) descendantsHolding(ctx context.Context, root model.Node, resou
 	// here — or through an allocation from a budget of the subtree. One that
 	// has it from a budget further up does not depend on this one at all.
 	holds := func(n model.Node, id string) bool {
-		if n.Limit[id] == 1 {
+		if n.Limit.Grants(id) {
 			return true
 		}
 		for _, a := range n.Allocations {
-			if _, inSubtree := parentMap[a.BudgetID]; inSubtree && a.Limit[id] == 1 {
+			if _, inSubtree := parentMap[a.BudgetID]; inSubtree && a.Limit.Grants(id) {
 				return true
 			}
 		}
@@ -128,9 +128,7 @@ func (s *Service) checkCapacity(ctx context.Context, ancestors []model.Node, add
 			continue
 		}
 		committed := subtreeUsage[ancestor.ID].Total(s.countIDs())
-		for _, resourceID := range s.countIDs() {
-			committed[resourceID] -= subtractLimit[resourceID]
-		}
+		deduct(committed, subtractLimit, s.countIDs())
 		needed, err := quotaAddChecked(committed, addLimit, s.countIDs())
 		if err != nil {
 			return fmt.Errorf("budget %q (%s) capacity exceeded: %w", ancestor.ID, ancestor.Name, err)
@@ -280,8 +278,6 @@ func (s *Service) bindingBudget(ctx context.Context, n *model.Node) (*model.Node
 	return nil, fmt.Errorf("budget %q inherits its limit, but no budget above it has one", nodeLabel(*n))
 }
 
-// bindingInChain is bindingBudget on a chain already loaded, nearest first:
-// its first node with a limit of its own, nil for an empty chain.
 // withDefaultAvailabilities gives a new project the availabilities whose default is 1 and that the budget it draws from holds, where the request does not name them — only in the areas the project asks something of (a cloud project gets no workspace server types). The project form presets them, but the start page, an auto-approve budget's preset and API clients send only quantities; so every way to a project gets them (e.g. the server types ws-profile-*), and an explicit 0 stays 0.
 func (s *Service) withDefaultAvailabilities(chain []model.Node, limit common.ProjectQuota) common.ProjectQuota {
 	binding := bindingInChain(chain)
@@ -302,10 +298,8 @@ func (s *Service) withDefaultAvailabilities(chain []model.Node, limit common.Pro
 		if _, named := limit[r.ID]; named {
 			continue
 		}
-		if binding.ID != model.RootNodeID {
-			if binding.Limit[r.ID] != 1 { // an availability is 0 or 1 (validateAvailabilities; the root grants with 1)
-				continue
-			}
+		if !grantsAvailability(binding, r.ID) {
+			continue
 		}
 		if out == nil {
 			out = make(common.ProjectQuota, len(limit)+1)
@@ -321,6 +315,13 @@ func (s *Service) withDefaultAvailabilities(chain []model.Node, limit common.Pro
 	return out
 }
 
+// grantsAvailability reports whether budget b grants availability id to what draws from it: the root grants every one it offers, any other budget only with 1 in its limit (decided 10.11.2026: a -1 there is no grant). b is the budget whose limit applies (bindingInChain), not one that inherits.
+func grantsAvailability(b *model.Node, id string) bool {
+	return b.ID == model.RootNodeID || b.Limit.Grants(id)
+}
+
+// bindingInChain is bindingBudget on a chain already loaded, nearest first:
+// its first node with a limit of its own, nil for an empty chain.
 func bindingInChain(chain []model.Node) *model.Node {
 	for i := range chain {
 		if !chain[i].InheritsLimit {
@@ -366,16 +367,13 @@ func (s *Service) validateChildBudgetLimit(parent *model.Node, childLimit common
 // The root holds the whole catalogue (see availableResourcesFor).
 func (s *Service) validateLeafAvailabilities(parent *model.Node, limit common.ProjectQuota) error {
 	for _, r := range s.resources() {
-		if !s.isBool(r.ID) || limit[r.ID] != 1 {
+		if !r.IsBool() || !limit.Grants(r.ID) {
 			continue
 		}
 		if parent == nil {
 			return fmt.Errorf("%q cannot be granted without a budget", r.ID)
 		}
-		if parent.ID == model.RootNodeID {
-			continue
-		}
-		if parent.Limit[r.ID] == 1 {
+		if grantsAvailability(parent, r.ID) {
 			continue
 		}
 		return fmt.Errorf("%q is not available in budget %q — it has to be delegated to that budget first", r.ID, nodeLabel(*parent))
@@ -411,10 +409,8 @@ func (s *Service) checkBudgetLimit(ctx context.Context, n model.Node, chain []mo
 		return fmt.Errorf("compute subtree usage for limit check: %w", err)
 	}
 	inUse := subtreeUsage[n.ID].Total(s.countIDs())
-	for _, id := range s.countIDs() {
-		if limit[id] != common.UnlimitedQuota && inUse[id] > limit[id] {
-			return fmt.Errorf("new limit for %q (%d) is below current active usage (%d)", id, limit[id], inUse[id])
-		}
+	if id, short := shortfall(inUse, limit, s.countIDs()); short {
+		return fmt.Errorf("new limit for %q (%d) is below current active usage (%d)", id, limit[id], inUse[id])
 	}
 	return nil
 }
@@ -483,15 +479,18 @@ func (s *Service) loadTarget(ctx context.Context, userTokens common.TokenList, c
 
 // limitShrinks reports whether next asks for nothing that current does not
 // already hold: no count grows and no availability is newly switched on.
-// Giving something back never needs anybody's permission.
+// Giving something back never needs anybody's permission. A project's own
+// limit (leafChangeDecision) and an allocation (SetAllocation) are told apart
+// from growth by this alone.
 func (s *Service) limitShrinks(current, next common.ProjectQuota) bool {
-	for id, v := range next {
+	for id := range next {
 		if s.isBool(id) {
-			if v > 0 && current[id] <= 0 {
+			if next.Grants(id) && !current.Grants(id) {
 				return false
 			}
 			continue
 		}
+		v := next[id]
 		if v > current[id] {
 			return false
 		}

@@ -373,10 +373,10 @@ func saturate(a int) int {
 	return math.MaxInt
 }
 
-// quotaFits checks whether the needed quota stays within the given limits.
-// A limit of common.UnlimitedQuota (-1) means no cap for that resource.
 // shortfall is the first resource of resourceIDs where need exceeds limit;
-// false when everything fits (quotaFits).
+// false when everything fits. A limit of common.UnlimitedQuota (-1) means no
+// cap for that resource. The one test of "fits under a limit": capacity,
+// per-requester share and a budget's limit against what is in use below it.
 func shortfall(need, limit common.ProjectQuota, resourceIDs []string) (string, bool) {
 	for _, resourceID := range resourceIDs {
 		if limit[resourceID] != common.UnlimitedQuota && need[resourceID] > limit[resourceID] {
@@ -386,14 +386,9 @@ func shortfall(need, limit common.ProjectQuota, resourceIDs []string) (string, b
 	return "", false
 }
 
-func quotaFits(need, limit common.ProjectQuota, resourceIDs []string) bool {
-	for _, resourceID := range resourceIDs {
-		if limit[resourceID] == common.UnlimitedQuota {
-			continue
-		}
-		if need[resourceID] > limit[resourceID] {
-			return false
-		}
+// deduct subtracts sub from q in place for resourceIDs: what a change takes back before it adds its new size (a change_pending project's current limit, an owner's project being resized), so it is not counted twice.
+func deduct(q, sub common.ProjectQuota, resourceIDs []string) {
+	for _, id := range resourceIDs {
+		q[id] -= sub[id]
 	}
-	return true
 }

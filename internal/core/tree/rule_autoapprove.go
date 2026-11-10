@@ -38,11 +38,12 @@ func (s *Service) autoApprovable(ctx context.Context, budget *model.Node, owner 
 		if err != nil {
 			return false, fmt.Errorf("compute per-requester usage: %w", err)
 		}
-		for _, id := range s.countIDs() {
-			usage[id] -= subtractLimit[id]
-		}
+		deduct(usage, subtractLimit, s.countIDs())
 		need, err := quotaAddChecked(usage, addLimit, s.countIDs())
-		if err != nil || !quotaFits(need, budget.AutoApprove.PerRequesterLimit, s.countIDs()) {
+		if err != nil {
+			return false, nil
+		}
+		if _, short := shortfall(need, budget.AutoApprove.PerRequesterLimit, s.countIDs()); short {
 			return false, nil
 		}
 	}

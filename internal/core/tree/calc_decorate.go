@@ -335,11 +335,7 @@ func (s *Service) availableResourcesFor(n model.Node) []string {
 			out = append(out, r.ID)
 			continue
 		}
-		v, ok := n.Limit[r.ID]
-		if !ok {
-			continue
-		}
-		if v > 0 || v == common.UnlimitedQuota {
+		if n.Limit.Holds(r.ID) {
 			out = append(out, r.ID)
 		}
 	}

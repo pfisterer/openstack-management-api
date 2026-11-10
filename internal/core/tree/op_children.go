@@ -248,7 +248,7 @@ func projectAreas(n model.Node, resources []common.Resource) map[string]bool {
 			continue
 		}
 		for _, l := range limits {
-			if v := l[r.ID]; v > 0 || v == common.UnlimitedQuota {
+			if l.Holds(r.ID) {
 				out[area] = true
 			}
 		}

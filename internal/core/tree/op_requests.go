@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"strings"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
@@ -218,4 +220,86 @@ func (r *UpdateNodeRequest) UnmarshalJSON(b []byte) error {
 		r.ReleaseMax = &model.ReleaseMax{}
 	}
 	return nil
+}
+
+// updateClass is what an UpdateNodeRequest field edits, which decides who may send it.
+type updateClass int
+
+const (
+	// updateLabel fields (name, admin scope) are the only direct edits on a project, by its owner or a manager; on a budget they are policy.
+	updateLabel updateClass = iota + 1
+	// updatePolicy fields need a manager of the node or above (managesNode).
+	updatePolicy
+	// updateCapacity fields need a manager above the node (managesParentChain): nobody raises their own limit or end.
+	updateCapacity
+)
+
+// updateFieldClass classifies every field of UpdateNodeRequest by its Go name; the one list a new field has to be added to (TestUpdateNodeRequest_EveryFieldClassified fails otherwise). A field counts as sent when it is not its zero value: a pointer that is set, a Clear* flag that is true.
+var updateFieldClass = map[string]updateClass{
+	"Name":                           updateLabel,
+	"AdminScope":                     updateLabel,
+	"EligibleRequesters":             updatePolicy,
+	"AutoApprove":                    updatePolicy,
+	"ClearAutoApprove":               updatePolicy,
+	"AllowSubBudgetRequests":         updatePolicy,
+	"AllowRequestsBeyondAutoApprove": updatePolicy,
+	"AutoApproveExtensions":          updatePolicy,
+	"MaxProjectTermDays":             updatePolicy,
+	"ClearMaxProjectTermDays":        updatePolicy,
+	"ReleaseMax":                     updatePolicy,
+	"WorkspaceScratchGB":             updatePolicy,
+	"ClearWorkspaceScratchGB":        updatePolicy,
+	"BatchPriority":                  updatePolicy,
+	"ClearBatchPriority":             updatePolicy,
+	"BatchJobs":                      updatePolicy,
+	"ClearBatchJobs":                 updatePolicy,
+	"Limit":                          updateCapacity,
+	"TerminationDate":                updateCapacity,
+	"ClearTerminationDate":           updateCapacity,
+	"InheritsLimit":                  updateCapacity,
+}
+
+// sentClasses reports which classes of field r sends.
+func (r UpdateNodeRequest) sentClasses() map[updateClass]bool {
+	out := map[updateClass]bool{}
+	v := reflect.ValueOf(r)
+	for i := range v.NumField() {
+		if !v.Field(i).IsZero() {
+			out[updateFieldClass[v.Type().Field(i).Name]] = true
+		}
+	}
+	return out
+}
+
+// leafDirectEdit reports whether r touches nothing but the name and the admin scope — the direct edits a project leaf accepts. Neither costs anything, so neither goes through the approval cycle.
+func (r UpdateNodeRequest) leafDirectEdit() bool {
+	c := r.sentClasses()
+	return c[updateLabel] && len(c) == 1
+}
+
+// policyEdit reports whether r edits anything that needs a manager of the node or above: a label or a policy field.
+func (r UpdateNodeRequest) policyEdit() bool {
+	c := r.sentClasses()
+	return c[updateLabel] || c[updatePolicy]
+}
+
+// capacityEdit reports whether r edits the limit or the end, which needs a manager above the node.
+func (r UpdateNodeRequest) capacityEdit() bool { return r.sentClasses()[updateCapacity] }
+
+// createBudgetSettings are the fields of CreateNodeRequest a project refuses as budget settings, in the order they are named in the refusal. The other budget fields (eligible requesters, auto-approve and its switches) are ignored on a project, as they always were; TestCreateNodeRequest_EveryFieldClassified holds the two lists to the struct.
+var createBudgetSettings = []string{"MaxProjectTermDays", "ReleaseMax", "WorkspaceScratchGB", "BatchPriority", "BatchJobs", "InheritsLimit"}
+
+// createIgnoredOnProject are the budget fields of CreateNodeRequest a project ignores.
+var createIgnoredOnProject = []string{"EligibleRequesters", "AutoApprove", "AllowSubBudgetRequests", "AllowRequestsBeyondAutoApprove", "AutoApproveExtensions"}
+
+// budgetSetting names, by its JSON name, the first budget setting (createBudgetSettings) r sends; "" when it sends none.
+func (r CreateNodeRequest) budgetSetting() string {
+	v := reflect.ValueOf(r)
+	for _, name := range createBudgetSettings {
+		if !v.FieldByName(name).IsZero() {
+			f, _ := v.Type().FieldByName(name)
+			return strings.Split(f.Tag.Get("json"), ",")[0]
+		}
+	}
+	return ""
 }

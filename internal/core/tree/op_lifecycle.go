@@ -51,23 +51,8 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		if err := s.validateLeafLimit(req.Limit); err != nil {
 			return model.Node{}, err
 		}
-		if req.MaxProjectTermDays != nil {
-			return model.Node{}, fmt.Errorf("max_project_term_days is a budget setting")
-		}
-		if req.ReleaseMax != nil {
-			return model.Node{}, fmt.Errorf("release_max is a budget setting")
-		}
-		if req.WorkspaceScratchGB != nil {
-			return model.Node{}, fmt.Errorf("workspace_scratch_gb is a budget setting")
-		}
-		if req.BatchPriority != nil {
-			return model.Node{}, fmt.Errorf("batch_priority is a budget setting")
-		}
-		if req.BatchJobs != nil {
-			return model.Node{}, fmt.Errorf("batch_jobs is a budget setting")
-		}
-		if req.InheritsLimit {
-			return model.Node{}, fmt.Errorf("inherits_limit is a budget setting")
+		if name := req.budgetSetting(); name != "" {
+			return model.Node{}, fmt.Errorf("%s is a budget setting", name)
 		}
 	case model.KindBudget:
 		// A budget without an admin scope is invisible in the UI: "My Budgets"
@@ -344,22 +329,6 @@ func (s *Service) checkProjectsPerOwner(ctx context.Context, budget *model.Node,
 // liveProjectStatuses are the statuses a project counts in against checkProjectsPerOwner.
 var liveProjectStatuses = []string{model.StatusPending, model.StatusApproved, model.StatusChangePending, model.StatusReleased}
 
-// isLeafDirectEdit reports whether req touches nothing but the name and the
-// admin scope — the direct edits a project leaf accepts. Neither costs anything,
-// so neither goes through the approval cycle.
-func isLeafDirectEdit(req UpdateNodeRequest) bool {
-	return (req.Name != nil || req.AdminScope != nil) &&
-		req.EligibleRequesters == nil &&
-		req.AutoApprove == nil && !req.ClearAutoApprove &&
-		req.AllowSubBudgetRequests == nil && req.AllowRequestsBeyondAutoApprove == nil &&
-		req.AutoApproveExtensions == nil && req.MaxProjectTermDays == nil && !req.ClearMaxProjectTermDays &&
-		req.ReleaseMax == nil && req.WorkspaceScratchGB == nil && !req.ClearWorkspaceScratchGB &&
-		req.BatchPriority == nil && !req.ClearBatchPriority &&
-		req.BatchJobs == nil && !req.ClearBatchJobs &&
-		req.Limit == nil && req.TerminationDate == nil && !req.ClearTerminationDate &&
-		req.InheritsLimit == nil
-}
-
 // UpdateNode applies immediate edits to a budget. Policy fields (name, admin
 // scope, eligible requesters, auto-approve) require a manager of the node or its
 // ancestors. Limit and termination date require a manager of the PARENT chain —
@@ -393,17 +362,13 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 	if err != nil {
 		return model.Node{}, err
 	}
-	if current.Kind != model.KindBudget && !isLeafDirectEdit(req) {
+	if current.Kind != model.KindBudget && !req.leafDirectEdit() {
 		return model.Node{}, fmt.Errorf("only the name and the admins can be edited directly on a project; use request-change for anything else")
 	}
 
-	wantsPolicyEdit := req.Name != nil || req.AdminScope != nil || req.EligibleRequesters != nil ||
-		req.AutoApprove != nil || req.ClearAutoApprove || req.AllowSubBudgetRequests != nil ||
-		req.AllowRequestsBeyondAutoApprove != nil || req.AutoApproveExtensions != nil ||
-		req.MaxProjectTermDays != nil || req.ClearMaxProjectTermDays || req.ReleaseMax != nil ||
-		req.WorkspaceScratchGB != nil || req.ClearWorkspaceScratchGB || req.BatchPriority != nil || req.ClearBatchPriority ||
-		req.BatchJobs != nil || req.ClearBatchJobs
-	wantsCapacityEdit := req.Limit != nil || req.TerminationDate != nil || req.ClearTerminationDate || req.InheritsLimit != nil
+	// Which fields need whom is listed once, in updateFieldClass.
+	wantsPolicyEdit := req.policyEdit()
+	wantsCapacityEdit := req.capacityEdit()
 
 	// The budgets above: they decide who may make the edit and bound what it sets.
 	var chain []model.Node

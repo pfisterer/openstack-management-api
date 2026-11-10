@@ -526,10 +526,7 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 		}
 		log.Infow("MCP create_project", "actor", caller.actorEmail, "budget_id", in.BudgetID)
 		node, err := cfg.Service.CreateNode(req, caller.serviceActor(), caller.userEmail, caller.tokens)
-		if err != nil {
-			return nil, mcpProject{}, mcpServiceError(log, err, "request project")
-		}
-		return nil, toMCPProject(node), nil
+		return nodeResult(log, node, err, "request project")
 	})
 
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
@@ -546,10 +543,7 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 		}
 		log.Infow("MCP request_project_change", "actor", caller.actorEmail, "node_id", in.ID)
 		node, err := cfg.Service.RequestChange(in.ID, req, caller.serviceActor(), caller.tokens)
-		if err != nil {
-			return nil, mcpProject{}, mcpServiceError(log, err, "request change on %q", in.ID)
-		}
-		return nil, toMCPProject(node), nil
+		return nodeResult(log, node, err, "request change on %q", in.ID)
 	})
 
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
@@ -565,10 +559,7 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 		}
 		log.Infow("MCP approve_request", "actor", caller.actorEmail, "node_id", in.ID)
 		node, err := cfg.Service.ApproveNode(in.ID, req, caller.serviceActor(), caller.tokens)
-		if err != nil {
-			return nil, mcpProject{}, mcpServiceError(log, err, "approve %q", in.ID)
-		}
-		return nil, toMCPProject(node), nil
+		return nodeResult(log, node, err, "approve %q", in.ID)
 	})
 
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
@@ -582,10 +573,7 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 		}
 		log.Infow("MCP reject_request", "actor", caller.actorEmail, "node_id", in.ID)
 		node, err := cfg.Service.RejectNode(in.ID, req, caller.serviceActor(), caller.tokens)
-		if err != nil {
-			return nil, mcpProject{}, mcpServiceError(log, err, "reject %q", in.ID)
-		}
-		return nil, toMCPProject(node), nil
+		return nodeResult(log, node, err, "reject %q", in.ID)
 	})
 
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
@@ -598,10 +586,7 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 		log.Infow("MCP rename_project", "actor", caller.actorEmail, "node_id", in.ID)
 		node, err := cfg.Service.UpdateNode(in.ID, tree.UpdateNodeRequest{Name: &in.Name},
 			caller.serviceActor(), caller.tokens)
-		if err != nil {
-			return nil, mcpProject{}, mcpServiceError(log, err, "rename %q", in.ID)
-		}
-		return nil, toMCPProject(node), nil
+		return nodeResult(log, node, err, "rename %q", in.ID)
 	})
 
 	// Projects only. The same field on a budget says who approves there, and
@@ -630,10 +615,7 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 		log.Infow("MCP set_project_admins", "actor", caller.actorEmail, "node_id", in.ID)
 		node, err := cfg.Service.UpdateNode(in.ID, tree.UpdateNodeRequest{AdminScope: &admins},
 			caller.serviceActor(), caller.tokens)
-		if err != nil {
-			return nil, mcpProject{}, mcpServiceError(log, err, "set admins of %q", in.ID)
-		}
-		return nil, toMCPProject(node), nil
+		return nodeResult(log, node, err, "set admins of %q", in.ID)
 	})
 }
 
@@ -651,10 +633,7 @@ func registerAllocationTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log
 		node, err := cfg.Service.SetAllocation(in.ID, tree.AllocationRequest{
 			BudgetID: in.BudgetID, Limit: common.ProjectQuota(in.Limit), Reason: in.Reason,
 		}, caller.serviceActor(), caller.tokens)
-		if err != nil {
-			return nil, mcpProject{}, mcpServiceError(log, err, "set allocation of %q", in.ID)
-		}
-		return nil, toMCPProject(node), nil
+		return nodeResult(log, node, err, "set allocation of %q", in.ID)
 	})
 }
 
@@ -698,10 +677,7 @@ func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log 
 		}
 		log.Infow("MCP create_budget", "actor", caller.actorEmail, "parent_id", in.ParentID)
 		node, err := cfg.Service.CreateNode(req, caller.serviceActor(), caller.userEmail, caller.tokens)
-		if err != nil {
-			return nil, mcpProject{}, mcpServiceError(log, err, "create budget")
-		}
-		return nil, toMCPProject(node), nil
+		return nodeResult(log, node, err, "create budget")
 	})
 
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
@@ -712,10 +688,7 @@ func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log 
 		log.Infow("MCP move_to_budget", "actor", caller.actorEmail, "node_id", in.ID, "new_parent", in.NewBudgetID)
 		node, err := cfg.Service.ReparentNode(in.ID, tree.ReparentNodeRequest{NewParentID: in.NewBudgetID},
 			caller.serviceActor(), caller.tokens)
-		if err != nil {
-			return nil, mcpProject{}, mcpServiceError(log, err, "move %q", in.ID)
-		}
-		return nil, toMCPProject(node), nil
+		return nodeResult(log, node, err, "move %q", in.ID)
 	})
 
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
@@ -726,10 +699,7 @@ func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log 
 		log.Infow("MCP transfer_ownership", "actor", caller.actorEmail, "node_id", in.ID)
 		node, err := cfg.Service.TransferOwner(in.ID, tree.TransferOwnerRequest{NewOwner: in.NewOwner},
 			caller.serviceActor(), caller.tokens)
-		if err != nil {
-			return nil, mcpProject{}, mcpServiceError(log, err, "transfer %q", in.ID)
-		}
-		return nil, toMCPProject(node), nil
+		return nodeResult(log, node, err, "transfer %q", in.ID)
 	})
 
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
@@ -748,10 +718,7 @@ func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log 
 		}
 		log.Infow("MCP adopt_imported_project", "actor", caller.actorEmail, "node_id", in.ID)
 		node, err := cfg.Service.PromoteNode(in.ID, req, caller.serviceActor(), caller.tokens)
-		if err != nil {
-			return nil, mcpProject{}, mcpServiceError(log, err, "adopt %q", in.ID)
-		}
-		return nil, toMCPProject(node), nil
+		return nodeResult(log, node, err, "adopt %q", in.ID)
 	})
 }
 
@@ -797,10 +764,7 @@ func registerDestructiveTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, lo
 		}
 		log.Infow("MCP release_project", "actor", caller.actorEmail, "node_id", in.ID, "delete", in.Delete)
 		node, err := cfg.Service.ReleaseNode(in.ID, tree.ReleaseNodeRequest{Delete: in.Delete}, caller.serviceActor(), caller.tokens)
-		if err != nil {
-			return nil, mcpProject{}, mcpServiceError(log, err, "release %q", in.ID)
-		}
-		return nil, toMCPProject(node), nil
+		return nodeResult(log, node, err, "release %q", in.ID)
 	})
 
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
@@ -814,10 +778,7 @@ func registerDestructiveTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, lo
 		}
 		log.Infow("MCP delete_project", "actor", caller.actorEmail, "node_id", in.ID)
 		node, err := cfg.Service.RequestDeletion(in.ID, caller.serviceActor(), caller.tokens)
-		if err != nil {
-			return nil, mcpProject{}, mcpServiceError(log, err, "delete %q", in.ID)
-		}
-		return nil, toMCPProject(node), nil
+		return nodeResult(log, node, err, "delete %q", in.ID)
 	})
 
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
@@ -835,6 +796,14 @@ func registerDestructiveTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, lo
 		}
 		return nil, toMCPProject(*node), nil
 	})
+}
+
+// nodeResult ends a tool that writes a node: the node the service returned, or its error as mcpServiceError reports it, format and args naming the operation.
+func nodeResult(log *zap.SugaredLogger, node model.Node, err error, format string, args ...any) (*mcp.CallToolResult, mcpProject, error) {
+	if err != nil {
+		return nil, mcpProject{}, mcpServiceError(log, err, format, args...)
+	}
+	return nil, toMCPProject(node), nil
 }
 
 // mcpServiceError is what a tool reports of an error of the service: the operation's own message, or for a failure of the service itself (common.ErrInternal) a generic one, with the detail in the log.

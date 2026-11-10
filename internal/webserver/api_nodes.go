@@ -6,7 +6,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/identity"
 )
 
 // getNode returns a single node by ID if the caller is authorized to view it.
@@ -363,25 +365,9 @@ func searchNodes(cfg APIConfig) gin.HandlerFunc {
 //	@ID				createNode
 //	@Router			/v1/nodes [post]
 func createNode(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
-	return func(c *gin.Context) {
-		var req tree.CreateNodeRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		node, err := svc.CreateNode(req, uiActor(auth), auth.UserEmail, auth.EffectiveTokens)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.JSON(http.StatusCreated, node)
-	}
+	return writeNode(cfg, http.StatusCreated, func(c *gin.Context, req tree.CreateNodeRequest, auth identity.AuthContext) (model.Node, error) {
+		return cfg.Service.CreateNode(req, uiActor(auth), auth.UserEmail, auth.EffectiveTokens)
+	})
 }
 
 // updateNode applies a direct edit to a budget node.
@@ -403,25 +389,9 @@ func createNode(cfg APIConfig) gin.HandlerFunc {
 //	@ID				updateNode
 //	@Router			/v1/nodes/{id} [put]
 func updateNode(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
-	return func(c *gin.Context) {
-		var req tree.UpdateNodeRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		node, err := svc.UpdateNode(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, node)
-	}
+	return writeNode(cfg, http.StatusOK, func(c *gin.Context, req tree.UpdateNodeRequest, auth identity.AuthContext) (model.Node, error) {
+		return cfg.Service.UpdateNode(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
+	})
 }
 
 // requestNodeChange proposes changes; most need approval by the parent chain.
@@ -443,25 +413,9 @@ func updateNode(cfg APIConfig) gin.HandlerFunc {
 //	@ID				requestNodeChange
 //	@Router			/v1/nodes/{id}/request-change [post]
 func requestNodeChange(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
-	return func(c *gin.Context) {
-		var req tree.ChangeNodeRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		node, err := svc.RequestChange(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, node)
-	}
+	return writeNode(cfg, http.StatusOK, func(c *gin.Context, req tree.ChangeNodeRequest, auth identity.AuthContext) (model.Node, error) {
+		return cfg.Service.RequestChange(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
+	})
 }
 
 // approveNode approves a pending node or the pending changes of a node.
@@ -599,20 +553,9 @@ func releaseNode(cfg APIConfig) gin.HandlerFunc {
 //	@ID				requestNodeDeletion
 //	@Router			/v1/nodes/{id}/deletion [post]
 func requestNodeDeletion(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
-	return func(c *gin.Context) {
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		node, err := svc.RequestDeletion(c.Param("id"), uiActor(auth), auth.EffectiveTokens)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, node)
-	}
+	return actOnNode(cfg, func(c *gin.Context, auth identity.AuthContext) (model.Node, error) {
+		return cfg.Service.RequestDeletion(c.Param("id"), uiActor(auth), auth.EffectiveTokens)
+	})
 }
 
 // reparentNode moves a node under a new parent budget.
@@ -634,25 +577,9 @@ func requestNodeDeletion(cfg APIConfig) gin.HandlerFunc {
 //	@ID				reparentNode
 //	@Router			/v1/nodes/{id}/reparent [post]
 func reparentNode(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
-	return func(c *gin.Context) {
-		var req tree.ReparentNodeRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		node, err := svc.ReparentNode(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, node)
-	}
+	return writeNode(cfg, http.StatusOK, func(c *gin.Context, req tree.ReparentNodeRequest, auth identity.AuthContext) (model.Node, error) {
+		return cfg.Service.ReparentNode(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
+	})
 }
 
 // transferNodeOwner hands a project leaf to a new responsible person.
@@ -674,25 +601,9 @@ func reparentNode(cfg APIConfig) gin.HandlerFunc {
 //	@ID				transferNodeOwner
 //	@Router			/v1/nodes/{id}/transfer-owner [post]
 func transferNodeOwner(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
-	return func(c *gin.Context) {
-		var req tree.TransferOwnerRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		node, err := svc.TransferOwner(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, node)
-	}
+	return writeNode(cfg, http.StatusOK, func(c *gin.Context, req tree.TransferOwnerRequest, auth identity.AuthContext) (model.Node, error) {
+		return cfg.Service.TransferOwner(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
+	})
 }
 
 // setNodeAttributes replaces a node's own attributes.
@@ -713,25 +624,9 @@ func transferNodeOwner(cfg APIConfig) gin.HandlerFunc {
 //	@ID				setNodeAttributes
 //	@Router			/v1/nodes/{id}/attributes [put]
 func setNodeAttributes(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
-	return func(c *gin.Context) {
-		var req tree.SetAttributesRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		node, err := svc.SetAttributes(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, node)
-	}
+	return writeNode(cfg, http.StatusOK, func(c *gin.Context, req tree.SetAttributesRequest, auth identity.AuthContext) (model.Node, error) {
+		return cfg.Service.SetAttributes(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
+	})
 }
 
 // removeNodeExternalGroup takes a group given access in OpenStack off a project.
@@ -751,20 +646,9 @@ func setNodeAttributes(cfg APIConfig) gin.HandlerFunc {
 //	@ID				removeNodeExternalGroup
 //	@Router			/v1/nodes/{id}/external-groups/{groupId} [delete]
 func removeNodeExternalGroup(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
-	return func(c *gin.Context) {
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		node, err := svc.RemoveExternalGroup(c.Param("id"), c.Param("groupId"), uiActor(auth), auth.EffectiveTokens)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, node)
-	}
+	return actOnNode(cfg, func(c *gin.Context, auth identity.AuthContext) (model.Node, error) {
+		return cfg.Service.RemoveExternalGroup(c.Param("id"), c.Param("groupId"), uiActor(auth), auth.EffectiveTokens)
+	})
 }
 
 // setNodeAllocation grants, changes or removes what a project draws from a
@@ -787,25 +671,9 @@ func removeNodeExternalGroup(cfg APIConfig) gin.HandlerFunc {
 //	@ID				setNodeAllocation
 //	@Router			/v1/nodes/{id}/allocations [put]
 func setNodeAllocation(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
-	return func(c *gin.Context) {
-		var req tree.AllocationRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		node, err := svc.SetAllocation(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, node)
-	}
+	return writeNode(cfg, http.StatusOK, func(c *gin.Context, req tree.AllocationRequest, auth identity.AuthContext) (model.Node, error) {
+		return cfg.Service.SetAllocation(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
+	})
 }
 
 // listAllocationSources lists the budgets the caller may allocate to a project from.
@@ -858,25 +726,9 @@ func listAllocationSources(cfg APIConfig) gin.HandlerFunc {
 //	@ID				promoteNode
 //	@Router			/v1/nodes/{id}/promote [post]
 func promoteNode(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
-	return func(c *gin.Context) {
-		var req tree.PromoteNodeRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		node, err := svc.PromoteNode(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, node)
-	}
+	return writeNode(cfg, http.StatusOK, func(c *gin.Context, req tree.PromoteNodeRequest, auth identity.AuthContext) (model.Node, error) {
+		return cfg.Service.PromoteNode(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
+	})
 }
 
 // deleteNode deletes a budget subtree.
@@ -906,5 +758,44 @@ func deleteNode(cfg APIConfig) gin.HandlerFunc {
 			return
 		}
 		c.Status(http.StatusNoContent)
+	}
+}
+
+// writeNode is the shape of a handler that writes a node from a JSON body: the body bound to Req (400 when it does not bind), the caller (401 without one), the service call (its error through respondError) and the node it returns as JSON with status. The swagger annotations stay on the named handler that returns it.
+func writeNode[Req any](cfg APIConfig, status int, call func(c *gin.Context, req Req, auth identity.AuthContext) (model.Node, error)) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req Req
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		auth, err := mustGetAuthContext(c)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
+			return
+		}
+		node, err := call(c, req, auth)
+		if err != nil {
+			cfg.respondError(c, err)
+			return
+		}
+		c.JSON(status, node)
+	}
+}
+
+// actOnNode is writeNode for an action without a body: the caller (401 without one), the service call and the node it returns, 200.
+func actOnNode(cfg APIConfig, call func(c *gin.Context, auth identity.AuthContext) (model.Node, error)) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		auth, err := mustGetAuthContext(c)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
+			return
+		}
+		node, err := call(c, auth)
+		if err != nil {
+			cfg.respondError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, node)
 	}
 }

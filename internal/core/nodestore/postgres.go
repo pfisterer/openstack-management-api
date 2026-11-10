@@ -337,10 +337,15 @@ func applyNodeQuery(db *gorm.DB, q NodeQuery) *gorm.DB {
 		db = jsonbContainsAny(db, "eligible_requesters", q.EligibleAny)
 	}
 	if r := q.Responsible; r != nil {
+		// An empty Owner matches nobody, as in matchesQuery; "owner = ''" would match every budget.
+		ownerCond, ownerArgs := "FALSE", []any(nil)
+		if r.Owner != "" {
+			ownerCond, ownerArgs = "owner = ?", []any{r.Owner}
+		}
 		adminCond, adminArgs := jsonbContainsAnyCond("admin_scope", r.AdminAny)
 		memberCond, memberArgs := authorizedUsersContainAnyCond(r.MemberAny)
-		args := append(append([]any{r.Owner}, adminArgs...), memberArgs...)
-		db = db.Where("(owner = ? OR "+adminCond+" OR "+memberCond+")", args...)
+		args := append(append(ownerArgs, adminArgs...), memberArgs...)
+		db = db.Where("("+ownerCond+" OR "+adminCond+" OR "+memberCond+")", args...)
 	}
 	return db
 }

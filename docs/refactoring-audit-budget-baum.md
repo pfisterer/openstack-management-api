@@ -261,7 +261,7 @@ Nötige Tests: keine neuen; die bestehenden Tests zu Scratch, Release-Maxima und
 ## Entscheidungen (10.11.2026)
 
 1. Enddaten werden nach Kalendertag verglichen, in Europe/Berlin.
-2. Gespeichert wird nur das Datum (`2006-01-02`). Angaben mit Uhrzeit oder Zeitzonenversatz werden angenommen und als das darin geschriebene Datum gelesen, ohne Umrechnung nach Berlin (Abweichung vom ersten Wortlaut: das Laufzeitende `…T23:59:59Z` wäre in Berlin schon der Folgetag). „Heute“ und das Ende eines Tages zählen in Europe/Berlin. Umsetzung: `cloud-self-service-golib/day`.
+2. Gespeichert wird nur das Datum (`2006-01-02`). Angaben mit Uhrzeit oder Zeitzonenversatz werden angenommen und auf den Tag in Europe/Berlin umgerechnet; das ist auch, was das Portal meint, dessen Datumswähler Mitternacht Ortszeit schickt (`2026-12-30T23:00:00.000Z` für den 31.12.). Einzige Ausnahme: das frühere Laufzeitende `…T23:59:59Z` zählt als sein UTC-Datum, sonst wäre es in Berlin schon der Folgetag. Umsetzung: `model.EndDay` mit `cloud-self-service-golib/day` (v0.16.0).
 3. Ein unlesbares gespeichertes Ende gilt überall einheitlich als „später“ (lieber eine Bestätigung zu viel).
 4. Der Bestand wird einmalig migriert: Enddaten der Knoten, `pending.termination_date` und die OpenStack-Tags; der Verlauf bleibt unverändert.
 5. Felder werden in der API mit `null` gelöscht, die `clear_*`-Flags entfallen; `release_max` folgt derselben Regel. Client (`client-npm`) und UI werden zusammen umgestellt.

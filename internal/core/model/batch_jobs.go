@@ -21,13 +21,7 @@ type BatchJobs struct {
 func (b *BatchJobs) On() bool { return b != nil && b.JobsPerPerson > 0 && b.MaxHours > 0 }
 
 // Clone returns a copy, nil for nil.
-func (b *BatchJobs) Clone() *BatchJobs {
-	if b == nil {
-		return nil
-	}
-	c := *b
-	return &c
-}
+func (b *BatchJobs) Clone() *BatchJobs { return ClonePtr(b) }
 
 // ResolveBatchJobs is what applies below the given nodes, in any order: off when one of them that does not inherit its limit sets none, else the fewest jobs and the shortest run time any of them allows. Nil (off) for an empty chain or one of inheriting nodes only.
 func ResolveBatchJobs(chain []Node) *BatchJobs {

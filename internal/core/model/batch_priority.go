@@ -17,11 +17,11 @@ const (
 func StricterBatchPriority(a, b *string) *string {
 	switch {
 	case a == nil:
-		return cloneString(b)
+		return ClonePtr(b)
 	case b == nil || *a == BatchPriorityPreemptible:
-		return cloneString(a)
+		return ClonePtr(a)
 	default:
-		return cloneString(b)
+		return ClonePtr(b)
 	}
 }
 
@@ -46,12 +46,4 @@ func ValidateBatchPriority(v, inherited *string) error {
 		return fmt.Errorf("batch priority: the budget above makes batch jobs preemptible, so this one cannot guarantee them")
 	}
 	return nil
-}
-
-func cloneString(v *string) *string {
-	if v == nil {
-		return nil
-	}
-	c := *v
-	return &c
 }

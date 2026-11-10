@@ -10,16 +10,7 @@ import "fmt"
 const MaxWorkspaceScratchGB = 200
 
 // StricterScratch is the smaller of two values; nil sets nothing.
-func StricterScratch(a, b *int) *int {
-	switch {
-	case a == nil:
-		return cloneInt(b)
-	case b == nil || *a <= *b:
-		return cloneInt(a)
-	default:
-		return cloneInt(b)
-	}
-}
+func StricterScratch(a, b *int) *int { return MinPtr(a, b) }
 
 // ResolveWorkspaceScratchGB is what applies below the given nodes, in any order: the smallest value any of them sets. Nil when none sets one.
 func ResolveWorkspaceScratchGB(chain []Node) *int {

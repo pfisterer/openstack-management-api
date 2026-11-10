@@ -4,9 +4,7 @@ package model
 func ResolveMaxProjectTermDays(chain []Node) *int {
 	var shortest *int
 	for _, n := range chain {
-		if n.MaxProjectTermDays != nil && (shortest == nil || *n.MaxProjectTermDays < *shortest) {
-			shortest = n.MaxProjectTermDays
-		}
+		shortest = MinPtr(shortest, n.MaxProjectTermDays)
 	}
 	return shortest
 }

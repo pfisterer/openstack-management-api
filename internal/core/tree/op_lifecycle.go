@@ -212,8 +212,8 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		node.AutoApproveExtensions = req.AutoApproveExtensions
 		node.MaxProjectTermDays = maxTerm
 		node.ReleaseMax = req.ReleaseMax.Normalized()
-		node.WorkspaceScratchGB = cloneIntPtr(req.WorkspaceScratchGB)
-		node.BatchPriority = cloneStringPtr(req.BatchPriority)
+		node.WorkspaceScratchGB = model.ClonePtr(req.WorkspaceScratchGB)
+		node.BatchPriority = model.ClonePtr(req.BatchPriority)
 		node.BatchJobs = req.BatchJobs.Clone()
 		node.InheritsLimit = req.InheritsLimit
 	}
@@ -459,7 +459,7 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 		if err := model.ValidateWorkspaceScratchGB(req.WorkspaceScratchGB, model.ResolveWorkspaceScratchGB(chain)); err != nil {
 			return model.Node{}, err
 		}
-		updated.WorkspaceScratchGB = cloneIntPtr(req.WorkspaceScratchGB)
+		updated.WorkspaceScratchGB = model.ClonePtr(req.WorkspaceScratchGB)
 	}
 	// And for the batch priority: only stricter than above; removing it is always allowed.
 	if req.ClearBatchPriority {
@@ -468,7 +468,7 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 		if err := model.ValidateBatchPriority(req.BatchPriority, model.ResolveBatchPriority(chain)); err != nil {
 			return model.Node{}, err
 		}
-		updated.BatchPriority = cloneStringPtr(req.BatchPriority)
+		updated.BatchPriority = model.ClonePtr(req.BatchPriority)
 	}
 	// The batch jobs: on only where the budgets above have them, at most their values; nothing carried down (a budget below with more of its own simply gets these). Removing them switches them off here and below. A budget that inherits its limit has none of its own (handled with InheritsLimit below).
 	if req.ClearBatchJobs {
@@ -508,12 +508,12 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 		historyEntry.ReleaseMaxTo = updated.ReleaseMax.Clone()
 	}
 	if (req.WorkspaceScratchGB != nil || req.ClearWorkspaceScratchGB) && !reflect.DeepEqual(current.WorkspaceScratchGB, updated.WorkspaceScratchGB) {
-		historyEntry.WorkspaceScratchGBFrom = cloneIntPtr(current.WorkspaceScratchGB)
-		historyEntry.WorkspaceScratchGBTo = cloneIntPtr(updated.WorkspaceScratchGB)
+		historyEntry.WorkspaceScratchGBFrom = model.ClonePtr(current.WorkspaceScratchGB)
+		historyEntry.WorkspaceScratchGBTo = model.ClonePtr(updated.WorkspaceScratchGB)
 	}
 	if (req.BatchPriority != nil || req.ClearBatchPriority) && !reflect.DeepEqual(current.BatchPriority, updated.BatchPriority) {
-		historyEntry.BatchPriorityFrom = cloneStringPtr(current.BatchPriority)
-		historyEntry.BatchPriorityTo = cloneStringPtr(updated.BatchPriority)
+		historyEntry.BatchPriorityFrom = model.ClonePtr(current.BatchPriority)
+		historyEntry.BatchPriorityTo = model.ClonePtr(updated.BatchPriority)
 	}
 	if (req.BatchJobs != nil || req.ClearBatchJobs) && !reflect.DeepEqual(current.BatchJobs, updated.BatchJobs) {
 		historyEntry.BatchJobsFrom = current.BatchJobs.Clone()
@@ -1013,22 +1013,4 @@ func (s *Service) RejectNode(id string, req RejectNodeRequest, actor model.Actor
 		return model.Node{}, fmt.Errorf("node %w", common.ErrNotFound)
 	}
 	return updated, nil
-}
-
-// cloneIntPtr is a copy of v that shares nothing with it; nil stays nil.
-func cloneIntPtr(v *int) *int {
-	if v == nil {
-		return nil
-	}
-	n := *v
-	return &n
-}
-
-// cloneStringPtr is a copy of v that shares nothing with it; nil stays nil.
-func cloneStringPtr(v *string) *string {
-	if v == nil {
-		return nil
-	}
-	s := *v
-	return &s
 }

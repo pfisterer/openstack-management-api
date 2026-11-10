@@ -42,17 +42,9 @@ func (r *ReleaseMax) Clone() *ReleaseMax {
 		return nil
 	}
 	c := func(t ReleaseTimes) ReleaseTimes {
-		return ReleaseTimes{IdleOpenMinutes: cloneInt(t.IdleOpenMinutes), IdleClosedMinutes: cloneInt(t.IdleClosedMinutes), MaxHours: cloneInt(t.MaxHours)}
+		return ReleaseTimes{IdleOpenMinutes: ClonePtr(t.IdleOpenMinutes), IdleClosedMinutes: ClonePtr(t.IdleClosedMinutes), MaxHours: ClonePtr(t.MaxHours)}
 	}
 	return &ReleaseMax{CPU: c(r.CPU), GPU: c(r.GPU)}
-}
-
-func cloneInt(v *int) *int {
-	if v == nil {
-		return nil
-	}
-	n := *v
-	return &n
 }
 
 // Normalized is r with nothing set collapsed to nil, so "no maximums of its own" has one spelling in the store.
@@ -64,30 +56,21 @@ func (r *ReleaseMax) Normalized() *ReleaseMax {
 }
 
 // stricterIdle is the shorter of two idle times; nil sets nothing.
-func stricterIdle(a, b *int) *int {
-	switch {
-	case a == nil:
-		return cloneInt(b)
-	case b == nil || *a <= *b:
-		return cloneInt(a)
-	default:
-		return cloneInt(b)
-	}
-}
+func stricterIdle(a, b *int) *int { return MinPtr(a, b) }
 
 // stricterMax is the stricter of two upper bounds: 0 (none) is the loosest value, nil sets nothing.
 func stricterMax(a, b *int) *int {
 	switch {
 	case a == nil:
-		return cloneInt(b)
+		return ClonePtr(b)
 	case b == nil:
-		return cloneInt(a)
+		return ClonePtr(a)
 	case *a == 0:
-		return cloneInt(b)
+		return ClonePtr(b)
 	case *b == 0 || *a <= *b:
-		return cloneInt(a)
+		return ClonePtr(a)
 	default:
-		return cloneInt(b)
+		return ClonePtr(b)
 	}
 }
 

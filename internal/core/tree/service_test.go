@@ -424,7 +424,8 @@ func TestClearTerminationDate(t *testing.T) {
 	}
 
 	// Without the flag the date survives — that is what "leave as is" means.
-	untouched, err := svc.UpdateNode(budget.ID, tree.UpdateNodeRequest{}, model.UIActor("root@x"), rootTokens)
+	newName := "renamed"
+	untouched, err := svc.UpdateNode(budget.ID, tree.UpdateNodeRequest{Name: &newName}, model.UIActor("root@x"), rootTokens)
 	if err != nil {
 		t.Fatalf("update without changes: %v", err)
 	}

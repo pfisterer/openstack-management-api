@@ -369,6 +369,10 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 	// Which fields need whom is listed once, in updateFieldClass.
 	wantsPolicyEdit := req.policyEdit()
 	wantsCapacityEdit := req.capacityEdit()
+	// An edit that sends nothing needs nobody's rights and would only add an empty history entry: refused, so no edit passes without a check (found 10.11.2026).
+	if !wantsPolicyEdit && !wantsCapacityEdit {
+		return model.Node{}, fmt.Errorf("nothing to change: the request sets no field")
+	}
 
 	// The budgets above: they decide who may make the edit and bound what it sets.
 	var chain []model.Node

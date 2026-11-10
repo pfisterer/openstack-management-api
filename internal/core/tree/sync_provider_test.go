@@ -136,16 +136,16 @@ func TestPromote(t *testing.T) {
 	ctx := context.Background()
 	imported := model.Node{ID: "p_1", Kind: model.KindProject, Status: model.StatusImported, Owner: "user:owner@x",
 		Flags:           []string{model.FlagPromoteOnReconcile},
-		AuthorizedUsers: []common.AuthorizedUser{{Token: "user:a@x", OpenstackRole: "reader"}}}
+		AuthorizedUsers: []common.AuthorizedUser{{Token: "user:a@x", Role: "reader"}}}
 	withdrawn := model.Node{ID: "p_2", Kind: model.KindProject, Status: model.StatusImported}
 	p, store := providerSyncWith(t, imported, withdrawn)
 
-	current := []common.AuthorizedUser{{Token: "user:a@x", OpenstackRole: "member"}, {Token: "user:new@x", OpenstackRole: "member"}, {Token: "user:owner@x", OpenstackRole: "member"}}
+	current := []common.AuthorizedUser{{Token: "user:a@x", Role: "member"}, {Token: "user:new@x", Role: "member"}, {Token: "user:owner@x", Role: "member"}}
 	if ok, err := p.Promote(ctx, "p_1", current); err != nil || !ok {
 		t.Fatalf("promote: %v %v", ok, err)
 	}
 	n := nodeIn(t, store, "p_1")
-	if n.Status != model.StatusPending || slices.Contains(n.Flags, model.FlagPromoteOnReconcile) || len(n.AuthorizedUsers) != 2 || n.AuthorizedUsers[0].OpenstackRole != "reader" {
+	if n.Status != model.StatusPending || slices.Contains(n.Flags, model.FlagPromoteOnReconcile) || len(n.AuthorizedUsers) != 2 || n.AuthorizedUsers[0].Role != "reader" {
 		t.Errorf("promoted node: %+v", n)
 	}
 	if ok, _ := p.Promote(ctx, "p_2", current); ok || nodeIn(t, store, "p_2").Status != model.StatusImported {

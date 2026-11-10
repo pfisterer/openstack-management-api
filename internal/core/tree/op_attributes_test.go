@@ -104,7 +104,7 @@ func TestAttributes_VisibleToThoseWhoLookAfterTheNode(t *testing.T) {
 	member := common.TokenList{"user:member@x"}
 	p, err := f.svc.CreateNode(tree.CreateNodeRequest{ParentID: f.stud.ID, Kind: model.KindProject, Name: "Shared", Reason: "t",
 		Limit:           common.ProjectQuota{"cores": 0},
-		AuthorizedUsers: []common.AuthorizedUser{{Token: "user:member@x", OpenstackRole: "member"}},
+		AuthorizedUsers: []common.AuthorizedUser{{Token: "user:member@x", Role: "member"}},
 	}, model.UIActor("stud@x"), "stud@x", ownerToken)
 	if err != nil {
 		t.Fatalf("create shared project: %v", err)

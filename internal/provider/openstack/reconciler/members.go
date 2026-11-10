@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/gophercloud/gophercloud/openstack/identity/v3/groups"
@@ -63,15 +62,15 @@ func (r *Reconciler) pruneOrphanedUsers(res *reconcileResult) {
 
 // buildDesiredMembers extracts the intended OpenStack role assignments from a leaf.
 // Only user: tokens are processed — group: tokens have no direct Keystone equivalent.
-// The owner receives common.OwnerOpenstackRole; AuthorizedUsers their specified one.
+// The owner receives osclient.OwnerKeystoneRole; AuthorizedUsers the Keystone role of their role in the tree (osclient.KeystoneRole).
 func buildDesiredMembers(leaf model.Node) []osclient.DesiredMember {
 	desired := make([]osclient.DesiredMember, 0, 1+len(leaf.AuthorizedUsers))
 	if email := leaf.OwnerEmail(); email != "" {
 		desired = append(desired, osclient.DesiredMember{
 			Email: email,
 			// Was hardcoded "admin", which is cloud-wide in OpenStack's default
-			// policy — see the note on OwnerOpenstackRole.
-			RoleName: common.OwnerOpenstackRole,
+			// policy — see the note on OwnerKeystoneRole.
+			RoleName: osclient.OwnerKeystoneRole,
 			// This is the owner's own project, so it is the sensible landing
 			// place for their dashboard session (only applied when they have no
 			// default project yet).
@@ -82,27 +81,11 @@ func buildDesiredMembers(leaf model.Node) []osclient.DesiredMember {
 		if email, ok := strings.CutPrefix(au.Token, "user:"); ok {
 			desired = append(desired, osclient.DesiredMember{
 				Email:    email,
-				RoleName: allowedRole(au.OpenstackRole),
+				RoleName: osclient.KeystoneRole(au.Role),
 			})
 		}
 	}
 	return desired
-}
-
-// allowedRole keeps a stored role from outliving the rules it was written under.
-//
-// The API validates authorized_users on write, but rows persist across releases:
-// an entry saved while "admin" was still selectable would otherwise keep being
-// re-granted on every reconcile pass, forever, with no way to see it in the UI.
-// Anything not currently offered is clamped down to the participant default
-// rather than skipped — dropping it would silently revoke access instead of
-// reducing it.
-func allowedRole(role string) string {
-	normalized := strings.ToLower(strings.TrimSpace(role))
-	if slices.Contains(common.OpenstackRoles, normalized) {
-		return normalized
-	}
-	return common.OwnerOpenstackRole
 }
 
 // syncMembers reconciles the OpenStack project's user role assignments to match the
@@ -368,7 +351,7 @@ func (r *Reconciler) syncGroupAssignments(leaf model.Node, osProjectID string, g
 				"node_id", leaf.ID, "group", au.Token)
 			return
 		}
-		desiredList = append(desiredList, desired{groupID: id, roleName: au.OpenstackRole})
+		desiredList = append(desiredList, desired{groupID: id, roleName: osclient.KeystoneRole(au.Role)})
 	}
 	// External groups have no delegation token — add them by their OS group ID directly
 	// so they are always preserved and never removed by the cleanup pass below.

@@ -43,8 +43,8 @@ func TestAuthorizedUsersAreValidated(t *testing.T) {
 	tooMany := make([]common.AuthorizedUser, 0, common.DefaultMaxAuthorizedUsers+1)
 	for i := 0; i <= common.DefaultMaxAuthorizedUsers; i++ {
 		tooMany = append(tooMany, common.AuthorizedUser{
-			Token:         fmt.Sprintf("user:p%d@x.example", i),
-			OpenstackRole: "member",
+			Token: fmt.Sprintf("user:p%d@x.example", i),
+			Role:  "member",
 		})
 	}
 
@@ -55,59 +55,59 @@ func TestAuthorizedUsersAreValidated(t *testing.T) {
 	}{
 		{
 			name:  "a known group is accepted",
-			users: []common.AuthorizedUser{{Token: dev.DeptCSFaculty, OpenstackRole: "member"}},
+			users: []common.AuthorizedUser{{Token: dev.DeptCSFaculty, Role: "member"}},
 		},
 		{
 			name:  "a plain user is accepted and lower-cased",
-			users: []common.AuthorizedUser{{Token: "user:Someone@X.example", OpenstackRole: "READER"}},
+			users: []common.AuthorizedUser{{Token: "user:Someone@X.example", Role: "READER"}},
 		},
 		{
 			name:  "a relation on a known group is accepted",
-			users: []common.AuthorizedUser{{Token: dev.CourseDozentGroup, OpenstackRole: "member"}},
+			users: []common.AuthorizedUser{{Token: dev.CourseDozentGroup, Role: "member"}},
 		},
 		{
 			name:    "an unknown relation on a known group is refused",
-			users:   []common.AuthorizedUser{{Token: dev.CourseGroup + "#tutor", OpenstackRole: "member"}},
+			users:   []common.AuthorizedUser{{Token: dev.CourseGroup + "#tutor", Role: "member"}},
 			wantErr: "unknown group",
 		},
 		{
 			name:    "a relation on an unknown group is refused",
-			users:   []common.AuthorizedUser{{Token: "group:does-not-exist#dozent", OpenstackRole: "member"}},
+			users:   []common.AuthorizedUser{{Token: "group:does-not-exist#dozent", Role: "member"}},
 			wantErr: "unknown group",
 		},
 		{
 			name:    "an unknown group is refused",
-			users:   []common.AuthorizedUser{{Token: "group:does-not-exist", OpenstackRole: "member"}},
+			users:   []common.AuthorizedUser{{Token: "group:does-not-exist", Role: "member"}},
 			wantErr: "unknown group",
 		},
 		{
 			name:    "a group the requester does not belong to is refused",
-			users:   []common.AuthorizedUser{{Token: dev.RootGroup, OpenstackRole: "member"}},
+			users:   []common.AuthorizedUser{{Token: dev.RootGroup, Role: "member"}},
 			wantErr: "only members of group",
 		},
 		{
 			name:    "an address with a display name is refused",
-			users:   []common.AuthorizedUser{{Token: "user:Mallory <victim@x.example>", OpenstackRole: "member"}},
+			users:   []common.AuthorizedUser{{Token: "user:Mallory <victim@x.example>", Role: "member"}},
 			wantErr: "not a valid email",
 		},
 		{
 			name:    "an address with a comment is refused",
-			users:   []common.AuthorizedUser{{Token: "user:victim@x.example (mallory)", OpenstackRole: "member"}},
+			users:   []common.AuthorizedUser{{Token: "user:victim@x.example (mallory)", Role: "member"}},
 			wantErr: "not a valid email",
 		},
 		{
 			name:    "a malformed address is refused",
-			users:   []common.AuthorizedUser{{Token: "user:not-an-address", OpenstackRole: "member"}},
+			users:   []common.AuthorizedUser{{Token: "user:not-an-address", Role: "member"}},
 			wantErr: "not a valid email",
 		},
 		{
 			name:    "an unsupported role is refused",
-			users:   []common.AuthorizedUser{{Token: "user:someone@x.example", OpenstackRole: "superuser"}},
+			users:   []common.AuthorizedUser{{Token: "user:someone@x.example", Role: "superuser"}},
 			wantErr: "expected one of",
 		},
 		{
 			name:    "a token without a prefix is refused",
-			users:   []common.AuthorizedUser{{Token: "someone@x.example", OpenstackRole: "member"}},
+			users:   []common.AuthorizedUser{{Token: "someone@x.example", Role: "member"}},
 			wantErr: "must be a user: or group: token",
 		},
 		{
@@ -136,8 +136,8 @@ func TestAuthorizedUsersAreValidated(t *testing.T) {
 				if got.Token != strings.ToLower(tc.users[0].Token) {
 					t.Errorf("token not normalized: got %q, want %q", got.Token, strings.ToLower(tc.users[0].Token))
 				}
-				if got.OpenstackRole != strings.ToLower(tc.users[0].OpenstackRole) {
-					t.Errorf("role not normalized: got %q", got.OpenstackRole)
+				if got.Role != strings.ToLower(tc.users[0].Role) {
+					t.Errorf("role not normalized: got %q", got.Role)
 				}
 				return
 			}
@@ -157,7 +157,7 @@ func TestAuthorizedUsers_GroupsNeedMembershipOrAManager(t *testing.T) {
 	svc, _ := newSvc(t, common.TokenList{"group:root"})
 	requester := common.TokenList{"user:student@x"}
 	budget := budgetForMembers(t, svc, requester)
-	rootGroup := []common.AuthorizedUser{{Token: dev.RootGroup, OpenstackRole: "member"}}
+	rootGroup := []common.AuthorizedUser{{Token: dev.RootGroup, Role: "member"}}
 
 	if _, err := svc.CreateNode(tree.CreateNodeRequest{
 		ParentID: budget.ID, Kind: model.KindProject, Name: "p", Reason: "r", Limit: cores(1), AuthorizedUsers: rootGroup,
@@ -179,7 +179,7 @@ func TestAuthorizedUsers_GroupsNeedMembershipOrAManager(t *testing.T) {
 	if _, err := svc.RequestChange(project.ID, tree.ChangeNodeRequest{AuthorizedUsers: &rootGroup}, model.UIActor("root@x"), common.TokenList{"user:root@x", "group:root"}); err != nil {
 		t.Fatalf("a manager adds a group: %v", err)
 	}
-	both := append(slices.Clone(rootGroup), common.AuthorizedUser{Token: "user:friend@x.example", OpenstackRole: "member"})
+	both := append(slices.Clone(rootGroup), common.AuthorizedUser{Token: "user:friend@x.example", Role: "member"})
 	if _, err := svc.RequestChange(project.ID, tree.ChangeNodeRequest{AuthorizedUsers: &both}, model.UIActor("student@x"), requester); err != nil {
 		t.Fatalf("the owner edits a list a manager extended: %v", err)
 	}
@@ -192,12 +192,12 @@ func TestAuthorizedUsers_AnyExistingGroupWhileMembershipIsOff(t *testing.T) {
 	requester := common.TokenList{"user:student@x"}
 	budget := budgetForMembers(t, svc, requester)
 	if _, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: budget.ID, Kind: model.KindProject, Name: "p", Reason: "r", Limit: cores(1), AuthorizedUsers: []common.AuthorizedUser{{Token: dev.RootGroup, OpenstackRole: "member"}},
+		ParentID: budget.ID, Kind: model.KindProject, Name: "p", Reason: "r", Limit: cores(1), AuthorizedUsers: []common.AuthorizedUser{{Token: dev.RootGroup, Role: "member"}},
 	}, model.UIActor("student@x"), "student@x", requester); err != nil {
 		t.Fatalf("an existing group the requester does not belong to should be accepted for now: %v", err)
 	}
 	if _, err := svc.CreateNode(tree.CreateNodeRequest{
-		ParentID: budget.ID, Kind: model.KindProject, Name: "q", Reason: "r", Limit: cores(1), AuthorizedUsers: []common.AuthorizedUser{{Token: "group:does-not-exist", OpenstackRole: "member"}},
+		ParentID: budget.ID, Kind: model.KindProject, Name: "q", Reason: "r", Limit: cores(1), AuthorizedUsers: []common.AuthorizedUser{{Token: "group:does-not-exist", Role: "member"}},
 	}, model.UIActor("student@x"), "student@x", requester); err == nil || !strings.Contains(err.Error(), "unknown group") {
 		t.Fatalf("an unknown group must still be refused: %v", err)
 	}

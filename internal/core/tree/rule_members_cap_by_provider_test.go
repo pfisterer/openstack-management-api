@@ -16,7 +16,7 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/dev"
 )
 
-// os22: the ceiling on a project's members protects OpenStack, where every member costs the reconciler Keystone work on every run. A project without anything in OpenStack (workspaces, LLM) has a ceiling of its own.
+// os22: every provider bounds the members of its projects (tree.ProviderRules, since 10.11.2026): OpenStack low, since every member costs the reconciler Keystone work on every run, the AI service higher. A project gets the smallest ceiling of the providers it concerns, the tree's own when it concerns none.
 
 var memberCapResources = []common.Resource{
 	{ID: "cores", Name: "Cores", Provider: common.ProviderOpenStack},
@@ -26,7 +26,16 @@ var memberCapResources = []common.Resource{
 const (
 	capOpenStack = 5
 	capOther     = 12
+	capTree      = 20
 )
+
+type testRules struct {
+	provider string
+	max      int
+}
+
+func (r testRules) Provider() string { return r.provider }
+func (r testRules) MaxMembers() int  { return r.max }
 
 type memberCapFixture struct {
 	svc    *tree.Service
@@ -39,8 +48,8 @@ var memberCapOwner = common.TokenList{"user:student@x"}
 func newMemberCapFixture(t *testing.T) memberCapFixture {
 	t.Helper()
 	log := zap.NewNop().Sugar()
-	svc := tree.NewService(nodestore.NewInMemoryStore(log), dev.NewMockRoleProvider(), memberCapResources, common.TokenList{"group:root"}, 5*time.Second, capOpenStack, testAccounting, log)
-	svc.SetMaxAuthorizedUsersOther(capOther)
+	svc := tree.NewService(nodestore.NewInMemoryStore(log), dev.NewMockRoleProvider(), memberCapResources, common.TokenList{"group:root"}, 5*time.Second, capTree, testAccounting, log)
+	svc.SetProviderRules(testRules{common.ProviderOpenStack, capOpenStack}, testRules{"aiaas", capOther})
 	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
 		t.Fatalf("bootstrap: %v", err)
 	}
@@ -62,7 +71,7 @@ func newMemberCapFixture(t *testing.T) memberCapFixture {
 func members(n int) []common.AuthorizedUser {
 	out := make([]common.AuthorizedUser, n)
 	for i := range out {
-		out[i] = common.AuthorizedUser{Token: fmt.Sprintf("user:s%d@x.example", i), OpenstackRole: "member"}
+		out[i] = common.AuthorizedUser{Token: fmt.Sprintf("user:s%d@x.example", i), Role: "member"}
 	}
 	return out
 }
@@ -72,7 +81,7 @@ func (f memberCapFixture) create(limit common.ProjectQuota, n int) (model.Node, 
 		model.UIActor("student@x"), "student@x", memberCapOwner)
 }
 
-func wantCapError(t *testing.T, err error, limit int, openstack bool) {
+func wantCapError(t *testing.T, err error, limit int, provider string) {
 	t.Helper()
 	if err == nil {
 		t.Fatalf("expected the ceiling of %d to apply, request was accepted", limit)
@@ -80,8 +89,8 @@ func wantCapError(t *testing.T, err error, limit int, openstack bool) {
 	if !strings.Contains(err.Error(), fmt.Sprintf("at most %d authorized users", limit)) {
 		t.Errorf("error does not name the ceiling %d: %v", limit, err)
 	}
-	if strings.Contains(err.Error(), "OpenStack") != openstack {
-		t.Errorf("error should say whether it is the OpenStack ceiling (%v): %v", openstack, err)
+	if provider != "" && !strings.Contains(err.Error(), "resources of "+provider) {
+		t.Errorf("error should name the provider %s: %v", provider, err)
 	}
 }
 
@@ -93,7 +102,7 @@ func TestMemberCap_WorkspaceProjectsHaveTheirOwnCeiling(t *testing.T) {
 		t.Fatalf("a workspace project with %d members (above the OpenStack ceiling) was refused: %v", capOther, err)
 	}
 	_, err := f.create(ws, capOther+1)
-	wantCapError(t, err, capOther, false)
+	wantCapError(t, err, capOther, "aiaas")
 }
 
 func TestMemberCap_OpenStackProjectsKeepTheirCeiling(t *testing.T) {
@@ -102,10 +111,10 @@ func TestMemberCap_OpenStackProjectsKeepTheirCeiling(t *testing.T) {
 		t.Fatalf("at the ceiling: %v", err)
 	}
 	_, err := f.create(common.ProjectQuota{"cores": 2}, capOpenStack+1)
-	wantCapError(t, err, capOpenStack, true)
+	wantCapError(t, err, capOpenStack, common.ProviderOpenStack)
 	// Both at once is an OpenStack project.
 	_, err = f.create(common.ProjectQuota{"cores": 2, "ws-storage-gb": 5}, capOpenStack+1)
-	wantCapError(t, err, capOpenStack, true)
+	wantCapError(t, err, capOpenStack, common.ProviderOpenStack)
 	// A quantity of 0 brings nothing of OpenStack in.
 	if _, err := f.create(common.ProjectQuota{"cores": 0, "ws-storage-gb": 5}, capOpenStack+1); err != nil {
 		t.Errorf("cores 0 counted as OpenStack: %v", err)
@@ -129,18 +138,18 @@ func TestMemberCap_ChangeRequests(t *testing.T) {
 		t.Fatalf("editing members of a workspace project: %v", err)
 	}
 	tooMany := members(capOther + 1)
-	wantCapError(t, change(tree.ChangeNodeRequest{AuthorizedUsers: &tooMany}), capOther, false)
+	wantCapError(t, change(tree.ChangeNodeRequest{AuthorizedUsers: &tooMany}), capOther, "aiaas")
 
 	// Asking for OpenStack resources brings the OpenStack ceiling — also for the members already there.
 	withCores := common.ProjectQuota{"cores": 1, "ws-storage-gb": 50}
-	wantCapError(t, change(tree.ChangeNodeRequest{Limit: &withCores}), capOpenStack, true)
+	wantCapError(t, change(tree.ChangeNodeRequest{Limit: &withCores}), capOpenStack, common.ProviderOpenStack)
 	few := members(capOpenStack)
 	if err := change(tree.ChangeNodeRequest{Limit: &withCores, AuthorizedUsers: &few}); err != nil {
 		t.Fatalf("OpenStack resources with members within the ceiling: %v", err)
 	}
 	// Now an OpenStack project: more members than its ceiling are refused.
 	more = members(capOpenStack + 1)
-	wantCapError(t, change(tree.ChangeNodeRequest{AuthorizedUsers: &more}), capOpenStack, true)
+	wantCapError(t, change(tree.ChangeNodeRequest{AuthorizedUsers: &more}), capOpenStack, common.ProviderOpenStack)
 }
 
 // A change that has nothing to do with members or OpenStack does not trip over a list that is longer than today's ceiling.
@@ -164,8 +173,18 @@ func TestMemberCap_AllocationBringingOpenStack(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = f.svc.SetAllocation(p.ID, tree.AllocationRequest{BudgetID: f.uni.ID, Limit: common.ProjectQuota{"cores": 2}, Reason: "lab"}, model.UIActor("root@x"), common.TokenList{"group:root"})
-	wantCapError(t, err, capOpenStack, true)
+	wantCapError(t, err, capOpenStack, common.ProviderOpenStack)
 	if _, err := f.svc.SetAllocation(p.ID, tree.AllocationRequest{BudgetID: f.uni.ID, Limit: common.ProjectQuota{"ws-storage-gb": 10}, Reason: "more space"}, model.UIActor("root@x"), common.TokenList{"group:root"}); err != nil {
 		t.Errorf("a workspace allocation was refused: %v", err)
 	}
+}
+
+// A project that concerns no provider yet (nothing above zero, no binding) has the tree's own ceiling.
+func TestMemberCap_NoProviderHasTheTreesCeiling(t *testing.T) {
+	f := newMemberCapFixture(t)
+	if _, err := f.create(common.ProjectQuota{"cores": 0}, capTree); err != nil {
+		t.Fatalf("at the tree's ceiling: %v", err)
+	}
+	_, err := f.create(common.ProjectQuota{"cores": 0}, capTree+1)
+	wantCapError(t, err, capTree, "")
 }

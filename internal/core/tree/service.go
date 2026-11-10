@@ -3,6 +3,7 @@ package tree
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -36,9 +37,12 @@ type Service struct {
 
 	rootAdminTokens common.TokenList
 	requestTimeout  time.Duration
-	// maxAuthorizedUsers bounds how many participants a project that involves OpenStack may list; maxAuthorizedUsersOther the participants of any other project (see maxAuthorizedUsersFor).
-	maxAuthorizedUsers      int
-	maxAuthorizedUsersOther int
+	// caps are the caps the providers declare (SetCaps).
+	caps common.CapCatalog
+	// rules are the providers' rules by provider (SetProviderRules).
+	rules map[string]ProviderRules
+	// maxMembers bounds the members of a project no provider with rules concerns (see memberCeilingOf).
+	maxMembers int
 	// maxProjectsPerOwner bounds the live projects one person may request under one budget (see checkProjectsPerOwner); 0 or less is no bound.
 	maxProjectsPerOwner int
 
@@ -107,7 +111,9 @@ type Accounting struct {
 // NewService constructs the tree service.
 // rootAdminTokens is synchronized into the root node's AdminScope on every
 // Bootstrap — the configuration is the source of truth for that one scope.
-func NewService(store nodestore.Store, roles roles.Provider, resources []common.Resource, rootAdminTokens common.TokenList, requestTimeout time.Duration, maxAuthorizedUsers int, accounting Accounting, log *zap.SugaredLogger) *Service {
+//
+// maxMembers is how many members a project may list that no provider with rules (SetProviderRules) concerns; 0 or less is common.DefaultMaxAuthorizedUsers.
+func NewService(store nodestore.Store, roles roles.Provider, resources []common.Resource, rootAdminTokens common.TokenList, requestTimeout time.Duration, maxMembers int, accounting Accounting, log *zap.SugaredLogger) *Service {
 	if store == nil {
 		panic("tree.NewService requires a non-nil store")
 	}
@@ -117,22 +123,21 @@ func NewService(store nodestore.Store, roles roles.Provider, resources []common.
 	if requestTimeout <= 0 {
 		requestTimeout = 30 * time.Second
 	}
-	if maxAuthorizedUsers <= 0 {
-		maxAuthorizedUsers = common.DefaultMaxAuthorizedUsers
+	if maxMembers <= 0 {
+		maxMembers = common.DefaultMaxAuthorizedUsers
 	}
 	s := &Service{
-		plain:                   store,
-		roles:                   roles,
-		ownerTokens:             newTokenCache(2 * time.Minute),
-		catalog:                 common.StaticCatalog(resources),
-		rootAdminTokens:         common.CanonicalTokens(rootAdminTokens),
-		requestTimeout:          requestTimeout,
-		maxAuthorizedUsers:      maxAuthorizedUsers,
-		maxAuthorizedUsersOther: common.DefaultMaxAuthorizedUsersOther,
-		maxProjectsPerOwner:     common.DefaultMaxProjectsPerOwner,
-		accounting:              accounting,
-		clock:                   time.Now,
-		log:                     log,
+		plain:               store,
+		roles:               roles,
+		ownerTokens:         newTokenCache(2 * time.Minute),
+		catalog:             common.StaticCatalog(resources),
+		rootAdminTokens:     common.CanonicalTokens(rootAdminTokens),
+		requestTimeout:      requestTimeout,
+		maxMembers:          maxMembers,
+		maxProjectsPerOwner: common.DefaultMaxProjectsPerOwner,
+		accounting:          accounting,
+		clock:               time.Now,
+		log:                 log,
 	}
 	s.store = signallingStore{Store: store, changed: s.signalChange}
 	return s
@@ -143,13 +148,20 @@ func NewService(store nodestore.Store, roles roles.Provider, resources []common.
 // classes (quantities). A quantity once in the catalogue never leaves it.
 func (s *Service) UseCatalog(c common.ResourceCatalog) { s.catalog = c }
 
-// SetMaxAuthorizedUsersOther sets how many participants a project without anything in OpenStack may list; 0 or less keeps the default, common.DefaultMaxAuthorizedUsersOther. The ceiling for projects that involve OpenStack is the one given to NewService.
-func (s *Service) SetMaxAuthorizedUsersOther(n int) {
-	if n <= 0 {
-		n = common.DefaultMaxAuthorizedUsersOther
+// SetCaps sets the caps the providers declare (common.Cap), checked as a whole.
+func (s *Service) SetCaps(defs []common.Cap) error {
+	if err := common.ValidateCapDefs(defs); err != nil {
+		return err
 	}
-	s.maxAuthorizedUsersOther = n
+	s.caps = common.CapCatalog(defs)
+	return nil
 }
+
+// capDefs are the caps the providers declare.
+func (s *Service) capDefs() []common.Cap { return s.caps }
+
+// Caps are the caps the providers declare, for /v1/config.
+func (s *Service) Caps() []common.Cap { return slices.Clone(s.caps) }
 
 // SetMaxProjectsPerOwner sets how many live projects one person may request under one budget; 0 or less lifts the bound. The default is common.DefaultMaxProjectsPerOwner.
 func (s *Service) SetMaxProjectsPerOwner(n int) { s.maxProjectsPerOwner = n }

@@ -136,8 +136,8 @@ func WithProviderBudget(nodes []model.Node, resources []common.Resource) []model
 			Owner:  "user:faculty@cs.example",
 			Limit:  courseLimit,
 			AuthorizedUsers: []common.AuthorizedUser{
-				{Token: CourseStudierendeGroup, OpenstackRole: "member"},
-				{Token: "user:cs-student@cs.com", OpenstackRole: "member"},
+				{Token: CourseStudierendeGroup, Role: "member"},
+				{Token: "user:cs-student@cs.com", Role: "member"},
 			},
 			TerminationDate: days(120),
 			CreatedBy:       "faculty@cs.example", CreatedAt: "2026-10-01T10:00:00Z",
@@ -162,7 +162,7 @@ func WithProviderBudget(nodes []model.Node, resources []common.Resource) []model
 			Owner:  "user:admin@cs.example",
 			Limit:  researchLimit,
 			AuthorizedUsers: []common.AuthorizedUser{
-				{Token: "user:faculty@cs.example", OpenstackRole: "member"},
+				{Token: "user:faculty@cs.example", Role: "member"},
 			},
 			TerminationDate: days(200),
 			CreatedBy:       "admin@cs.example", CreatedAt: "2026-10-05T14:00:00Z",
@@ -178,7 +178,7 @@ func WithProviderBudget(nodes []model.Node, resources []common.Resource) []model
 			Pending: &model.PendingChanges{
 				Limit: func() *common.ProjectQuota { l := with(thesisLimit, common.ProjectQuota{resLLM: 80}); return &l }(),
 				AuthorizedUsers: &[]common.AuthorizedUser{
-					{Token: "user:faculty@cs.example", OpenstackRole: "member"},
+					{Token: "user:faculty@cs.example", Role: "member"},
 				},
 			},
 			TerminationDate: days(90),
@@ -193,7 +193,7 @@ func WithProviderBudget(nodes []model.Node, resources []common.Resource) []model
 			Owner:  "user:faculty@cs.example",
 			Limit:  mixedLimit,
 			AuthorizedUsers: []common.AuthorizedUser{
-				{Token: "user:cs-student@cs.com", OpenstackRole: "reader"},
+				{Token: "user:cs-student@cs.com", Role: "reader"},
 			},
 			TerminationDate: days(60),
 			CreatedBy:       "faculty@cs.example", CreatedAt: "2026-09-20T09:00:00Z",

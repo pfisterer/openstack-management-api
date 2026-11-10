@@ -38,10 +38,10 @@ func testNodeQueryContract(t *testing.T, s Store) {
 		{ID: "b_1", ParentID: parent("root"), Kind: model.KindBudget, Status: model.StatusApproved, AdminScope: common.TokenList{"group:a"}, EligibleRequesters: common.TokenList{"group:stud"}},
 		{ID: "b_2", ParentID: parent("root"), Kind: model.KindBudget, Status: model.StatusPending, AdminScope: common.TokenList{"group:b"}},
 		{ID: "p_1", ParentID: parent("b_1"), Kind: model.KindProject, Status: model.StatusApproved, Owner: "user:alice@x", AdminScope: common.TokenList{"user:carol@x"},
-			AuthorizedUsers: []common.AuthorizedUser{{Token: "user:bob@x", OpenstackRole: "member"}}},
+			AuthorizedUsers: []common.AuthorizedUser{{Token: "user:bob@x", Role: "member"}}},
 		{ID: "p_2", ParentID: parent("b_1"), Kind: model.KindProject, Status: model.StatusReleased, Owner: "user:bob@x"},
 		{ID: "p_3", ParentID: parent("b_2"), Kind: model.KindProject, Status: model.StatusPending, Owner: "user:alice@x",
-			AuthorizedUsers: []common.AuthorizedUser{{Token: "group:lab", OpenstackRole: "member"}}},
+			AuthorizedUsers: []common.AuthorizedUser{{Token: "group:lab", Role: "member"}}},
 	}
 	if err := s.Seed(ctx, nil, nodes); err != nil {
 		t.Fatalf("seed: %v", err)

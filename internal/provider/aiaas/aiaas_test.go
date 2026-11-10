@@ -31,7 +31,7 @@ var catalog = []common.Resource{
 func TestProjectFor(t *testing.T) {
 	end := "2027-03-31"
 	n := model.Node{ID: "p_1", Name: "Kurs", Owner: "user:o@dhbw.de", AdminScope: common.TokenList{"group:mgr"},
-		AuthorizedUsers: []common.AuthorizedUser{{Token: "group:k", OpenstackRole: "reader"}, {Token: "user:o@dhbw.de"}, {Token: "user:tutor@dhbw.de", OpenstackRole: "member"}}, TerminationDate: &end,
+		AuthorizedUsers: []common.AuthorizedUser{{Token: "group:k", Role: "reader"}, {Token: "user:o@dhbw.de"}, {Token: "user:tutor@dhbw.de", Role: "member"}}, TerminationDate: &end,
 		Limit: common.ProjectQuota{"cores": 4, "ws-vcpu-hours": 1000, "ws-gpu-hours-l4-3q": common.UnlimitedQuota, "ws-gpus-l4-3q": 2, "llm-mtokens": 80}}
 	p := ProjectFor(n, catalog)
 	if p.Name != "Kurs" || len(p.Members) != 4 || p.Members[0].Role != "manager" || p.Members[1].Role != "manager" || p.Members[2].Token != "group:k" || p.Members[2].Role != "reader" || p.Members[3].Role != "member" {
@@ -252,12 +252,11 @@ func TestPassSendsReleaseMax(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	store := nodestore.NewInMemoryStore(log)
 	svc := tree.NewService(store, nil, catalog, nil, time.Second, 0, tree.Accounting{}, log)
-	iv := func(n int) *int { return &n }
 	root, b1, b2 := "r", "b1", "b2"
 	for _, n := range []model.Node{
-		{ID: root, Kind: model.KindBudget, Status: model.StatusApproved, ReleaseMax: &model.ReleaseMax{CPU: model.ReleaseTimes{IdleOpenMinutes: iv(120), IdleClosedMinutes: iv(120), MaxHours: iv(12)}, GPU: model.ReleaseTimes{IdleOpenMinutes: iv(30), IdleClosedMinutes: iv(5), MaxHours: iv(4)}}},
+		{ID: root, Kind: model.KindBudget, Status: model.StatusApproved, Caps: common.Caps{CapReleaseCPUIdleOpen: 120, CapReleaseCPUIdleClosed: 120, CapReleaseCPUMaxHours: 12, CapReleaseGPUIdleOpen: 30, CapReleaseGPUIdleClosed: 5, CapReleaseGPUMaxHours: 4}},
 		{ID: b1, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &root},
-		{ID: b2, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &b1, ReleaseMax: &model.ReleaseMax{CPU: model.ReleaseTimes{IdleOpenMinutes: iv(60), MaxHours: iv(24)}, GPU: model.ReleaseTimes{MaxHours: iv(2)}}},
+		{ID: b2, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &b1, Caps: common.Caps{CapReleaseCPUIdleOpen: 60, CapReleaseCPUMaxHours: 24, CapReleaseGPUMaxHours: 2}},
 		{ID: "lone", Kind: model.KindBudget, Status: model.StatusApproved},
 		{ID: "p_deep", Kind: model.KindProject, Status: model.StatusApproved, ParentID: &b2, Name: "Deep", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
 		{ID: "p_free", Kind: model.KindProject, Status: model.StatusApproved, ParentID: new("lone"), Name: "Free", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
@@ -290,12 +289,11 @@ func TestPassSendsWorkspaceScratch(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	store := nodestore.NewInMemoryStore(log)
 	svc := tree.NewService(store, nil, catalog, nil, time.Second, 0, tree.Accounting{}, log)
-	iv := func(n int) *int { return &n }
 	root, b1, b2 := "r", "b1", "b2"
 	for _, n := range []model.Node{
-		{ID: root, Kind: model.KindBudget, Status: model.StatusApproved, WorkspaceScratchGB: iv(20)},
-		{ID: b1, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &root, WorkspaceScratchGB: iv(4)},
-		{ID: b2, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &b1, WorkspaceScratchGB: iv(10)},
+		{ID: root, Kind: model.KindBudget, Status: model.StatusApproved, Caps: common.Caps{CapWorkspaceScratchGB: 20}},
+		{ID: b1, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &root, Caps: common.Caps{CapWorkspaceScratchGB: 4}},
+		{ID: b2, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &b1, Caps: common.Caps{CapWorkspaceScratchGB: 10}},
 		{ID: "lone", Kind: model.KindBudget, Status: model.StatusApproved},
 		{ID: "p_deep", Kind: model.KindProject, Status: model.StatusApproved, ParentID: &b2, Name: "Deep", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
 		{ID: "p_free", Kind: model.KindProject, Status: model.StatusApproved, ParentID: new("lone"), Name: "Free", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
@@ -328,9 +326,9 @@ func TestPassSendsBatchPriority(t *testing.T) {
 	svc := tree.NewService(store, nil, catalog, nil, time.Second, 0, tree.Accounting{}, log)
 	root, b1, b2, g := "r", "b1", "b2", "g"
 	for _, n := range []model.Node{
-		{ID: root, Kind: model.KindBudget, Status: model.StatusApproved, BatchPriority: new(model.BatchPriorityGuaranteed)},
-		{ID: b1, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &root, BatchPriority: new(model.BatchPriorityPreemptible)},
-		{ID: b2, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &b1, BatchPriority: new(model.BatchPriorityGuaranteed)},
+		{ID: root, Kind: model.KindBudget, Status: model.StatusApproved, Caps: common.Caps{CapBatchPriority: 1}},
+		{ID: b1, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &root, Caps: common.Caps{CapBatchPriority: 0}},
+		{ID: b2, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &b1, Caps: common.Caps{CapBatchPriority: 1}},
 		{ID: g, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &root},
 		{ID: "lone", Kind: model.KindBudget, Status: model.StatusApproved},
 		{ID: "p_deep", Kind: model.KindProject, Status: model.StatusApproved, ParentID: &b2, Name: "Deep", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
@@ -346,10 +344,10 @@ func TestPassSendsBatchPriority(t *testing.T) {
 	if _, err := s.Pass(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := fake.projects["p_deep"].BatchPriority; got != model.BatchPriorityPreemptible {
+	if got := fake.projects["p_deep"].BatchPriority; got != "preemptible" {
 		t.Errorf("batch_priority = %q, want the strictest along the chain, preemptible", got)
 	}
-	if got := fake.projects["p_guar"].BatchPriority; got != model.BatchPriorityGuaranteed {
+	if got := fake.projects["p_guar"].BatchPriority; got != "guaranteed" {
 		t.Errorf("batch_priority = %q, want the root's guaranteed", got)
 	}
 	if got := fake.projects["p_free"].BatchPriority; got != "" {
@@ -368,9 +366,9 @@ func TestPassSendsBatchJobs(t *testing.T) {
 	svc := tree.NewService(store, nil, catalog, nil, time.Second, 0, tree.Accounting{}, log)
 	root, b1, b2, inh, off := "r", "b1", "b2", "inh", "off"
 	for _, n := range []model.Node{
-		{ID: root, Kind: model.KindBudget, Status: model.StatusApproved, BatchJobs: &model.BatchJobs{JobsPerPerson: 4, MaxHours: 8}},
-		{ID: b1, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &root, BatchJobs: &model.BatchJobs{JobsPerPerson: 2, MaxHours: 8}},
-		{ID: b2, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &b1, BatchJobs: &model.BatchJobs{JobsPerPerson: 3, MaxHours: 4}},
+		{ID: root, Kind: model.KindBudget, Status: model.StatusApproved, Caps: common.Caps{CapBatchJobsPerPerson: 4, CapBatchMaxHours: 8}},
+		{ID: b1, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &root, Caps: common.Caps{CapBatchJobsPerPerson: 2, CapBatchMaxHours: 8}},
+		{ID: b2, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &b1, Caps: common.Caps{CapBatchJobsPerPerson: 3, CapBatchMaxHours: 4}},
 		{ID: inh, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &b1, InheritsLimit: true},
 		{ID: off, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &root},
 		{ID: "p_deep", Kind: model.KindProject, Status: model.StatusApproved, ParentID: &b2, Name: "Deep", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},

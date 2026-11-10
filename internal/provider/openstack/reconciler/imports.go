@@ -302,12 +302,12 @@ func importMembers(members []osclient.ProjectMemberInfo) []common.AuthorizedUser
 		role := treeRole(m.RoleName)
 		if i, seen := at[token]; seen {
 			if role == "member" {
-				out[i].OpenstackRole = role
+				out[i].Role = role
 			}
 			continue
 		}
 		at[token] = len(out)
-		out = append(out, common.AuthorizedUser{Token: token, OpenstackRole: role})
+		out = append(out, common.AuthorizedUser{Token: token, Role: role})
 	}
 	return out
 }
@@ -332,12 +332,12 @@ func importGroups(prefix string, groups []importedGroup) ([]common.AuthorizedUse
 			token := groupTokenForKeystoneName(prefix, g.name)
 			if i, seen := memberAt[token]; seen {
 				if role == "member" {
-					members[i].OpenstackRole = role
+					members[i].Role = role
 				}
 				continue
 			}
 			memberAt[token] = len(members)
-			members = append(members, common.AuthorizedUser{Token: token, OpenstackRole: role})
+			members = append(members, common.AuthorizedUser{Token: token, Role: role})
 			continue
 		}
 		if i, seen := externalAt[g.id]; seen {

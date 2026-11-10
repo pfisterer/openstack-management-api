@@ -105,7 +105,7 @@ func TestChange_WithoutPolicy(t *testing.T) {
 	if n := f.change(t, p.ID, tree.ChangeNodeRequest{TerminationDate: &sooner}); n.Status != model.StatusApproved || *n.TerminationDate != "2027-03-31" {
 		t.Fatalf("an earlier end should apply at once, got %q", n.Status)
 	}
-	members := []common.AuthorizedUser{{Token: "user:friend@x", OpenstackRole: "member"}}
+	members := []common.AuthorizedUser{{Token: "user:friend@x", Role: "member"}}
 	if n := f.change(t, p.ID, tree.ChangeNodeRequest{AuthorizedUsers: &members}); n.Status != model.StatusApproved || len(n.AuthorizedUsers) != 1 {
 		t.Fatalf("a member change should apply at once, got %q with %v", n.Status, n.AuthorizedUsers)
 	}
@@ -125,7 +125,7 @@ func TestChange_MixedProposalWaitsAsAWhole(t *testing.T) {
 	f := newChangeFixture(t, nil, nil)
 	p := f.approved(t, 4, nil)
 
-	members := []common.AuthorizedUser{{Token: "user:friend@x", OpenstackRole: "member"}}
+	members := []common.AuthorizedUser{{Token: "user:friend@x", Role: "member"}}
 	n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(6)), AuthorizedUsers: &members})
 	if n.Status != model.StatusChangePending || len(n.AuthorizedUsers) != 0 {
 		t.Fatalf("growth plus members should wait as one, got %q with members %v", n.Status, n.AuthorizedUsers)
@@ -259,9 +259,9 @@ func TestChange_BareDateIsTheSameEnd(t *testing.T) {
 		t.Fatalf("an end should be stored as its day, got %q", *p.TerminationDate)
 	}
 
-	members := []common.AuthorizedUser{{Token: "user:friend@x", OpenstackRole: "member"}}
+	members := []common.AuthorizedUser{{Token: "user:friend@x", Role: "member"}}
 	for i, same := range []string{"2027-06-30T00:00:00.000Z", "2027-06-29T22:00:00.000Z", "2027-06-30T23:59:59Z", "2027-06-30"} {
-		members = append(members, common.AuthorizedUser{Token: fmt.Sprintf("user:friend%d@x", i), OpenstackRole: "member"})
+		members = append(members, common.AuthorizedUser{Token: fmt.Sprintf("user:friend%d@x", i), Role: "member"})
 		if n := f.change(t, p.ID, tree.ChangeNodeRequest{TerminationDate: &same, AuthorizedUsers: &members}); n.Status != model.StatusApproved || len(n.AuthorizedUsers) != len(members) || *n.TerminationDate != "2027-06-30" {
 			t.Fatalf("members with the same end (%s) should apply at once, got %q with %d members, end %s", same, n.Status, len(n.AuthorizedUsers), *n.TerminationDate)
 		}

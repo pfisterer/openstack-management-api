@@ -102,7 +102,7 @@ func TestImportAndMergeMembers(t *testing.T) {
 		{Email: "owner@x", RoleName: "member"},
 		{Email: "svc-backup", RoleName: "member"},
 	})
-	want := []common.AuthorizedUser{{Token: "user:a@x", OpenstackRole: "member"}, {Token: "user:b@x", OpenstackRole: "reader"}, {Token: "user:owner@x", OpenstackRole: "member"}}
+	want := []common.AuthorizedUser{{Token: "user:a@x", Role: "member"}, {Token: "user:b@x", Role: "reader"}, {Token: "user:owner@x", Role: "member"}}
 	if len(imported) != len(want) {
 		t.Fatalf("imported %v, want %v", imported, want)
 	}
@@ -112,11 +112,11 @@ func TestImportAndMergeMembers(t *testing.T) {
 		}
 	}
 
-	leaf := []common.AuthorizedUser{{Token: "user:b@x", OpenstackRole: "member"}}
-	got := tree.MergeMembers(leaf, append(imported, common.AuthorizedUser{Token: "user:new@x", OpenstackRole: "member"}), "user:owner@x")
+	leaf := []common.AuthorizedUser{{Token: "user:b@x", Role: "member"}}
+	got := tree.MergeMembers(leaf, append(imported, common.AuthorizedUser{Token: "user:new@x", Role: "member"}), "user:owner@x")
 	tokens := map[string]string{}
 	for _, u := range got {
-		tokens[u.Token] = u.OpenstackRole
+		tokens[u.Token] = u.Role
 	}
 	if len(got) != 3 || tokens["user:b@x"] != "member" || tokens["user:a@x"] != "member" || tokens["user:new@x"] != "member" {
 		t.Errorf("merged %v: want b kept as set on the leaf, a and the newcomer added, the owner left out", got)
@@ -132,7 +132,7 @@ func TestImportGroups(t *testing.T) {
 		{id: "g2", name: "fakultaet-wi", role: "reader"},
 		{id: "g3", name: "", role: "reader"},
 	})
-	if len(members) != 1 || members[0].Token != "group:wwi23seb#dozent" || members[0].OpenstackRole != "member" {
+	if len(members) != 1 || members[0].Token != "group:wwi23seb#dozent" || members[0].Role != "member" {
 		t.Errorf("members = %v, want the managed group as member", members)
 	}
 	if len(external) != 2 || external[0].GroupID != "g2" || external[0].GroupName != "fakultaet-wi" || external[0].Role != "member" ||

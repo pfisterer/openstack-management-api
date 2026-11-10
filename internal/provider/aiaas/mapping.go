@@ -142,7 +142,7 @@ func membersOf(n model.Node) []Member {
 	}
 	for _, u := range n.AuthorizedUsers {
 		role := "member"
-		if u.OpenstackRole == "reader" {
+		if u.Role == "reader" {
 			role = "reader"
 		}
 		add(u.Token, role)
@@ -187,43 +187,6 @@ func InUseFrom(st Status, resources []common.Resource) common.ProjectQuota {
 		}
 	}
 	return out
-}
-
-// ReleaseFor is what the AI service is told about a leaf's release times: the strictest maximums of the budgets above it (chain, in any order). Never nil, also when no budget sets any: then every field is left out and the AI service applies its defaults.
-func ReleaseFor(chain []model.Node) *Release {
-	r := model.ResolveReleaseMax(chain)
-	if r == nil {
-		return &Release{}
-	}
-	conv := func(t model.ReleaseTimes) ReleaseTimes {
-		return ReleaseTimes{IdleOpenMinutes: t.IdleOpenMinutes, IdleClosedMinutes: t.IdleClosedMinutes, MaxHours: t.MaxHours}
-	}
-	return &Release{CPU: conv(r.CPU), GPU: conv(r.GPU)}
-}
-
-// ScratchFor is what the AI service is told about a leaf's local storage per workspace: the smallest value of the budgets above it (chain, in any order), 0 when none sets one.
-func ScratchFor(chain []model.Node) int {
-	if v := model.ResolveWorkspaceScratchGB(chain); v != nil {
-		return *v
-	}
-	return 0
-}
-
-// BatchPriorityFor is what the AI service is told about a leaf's batch priority: the strictest value of the budgets above it (chain, in any order), empty when none sets one.
-func BatchPriorityFor(chain []model.Node) string {
-	if v := model.ResolveBatchPriority(chain); v != nil {
-		return *v
-	}
-	return ""
-}
-
-// BatchJobsFor is what the AI service is told about a leaf's batch jobs: what the budgets above it allow (chain, in any order), {0, 0} where they have none. Never nil.
-func BatchJobsFor(chain []model.Node) *BatchJobs {
-	v := model.ResolveBatchJobs(chain)
-	if v == nil {
-		return &BatchJobs{}
-	}
-	return &BatchJobs{JobsPerPerson: v.JobsPerPerson, MaxHours: v.MaxHours}
 }
 
 // chainOf is the budgets above a leaf, parent first, from the budgets by id; it stops at a budget it does not know or at a cycle.

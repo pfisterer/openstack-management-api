@@ -134,9 +134,9 @@ func (s *Service) SetAllocation(id string, req AllocationRequest, actor model.Ac
 	if len(updated.Allocations) == 0 {
 		updated.Allocations = nil
 	}
-	// OpenStack resources drawn from above make the project OpenStack's business, with that ceiling on its members.
-	if raises && !s.involvesOpenStack(*current) && s.involvesOpenStack(updated) {
-		if err := s.checkAuthorizedUserCount(len(current.AuthorizedUsers), true); err != nil {
+	// Resources drawn from above may make the project a provider's business, with that provider's ceiling on its members.
+	if raises {
+		if err := checkMemberCeilingFalls(len(current.AuthorizedUsers), s.memberCeilingOf(*current), s.memberCeilingOf(updated)); err != nil {
 			return model.Node{}, err
 		}
 	}

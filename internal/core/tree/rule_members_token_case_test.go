@@ -67,7 +67,7 @@ func TestBootstrapCanonicalizesStoredTokens(t *testing.T) {
 		ID: "p_legacy", Kind: model.KindProject, ParentID: &parent, Status: model.StatusApproved, Name: "Legacy",
 		Owner:           "user:Old.Owner@X",
 		AdminScope:      common.TokenList{"group:Leiter-ZWR", "user:Co@X"},
-		AuthorizedUsers: []common.AuthorizedUser{{Token: "group:WWI23SEB", OpenstackRole: "member"}},
+		AuthorizedUsers: []common.AuthorizedUser{{Token: "group:WWI23SEB", Role: "member"}},
 	}); err != nil {
 		t.Fatal(err)
 	}

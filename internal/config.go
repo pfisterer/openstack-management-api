@@ -189,9 +189,9 @@ type AppConfiguration struct {
 	// AIaaS is where the AI service (aiaas-management-api) is and the token of the tree there; no URL = the provider is off.
 	AIaaS                 AIaaSConfig `json:"aiaas"`
 	ServiceTimeoutSeconds int         `json:"service_timeout_seconds"`
-	// MaxAuthorizedUsers caps the participants one project that involves OpenStack may list. Each entry costs the reconciler Keystone work on every run (a group plus an account per member), so the ceiling bounds what a single request can trigger. A course or department belongs in as ONE group token, not as N entries.
+	// MaxAuthorizedUsers caps the members of a project of OpenStack (osclient.Rules): each entry costs the reconciler Keystone work on every run (a group plus an account per member), so the ceiling bounds what a single request can trigger. A course or department belongs in as ONE group token, not as N entries.
 	MaxAuthorizedUsers int `json:"max_authorized_users"`
-	// MaxAuthorizedUsersOther caps the participants of a project without anything in OpenStack (workspaces, LLM): no Keystone work, so it may be far higher.
+	// MaxAuthorizedUsersOther caps the members of a project of the AI service (aiaas.Rules) and of one no provider concerns yet (the tree's own ceiling): no Keystone work, so it may be far higher.
 	MaxAuthorizedUsersOther int `json:"max_authorized_users_other"`
 	// MaxProjectsPerOwner caps the live projects one person may request under one budget (tree.Service.SetMaxProjectsPerOwner); 0 or less is no cap.
 	MaxProjectsPerOwner int `json:"max_projects_per_owner"`
@@ -329,8 +329,8 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			DeleteGraceDays:      envconf.Int("AIAAS_DELETE_GRACE_DAYS", 14),
 		},
 		ServiceTimeoutSeconds:   envconf.Int("SERVICE_TIMEOUT_SECONDS", 30),
-		MaxAuthorizedUsers:      envconf.Int("API_MAX_AUTHORIZED_USERS", common.DefaultMaxAuthorizedUsers),
-		MaxAuthorizedUsersOther: envconf.Int("API_MAX_AUTHORIZED_USERS_OTHER", common.DefaultMaxAuthorizedUsersOther),
+		MaxAuthorizedUsers:      envconf.Int("API_MAX_AUTHORIZED_USERS", osclient.DefaultMaxMembers),
+		MaxAuthorizedUsersOther: envconf.Int("API_MAX_AUTHORIZED_USERS_OTHER", common.DefaultMaxAuthorizedUsers),
 		MaxProjectsPerOwner:     envconf.Int("API_MAX_PROJECTS_PER_OWNER", common.DefaultMaxProjectsPerOwner),
 		ChargeOSInUse:           envconf.Bool("API_CHARGE_OS_IN_USE", true),
 		ChargeReleased:          envconf.Bool("API_CHARGE_RELEASED", true),

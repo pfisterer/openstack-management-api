@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"maps"
-	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -154,20 +153,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		}
 		if err == nil {
 			// Unlike the term, nothing is copied down: what the budgets above set applies anyway (strictest along the chain), and copying would freeze it here.
-			err = model.ValidateReleaseMax(req.ReleaseMax, model.ResolveReleaseMax(parentChain))
-		}
-		if err == nil {
-			err = model.ValidateWorkspaceScratchGB(req.WorkspaceScratchGB, model.ResolveWorkspaceScratchGB(parentChain))
-		}
-		if err == nil {
-			err = model.ValidateBatchPriority(req.BatchPriority, model.ResolveBatchPriority(parentChain))
-		}
-		if err == nil {
-			if req.InheritsLimit && req.BatchJobs != nil {
-				err = fmt.Errorf("batch_jobs: a budget that inherits the limit of the budget above passes on its batch jobs too")
-			} else {
-				err = model.ValidateBatchJobs(req.BatchJobs, model.ResolveBatchJobs(parentChain), false)
-			}
+			err = model.ValidateCaps(req.Caps, model.ResolveCaps(parentChain, s.capDefs()), false, req.InheritsLimit, s.capDefs())
 		}
 	}
 	if err != nil {
@@ -211,10 +197,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		node.AllowRequestsBeyondAutoApprove = req.AllowRequestsBeyondAutoApprove
 		node.AutoApproveExtensions = req.AutoApproveExtensions
 		node.MaxProjectTermDays = maxTerm
-		node.ReleaseMax = req.ReleaseMax.Normalized()
-		node.WorkspaceScratchGB = model.ClonePtr(req.WorkspaceScratchGB)
-		node.BatchPriority = model.ClonePtr(req.BatchPriority)
-		node.BatchJobs = req.BatchJobs.Clone()
+		node.Caps = req.Caps.Clone()
 		node.InheritsLimit = req.InheritsLimit
 	}
 	node.History = []model.HistoryEntry{createdEntry}
@@ -279,9 +262,9 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 
 // normalizeCreateMembers checks the members of a new project for CreateNode, with the parent's managers free to add any group. Their ceiling depends on whether the requested limit holds anything of OpenStack.
 func (s *Service) normalizeCreateMembers(ctx context.Context, req CreateNodeRequest, userTokens common.TokenList) ([]common.AuthorizedUser, error) {
-	openstack := s.involvesOpenStack(model.Node{}, req.Limit)
+	ceiling := s.memberCeilingOf(model.Node{}, req.Limit)
 	if len(req.AuthorizedUsers) == 0 {
-		return s.normalizeAuthorizedUsers(ctx, req.AuthorizedUsers, openstack, userTokens, false)
+		return s.normalizeAuthorizedUsers(ctx, req.AuthorizedUsers, ceiling, userTokens, false)
 	}
 	// The parent and the budgets above it; empty when there is no such parent, which CreateNode refuses next.
 	parentChain, err := s.nodeChain(ctx, req.ParentID)
@@ -289,7 +272,7 @@ func (s *Service) normalizeCreateMembers(ctx context.Context, req CreateNodeRequ
 		return nil, err
 	}
 	manager := managesInChain(common.NewTokenSet(userTokens), parentChain)
-	return s.normalizeAuthorizedUsers(ctx, req.AuthorizedUsers, openstack, userTokens, manager)
+	return s.normalizeAuthorizedUsers(ctx, req.AuthorizedUsers, ceiling, userTokens, manager)
 }
 
 // allZero reports whether a limit asks for nothing: every value 0, availabilities included.
@@ -449,42 +432,22 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 		}
 		updated.MaxProjectTermDays = req.MaxProjectTermDays
 	}
-	// A budget's release maximums only tighten what the budgets above allow. Lowering them needs nothing carried down: what applies below is the strictest along the chain, so a budget below with longer times of its own simply gets these.
-	if req.ReleaseMax != nil {
-		if err := model.ValidateReleaseMax(req.ReleaseMax, model.ResolveReleaseMax(chain)); err != nil {
-			return model.Node{}, err
+	// Caps only tighten what the budgets above allow. Lowering one needs nothing carried down: what applies below is the strictest along the chain, so a budget below with a looser value of its own simply gets this one. Checked after InheritsLimit below, which decides whether the budget may hold Grant caps.
+	if req.ClearCaps {
+		updated.Caps = nil
+	} else if req.Caps != nil {
+		next := maps.Clone(current.Caps)
+		if next == nil {
+			next = common.Caps{}
 		}
-		updated.ReleaseMax = req.ReleaseMax.Normalized()
-	}
-	// The same for the local storage per workspace: only lower than above; removing it is always allowed, the budgets above apply anyway.
-	if req.ClearWorkspaceScratchGB {
-		updated.WorkspaceScratchGB = nil
-	} else if req.WorkspaceScratchGB != nil {
-		if err := model.ValidateWorkspaceScratchGB(req.WorkspaceScratchGB, model.ResolveWorkspaceScratchGB(chain)); err != nil {
-			return model.Node{}, err
+		for id, v := range req.Caps {
+			if v == nil {
+				delete(next, id)
+			} else {
+				next[id] = *v
+			}
 		}
-		updated.WorkspaceScratchGB = model.ClonePtr(req.WorkspaceScratchGB)
-	}
-	// And for the batch priority: only stricter than above; removing it is always allowed.
-	if req.ClearBatchPriority {
-		updated.BatchPriority = nil
-	} else if req.BatchPriority != nil {
-		if err := model.ValidateBatchPriority(req.BatchPriority, model.ResolveBatchPriority(chain)); err != nil {
-			return model.Node{}, err
-		}
-		updated.BatchPriority = model.ClonePtr(req.BatchPriority)
-	}
-	// The batch jobs: on only where the budgets above have them, at most their values; nothing carried down (a budget below with more of its own simply gets these). Removing them switches them off here and below. A budget that inherits its limit has none of its own (handled with InheritsLimit below).
-	if req.ClearBatchJobs {
-		updated.BatchJobs = nil
-	} else if req.BatchJobs != nil {
-		if current.InheritsLimit || (req.InheritsLimit != nil && *req.InheritsLimit) {
-			return model.Node{}, fmt.Errorf("batch_jobs: a budget that inherits the limit of the budget above passes on its batch jobs too")
-		}
-		if err := model.ValidateBatchJobs(req.BatchJobs, model.ResolveBatchJobs(chain), current.ParentID == nil); err != nil {
-			return model.Node{}, err
-		}
-		updated.BatchJobs = req.BatchJobs.Clone()
+		updated.Caps = next.Clone()
 	}
 	if req.ClearTerminationDate || req.TerminationDate != nil {
 		if bound := chainEnd(chain); req.ClearTerminationDate && bound != nil {
@@ -506,22 +469,6 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 	if req.ClearTerminationDate || req.TerminationDate != nil {
 		historyEntry.TerminationDateFrom = current.TerminationDate
 		historyEntry.TerminationDateTo = updated.TerminationDate
-	}
-	if req.ReleaseMax != nil && !reflect.DeepEqual(current.ReleaseMax, updated.ReleaseMax) {
-		historyEntry.ReleaseMaxFrom = current.ReleaseMax.Clone()
-		historyEntry.ReleaseMaxTo = updated.ReleaseMax.Clone()
-	}
-	if (req.WorkspaceScratchGB != nil || req.ClearWorkspaceScratchGB) && !reflect.DeepEqual(current.WorkspaceScratchGB, updated.WorkspaceScratchGB) {
-		historyEntry.WorkspaceScratchGBFrom = model.ClonePtr(current.WorkspaceScratchGB)
-		historyEntry.WorkspaceScratchGBTo = model.ClonePtr(updated.WorkspaceScratchGB)
-	}
-	if (req.BatchPriority != nil || req.ClearBatchPriority) && !reflect.DeepEqual(current.BatchPriority, updated.BatchPriority) {
-		historyEntry.BatchPriorityFrom = model.ClonePtr(current.BatchPriority)
-		historyEntry.BatchPriorityTo = model.ClonePtr(updated.BatchPriority)
-	}
-	if (req.BatchJobs != nil || req.ClearBatchJobs) && !reflect.DeepEqual(current.BatchJobs, updated.BatchJobs) {
-		historyEntry.BatchJobsFrom = current.BatchJobs.Clone()
-		historyEntry.BatchJobsTo = updated.BatchJobs.Clone()
 	}
 
 	// An inherited limit is the one of the budget above and cannot be set by
@@ -545,23 +492,36 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 		historyEntry.LimitFrom = &current.Limit
 		historyEntry.Reason = new("Inherits the limit of the budget above")
 		updated.Limit = common.ProjectQuota{}
-		// Its batch jobs are those above now, like its limit.
-		if updated.BatchJobs != nil {
-			historyEntry.BatchJobsFrom, historyEntry.BatchJobsTo = current.BatchJobs.Clone(), nil
-			updated.BatchJobs = nil
+		// Its Grant caps are those above now, like its limit. A copy: updated shares the map with current.
+		next := maps.Clone(updated.Caps)
+		for id := range model.GrantCaps(next, s.capDefs()) {
+			delete(next, id)
 		}
+		updated.Caps = next.Clone()
 	}
 	if !inherits && current.InheritsLimit && req.Limit == nil && binding != nil {
 		req.Limit = new(maps.Clone(binding.Limit))
 	}
-	// Switched off, it keeps the batch jobs it passed on, unless given others: nothing changes below until somebody changes them.
-	if !inherits && current.InheritsLimit && req.BatchJobs == nil && !req.ClearBatchJobs && chain != nil {
-		if above := model.ResolveBatchJobs(chain); above != nil {
-			updated.BatchJobs = above
-			historyEntry.BatchJobsFrom, historyEntry.BatchJobsTo = nil, above.Clone()
+	// Switched off, it keeps the Grant caps it passed on, each unless the request sets or removes it: nothing changes below until somebody changes them.
+	if !inherits && current.InheritsLimit && !req.ClearCaps && chain != nil {
+		next := maps.Clone(updated.Caps)
+		if next == nil {
+			next = common.Caps{}
 		}
+		for id, v := range model.GrantCaps(model.ResolveCaps(chain, s.capDefs()), s.capDefs()) {
+			if _, named := req.Caps[id]; !named {
+				next[id] = v
+			}
+		}
+		updated.Caps = next.Clone()
 	}
 	updated.InheritsLimit = inherits
+	if req.Caps != nil {
+		if err := model.ValidateCaps(updated.Caps, model.ResolveCaps(chain, s.capDefs()), current.ParentID == nil, inherits, s.capDefs()); err != nil {
+			return model.Node{}, err
+		}
+	}
+	historyEntry.CapsFrom, historyEntry.CapsTo = common.DiffCaps(current.Caps, updated.Caps)
 
 	if req.Limit != nil {
 		if err := s.checkBudgetLimit(ctx, *current, chain, *req.Limit, true); err != nil {
@@ -659,14 +619,14 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor model.Ac
 		return model.Node{}, err
 	}
 
-	// The ceiling on members is the one of the project as it will be: a limit that brings OpenStack in brings its ceiling in too, also for the members it already has.
+	// The ceiling on members is the one of the project as it will be: a limit that brings a provider in brings its ceiling in too, also for the members it already has.
 	var requestedLimit []common.ProjectQuota
 	if req.Limit != nil {
 		requestedLimit = append(requestedLimit, *req.Limit)
 	}
-	openstack := current.IsLeaf() && s.involvesOpenStack(*current, requestedLimit...)
-	if req.AuthorizedUsers == nil && openstack && !s.involvesOpenStack(*current) {
-		if err := s.checkAuthorizedUserCount(len(current.AuthorizedUsers), true); err != nil {
+	ceiling := s.memberCeilingOf(*current, requestedLimit...)
+	if req.AuthorizedUsers == nil && current.IsLeaf() {
+		if err := checkMemberCeilingFalls(len(current.AuthorizedUsers), s.memberCeilingOf(*current), ceiling); err != nil {
 			return model.Node{}, err
 		}
 	}
@@ -681,7 +641,7 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor model.Ac
 		if current.Pending != nil && current.Pending.AuthorizedUsers != nil {
 			keep = append(keep, *current.Pending.AuthorizedUsers)
 		}
-		normalized, err := s.normalizeAuthorizedUsers(ctx, *req.AuthorizedUsers, openstack, userTokens, manager, keep...)
+		normalized, err := s.normalizeAuthorizedUsers(ctx, *req.AuthorizedUsers, ceiling, userTokens, manager, keep...)
 		if err != nil {
 			return model.Node{}, err
 		}

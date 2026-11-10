@@ -61,8 +61,11 @@ type SetupConfig struct {
 
 // ConfigResponse contains system-wide resource configuration for the frontend.
 type ConfigResponse struct {
-	Resources      []uiResource `json:"resources"`
-	OpenstackRoles []string     `json:"openstackRoles"`
+	Resources []uiResource `json:"resources"`
+	// Roles are the roles a member of a project can hold (common.Roles), the list the API validates authorized_users against.
+	Roles []string `json:"roles"`
+	// Caps are the caps a budget can set for the projects below it (common.Cap), declared by the providers.
+	Caps []common.Cap `json:"caps"`
 	// ProvisioningEnabled reports whether the reconciler is running. Only then
 	// does an approved project eventually get an OpenStack project — without it
 	// the UI would show every project as "waiting for OpenStack" forever.
@@ -142,6 +145,8 @@ type APIConfig struct {
 	// Catalog is the resource catalogue, read per request: root admins change
 	// its availabilities at runtime.
 	Catalog common.ResourceCatalog
+	// Caps are the caps budgets can set (common.Cap), for /v1/config.
+	Caps []common.Cap
 	// CatalogAdmin runs the root admins' catalogue steps; nil leaves the
 	// routes answering 503.
 	CatalogAdmin *catalog.Admin
@@ -400,13 +405,10 @@ func getConfig(cfg APIConfig) gin.HandlerFunc {
 			resources = append(resources, uiResourceFrom(r))
 		}
 
-		// Same list the API validates authorized_users against, so the UI can
-		// never offer a role the API would reject.
-		openstackRoles := common.OpenstackRoles
-
 		config := ConfigResponse{
 			Resources:             resources,
-			OpenstackRoles:        openstackRoles,
+			Roles:                 common.Roles,
+			Caps:                  append([]common.Cap{}, cfg.Caps...),
 			ProvisioningEnabled:   cfg.ProvisioningEnabled != nil && cfg.ProvisioningEnabled(),
 			Providers:             append([]string{}, cfg.Providers...),
 			OpenstackDashboardURL: cfg.OpenstackDashboardURL,

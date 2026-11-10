@@ -75,10 +75,7 @@ func (s *Service) attachParentNames(ctx context.Context, nodes []model.Node, vie
 			nodes[i].EffectiveAttributes = nil
 		}
 		above := tree.budgetsAbove(nodes[i])
-		nodes[i].InheritedReleaseMax = model.ResolveReleaseMax(above)
-		nodes[i].InheritedWorkspaceScratchGB = model.ResolveWorkspaceScratchGB(above)
-		nodes[i].InheritedBatchPriority = model.ResolveBatchPriority(above)
-		nodes[i].InheritedBatchJobs = model.ResolveBatchJobs(above)
+		nodes[i].InheritedCaps = model.ResolveCaps(above, s.capDefs())
 		if nodes[i].ParentID != nil {
 			nodes[i].ParentName = tree.nodes[*nodes[i].ParentID].Name
 			nodes[i].ParentPath = tree.path(*nodes[i].ParentID)
@@ -127,7 +124,7 @@ type ancestry struct {
 func slimNode(n model.Node) model.Node {
 	return model.Node{
 		ID: n.ID, ParentID: n.ParentID, Name: n.Name, Attributes: n.Attributes, AdminScope: n.AdminScope,
-		ReleaseMax: n.ReleaseMax, WorkspaceScratchGB: n.WorkspaceScratchGB, BatchPriority: n.BatchPriority, BatchJobs: n.BatchJobs,
+		Caps:          n.Caps,
 		InheritsLimit: n.InheritsLimit, MaxProjectTermDays: n.MaxProjectTermDays,
 	}
 }

@@ -119,7 +119,7 @@ func TestListMineIncludesMembers(t *testing.T) {
 	}
 	project, err := svc.CreateNode(tree.CreateNodeRequest{
 		ParentID: budget.ID, Kind: model.KindProject, Name: "Lab", Reason: "lab", Limit: cores(2),
-		AuthorizedUsers: []common.AuthorizedUser{{Token: "user:member@x", OpenstackRole: "member"}, {Token: "group:cs-student", OpenstackRole: "reader"}},
+		AuthorizedUsers: []common.AuthorizedUser{{Token: "user:member@x", Role: "member"}, {Token: "group:cs-student", Role: "reader"}},
 	}, model.UIActor("owner@x"), "owner@x", ownerTokens)
 	if err != nil {
 		t.Fatalf("create project: %v", err)

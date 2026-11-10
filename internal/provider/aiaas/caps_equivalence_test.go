@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 )
 
 // The values the AI service is told about a project's release times, local storage, batch priority and batch jobs, for chains of budgets. Written before the four settings became caps of the catalogue (docs/plan-caps-katalog.md, 10.11.2026) with the then hand-written model, and kept unchanged since: the wire to the AI service must not move. Only budget() knows how a setting is stored on a node.
@@ -60,16 +62,37 @@ func TestCapsWireEquivalence(t *testing.T) {
 	}
 }
 
-// budget is a budget node setting s of its own, as the tree stores it.
+// budget is a budget node setting s of its own, as the tree stores it: its caps.
 func budget(s set) model.Node {
-	b := model.Node{Kind: model.KindBudget, InheritsLimit: s.inherits, WorkspaceScratchGB: s.scratch}
-	r := &model.ReleaseMax{CPU: model.ReleaseTimes{IdleOpenMinutes: s.cpuOpen, IdleClosedMinutes: s.cpuClosed, MaxHours: s.cpuMax}, GPU: model.ReleaseTimes{IdleOpenMinutes: s.gpuOpen, IdleClosedMinutes: s.gpuClosed, MaxHours: s.gpuMax}}
-	b.ReleaseMax = r.Normalized()
-	if s.prio != "" {
-		b.BatchPriority = &s.prio
+	c := common.Caps{}
+	for id, v := range map[string]*int{CapReleaseCPUIdleOpen: s.cpuOpen, CapReleaseCPUIdleClosed: s.cpuClosed, CapReleaseCPUMaxHours: s.cpuMax, CapReleaseGPUIdleOpen: s.gpuOpen, CapReleaseGPUIdleClosed: s.gpuClosed, CapReleaseGPUMaxHours: s.gpuMax, CapWorkspaceScratchGB: s.scratch} {
+		if v != nil {
+			c[id] = *v
+		}
+	}
+	switch s.prio {
+	case "preemptible":
+		c[CapBatchPriority] = 0
+	case "guaranteed":
+		c[CapBatchPriority] = 1
 	}
 	if s.jobs > 0 {
-		b.BatchJobs = &model.BatchJobs{JobsPerPerson: s.jobs, MaxHours: s.jobHours}
+		c[CapBatchJobsPerPerson], c[CapBatchMaxHours] = s.jobs, s.jobHours
 	}
-	return b
+	return model.Node{Kind: model.KindBudget, InheritsLimit: s.inherits, Caps: c.Clone()}
+}
+
+// The migration writes the ids of these caps.
+func TestLegacyCapIDsAreTheCaps(t *testing.T) {
+	for _, id := range nodestore.LegacyCapIDs {
+		if _, ok := common.CapCatalog(Caps).Find(id); !ok {
+			t.Errorf("%s is no cap", id)
+		}
+	}
+	if len(nodestore.LegacyCapIDs) != len(Caps) {
+		t.Errorf("%d legacy ids, %d caps", len(nodestore.LegacyCapIDs), len(Caps))
+	}
+	if err := common.ValidateCapDefs(Caps); err != nil {
+		t.Error(err)
+	}
 }

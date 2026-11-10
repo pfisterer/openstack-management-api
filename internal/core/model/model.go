@@ -315,19 +315,10 @@ type HistoryEntry struct {
 	// after an "attributes_changed" entry.
 	AttributesFrom Attributes `json:"attributes_from,omitempty"`
 	AttributesTo   Attributes `json:"attributes_to,omitempty"`
-	// ReleaseMaxFrom and ReleaseMaxTo are the budget's own release maximums before and after an "updated" entry that changed them; nil on one side means none.
-	ReleaseMaxFrom *ReleaseMax `json:"release_max_from,omitempty"`
-	ReleaseMaxTo   *ReleaseMax `json:"release_max_to,omitempty"`
-	// WorkspaceScratchGBFrom and WorkspaceScratchGBTo are the budget's own local storage per workspace before and after an "updated" entry that changed it; nil on one side means none.
-	WorkspaceScratchGBFrom *int `json:"workspace_scratch_gb_from,omitempty"`
-	WorkspaceScratchGBTo   *int `json:"workspace_scratch_gb_to,omitempty"`
-	// BatchPriorityFrom and BatchPriorityTo are the budget's own batch priority before and after an "updated" entry that changed it; nil on one side means none.
-	BatchPriorityFrom *string `json:"batch_priority_from,omitempty"`
-	BatchPriorityTo   *string `json:"batch_priority_to,omitempty"`
-	// BatchJobsFrom and BatchJobsTo are the budget's own batch jobs before and after an "updated" entry that changed them; nil on one side means none.
-	BatchJobsFrom *BatchJobs `json:"batch_jobs_from,omitempty"`
-	BatchJobsTo   *BatchJobs `json:"batch_jobs_to,omitempty"`
-	Reason        *string    `json:"reason,omitempty"`
+	// CapsFrom and CapsTo are the budget's own caps (common.Cap) that an entry changed, before and after: only the ids that differ; an id missing on one side was not set there.
+	CapsFrom common.Caps `json:"caps_from,omitempty"`
+	CapsTo   common.Caps `json:"caps_to,omitempty"`
+	Reason   *string     `json:"reason,omitempty"`
 }
 
 // StatusUsage groups the aggregated limits and contributing leaf IDs for one status.
@@ -423,14 +414,8 @@ type Node struct {
 	// sub-budget may tighten it, never loosen it; lowering it shortens the
 	// projects below. nil means no cap of its own.
 	MaxProjectTermDays *int `json:"max_project_term_days,omitempty"`
-	// ReleaseMax are the most the projects below this budget may choose as release times of their workspaces at the AI service (see ReleaseMax). Not a quantity: it holds for every project below, a budget below may only tighten it, and what applies to a project is the strictest value along its chain (ResolveReleaseMax). Set by the budget's managers like the other policy fields. nil means nothing of its own.
-	ReleaseMax *ReleaseMax `json:"release_max,omitempty"`
-	// WorkspaceScratchGB is the most local storage (GB) a workspace or GPU kernel of the projects below this budget may write outside its home at the AI service (see scratch.go). Like ReleaseMax no quantity: it holds for every project below, a budget below may only lower it, and what applies to a project is the smallest value along its chain (ResolveWorkspaceScratchGB). nil means nothing of its own.
-	WorkspaceScratchGB *int `json:"workspace_scratch_gb,omitempty" example:"5"`
-	// BatchPriority is how the batch jobs of the projects below this budget run at the AI service: BatchPriorityGuaranteed or BatchPriorityPreemptible (see batch_priority.go). Like WorkspaceScratchGB no quantity: it holds for every project below, a budget below may only tighten it (preemptible is stricter), and what applies to a project is the strictest value along its chain (ResolveBatchPriority). nil means nothing of its own.
-	BatchPriority *string `json:"batch_priority,omitempty" example:"preemptible" enums:"guaranteed,preemptible"`
-	// BatchJobs switch batch jobs at the AI service on for the projects below this budget, with their bounds (see batch_jobs.go). Like a resource they are there or not: nil means none, here and below, unless the budget inherits its limit (then it passes on those above). A budget below may have them only where this one does, with values at most these; what applies to a project is the strictest value along its chain (ResolveBatchJobs).
-	BatchJobs *BatchJobs `json:"batch_jobs,omitempty"`
+	// Caps are the budget's own caps (common.Cap, declared by the providers): upper bounds for every project below it, which a budget below may only tighten; what applies to a project is the strictest value along its chain (ResolveCaps). Set by the budget's managers like the other policy fields. Nil means none of its own.
+	Caps common.Caps `json:"caps,omitempty"`
 
 	// InheritsLimit makes a budget a node for structure only: it has no limit
 	// of its own but passes on the one of the budget above — a campus that
@@ -535,14 +520,8 @@ type Node struct {
 	// the node it comes from. Like Attributes, only for those who look after the
 	// node — its managers and those above, on a project its owner and admins.
 	EffectiveAttributes map[string]AttributeGroup `json:"effective_attributes,omitempty"`
-	// InheritedReleaseMax is attached to API responses (never persisted): the strictest release maximums of the budgets above this node (ResolveReleaseMax over its ancestors). On a budget it is what its own ReleaseMax may only tighten; on a project, what applies to it. Nil when no budget above sets any.
-	InheritedReleaseMax *ReleaseMax `json:"inherited_release_max,omitempty"`
-	// InheritedWorkspaceScratchGB is attached to API responses (never persisted): the smallest local storage per workspace the budgets above this node set (ResolveWorkspaceScratchGB over its ancestors). On a budget it is what its own value may only lower; on a project, what applies to it. Nil when no budget above sets one (the AI service's default applies).
-	InheritedWorkspaceScratchGB *int `json:"inherited_workspace_scratch_gb,omitempty"`
-	// InheritedBatchPriority is attached to API responses (never persisted): the strictest batch priority the budgets above this node set (ResolveBatchPriority over its ancestors). On a budget it is what its own value may only tighten; on a project, what applies to it. Nil when no budget above sets one (the AI service treats the project as preemptible).
-	InheritedBatchPriority *string `json:"inherited_batch_priority,omitempty" enums:"guaranteed,preemptible"`
-	// InheritedBatchJobs is attached to API responses (never persisted): what the budgets above this node allow of batch jobs (ResolveBatchJobs over its ancestors). On a budget, what its own value may be at most; on a project, what applies to it. Nil for the root and where the budgets above have none (then the projects have none either).
-	InheritedBatchJobs *BatchJobs `json:"inherited_batch_jobs,omitempty"`
+	// InheritedCaps is attached to API responses (never persisted): what the budgets above this node set of caps (ResolveCaps over its ancestors). On a budget it is what its own caps may only tighten; on a project, what applies to it. An id missing is set by nobody above (for a Grant cap: none).
+	InheritedCaps common.Caps `json:"inherited_caps,omitempty"`
 
 	// AvailableResources is attached to API responses (never persisted): the
 	// resources that are in scope AT THIS NODE, root-most first as the catalogue

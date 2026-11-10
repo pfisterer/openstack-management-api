@@ -174,11 +174,11 @@ func DefaultMockTreeState() ([]common.Identity, []model.Node) {
 			Owner:  "user:faculty@cs.example",
 			Limit:  common.ProjectQuota{"cores": 4, "ram": 16, "storage": 100},
 			AuthorizedUsers: []common.AuthorizedUser{
-				{Token: DeptCSFaculty, OpenstackRole: "member"},
+				{Token: DeptCSFaculty, Role: "member"},
 				// A read-only participant: the student may look at the project in
 				// OpenStack but cannot change anything. Covers the "reader" role in
 				// the member sync and gives the UI a project with mixed roles.
-				{Token: "user:cs-student@cs.com", OpenstackRole: "reader"},
+				{Token: "user:cs-student@cs.com", Role: "reader"},
 			},
 			TerminationDate: plusDays(90),
 			CreatedBy:       "faculty@cs.example", CreatedAt: "2026-01-20T10:00:00Z",
@@ -193,7 +193,7 @@ func DefaultMockTreeState() ([]common.Identity, []model.Node) {
 			Owner:  "user:cs-student@cs.com",
 			Limit:  common.ProjectQuota{"cores": 2, "ram": 8, "storage": 50},
 			AuthorizedUsers: []common.AuthorizedUser{
-				{Token: "user:cs-student@cs.com", OpenstackRole: "member"},
+				{Token: "user:cs-student@cs.com", Role: "member"},
 			},
 			TerminationDate: plusDays(30),
 			CreatedBy:       "cs-student@cs.com", CreatedAt: "2026-01-23T08:00:00Z",
@@ -209,12 +209,12 @@ func DefaultMockTreeState() ([]common.Identity, []model.Node) {
 				Limit:           &common.ProjectQuota{"cores": 12, "ram": 48, "storage": 300},
 				TerminationDate: plusDays(180),
 				AuthorizedUsers: &[]common.AuthorizedUser{
-					{Token: DeptCSFaculty, OpenstackRole: "member"},
-					{Token: "user:newuser@cs.example", OpenstackRole: "reader"},
+					{Token: DeptCSFaculty, Role: "member"},
+					{Token: "user:newuser@cs.example", Role: "reader"},
 				},
 			},
 			AuthorizedUsers: []common.AuthorizedUser{
-				{Token: DeptCSFaculty, OpenstackRole: "member"},
+				{Token: DeptCSFaculty, Role: "member"},
 			},
 			TerminationDate: plusDays(60),
 			CreatedBy:       "faculty@cs.example", CreatedAt: "2026-01-15T10:00:00Z",
@@ -227,7 +227,7 @@ func DefaultMockTreeState() ([]common.Identity, []model.Node) {
 			Owner:  "user:faculty@bio.example",
 			Limit:  common.ProjectQuota{"cores": 16, "ram": 64, "storage": 800},
 			AuthorizedUsers: []common.AuthorizedUser{
-				{Token: DeptBioGroup, OpenstackRole: "member"},
+				{Token: DeptBioGroup, Role: "member"},
 			},
 			TerminationDate: plusDays(180),
 			CreatedBy:       "faculty@bio.example", CreatedAt: "2026-02-01T09:00:00Z",
@@ -241,8 +241,8 @@ func DefaultMockTreeState() ([]common.Identity, []model.Node) {
 			Reason: "OpenStack project: legacy-ml-workload (os-project-abc-123)",
 			Limit:  common.ProjectQuota{"cores": 9, "ram": 16, "storage": 100},
 			AuthorizedUsers: []common.AuthorizedUser{
-				{Token: "user:faculty@cs.example", OpenstackRole: "member"},
-				{Token: DeptCSFaculty, OpenstackRole: "member"},
+				{Token: "user:faculty@cs.example", Role: "member"},
+				{Token: DeptCSFaculty, Role: "member"},
 			},
 			Bindings: map[string]model.Binding{"openstack": {
 				ExternalID:   "os-project-abc-123",

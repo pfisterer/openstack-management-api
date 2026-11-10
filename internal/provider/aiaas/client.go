@@ -49,13 +49,13 @@ type Project struct {
 	DeleteAt *time.Time `json:"delete_at,omitempty"`
 	// Workspaces tells whether the project holds anything of the area workspaces: only then it is a workspace project (start form, servers); one with LLM tokens only is not.
 	Workspaces bool `json:"workspaces"`
-	// Release are the most the project may choose as release times: the strictest release maximums along its chain of budgets, root included (model.ResolveReleaseMax). Always sent, so they belong to the tree there and nobody sets them at the AI service; a field no budget sets is left out and the AI service keeps its own default for it.
+	// Release are the most the project may choose as release times: the strictest release maximums along its chain of budgets, root included (ReleaseFor). Always sent, so they belong to the tree there and nobody sets them at the AI service; a field no budget sets is left out and the AI service keeps its own default for it.
 	Release *Release `json:"release"`
-	// WorkspaceScratchGB is the local storage (GB) a workspace or GPU kernel of the project may write outside its home: the smallest value along its chain of budgets, root included (model.ResolveWorkspaceScratchGB); 0 = no budget sets one, the AI service applies its default.
+	// WorkspaceScratchGB is the local storage (GB) a workspace or GPU kernel of the project may write outside its home: the smallest value along its chain of budgets, root included (ScratchFor); 0 = no budget sets one, the AI service applies its default.
 	WorkspaceScratchGB int `json:"workspace_scratch_gb"`
-	// BatchPriority is how the project's batch jobs run: "guaranteed" or "preemptible", the strictest value along its chain of budgets, root included (model.ResolveBatchPriority); empty = no budget sets one, the AI service treats it as preemptible.
+	// BatchPriority is how the project's batch jobs run: "guaranteed" or "preemptible", the strictest value along its chain of budgets, root included (BatchPriorityFor); empty = no budget sets one, the AI service treats it as preemptible.
 	BatchPriority string `json:"batch_priority,omitempty" example:"preemptible" enums:"guaranteed,preemptible"`
-	// BatchJobs are the project's batch jobs: the strictest values along its chain of budgets, root included (model.ResolveBatchJobs); {0, 0} where they have none. Always sent: the tree decides the job limits of its projects at the AI service.
+	// BatchJobs are the project's batch jobs: the strictest values along its chain of budgets, root included (BatchJobsFor); {0, 0} where they have none. Always sent: the tree decides the job limits of its projects at the AI service.
 	BatchJobs *BatchJobs `json:"batch_jobs"`
 }
 

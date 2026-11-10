@@ -115,6 +115,10 @@ func NewPostgresStore(dsn string, log *zap.SugaredLogger) (*PostgresStore, error
 	if err := factBindingCounts(db, log); err != nil {
 		return nil, fmt.Errorf("postgres: %w", err)
 	}
+	// Fatal, unlike the end dates: nothing reads the former fields any more, so a node written before they are migrated would lose its budget settings, and a reader its role.
+	if err := migrateCaps(db, log); err != nil {
+		return nil, fmt.Errorf("postgres: caps: %w", err)
+	}
 	// Not fatal: every reader understands the former spellings too, so a failure leaves the service working and the migration runs again at the next start.
 	if err := normalizeEndDates(db, log); err != nil {
 		log.Warnw("Stored end dates not written as days", "error", err)
@@ -137,11 +141,8 @@ func toNodeRow(n model.Node) nodeRow {
 	n.Usage = nil
 	// So is what the projects below use: it changes with every provider pass.
 	n.SubtreeInUse = nil
-	// So are the release maximums inherited from above: a stored copy would go stale the moment a budget above changes its own.
-	n.InheritedReleaseMax = nil
-	n.InheritedWorkspaceScratchGB = nil
-	n.InheritedBatchPriority = nil
-	n.InheritedBatchJobs = nil
+	// So are the caps inherited from above: a stored copy would go stale the moment a budget above changes its own.
+	n.InheritedCaps = nil
 	// And how the caller of a listing sees the node.
 	n.ViewerRelation = ""
 	// Every write passes here, so this is where no node's history outgrows its cap.
@@ -214,7 +215,7 @@ func jsonbContainsAnyCond(column string, tokens []string) (string, []any) {
 	return "(" + strings.Join(conds, " OR ") + ")", args
 }
 
-// authorizedUsersContainAnyCond matches a node whose authorized users (inside the data blob, [{"token": …, "openstack_role": …}]) hold any of the tokens.
+// authorizedUsersContainAnyCond matches a node whose authorized users (inside the data blob, [{"token": …, "role": …}]) hold any of the tokens.
 func authorizedUsersContainAnyCond(tokens []string) (string, []any) {
 	if len(tokens) == 0 {
 		return "FALSE", nil

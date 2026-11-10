@@ -61,14 +61,8 @@ type CreateNodeRequest struct {
 	// MaxProjectTermDays may not exceed the cap of a budget above; omitted
 	// under a budget with a cap, it is that cap.
 	MaxProjectTermDays *int `json:"max_project_term_days"`
-	// ReleaseMax are the budget's own release maximums (model.ReleaseMax); each value at most what the budgets above allow. Omitted or empty, the budget sets none of its own and those above apply.
-	ReleaseMax *model.ReleaseMax `json:"release_max"`
-	// WorkspaceScratchGB is the budget's own local storage per workspace in GB (model.WorkspaceScratchGB), 1 to model.MaxWorkspaceScratchGB and at most what the budgets above allow. Omitted, the budget sets none of its own and those above apply.
-	WorkspaceScratchGB *int `json:"workspace_scratch_gb" example:"5"`
-	// BatchPriority is the budget's own batch priority (model.BatchPriority), "guaranteed" or "preemptible"; it may not guarantee what the budgets above make preemptible. Omitted, the budget sets none of its own and those above apply.
-	BatchPriority *string `json:"batch_priority" example:"preemptible" enums:"guaranteed,preemptible"`
-	// BatchJobs switches batch jobs on for the projects below the budget (model.BatchJobs): jobs per person and the longest run time in hours, only where the budgets above have them and each at most what they allow. Omitted, the budget has none, unless it inherits its limit (InheritsLimit): then it passes on those above and must not set any.
-	BatchJobs *model.BatchJobs `json:"batch_jobs"`
+	// Caps are the budget's own caps (common.Cap, /v1/config lists them) by id; each within its cap and at most what the budgets above allow, a Grant cap only where they have it. Omitted, the budget sets none of its own and those above apply.
+	Caps common.Caps `json:"caps"`
 	// InheritsLimit creates a budget that passes on the limit of its parent
 	// (Node.InheritsLimit); Limit is then ignored. Managers only.
 	InheritsLimit bool `json:"inherits_limit"`
@@ -78,7 +72,7 @@ type CreateNodeRequest struct {
 // cycle). Policy fields require a manager of the node or its ancestors; Limit
 // requires a manager of the parent chain (you cannot raise your own budget).
 //
-// A field left out stays as it is; a field sent as null is removed (auto_approve, max_project_term_days, release_max, workspace_scratch_gb, batch_priority, batch_jobs, termination_date). Decided 10.11.2026 in place of the clear_* flags, which are refused since (UnmarshalJSON). The Clear* fields below carry the null into the service and are not part of the JSON.
+// A field left out stays as it is; a field sent as null is removed (auto_approve, max_project_term_days, caps, termination_date). Decided 10.11.2026 in place of the clear_* flags, which are refused since (UnmarshalJSON). The Clear* fields below carry the null into the service and are not part of the JSON.
 type UpdateNodeRequest struct {
 	Name                           *string            `json:"name,omitempty"`
 	AdminScope                     *common.TokenList  `json:"admin_scope,omitempty"`
@@ -94,17 +88,9 @@ type UpdateNodeRequest struct {
 	// null removes the cap, only where no budget above has one.
 	MaxProjectTermDays      *int `json:"max_project_term_days,omitempty"`
 	ClearMaxProjectTermDays bool `json:"-" swaggerignore:"true"`
-	// ReleaseMax replaces the budget's own release maximums as a whole (model.ReleaseMax); a field left out is not set here, so the budgets above decide it, and an empty object or null removes them all. Each value at most what the budgets above allow (Node.InheritedReleaseMax). Managers of the budget or above, like the other policy fields. Omitted, they stay as they are.
-	ReleaseMax *model.ReleaseMax `json:"release_max,omitempty"`
-	// WorkspaceScratchGB sets the budget's own local storage per workspace in GB (model.WorkspaceScratchGB): 1 to model.MaxWorkspaceScratchGB and at most what the budgets above allow (Node.InheritedWorkspaceScratchGB). null removes it, so the budgets above (or the AI service's default) apply. Managers of the budget or above, like the other policy fields. Omitted, it stays as it is.
-	WorkspaceScratchGB      *int `json:"workspace_scratch_gb,omitempty" example:"5"`
-	ClearWorkspaceScratchGB bool `json:"-" swaggerignore:"true"`
-	// BatchPriority sets the budget's own batch priority (model.BatchPriority): "guaranteed" or "preemptible", and not "guaranteed" where the budgets above make it preemptible (Node.InheritedBatchPriority). null removes it, so the budgets above apply (none: preemptible). Managers of the budget or above, like the other policy fields. Omitted, it stays as it is.
-	BatchPriority      *string `json:"batch_priority,omitempty" example:"preemptible" enums:"guaranteed,preemptible"`
-	ClearBatchPriority bool    `json:"-" swaggerignore:"true"`
-	// BatchJobs switches batch jobs on for the projects below the budget or changes their bounds (model.BatchJobs): jobs per person and the longest run time in hours, only where the budgets above have them (Node.InheritedBatchJobs) and each at most what they allow; the root sets the most anybody gets. null switches them off here and below. Not on a budget that inherits its limit: it passes on those above. Managers of the budget or above, like the other policy fields. Omitted, they stay as they are.
-	BatchJobs       *model.BatchJobs     `json:"batch_jobs,omitempty"`
-	ClearBatchJobs  bool                 `json:"-" swaggerignore:"true"`
+	// Caps changes the budget's own caps (common.Cap) by id: a value sets one, null removes it, an id left out stays; "caps": null removes them all. The result must hold as on creation (model.ValidateCaps). Managers of the budget or above, like the other policy fields.
+	Caps            map[string]*int      `json:"caps,omitempty"`
+	ClearCaps       bool                 `json:"-" swaggerignore:"true"`
 	Limit           *common.ProjectQuota `json:"limit,omitempty"`
 	TerminationDate *string              `json:"termination_date,omitempty"`
 	// TerminationDate may not lie after the end of any budget above. A budget's
@@ -183,9 +169,6 @@ type PromoteNodeRequest struct {
 var nullableUpdateFields = []struct{ field, formerFlag string }{
 	{"auto_approve", "clear_auto_approve"},
 	{"max_project_term_days", "clear_max_project_term_days"},
-	{"workspace_scratch_gb", "clear_workspace_scratch_gb"},
-	{"batch_priority", "clear_batch_priority"},
-	{"batch_jobs", "clear_batch_jobs"},
 	{"termination_date", "clear_termination_date"},
 }
 
@@ -212,13 +195,8 @@ func (r *UpdateNodeRequest) UnmarshalJSON(b []byte) error {
 	*r = UpdateNodeRequest(p)
 	r.ClearAutoApprove = isNull("auto_approve")
 	r.ClearMaxProjectTermDays = isNull("max_project_term_days")
-	r.ClearWorkspaceScratchGB = isNull("workspace_scratch_gb")
-	r.ClearBatchPriority = isNull("batch_priority")
-	r.ClearBatchJobs = isNull("batch_jobs")
+	r.ClearCaps = isNull("caps")
 	r.ClearTerminationDate = isNull("termination_date")
-	if isNull("release_max") {
-		r.ReleaseMax = &model.ReleaseMax{}
-	}
 	return nil
 }
 
@@ -246,13 +224,8 @@ var updateFieldClass = map[string]updateClass{
 	"AutoApproveExtensions":          updatePolicy,
 	"MaxProjectTermDays":             updatePolicy,
 	"ClearMaxProjectTermDays":        updatePolicy,
-	"ReleaseMax":                     updatePolicy,
-	"WorkspaceScratchGB":             updatePolicy,
-	"ClearWorkspaceScratchGB":        updatePolicy,
-	"BatchPriority":                  updatePolicy,
-	"ClearBatchPriority":             updatePolicy,
-	"BatchJobs":                      updatePolicy,
-	"ClearBatchJobs":                 updatePolicy,
+	"Caps":                           updatePolicy,
+	"ClearCaps":                      updatePolicy,
 	"Limit":                          updateCapacity,
 	"TerminationDate":                updateCapacity,
 	"ClearTerminationDate":           updateCapacity,
@@ -287,7 +260,7 @@ func (r UpdateNodeRequest) policyEdit() bool {
 func (r UpdateNodeRequest) capacityEdit() bool { return r.sentClasses()[updateCapacity] }
 
 // createBudgetSettings are the fields of CreateNodeRequest a project refuses as budget settings, in the order they are named in the refusal. The other budget fields (eligible requesters, auto-approve and its switches) are ignored on a project, as they always were; TestCreateNodeRequest_EveryFieldClassified holds the two lists to the struct.
-var createBudgetSettings = []string{"MaxProjectTermDays", "ReleaseMax", "WorkspaceScratchGB", "BatchPriority", "BatchJobs", "InheritsLimit"}
+var createBudgetSettings = []string{"MaxProjectTermDays", "Caps", "InheritsLimit"}
 
 // createIgnoredOnProject are the budget fields of CreateNodeRequest a project ignores.
 var createIgnoredOnProject = []string{"EligibleRequesters", "AutoApprove", "AllowSubBudgetRequests", "AllowRequestsBeyondAutoApprove", "AutoApproveExtensions"}

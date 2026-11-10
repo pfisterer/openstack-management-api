@@ -53,7 +53,7 @@ func TestListChildrenFilters(t *testing.T) {
 		t.Helper()
 		var users []common.AuthorizedUser
 		for _, m := range members {
-			users = append(users, common.AuthorizedUser{Token: m, OpenstackRole: "member"})
+			users = append(users, common.AuthorizedUser{Token: m, Role: "member"})
 		}
 		if _, err := svc.CreateNode(tree.CreateNodeRequest{
 			ParentID: budget.ID, Kind: model.KindProject, Name: name, Reason: "a project", Limit: cores(1),

@@ -28,47 +28,13 @@ const (
 	MaxPageLimit     = 500
 )
 
-// OpenstackRoles are the roles a project participant can hold. The list is the
-// single source for both the /v1/config response (what the UI offers) and the
-// validation of authorized_users — otherwise the UI could offer a role the API
-// rejects, or the API could accept one Keystone does not know.
+// Roles are the roles a member of a project can hold in the tree: "member" works in the project, "reader" only looks (decided 10.11.2026: the tree's own terms, docs/plan-caps-katalog.md; before, the field was named openstack_role). Each provider says what a role means there: OpenStack grants the Keystone role of the same name, the AI service gives a reader read access only. The list is the single source for both the /v1/config response (what the UI offers) and the validation of authorized_users.
 //
-// "admin" used to be in this list, which made cloud-wide admin a self-service
-// choice: whoever files a project request fills in authorized_users, and the
-// auto-approval path only weighs quota against the parent budget — it never
-// looks at the roles. Someone requesting a project could therefore hand a
-// friend the operator's view of the entire cloud with nobody reviewing it.
-// See OwnerOpenstackRole for why "admin" is not project-local in OpenStack.
-//
-// Granting "admin" remains possible, but only as a deliberate act by an
-// operator against Keystone — not as an entry in a self-service form.
-var OpenstackRoles = []string{"member", "reader"}
+// "admin" used to be in this list, which made cloud-wide admin a self-service choice in OpenStack (see osclient.OwnerKeystoneRole): whoever files a project request fills in authorized_users, and the auto-approval path never looks at the roles. Granting "admin" remains possible, but only as a deliberate act by an operator against Keystone — not as an entry in a self-service form.
+var Roles = []string{"member", "reader"}
 
-// OwnerOpenstackRole is the Keystone role a project owner receives.
-//
-// It is "member", NOT "admin". OpenStack's "admin" role is not confined to the
-// project it is granted in: a large part of the default policy checks
-// `role:admin` without looking at scope, so a project-scoped admin can read
-// cloud-wide state — the full hypervisor list, host aggregates, every tenant's
-// resources. Granting it to a project owner hands a student the operator's view
-// of the whole cloud (observed on ha-teststack 2026-08-06).
-//
-// "member" is what "may run their own project" actually means: create and manage
-// servers, volumes, networks inside the project, and nothing outside it. Owners
-// do not need "admin" to manage participants either — that happens through this
-// platform, not through Horizon.
-const OwnerOpenstackRole = "member"
-
-// DefaultMaxAuthorizedUsers caps how many participants one project that involves OpenStack may list.
-//
-// Real projects have a handful; a course or department goes in as ONE group
-// token, which is why the ceiling can sit far above normal use and still bound
-// the work a single request creates: every group entry costs the reconciler a
-// Keystone group plus a FindOrCreateUser per member of that group, on every run.
-const DefaultMaxAuthorizedUsers = 32
-
-// DefaultMaxAuthorizedUsersOther caps the participants of a project without anything in OpenStack (workspaces, LLM). Those members cost no Keystone work, so the cap only bounds the size of one request and of the lists handed to the AI service; a course of 30–40 students listed one by one fits several times over.
-const DefaultMaxAuthorizedUsersOther = 200
+// DefaultMaxAuthorizedUsers caps the members of a project that no provider with rules of its own concerns (tree.ProviderRules); a provider bounds its projects itself, OpenStack far lower, since each member costs it Keystone work on every run. A course or department goes in as ONE group token.
+const DefaultMaxAuthorizedUsers = 200
 
 // ProviderOpenStack is the provider name of OpenStack, as resources (Resource.Provider) and bindings (Node.Bindings) name it.
 const ProviderOpenStack = "openstack"
@@ -106,8 +72,8 @@ func (q ProjectQuota) Grants(id string) bool { return q[id] == 1 }
 
 // AuthorizedUser represents a user/group authorization entry with an OpenStack role.
 type AuthorizedUser struct {
-	Token         string `json:"token"`
-	OpenstackRole string `json:"openstack_role"`
+	Token string `json:"token"`
+	Role  string `json:"role"`
 }
 
 // ExternalGroupAssignment records an OpenStack group role assignment that has no

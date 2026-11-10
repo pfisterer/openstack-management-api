@@ -5,6 +5,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 )
 
 // The owner's Keystone role used to be a hardcoded "admin". OpenStack's default
@@ -23,10 +24,10 @@ func TestBuildDesiredMembers_OwnerIsNotCloudAdmin(t *testing.T) {
 		t.Errorf("owner email = %q, want student@example.edu", got)
 	}
 	if members[0].RoleName == "admin" {
-		t.Fatal("owner was granted the cloud-wide 'admin' role; see common.OwnerOpenstackRole")
+		t.Fatal("owner was granted the cloud-wide 'admin' role; see osclient.OwnerKeystoneRole")
 	}
-	if got := members[0].RoleName; got != common.OwnerOpenstackRole {
-		t.Errorf("owner role = %q, want %q", got, common.OwnerOpenstackRole)
+	if got := members[0].RoleName; got != osclient.OwnerKeystoneRole {
+		t.Errorf("owner role = %q, want %q", got, osclient.OwnerKeystoneRole)
 	}
 }
 
@@ -35,10 +36,10 @@ func TestBuildDesiredMembers_AuthorizedUsersKeepTheirRole(t *testing.T) {
 	leaf := model.Node{
 		Owner: "user:owner@example.edu",
 		AuthorizedUsers: []common.AuthorizedUser{
-			{Token: "user:reader@example.edu", OpenstackRole: "reader"},
-			{Token: "user:member@example.edu", OpenstackRole: "member"},
+			{Token: "user:reader@example.edu", Role: "reader"},
+			{Token: "user:member@example.edu", Role: "member"},
 			// Group tokens have no Keystone equivalent and must be skipped.
-			{Token: "group:course-wi", OpenstackRole: "member"},
+			{Token: "group:course-wi", Role: "member"},
 		},
 	}
 
@@ -48,7 +49,7 @@ func TestBuildDesiredMembers_AuthorizedUsersKeepTheirRole(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"owner@example.edu":  common.OwnerOpenstackRole,
+		"owner@example.edu":  osclient.OwnerKeystoneRole,
 		"reader@example.edu": "reader",
 		"member@example.edu": "member",
 	}
@@ -68,9 +69,9 @@ func TestBuildDesiredMembers_StoredAdminIsClampedDown(t *testing.T) {
 	leaf := model.Node{
 		Owner: "user:owner@example.edu",
 		AuthorizedUsers: []common.AuthorizedUser{
-			{Token: "user:legacy@example.edu", OpenstackRole: "admin"},
-			{Token: "user:garbage@example.edu", OpenstackRole: "not-a-role"},
-			{Token: "user:cased@example.edu", OpenstackRole: "  Reader "},
+			{Token: "user:legacy@example.edu", Role: "admin"},
+			{Token: "user:garbage@example.edu", Role: "not-a-role"},
+			{Token: "user:cased@example.edu", Role: "  Reader "},
 		},
 	}
 
@@ -82,11 +83,11 @@ func TestBuildDesiredMembers_StoredAdminIsClampedDown(t *testing.T) {
 	if got["legacy@example.edu"] == "admin" {
 		t.Error("a stored 'admin' role was passed through to Keystone")
 	}
-	if got["legacy@example.edu"] != common.OwnerOpenstackRole {
-		t.Errorf("legacy admin = %q, want it clamped to %q", got["legacy@example.edu"], common.OwnerOpenstackRole)
+	if got["legacy@example.edu"] != osclient.OwnerKeystoneRole {
+		t.Errorf("legacy admin = %q, want it clamped to %q", got["legacy@example.edu"], osclient.OwnerKeystoneRole)
 	}
-	if got["garbage@example.edu"] != common.OwnerOpenstackRole {
-		t.Errorf("unknown role = %q, want %q", got["garbage@example.edu"], common.OwnerOpenstackRole)
+	if got["garbage@example.edu"] != osclient.OwnerKeystoneRole {
+		t.Errorf("unknown role = %q, want %q", got["garbage@example.edu"], osclient.OwnerKeystoneRole)
 	}
 	// Clamping must not swallow a role that is merely untidy.
 	if got["cased@example.edu"] != "reader" {

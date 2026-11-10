@@ -18,9 +18,12 @@ func TestUpdateNodeRequest_EveryFieldClassified(t *testing.T) {
 		}
 		var r UpdateNodeRequest
 		v := reflect.ValueOf(&r).Elem().Field(i)
-		if v.Kind() == reflect.Pointer {
+		switch v.Kind() {
+		case reflect.Pointer:
 			v.Set(reflect.New(f.Type.Elem()))
-		} else {
+		case reflect.Map:
+			v.Set(reflect.MakeMap(f.Type))
+		default:
 			v.SetBool(true)
 		}
 		if got := r.sentClasses(); len(got) != 1 || !got[class] {
@@ -63,9 +66,12 @@ func TestCreateNodeRequest_EveryFieldClassified(t *testing.T) {
 		var r CreateNodeRequest
 		f, _ := typ.FieldByName(name)
 		v := reflect.ValueOf(&r).Elem().FieldByName(name)
-		if v.Kind() == reflect.Pointer {
+		switch v.Kind() {
+		case reflect.Pointer:
 			v.Set(reflect.New(f.Type.Elem()))
-		} else {
+		case reflect.Map:
+			v.Set(reflect.MakeMap(f.Type))
+		default:
 			v.SetBool(true)
 		}
 		if got, want := r.budgetSetting(), f.Tag.Get("json"); got != want {

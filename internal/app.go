@@ -211,7 +211,7 @@ func RunApplication() {
 		cancelRefresh()
 	}
 	allResources := common.CombinedCatalog{resourceCatalog, gpuCatalog}
-	treeSvc := tree.NewService(nodeStore, roleProvider, allResources.Resources(), config.RootAdminTokens, requestTimeout, config.MaxAuthorizedUsers, tree.Accounting{
+	treeSvc := tree.NewService(nodeStore, roleProvider, allResources.Resources(), config.RootAdminTokens, requestTimeout, config.MaxAuthorizedUsersOther, tree.Accounting{
 		ChargeInUse:    config.ChargeOSInUse,
 		ChargeReleased: config.ChargeReleased,
 		ChargeArchived: config.ChargeArchived,
@@ -227,7 +227,11 @@ func RunApplication() {
 	}
 	treeSvc.SetDeletingProviders(deleting...)
 	treeSvc.SetMaxProjectsPerOwner(config.MaxProjectsPerOwner)
-	treeSvc.SetMaxAuthorizedUsersOther(config.MaxAuthorizedUsersOther)
+	// What the providers tell the tree beyond their resources: the caps a budget sets for the projects below it, and how many members a project of theirs may list.
+	if err := treeSvc.SetCaps(aiaas.Caps); err != nil {
+		logger.Fatalw("Invalid caps of the providers", "error", err)
+	}
+	treeSvc.SetProviderRules(osclient.Rules{Members: config.MaxAuthorizedUsers}, aiaas.Rules{Members: config.MaxAuthorizedUsersOther})
 
 	// Bootstrap: optional mock seed into an empty store, then ensure the
 	// structural root/unassigned nodes (root admin scope is synced from config).
@@ -368,6 +372,7 @@ func RunApplication() {
 			// Asked per request: the reconciler may still be connecting.
 			ProvisioningEnabled:   func() bool { return reconcilerAPI != nil && reconcilerAPI.Ready() },
 			Providers:             activeProviders(config),
+			Caps:                  treeSvc.Caps(),
 			OpenstackDashboardURL: config.WebServer.OpenstackDashboardURL,
 			Retirement:            retirementConfig(config),
 			Usage:                 usageStore,

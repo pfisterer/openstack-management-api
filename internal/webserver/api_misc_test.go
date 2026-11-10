@@ -123,7 +123,7 @@ func TestConfigEndpoint(t *testing.T) {
 	assertStatus(t, rr, http.StatusOK)
 	var cfg webserver.ConfigResponse
 	mustDecode(t, rr, &cfg)
-	if len(cfg.OpenstackRoles) == 0 {
+	if len(cfg.Roles) == 0 {
 		t.Errorf("config should list OpenStack roles")
 	}
 }

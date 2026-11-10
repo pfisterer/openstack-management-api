@@ -51,9 +51,9 @@ var requireGroupMembership = false
 //
 // A group grants everyone in it access to the project, so whoever adds one must belong to it (while requireGroupMembership is on, which it is not at present): callerTokens has to hold the group token. Otherwise any requester could put a whole faculty, or the root admins' group, into a project of theirs — and with a budget that auto-approves, nobody would ever look. manager exempts the managers of the budgets above the node (root admins included), who decide over access there anyway. Groups the node already lists (keep) stay allowed, so an owner can edit a list a manager extended.
 //
-// openstack says whether the project involves OpenStack (involvesOpenStack), which decides the ceiling (maxAuthorizedUsersFor).
-func (s *Service) normalizeAuthorizedUsers(ctx context.Context, users []common.AuthorizedUser, openstack bool, callerTokens common.TokenList, manager bool, keep ...[]common.AuthorizedUser) ([]common.AuthorizedUser, error) {
-	if err := s.checkAuthorizedUserCount(len(users), openstack); err != nil {
+// ceiling is how many members the project may list (memberCeilingOf).
+func (s *Service) normalizeAuthorizedUsers(ctx context.Context, users []common.AuthorizedUser, ceiling memberCeiling, callerTokens common.TokenList, manager bool, keep ...[]common.AuthorizedUser) ([]common.AuthorizedUser, error) {
+	if err := checkMemberCount(len(users), ceiling); err != nil {
 		return nil, err
 	}
 	caller := common.NewTokenSet(common.CanonicalTokens(callerTokens))
@@ -73,9 +73,9 @@ func (s *Service) normalizeAuthorizedUsers(ctx context.Context, users []common.A
 			return nil, fmt.Errorf("invalid authorized_users: entry %d has empty token", i)
 		}
 
-		role := strings.ToLower(strings.TrimSpace(user.OpenstackRole))
-		if !slices.Contains(common.OpenstackRoles, role) {
-			return nil, fmt.Errorf("invalid authorized_users: entry %d has role %q, expected one of %v", i, user.OpenstackRole, common.OpenstackRoles)
+		role := strings.ToLower(strings.TrimSpace(user.Role))
+		if !slices.Contains(common.Roles, role) {
+			return nil, fmt.Errorf("invalid authorized_users: entry %d has role %q, expected one of %v", i, user.Role, common.Roles)
 		}
 
 		switch {
@@ -113,7 +113,7 @@ func (s *Service) normalizeAuthorizedUsers(ctx context.Context, users []common.A
 			return nil, fmt.Errorf("invalid authorized_users: entry %d must be a %s or %s token", i, common.UserPrefix, common.GroupPrefix)
 		}
 
-		out = append(out, common.AuthorizedUser{Token: token, OpenstackRole: role})
+		out = append(out, common.AuthorizedUser{Token: token, Role: role})
 	}
 	return out, nil
 }
@@ -148,44 +148,91 @@ func (s *Service) groupTokenExists(ctx context.Context, token string) (bool, err
 	return false, nil
 }
 
-// maxAuthorizedUsersFor is the ceiling on a project's participants. Only a project that involves OpenStack makes each of them cost work on every reconciler run (a Keystone account, group and role assignment); the members of a workspace or LLM project are only handed to the AI service, so those projects get a ceiling of their own (SetMaxAuthorizedUsersOther).
-func (s *Service) maxAuthorizedUsersFor(openstack bool) int {
-	if openstack {
-		return s.maxAuthorizedUsers
-	}
-	return s.maxAuthorizedUsersOther
+// ProviderRules is what a provider tells the tree about itself beyond its resources and caps (decided 10.11.2026, docs/plan-caps-katalog.md): how many members a project of its may list. The tree does not know why; for OpenStack each one costs Keystone work on every reconciler run, for the AI service only the size of what it is handed.
+type ProviderRules interface {
+	Provider() string
+	// MaxMembers is how many entries of authorized_users a project of the provider may list (a group counts as one).
+	MaxMembers() int
 }
 
-// checkAuthorizedUserCount refuses n participants above the ceiling that applies, naming it.
-func (s *Service) checkAuthorizedUserCount(n int, openstack bool) error {
-	limit := s.maxAuthorizedUsersFor(openstack)
-	if n <= limit {
-		return nil
+// SetProviderRules registers the rules of the providers; one per provider, a later one replaces an earlier one.
+func (s *Service) SetProviderRules(rules ...ProviderRules) {
+	if s.rules == nil {
+		s.rules = map[string]ProviderRules{}
 	}
-	if openstack {
-		return fmt.Errorf("at most %d authorized users in a project with OpenStack resources (got %d) — use a group token to grant access to a whole course or department", limit, n)
+	for _, r := range rules {
+		s.rules[r.Provider()] = r
 	}
-	return fmt.Errorf("at most %d authorized users in a project (got %d) — use a group token to grant access to a whole course or department", limit, n)
 }
 
-// involvesOpenStack reports whether project n is OpenStack's business — or becomes it with one of limits (a requested change, a new allocation): it has an OpenStack binding (an OpenStack project exists or existed for it, imports included), or its limit, an allocation, a waiting change or one of limits holds an OpenStack resource. The same view the reconciler takes (concerns): a resource without a provider belongs to OpenStack too. A held availability counts, a quantity of 0 does not.
-func (s *Service) involvesOpenStack(n model.Node, limits ...common.ProjectQuota) bool {
-	if _, bound := n.Bindings[common.ProviderOpenStack]; bound || n.Status == model.StatusImported {
-		return true
+// memberCeiling is the most members a project may list and the provider that sets it ("" for the tree's own ceiling).
+type memberCeiling struct {
+	max      int
+	provider string
+}
+
+// memberCeilingOf is the ceiling on the members of project n — as it is, or as it becomes with one of limits (a requested change, a new allocation): the smallest MaxMembers of the providers it concerns (concernedProviders), else the tree's own (NewService).
+func (s *Service) memberCeilingOf(n model.Node, limits ...common.ProjectQuota) memberCeiling {
+	out := memberCeiling{max: s.maxMembers}
+	first := true
+	for _, p := range s.concernedProviders(n, limits...) {
+		r, ok := s.rules[p]
+		if !ok {
+			continue
+		}
+		if first || r.MaxMembers() < out.max {
+			out, first = memberCeiling{max: r.MaxMembers(), provider: p}, false
+		}
 	}
+	return out
+}
+
+// concernedProviders are the providers with rules (SetProviderRules) whose business project n is, or becomes with one of limits: it has their binding, or its limit, an allocation, a waiting change or one of limits holds one of their resources (a resource without a provider belongs to every provider). The view the providers take of their leaves (concerns). Sorted.
+func (s *Service) concernedProviders(n model.Node, limits ...common.ProjectQuota) []string {
 	all := append([]common.ProjectQuota{n.EffectiveLimit()}, limits...)
 	if n.Pending != nil && n.Pending.Limit != nil {
 		all = append(all, *n.Pending.Limit)
 	}
+	var out []string
+	for p := range s.rules {
+		if _, bound := n.Bindings[p]; bound || s.holdsOf(p, all) {
+			out = append(out, p)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// holdsOf reports whether one of limits holds a resource of provider p.
+func (s *Service) holdsOf(p string, limits []common.ProjectQuota) bool {
 	for _, r := range s.resources() {
-		if !r.BelongsTo(common.ProviderOpenStack) {
+		if !r.BelongsTo(p) {
 			continue
 		}
-		for _, l := range all {
+		for _, l := range limits {
 			if l.Holds(r.ID) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// checkMemberCount refuses n members above c, naming it.
+func checkMemberCount(n int, c memberCeiling) error {
+	if n <= c.max {
+		return nil
+	}
+	if c.provider != "" {
+		return fmt.Errorf("at most %d authorized users in a project with resources of %s (got %d) — use a group token to grant access to a whole course or department", c.max, c.provider, n)
+	}
+	return fmt.Errorf("at most %d authorized users in a project (got %d) — use a group token to grant access to a whole course or department", c.max, n)
+}
+
+// checkMemberCeilingFalls refuses a change that lowers the ceiling on the members of a project (from was, to next) below the members it already lists.
+func checkMemberCeilingFalls(members int, was, next memberCeiling) error {
+	if next.max >= was.max {
+		return nil
+	}
+	return checkMemberCount(members, next)
 }

@@ -248,3 +248,24 @@ func TestHardLimit_NoEffectWithoutPolicy(t *testing.T) {
 		t.Fatalf("without a policy a request should wait for a manager, got %q", n.Status)
 	}
 }
+
+// An end stored as a bare date (2026-12-31, as earlier API callers wrote it) is the same day as the form's RFC 3339 spelling: a member change that sends it along applies at once instead of waiting as an extension (ma-t-inf-23iki1-datenanalyse-r, 09.11.2026). A bare date in a request is stored the forms' way, anything else is refused.
+func TestChange_BareDateIsTheSameEnd(t *testing.T) {
+	bare := "2027-06-30"
+	f := newChangeFixture(t, nil, nil)
+	p := f.approved(t, 4, &bare)
+	if *p.TerminationDate != "2027-06-30T00:00:00.000Z" {
+		t.Fatalf("a bare date should be stored as midnight UTC, got %q", *p.TerminationDate)
+	}
+
+	same := "2027-06-30T00:00:00.000Z"
+	members := []common.AuthorizedUser{{Token: "user:friend@x", OpenstackRole: "member"}}
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{TerminationDate: &same, AuthorizedUsers: &members}); n.Status != model.StatusApproved || len(n.AuthorizedUsers) != 1 {
+		t.Fatalf("members with the same end should apply at once, got %q with %v", n.Status, n.AuthorizedUsers)
+	}
+
+	bad := "30.06.2027"
+	if _, err := f.svc.RequestChange(p.ID, tree.ChangeNodeRequest{TerminationDate: &bad}, model.UIActor("stud@x"), studTokens); err == nil {
+		t.Fatal("an end date in another format should be refused")
+	}
+}

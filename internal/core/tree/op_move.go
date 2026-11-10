@@ -240,6 +240,10 @@ func derefParent(id *string) string {
 // which the normal approval cycle applies. Requires management rights on the
 // unassigned chain (root admins) and on the target budget.
 func (s *Service) PromoteNode(id string, req PromoteNodeRequest, actor model.Actor, userTokens common.TokenList) (model.Node, error) {
+	var err error
+	if req.TerminationDate, err = normalizeEnd(req.TerminationDate); err != nil {
+		return model.Node{}, err
+	}
 	s.approvalMu.Lock()
 	defer s.approvalMu.Unlock()
 

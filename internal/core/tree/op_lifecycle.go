@@ -26,6 +26,10 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 	}
 	req.AdminScope = common.CanonicalTokens(req.AdminScope)
 	req.EligibleRequesters = common.CanonicalTokens(req.EligibleRequesters)
+	var err error
+	if req.TerminationDate, err = normalizeEnd(req.TerminationDate); err != nil {
+		return model.Node{}, err
+	}
 
 	// Validate the request shape before taking the approval lock.
 	//
@@ -374,6 +378,10 @@ func isLeafDirectEdit(req UpdateNodeRequest) bool {
 // worse, park the project in change_pending until they got around to it.
 // Everything else about a leaf still goes through RequestChange.
 func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor, userTokens common.TokenList) (model.Node, error) {
+	var err error
+	if req.TerminationDate, err = normalizeEnd(req.TerminationDate); err != nil {
+		return model.Node{}, err
+	}
 	if req.AdminScope != nil {
 		req.AdminScope = new(common.CanonicalTokens(*req.AdminScope))
 	}
@@ -637,6 +645,10 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 // at once; any other proposal is stored as pending changes and the node
 // transitions to (or stays in) change_pending until the parent chain decides.
 func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor model.Actor, userTokens common.TokenList) (model.Node, error) {
+	var err error
+	if req.TerminationDate, err = normalizeEnd(req.TerminationDate); err != nil {
+		return model.Node{}, err
+	}
 	// A change may take effect on the spot (see leafChangeDecision), which
 	// commits capacity just like an approval does.
 	s.approvalMu.Lock()

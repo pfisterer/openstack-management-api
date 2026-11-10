@@ -4,11 +4,37 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 )
+
+// parseEnd reads an end date: RFC 3339 as the forms write it, or a bare date (2026-12-31) as earlier API callers stored it, which counts as midnight UTC. A bare date failing RFC 3339 once sent a mere change of members to a manager, as if the project were extended (09.11.2026).
+func parseEnd(s string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+	return time.Parse(time.DateOnly, s)
+}
+
+// normalizeEnd checks an end date from a request: RFC 3339 stays as sent, a bare date (2026-12-31) is written as midnight UTC the way the forms write it, anything else is refused; nil stays nil.
+func normalizeEnd(s *string) (*string, error) {
+	if s == nil {
+		return nil, nil
+	}
+	v := strings.TrimSpace(*s)
+	if _, err := time.Parse(time.RFC3339, v); err == nil {
+		return &v, nil
+	}
+	t, err := time.Parse(time.DateOnly, v)
+	if err != nil {
+		return nil, fmt.Errorf("termination_date %q is neither a date (2006-01-02) nor RFC 3339", *s)
+	}
+	v = t.Format("2006-01-02T15:04:05.000Z")
+	return &v, nil
+}
 
 // endsNoLater reports whether the RFC 3339 date next is not after bound; a nil
 // bound means "no end" and bounds nothing. Unparseable dates answer false, so
@@ -17,11 +43,11 @@ func endsNoLater(next string, bound *string) bool {
 	if bound == nil {
 		return true
 	}
-	n, err := time.Parse(time.RFC3339, next)
+	n, err := parseEnd(next)
 	if err != nil {
 		return false
 	}
-	b, err := time.Parse(time.RFC3339, *bound)
+	b, err := parseEnd(*bound)
 	if err != nil {
 		return false
 	}
@@ -38,7 +64,7 @@ func chainEnd(chain []model.Node) *string {
 		if n.TerminationDate == nil {
 			continue
 		}
-		at, err := time.Parse(time.RFC3339, *n.TerminationDate)
+		at, err := parseEnd(*n.TerminationDate)
 		if err != nil {
 			continue
 		}

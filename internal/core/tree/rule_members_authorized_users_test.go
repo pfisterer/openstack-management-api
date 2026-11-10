@@ -33,6 +33,7 @@ func budgetForMembers(t *testing.T, svc *tree.Service, requester common.TokenLis
 // Every authorized_users entry makes the reconciler act in Keystone, so the API
 // checks what it is handed instead of passing it through.
 func TestAuthorizedUsersAreValidated(t *testing.T) {
+	defer tree.RequireGroupMembership(true)()
 	svc, _ := newSvc(t, common.TokenList{"group:root"})
 	requester := common.TokenList{"user:student@x"}
 	budget := budgetForMembers(t, svc, requester)
@@ -152,6 +153,7 @@ func TestAuthorizedUsersAreValidated(t *testing.T) {
 
 // A group grants its members access, so a requester adds only groups they belong to; the managers above the project may add any, and an owner editing the list keeps what a manager put there.
 func TestAuthorizedUsers_GroupsNeedMembershipOrAManager(t *testing.T) {
+	defer tree.RequireGroupMembership(true)()
 	svc, _ := newSvc(t, common.TokenList{"group:root"})
 	requester := common.TokenList{"user:student@x"}
 	budget := budgetForMembers(t, svc, requester)
@@ -180,5 +182,23 @@ func TestAuthorizedUsers_GroupsNeedMembershipOrAManager(t *testing.T) {
 	both := append(slices.Clone(rootGroup), common.AuthorizedUser{Token: "user:friend@x.example", OpenstackRole: "member"})
 	if _, err := svc.RequestChange(project.ID, tree.ChangeNodeRequest{AuthorizedUsers: &both}, model.UIActor("student@x"), requester); err != nil {
 		t.Fatalf("the owner edits a list a manager extended: %v", err)
+	}
+}
+
+// While the role provider knows no lecturers of the Dualis courses, anybody may add any existing group (10.11.2026); an unknown group is still refused.
+func TestAuthorizedUsers_AnyExistingGroupWhileMembershipIsOff(t *testing.T) {
+	defer tree.RequireGroupMembership(false)()
+	svc, _ := newSvc(t, common.TokenList{"group:root"})
+	requester := common.TokenList{"user:student@x"}
+	budget := budgetForMembers(t, svc, requester)
+	if _, err := svc.CreateNode(tree.CreateNodeRequest{
+		ParentID: budget.ID, Kind: model.KindProject, Name: "p", Reason: "r", Limit: cores(1), AuthorizedUsers: []common.AuthorizedUser{{Token: dev.RootGroup, OpenstackRole: "member"}},
+	}, model.UIActor("student@x"), "student@x", requester); err != nil {
+		t.Fatalf("an existing group the requester does not belong to should be accepted for now: %v", err)
+	}
+	if _, err := svc.CreateNode(tree.CreateNodeRequest{
+		ParentID: budget.ID, Kind: model.KindProject, Name: "q", Reason: "r", Limit: cores(1), AuthorizedUsers: []common.AuthorizedUser{{Token: "group:does-not-exist", OpenstackRole: "member"}},
+	}, model.UIActor("student@x"), "student@x", requester); err == nil || !strings.Contains(err.Error(), "unknown group") {
+		t.Fatalf("an unknown group must still be refused: %v", err)
 	}
 }

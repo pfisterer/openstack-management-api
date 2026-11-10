@@ -37,6 +37,9 @@ func normalizeOwnerToken(raw string) (string, error) {
 	return "user:" + strings.ToLower(v), nil
 }
 
+// requireGroupMembership switches the rule that only a group's members (or the managers above) may add the group. Off since 10.11.2026, decided: the role provider knows no lecturers of the Dualis courses (dualis-* groups carry only #studierende), so no lecturer could add the students of their course; until it does, anybody may add any existing group. Switch it on again (and drop this note) once Dualis delivers the lecturers, see __TODOS.md in dhbw-deployment (g1).
+var requireGroupMembership = false
+
 // normalizeAuthorizedUsers validates and normalizes authorization entries.
 //
 // Every entry here has consequences in OpenStack: the reconciler creates a
@@ -46,7 +49,7 @@ func normalizeOwnerToken(raw string) (string, error) {
 // and a typo left an empty group behind on every run. So a token must name
 // something that exists, and the list has a ceiling.
 //
-// A group grants everyone in it access to the project, so whoever adds one must belong to it: callerTokens has to hold the group token. Otherwise any requester could put a whole faculty, or the root admins' group, into a project of theirs — and with a budget that auto-approves, nobody would ever look. manager exempts the managers of the budgets above the node (root admins included), who decide over access there anyway. Groups the node already lists (keep) stay allowed, so an owner can edit a list a manager extended.
+// A group grants everyone in it access to the project, so whoever adds one must belong to it (while requireGroupMembership is on, which it is not at present): callerTokens has to hold the group token. Otherwise any requester could put a whole faculty, or the root admins' group, into a project of theirs — and with a budget that auto-approves, nobody would ever look. manager exempts the managers of the budgets above the node (root admins included), who decide over access there anyway. Groups the node already lists (keep) stay allowed, so an owner can edit a list a manager extended.
 //
 // openstack says whether the project involves OpenStack (involvesOpenStack), which decides the ceiling (maxAuthorizedUsersFor).
 func (s *Service) normalizeAuthorizedUsers(ctx context.Context, users []common.AuthorizedUser, openstack bool, callerTokens common.TokenList, manager bool, keep ...[]common.AuthorizedUser) ([]common.AuthorizedUser, error) {
@@ -100,7 +103,7 @@ func (s *Service) normalizeAuthorizedUsers(ctx context.Context, users []common.A
 				if !exists {
 					return nil, fmt.Errorf("invalid authorized_users: entry %d references unknown group %q", i, token)
 				}
-				if !manager && !kept[token] && !caller.Contains(token) {
+				if requireGroupMembership && !manager && !kept[token] && !caller.Contains(token) {
 					return nil, fmt.Errorf("%w: authorized_users entry %d: only members of group %q may add it", common.ErrForbidden, i, token)
 				}
 				seenGroups[token] = true

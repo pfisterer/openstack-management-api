@@ -269,3 +269,36 @@ Nötige Tests: keine neuen; die bestehenden Tests zu Scratch, Release-Maxima und
 7. Die Sonderbehandlung von `-1` bei Verfügbarkeiten an Budgets entfällt, nachdem geprüft ist, dass kein gespeichertes Budget `-1` enthält.
 8. Gemeinsame Helfer (Wiederholen mit Backoff beim Start, Token-Prüfung, Lesen von Zeiträumen und Enddaten) kommen nach `cloud-self-service-golib`; os-mgt wartet damit beim Start ebenfalls auf Postgres.
 9. Der Budgetbaum vergibt weiterhin nur Mengen je Zeitfenster (`24h`, `7d`, `30d`), keine Kontingente für die ganze Laufzeit.
+
+## Umsetzung (10.11.2026)
+
+Vor diesem Abschnitt umgesetzt: Maßnahme 2 (Startmigration `normalizeEndDates`), der Kern von Maßnahme 1 (`model.EndDay`, `NormalizeEnd`, `SameEnd`, `EndsNoLater`, `EndLabel`), `null` statt `clear_*` (Entscheidung 5), keine `-1`-Sonderbehandlung bei Verfügbarkeiten (Entscheidung 7) und `allow_sub_budget_requests` in MCP `create_budget` (Entscheidung 6). Danach, je Maßnahme ein Commit mit grünem `go build ./... && go vet ./... && go test ./...`:
+
+| Maßnahme | Stand | Commit |
+|---|---|---|
+| 1, Rest: `TerminationDate` als eigener Typ | nicht umgesetzt, siehe unten | – |
+| 3: `endBound`/`fitNodeEnd` und Uhr im Service (`SetClock`, `s.now()`); Laufzeittests mit fester Uhr, Test um Mitternacht in Berlin, Test für `PromoteNode` mit Laufzeitgrenze | erledigt | `9a32cd4` |
+| 4: `ProjectQuota.Holds` und `Grants` (Verfügbarkeit nur mit 1), `grantsAvailability` (Wurzel oder 1), `shortfall` statt `quotaFits` und statt der Schleife in `checkBudgetLimit`, `limitShrinks` auch für Zuweisungen, `deduct` | erledigt | `f64d944` |
+| 5: `ancestry` mit schlanken Knoten (`budgetsAbove`), `inherited_*` nur über `model.Resolve*`, `model.ResolveMaxProjectTermDays` statt `chainMaxTerm`; Test `inherited_*` gegen `model.Resolve*` | erledigt | `37f1816` |
+| 6: `mutateLiveSubtree` unter den beiden Kürzungsfunktionen; die drei übrigen Walker bleiben (unterschiedliche Abbruchregeln) | erledigt | `7bb7c9f` |
+| 7: `managesInChain`/`managesNodeIn` auf der geladenen Kette (CreateNode, UpdateNode, RequestChange, ApproveNode, loadTarget, SetAllocation, AllocationSources, Attribut-Sicht); neuer Test vor und nach dem Umbau grün | erledigt | `e7bcc4a` |
+| 8: `updateFieldClass` (Name/Verwalter, Policy, Kapazität) und `createBudgetSettings`, Reflexionstests | erledigt | `af0a505` |
+| 9: `writeNode`/`actOnNode` für acht bzw. zwei Handler, `nodeResult` für 13 MCP-Werkzeuge; Test 400/401 je Handler | erledigt | `afe9c0d` |
+| 10: `model.ClonePtr`, `model.MinPtr` | erledigt | `aedfff1` |
+| Löschdatum des Reconcilers in UTC (`deletionDay`) | erledigt | `befd8c5` |
+| Triviale Funde: Doku-Kommentare `bindingInChain` und `shortfall`, `isBool` mit vorhandenem `r` | erledigt | `f64d944` |
+| Triviale Funde: `InArea` mit `common.ProviderOpenStack`, `containsString` entfernt | erledigt | `befd8c5` |
+| Vertragstests `NodeQuery` für Memory- und Postgres-Store (Postgres mit `OSMGT_TEST_POSTGRES_DSN`) | erledigt | `b696836` |
+
+Bewusst nicht oder anders umgesetzt:
+
+- Maßnahme 1, Rest (eigener Typ für `TerminationDate`): Ein Typ mit `UnmarshalJSON` würde nur den JSON-Weg normalisieren. Die MCP-Werkzeuge und die Tests bauen die Anfragen in Go und setzen `TerminationDate` direkt; der Service müsste also weiter normalisieren, die vier Aufrufe von `model.NormalizeEnd` entfielen nicht. Auf `Node` und `PendingChanges` dürfte der Typ beim Laden nicht scheitern (gespeicherte unlesbare Werte), bräuchte also ein zweites, nachsichtiges Verhalten; Swagger und der generierte Client sähen ohne `swaggertype`-Annotation einen neuen Typ. Der Nutzen steht dazu in keinem Verhältnis; die Normalisierung bleibt an den vier Eingängen, das Format kennt nur `model.EndDay`.
+- Löschdatum: UTC statt Tag in Berlin. Der Reconciler liest das Datum schon als UTC (`deletionDue`) und schreibt das Archiv-Tag als UTC-Datum; niemand wählt diesen Tag, er ist eine berechnete Frist. UTC beim Schreiben behebt den Fehler, ohne die Bedeutung bestehender Tags oder des Lesers zu ändern; ein Tag in Berlin hätte beides ändern müssen.
+- Maßnahme 9: `approveNode` (eigene 400-Meldung), `rejectNode` (Körper optional) und `releaseNode` (erst 401, dann 400) behalten ihre Form, damit sich keine Antwort ändert. Die Sonderregel von MCP `create_budget` war schon entfernt (Entscheidung 6).
+- Maßnahme 6: `buildSubtreeParentMap`, `undelegatedBudgetIDs` und `checkInheritingMove` nicht auf einen gemeinsamen Walker umgestellt (wie im Audit empfohlen).
+- Die Uhr ersetzt `time.Now()` in den Baumregeln und beim Anlegen von Knoten; `model.NewHistoryEntry`, der Token-Cache und `ProviderSync` (Zeitstempel der Anbieter) lesen weiter `time.Now()`.
+
+Neu gefunden:
+
+- `UpdateNode` mit leerem Körper prüft keine Berechtigung: Weder Policy- noch Kapazitätsfeld gesetzt, also findet keine Prüfung statt, und der Knoten erhält einen leeren Verlaufseintrag `updated` und wird zurückgegeben – für jeden angemeldeten Aufrufer und jeden lebenden Knoten (geprüft mit einem Wegwerftest). Nicht geändert, weil sich die Autorisierung in diesem Umbau nicht ändern sollte; Vorschlag: eine leere Anfrage mit 400 ablehnen oder `managesNode` verlangen.
+- Der Postgres-Store fand bei `Responsible` ohne `Owner` jedes Budget (`owner = ''`), der Memory-Store keines. Kein Aufrufer übergibt einen leeren Owner; angeglichen in `b696836`.

@@ -150,13 +150,14 @@ func membersOf(n model.Node) []Member {
 	return out
 }
 
+// parseDay is an end date as midnight UTC of its day (model.EndDay: a timestamp counts as its day in Berlin), the form the AI service and EndOf count days in.
 func parseDay(s string) (time.Time, bool) {
-	for _, layout := range []string{time.DateOnly, time.RFC3339} {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t.UTC(), true
-		}
+	d, err := model.EndDay(s)
+	if err != nil {
+		return time.Time{}, false
 	}
-	return time.Time{}, false
+	t, err := time.Parse(time.DateOnly, d.String())
+	return t, err == nil
 }
 
 // unitLLMMTokens is how the AI service reports what a project's members used of its LLM pool, in millions of tokens in the current window.

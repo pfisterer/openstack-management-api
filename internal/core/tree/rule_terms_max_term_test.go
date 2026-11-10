@@ -2,6 +2,7 @@ package tree_test
 
 import (
 	"errors"
+	"github.com/pfisterer/cloud-self-service-golib/day"
 	"strings"
 	"testing"
 	"time"
@@ -15,9 +16,9 @@ func days(n int) *int { return &n }
 
 // inDays is the end of the UTC day n days from now — the latest end a term of
 // n days allows.
+// inDays is the day n days from today, counted in Berlin like every end date.
 func inDays(n int) string {
-	d := time.Now().UTC().AddDate(0, 0, n)
-	return time.Date(d.Year(), d.Month(), d.Day(), 23, 59, 59, 0, time.UTC).Format(time.RFC3339)
+	return day.Of(time.Now()).AddDays(n).String()
 }
 
 // newTermFixture is newChangeFixture whose budget lets projects run at most

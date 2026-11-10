@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
+
+	"github.com/pfisterer/cloud-self-service-golib/retry"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
@@ -54,7 +57,15 @@ type PostgresStore struct {
 func (s *PostgresStore) DB() *gorm.DB { return s.db }
 
 func NewPostgresStore(dsn string, log *zap.SugaredLogger) (*PostgresStore, error) {
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	// Wait up to a minute for Postgres: since the NetworkPolicies a new pod is let through only a moment after it starts, so the first attempt can be refused although nothing is wrong.
+	var db *gorm.DB
+	err := retry.Do(context.Background(), retry.Policy{Total: time.Minute, OnRetry: func(attempt int, err error, wait time.Duration) {
+		log.Infow("postgres not reachable yet, trying again", "attempt", attempt, "in", wait.String(), "error", err)
+	}}, func(context.Context) error {
+		var err error
+		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+		return err
+	})
 	if err != nil {
 		return nil, fmt.Errorf("postgres: connect: %w", err)
 	}
@@ -103,6 +114,10 @@ func NewPostgresStore(dsn string, log *zap.SugaredLogger) (*PostgresStore, error
 	}
 	if err := factBindingCounts(db, log); err != nil {
 		return nil, fmt.Errorf("postgres: %w", err)
+	}
+	// Not fatal: every reader understands the former spellings too, so a failure leaves the service working and the migration runs again at the next start.
+	if err := normalizeEndDates(db, log); err != nil {
+		log.Warnw("Stored end dates not written as days", "error", err)
 	}
 	return &PostgresStore{db: db, log: log}, nil
 }

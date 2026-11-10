@@ -403,7 +403,7 @@ func sortChildren(nodes []model.Node, key string, desc bool) {
 			return n.Status
 		case ChildSortEnd:
 			if n.TerminationDate != nil {
-				return *n.TerminationDate
+				return model.EndLabel(*n.TerminationDate) // as a day, so ends written differently sort by date
 			}
 			return "~" // no end sorts last
 		case ChildSortCreated:

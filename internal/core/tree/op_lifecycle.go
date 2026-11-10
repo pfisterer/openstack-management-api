@@ -1034,13 +1034,8 @@ func checkRevision(n *model.Node, expected *int) error {
 	return nil
 }
 
-// sameEnd reports whether two optional end dates are the same.
-func sameEnd(a, b *string) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	return *a == *b
-}
+// sameEnd reports whether two optional end dates name the same day (model.SameEnd), so a date written differently is no change.
+func sameEnd(a, b *string) bool { return model.SameEnd(a, b) }
 
 // RejectNode rejects a pending node (→ rejected, terminal) or discards the pending
 // changes of a change_pending node (→ back to approved — the previously approved

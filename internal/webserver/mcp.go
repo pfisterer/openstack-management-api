@@ -285,7 +285,7 @@ type mcpRequestInput struct {
 	// configuration (get_project shows what an existing one uses), and
 	// hard-coding cores/ram/storage here would be a second place to change.
 	Limit           map[string]int `json:"limit" jsonschema:"requested resources by id, e.g. {\"cores\": 4, \"ram\": 8192}"`
-	TerminationDate string         `json:"termination_date,omitempty" jsonschema:"optional intended end of life, RFC3339; at most the budget's own end and, where the budget sets max_project_term_days, at most that many days from today; the latest allowed is also the default"`
+	TerminationDate string         `json:"termination_date,omitempty" jsonschema:"optional intended end of life, a day 2006-01-02 (an RFC 3339 timestamp is accepted and counts as its day in Europe/Berlin); at most the budget's own end and, where the budget sets max_project_term_days, at most that many days from today; the latest allowed is also the default"`
 	Admins          []string       `json:"admins,omitempty" jsonschema:"optional: people or groups who administer the project together with you, e.g. user:a@b.c or group:x; they get no access in OpenStack by this"`
 }
 

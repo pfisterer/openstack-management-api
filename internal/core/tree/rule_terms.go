@@ -4,72 +4,36 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
+	"github.com/pfisterer/cloud-self-service-golib/day"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 )
 
-// parseEnd reads an end date: RFC 3339 as the forms write it, or a bare date (2026-12-31) as earlier API callers stored it, which counts as midnight UTC. A bare date failing RFC 3339 once sent a mere change of members to a manager, as if the project were extended (09.11.2026).
-func parseEnd(s string) (time.Time, error) {
-	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t, nil
-	}
-	return time.Parse(time.DateOnly, s)
-}
+// normalizeEnd checks an end date from a request and writes it as it is stored, "2006-01-02" (model.NormalizeEnd: a timestamp counts as its day in Berlin); anything unreadable is refused; nil stays nil.
+func normalizeEnd(s *string) (*string, error) { return model.NormalizeEnd(s) }
 
-// normalizeEnd checks an end date from a request: RFC 3339 stays as sent, a bare date (2026-12-31) is written as midnight UTC the way the forms write it, anything else is refused; nil stays nil.
-func normalizeEnd(s *string) (*string, error) {
-	if s == nil {
-		return nil, nil
-	}
-	v := strings.TrimSpace(*s)
-	if _, err := time.Parse(time.RFC3339, v); err == nil {
-		return &v, nil
-	}
-	t, err := time.Parse(time.DateOnly, v)
-	if err != nil {
-		return nil, fmt.Errorf("termination_date %q is neither a date (2006-01-02) nor RFC 3339", *s)
-	}
-	v = t.Format("2006-01-02T15:04:05.000Z")
-	return &v, nil
-}
-
-// endsNoLater reports whether the RFC 3339 date next is not after bound; a nil
-// bound means "no end" and bounds nothing. Unparseable dates answer false, so
-// they take the path through a human rather than past one.
-func endsNoLater(next string, bound *string) bool {
-	if bound == nil {
-		return true
-	}
-	n, err := parseEnd(next)
-	if err != nil {
-		return false
-	}
-	b, err := parseEnd(*bound)
-	if err != nil {
-		return false
-	}
-	return !n.After(b)
-}
+// endsNoLater reports whether the end next is not after bound, as days (model.EndsNoLater); a nil bound means "no end" and bounds nothing. An unreadable end counts as later, so it takes the path through a human rather than past one.
+func endsNoLater(next string, bound *string) bool { return model.EndsNoLater(next, bound) }
 
 // chainEnd is the earliest end date along a chain of budgets — the date no node
-// below them may outlive. Nil when none of them ends. Unparseable dates bound
-// nothing; the budget form never writes one.
+// below them may outlive. Nil when none of them ends. An unreadable date counts
+// as later than any other (model.EndsNoLater), so it bounds nothing.
 func chainEnd(chain []model.Node) *string {
 	var earliest *string
-	var earliestAt time.Time
+	var earliestAt day.Date
 	for _, n := range chain {
 		if n.TerminationDate == nil {
 			continue
 		}
-		at, err := parseEnd(*n.TerminationDate)
+		at, err := model.EndDay(*n.TerminationDate)
 		if err != nil {
 			continue
 		}
 		if earliest == nil || at.Before(earliestAt) {
-			earliest, earliestAt = n.TerminationDate, at
+			v := at.String() // as a day, so a node that takes it over stores no older spelling
+			earliest, earliestAt = &v, at
 		}
 	}
 	return earliest
@@ -105,13 +69,12 @@ func chainMaxTerm(chain []model.Node) *int {
 }
 
 // termEnd is the latest end a term of days allows for a project created or
-// extended at now: the end of that day, in UTC. The whole day rather than the
-// second, so a date picked in a browser whose clock runs a little ahead — or
-// a request that waited a few minutes for its approval — is not refused over
+// extended at now: that day, counted in Berlin like every end date. A day rather
+// than a second, so a date picked in a browser whose clock runs a little ahead —
+// or a request that waited a few minutes for its approval — is not refused over
 // the time of day.
 func termEnd(now time.Time, days int) string {
-	day := now.UTC().AddDate(0, 0, days)
-	return time.Date(day.Year(), day.Month(), day.Day(), 23, 59, 59, 0, time.UTC).Format(time.RFC3339)
+	return day.Of(now).AddDays(days).String()
 }
 
 // projectBound is the latest end a project below the chain may have at now:
@@ -165,13 +128,8 @@ func fitMaxTerm(days, bound *int) (*int, error) {
 	return days, nil
 }
 
-// dateOnly prints an RFC 3339 timestamp as its day for messages.
-func dateOnly(ts string) string {
-	if t, err := time.Parse(time.RFC3339, ts); err == nil {
-		return t.Format(time.DateOnly)
-	}
-	return ts
-}
+// dateOnly prints an end date as its day for messages (model.EndLabel).
+func dateOnly(ts string) string { return model.EndLabel(ts) }
 
 // shortenSubtreeEnds makes every live node below the given parents end no later
 // than end: a budget that ends earlier takes its sub-budgets and projects with

@@ -2,6 +2,7 @@ package tree_test
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
@@ -101,7 +102,7 @@ func TestChange_WithoutPolicy(t *testing.T) {
 		t.Fatalf("a shrink should apply at once, got %q with %v", n.Status, n.Limit)
 	}
 	sooner := "2027-03-31T00:00:00Z"
-	if n := f.change(t, p.ID, tree.ChangeNodeRequest{TerminationDate: &sooner}); n.Status != model.StatusApproved || *n.TerminationDate != sooner {
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{TerminationDate: &sooner}); n.Status != model.StatusApproved || *n.TerminationDate != "2027-03-31" {
 		t.Fatalf("an earlier end should apply at once, got %q", n.Status)
 	}
 	members := []common.AuthorizedUser{{Token: "user:friend@x", OpenstackRole: "member"}}
@@ -249,19 +250,26 @@ func TestHardLimit_NoEffectWithoutPolicy(t *testing.T) {
 	}
 }
 
-// An end stored as a bare date (2026-12-31, as earlier API callers wrote it) is the same day as the form's RFC 3339 spelling: a member change that sends it along applies at once instead of waiting as an extension (ma-t-inf-23iki1-datenanalyse-r, 09.11.2026). A bare date in a request is stored the forms' way, anything else is refused.
+// An end is a day (10.11.2026): stored as "2006-01-02", and every spelling of the same day is the same end, so a member change that sends it along applies at once instead of waiting as an extension (ma-t-inf-23iki1-datenanalyse-r, 09.11.2026). The portal's picker sends local midnight, i.e. the evening before in UTC; the former end of a term was 23:59:59 UTC. Anything else is refused.
 func TestChange_BareDateIsTheSameEnd(t *testing.T) {
 	bare := "2027-06-30"
 	f := newChangeFixture(t, nil, nil)
 	p := f.approved(t, 4, &bare)
-	if *p.TerminationDate != "2027-06-30T00:00:00.000Z" {
-		t.Fatalf("a bare date should be stored as midnight UTC, got %q", *p.TerminationDate)
+	if *p.TerminationDate != "2027-06-30" {
+		t.Fatalf("an end should be stored as its day, got %q", *p.TerminationDate)
 	}
 
-	same := "2027-06-30T00:00:00.000Z"
 	members := []common.AuthorizedUser{{Token: "user:friend@x", OpenstackRole: "member"}}
-	if n := f.change(t, p.ID, tree.ChangeNodeRequest{TerminationDate: &same, AuthorizedUsers: &members}); n.Status != model.StatusApproved || len(n.AuthorizedUsers) != 1 {
-		t.Fatalf("members with the same end should apply at once, got %q with %v", n.Status, n.AuthorizedUsers)
+	for i, same := range []string{"2027-06-30T00:00:00.000Z", "2027-06-29T22:00:00.000Z", "2027-06-30T23:59:59Z", "2027-06-30"} {
+		members = append(members, common.AuthorizedUser{Token: fmt.Sprintf("user:friend%d@x", i), OpenstackRole: "member"})
+		if n := f.change(t, p.ID, tree.ChangeNodeRequest{TerminationDate: &same, AuthorizedUsers: &members}); n.Status != model.StatusApproved || len(n.AuthorizedUsers) != len(members) || *n.TerminationDate != "2027-06-30" {
+			t.Fatalf("members with the same end (%s) should apply at once, got %q with %d members, end %s", same, n.Status, len(n.AuthorizedUsers), *n.TerminationDate)
+		}
+	}
+
+	later := "2027-06-30T22:30:00Z" // 1 July 00:30 in Berlin
+	if n := f.change(t, p.ID, tree.ChangeNodeRequest{TerminationDate: &later}); n.Status == model.StatusApproved && *n.TerminationDate != "2027-06-30" {
+		t.Fatalf("a day later is an extension and must not apply at once, got %q end %s", n.Status, *n.TerminationDate)
 	}
 
 	bad := "30.06.2027"

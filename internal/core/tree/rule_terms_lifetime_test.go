@@ -45,9 +45,9 @@ func endOf(n model.Node) string {
 }
 
 const (
-	dec2026 = "2026-12-31T00:00:00Z"
-	mar2027 = "2027-03-31T00:00:00Z"
-	sep2027 = "2027-09-30T00:00:00Z"
+	dec2026 = "2026-12-31"
+	mar2027 = "2027-03-31"
+	sep2027 = "2027-09-30"
 )
 
 func ptr(s string) *string { return &s }

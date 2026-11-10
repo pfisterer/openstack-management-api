@@ -153,6 +153,11 @@ func (r *Reconciler) markLeafArchived(ctx context.Context, leaf model.Node) {
 	}
 }
 
+// deletionDay is the day written into the pending-deletion tag of a project released at now: graceDays later, as a UTC date. UTC like the archive tag (archiveProject) and like deletionDue, which reads it as UTC midnight: written in the pod's local zone, a pod not running in UTC dated the tag a day off around midnight. Not a day in Berlin like the end dates of the tree: nobody picks this day, the reconciler computes and reads it, and tags written before keep the meaning they were written with.
+func deletionDay(now time.Time, graceDays int) string {
+	return now.UTC().AddDate(0, 0, graceDays).Format(time.DateOnly)
+}
+
 // tagReleasedProject writes the pending-deletion, contact and status tags.
 // Idempotent: the deletion day is set once and never moved — re-dating it on
 // every pass would push it out for ever.
@@ -168,7 +173,7 @@ func (r *Reconciler) tagReleasedProject(osProject osclient.ProjectInfo, leaf mod
 	if graceDays <= 0 {
 		graceDays = 30
 	}
-	deletionDate := time.Now().AddDate(0, 0, graceDays).Format("2006-01-02")
+	deletionDate := deletionDay(time.Now(), graceDays)
 	pending := ""
 	if !tagged {
 		pending = deletionDate

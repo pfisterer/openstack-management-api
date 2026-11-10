@@ -137,18 +137,18 @@ func ParticipantEmails(nodes []model.Node) []string {
 // matchesQuery reports whether a node satisfies the query. Shared by the
 // in-memory store; the Postgres store translates the same semantics to SQL.
 func matchesQuery(n model.Node, q NodeQuery) bool {
-	if len(q.IDs) > 0 && !containsString(q.IDs, n.ID) {
+	if len(q.IDs) > 0 && !slices.Contains(q.IDs, n.ID) {
 		return false
 	}
 	if len(q.ParentIDs) > 0 {
-		if n.ParentID == nil || !containsString(q.ParentIDs, *n.ParentID) {
+		if n.ParentID == nil || !slices.Contains(q.ParentIDs, *n.ParentID) {
 			return false
 		}
 	}
-	if len(q.Kinds) > 0 && !containsString(q.Kinds, n.Kind) {
+	if len(q.Kinds) > 0 && !slices.Contains(q.Kinds, n.Kind) {
 		return false
 	}
-	if len(q.Statuses) > 0 && !containsString(q.Statuses, n.Status) {
+	if len(q.Statuses) > 0 && !slices.Contains(q.Statuses, n.Status) {
 		return false
 	}
 	if q.Owner != "" && n.Owner != q.Owner {
@@ -165,10 +165,6 @@ func matchesQuery(n model.Node, q NodeQuery) bool {
 		return false
 	}
 	return true
-}
-
-func containsString(haystack []string, needle string) bool {
-	return slices.Contains(haystack, needle)
 }
 
 // authorizesAny reports whether the node's authorized users hold any of the tokens.

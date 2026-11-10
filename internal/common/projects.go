@@ -160,7 +160,7 @@ func (m Resource) InArea() string {
 	if m.Area != "" {
 		return m.Area
 	}
-	if m.Provider == "" || m.Provider == "openstack" {
+	if m.Provider == "" || m.Provider == ProviderOpenStack {
 		return AreaCloud
 	}
 	return ""

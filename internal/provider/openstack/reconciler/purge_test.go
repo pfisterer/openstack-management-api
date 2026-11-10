@@ -553,3 +553,26 @@ func TestRecordPurgeProgress(t *testing.T) {
 		t.Errorf("third pass: %+v", p)
 	}
 }
+
+// The deletion day is a UTC date, written as deletionDue reads it: in a pod running in Berlin, half past midnight on 11 November is still 10 November in UTC, and the project released then with no grace is due at once, not only a day later.
+func TestDeletionDay_UTCAsRead(t *testing.T) {
+	berlin, err := time.LoadLocation("Europe/Berlin")
+	if err != nil {
+		t.Skip("no time zone data")
+	}
+	now := time.Date(2026, 11, 11, 0, 30, 0, 0, berlin)
+	if got := deletionDay(now, 0); got != "2026-11-10" {
+		t.Fatalf("deletionDay = %s, want the UTC date 2026-11-10", got)
+	}
+	if got := deletionDay(now, 30); got != "2026-12-10" {
+		t.Fatalf("deletionDay with 30 days = %s, want 2026-12-10", got)
+	}
+	tags := []string{"pending-deletion:" + deletionDay(now, 0)}
+	if !deletionDue(ReleasedDeleteAfterGrace, model.Node{}, tags, "pending-deletion:", now) {
+		t.Fatal("a project whose grace ends today should be due now")
+	}
+	tags = []string{"pending-deletion:" + deletionDay(now, 1)}
+	if deletionDue(ReleasedDeleteAfterGrace, model.Node{}, tags, "pending-deletion:", now) {
+		t.Fatal("a project whose grace ends tomorrow should not be due yet")
+	}
+}

@@ -152,7 +152,7 @@ func PurgeSteps(skip []string) []string {
 	return append(steps, "project")
 }
 
-// deletionDue decides whether a retired leaf's project is deleted now.
+// deletionDue decides whether a retired leaf's project is deleted now. The pending-deletion tag names a UTC date (deletionDay); the project is due from midnight UTC of that day.
 func deletionDue(mode string, leaf model.Node, tags []string, pendingPrefix string, now time.Time) bool {
 	requested := slices.Contains(leaf.Flags, model.FlagDeleteRequested)
 	switch mode {

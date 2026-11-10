@@ -109,6 +109,22 @@ func fitProjectEnd(end *string, chain []model.Node, now time.Time) (*string, err
 	return end, nil
 }
 
+// endBound is the latest end a node of kind may have below chain, nearest first, today: for a project projectBound (the earliest budget end or the end of the shortest term, term naming the latter), for a budget the earliest budget end alone. Nil when nothing bounds it. The one place that says which rule bounds which kind of node.
+func (s *Service) endBound(kind string, chain []model.Node) (bound *string, term *int) {
+	if kind == model.KindProject {
+		return projectBound(chain, s.now())
+	}
+	return chainEnd(chain), nil
+}
+
+// fitNodeEnd applies the lifetime rule to the end asked for a node of kind below chain: fitProjectEnd for a project, fitEnd under the chain's end for a budget. No end asked means the bound; a later one is refused.
+func (s *Service) fitNodeEnd(kind string, end *string, chain []model.Node) (*string, error) {
+	if kind == model.KindProject {
+		return fitProjectEnd(end, chain, s.now())
+	}
+	return fitEnd(end, chainEnd(chain))
+}
+
 // fitMaxTerm applies the term rule to the cap asked for a budget below a chain
 // whose shortest cap is bound: no cap asked means the bound, a longer one is
 // refused — a sub-budget may tighten the rule, not escape it.

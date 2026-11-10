@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
@@ -101,14 +100,12 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor model.A
 	// Under a budget that ends sooner, the moved node and everything below it
 	// end with it; under a budget with a shorter maximum project term, the
 	// projects among them are shortened to it.
-	now := time.Now()
-	bound, reason := chainEnd(newParentChain), endsWithReason(*newParent)
-	maxTerm := chainMaxTerm(newParentChain)
-	if updated.IsLeaf() {
-		if b, term := projectBound(newParentChain, now); term != nil {
-			bound, reason = b, termReason(*newParent, *term)
-		}
+	bound, term := s.endBound(updated.Kind, newParentChain)
+	reason := endsWithReason(*newParent)
+	if term != nil {
+		reason = termReason(*newParent, *term)
 	}
+	maxTerm := chainMaxTerm(newParentChain)
 	if bound != nil {
 		if err := shortenEnd(&updated, *bound, actor, reason); err != nil && !errors.Is(err, nodestore.ErrSkipUpdate) {
 			return model.Node{}, err
@@ -130,7 +127,7 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor model.A
 	}
 	if updated.MaxProjectTermDays != nil && !updated.IsLeaf() {
 		days := *updated.MaxProjectTermDays
-		if _, err := s.shortenSubtreeTerms(ctx, []string{updated.ID}, days, now, actor, termReason(updated, days)); err != nil {
+		if _, err := s.shortenSubtreeTerms(ctx, []string{updated.ID}, days, s.now(), actor, termReason(updated, days)); err != nil {
 			return model.Node{}, err
 		}
 	}
@@ -278,7 +275,7 @@ func (s *Service) PromoteNode(id string, req PromoteNodeRequest, actor model.Act
 	if err := s.checkLeafLimit(ctx, *current, newParentChain, effectiveLimit, nil, true); err != nil {
 		return model.Node{}, err
 	}
-	terminationDate, err := fitProjectEnd(req.TerminationDate, newParentChain, time.Now())
+	terminationDate, err := s.fitNodeEnd(model.KindProject, req.TerminationDate, newParentChain)
 	if err != nil {
 		return model.Node{}, err
 	}

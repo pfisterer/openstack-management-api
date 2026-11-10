@@ -62,6 +62,9 @@ type Service struct {
 	// multi-replica setup would need DB-level row locking instead.
 	approvalMu sync.Mutex
 
+	// clock is what the tree takes as now: the day a maximum project term counts from and the time a node is created. time.Now unless a test sets another (SetClock).
+	clock func() time.Time
+
 	log *zap.SugaredLogger
 }
 
@@ -128,6 +131,7 @@ func NewService(store nodestore.Store, roles roles.Provider, resources []common.
 		maxAuthorizedUsersOther: common.DefaultMaxAuthorizedUsersOther,
 		maxProjectsPerOwner:     common.DefaultMaxProjectsPerOwner,
 		accounting:              accounting,
+		clock:                   time.Now,
 		log:                     log,
 	}
 	s.store = signallingStore{Store: store, changed: s.signalChange}
@@ -149,6 +153,17 @@ func (s *Service) SetMaxAuthorizedUsersOther(n int) {
 
 // SetMaxProjectsPerOwner sets how many live projects one person may request under one budget; 0 or less lifts the bound. The default is common.DefaultMaxProjectsPerOwner.
 func (s *Service) SetMaxProjectsPerOwner(n int) { s.maxProjectsPerOwner = n }
+
+// SetClock replaces the clock the tree reads now from (time.Now); for tests that need a fixed day, such as the end a maximum project term allows. nil restores time.Now.
+func (s *Service) SetClock(now func() time.Time) {
+	if now == nil {
+		now = time.Now
+	}
+	s.clock = now
+}
+
+// now is the current time by the service's clock (SetClock).
+func (s *Service) now() time.Time { return s.clock() }
 
 // resources is the current catalogue.
 func (s *Service) resources() []common.Resource { return s.catalog.Resources() }

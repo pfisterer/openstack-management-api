@@ -123,7 +123,7 @@ func (s *Service) ensureBootstrapNodes(ctx context.Context) error {
 		s.log.Warn("no ROOT_ADMIN_TOKENS configured — the root node will have an empty admin scope and no one can manage top-level budgets")
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := s.now().UTC().Format(time.RFC3339)
 
 	root, err := s.store.GetNode(ctx, model.RootNodeID)
 	if err != nil {

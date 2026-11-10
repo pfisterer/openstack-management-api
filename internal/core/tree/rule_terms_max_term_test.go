@@ -1,6 +1,7 @@
 package tree_test
 
 import (
+	"context"
 	"errors"
 	"github.com/pfisterer/cloud-self-service-golib/day"
 	"strings"
@@ -14,11 +15,15 @@ import (
 
 func days(n int) *int { return &n }
 
-// inDays is the end of the UTC day n days from now — the latest end a term of
-// n days allows.
-// inDays is the day n days from today, counted in Berlin like every end date.
+// termNow is the clock of the term tests: half past midnight in Berlin on 11 November 2026, still 10 November in UTC, so every test here also checks that a term counts from the day in Berlin.
+var termNow = time.Date(2026, 11, 10, 23, 30, 0, 0, time.UTC)
+
+// fixClock sets the service's clock to termNow.
+func fixClock(svc *tree.Service) { svc.SetClock(func() time.Time { return termNow }) }
+
+// inDays is the day n days after termNow, counted in Berlin like every end date.
 func inDays(n int) string {
-	return day.Of(time.Now()).AddDays(n).String()
+	return day.Of(termNow).AddDays(n).String()
 }
 
 // newTermFixture is newChangeFixture whose budget lets projects run at most
@@ -26,6 +31,7 @@ func inDays(n int) string {
 func newTermFixture(t *testing.T, policy *model.AutoApprove, budgetEnd *string, term int) changeFixture {
 	t.Helper()
 	f := newChangeFixture(t, policy, budgetEnd)
+	fixClock(f.svc)
 	budget, err := f.svc.UpdateNode(f.budget.ID, tree.UpdateNodeRequest{MaxProjectTermDays: &term}, rootActor(), rootTokens)
 	if err != nil {
 		t.Fatalf("set max term: %v", err)
@@ -72,6 +78,7 @@ func TestMaxTerm_BudgetEndComesFirst(t *testing.T) {
 // Without an end above and without a term, a project may run open-ended.
 func TestMaxTerm_OpenEndedWithoutLimits(t *testing.T) {
 	f := newChangeFixture(t, &model.AutoApprove{}, nil)
+	fixClock(f.svc)
 	if n := f.request(t, 1, nil); n.TerminationDate != nil {
 		t.Fatalf("nothing bounds this project, so it should have no end, got %s", endOf(n))
 	}
@@ -110,6 +117,7 @@ func TestMaxTerm_SubBudgets(t *testing.T) {
 // waiting proposals and the terms of sub-budgets — and leaves the rest alone.
 func TestMaxTerm_LoweringCascades(t *testing.T) {
 	f := newChangeFixture(t, nil, nil)
+	fixClock(f.svc)
 	sub := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: f.budget.ID, Kind: model.KindBudget, Limit: cores(5)})
 	deep := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: sub.ID, Kind: model.KindProject, Limit: cores(1)})
 	open := f.approved(t, 1, nil)
@@ -171,6 +179,7 @@ func TestMaxTerm_Extensions(t *testing.T) {
 // waits instead of being refused.
 func TestMaxTerm_ExtensionsWaitWhenNotAutoApproved(t *testing.T) {
 	f := newHardLimitFixture(t, &model.AutoApprove{})
+	fixClock(f.svc)
 	no := false
 	budget, err := f.svc.UpdateNode(f.budget.ID, tree.UpdateNodeRequest{AutoApproveExtensions: &no}, rootActor(), rootTokens)
 	if err != nil {
@@ -198,6 +207,7 @@ func TestMaxTerm_ExtensionsWaitWhenNotAutoApproved(t *testing.T) {
 // approved, as it does for a budget's end.
 func TestMaxTerm_ApprovalCaps(t *testing.T) {
 	f := newChangeFixture(t, nil, nil)
+	fixClock(f.svc)
 	p := f.request(t, 1, ptr(inDays(400)))
 	if _, err := f.svc.UpdateNode(f.budget.ID, tree.UpdateNodeRequest{MaxProjectTermDays: days(60)}, rootActor(), rootTokens); err != nil {
 		t.Fatalf("set term: %v", err)
@@ -216,6 +226,7 @@ func TestMaxTerm_ApprovalCaps(t *testing.T) {
 // Moving a project or a budget under a budget with a term applies it.
 func TestMaxTerm_Reparent(t *testing.T) {
 	svc, _ := newSvc(t, common.TokenList{"group:root"})
+	fixClock(svc)
 	from := mustCreate(t, svc, tree.CreateNodeRequest{ParentID: model.RootNodeID, Kind: model.KindBudget, Limit: cores(10)})
 	to := mustCreate(t, svc, tree.CreateNodeRequest{ParentID: model.RootNodeID, Kind: model.KindBudget, Limit: cores(10), MaxProjectTermDays: days(30)})
 	sub := mustCreate(t, svc, tree.CreateNodeRequest{ParentID: from.ID, Kind: model.KindBudget, Limit: cores(5)})
@@ -235,5 +246,42 @@ func TestMaxTerm_Reparent(t *testing.T) {
 		if n := mustGet(t, svc, id); endOf(n) != inDays(30) {
 			t.Errorf("%s should be shortened to the term, got %s", n.Name, endOf(n))
 		}
+	}
+}
+
+// A term counts from the day in Berlin: at half past midnight there, while UTC still has the day before, a term of one day ends on the day after the Berlin one.
+func TestMaxTerm_CountsFromTheDayInBerlin(t *testing.T) {
+	f := newTermFixture(t, &model.AutoApprove{}, nil, 1)
+	if n := f.request(t, 1, nil); endOf(n) != "2026-11-12" {
+		t.Fatalf("a one-day term at 00:30 in Berlin on 11 November should end on 12 November, got %s", endOf(n))
+	}
+	f.svc.SetClock(func() time.Time { return termNow.Add(-time.Hour) }) // 23:30 in Berlin on 10 November
+	if n := f.request(t, 1, nil); endOf(n) != "2026-11-11" {
+		t.Fatalf("a one-day term at 23:30 in Berlin on 10 November should end on 11 November, got %s", endOf(n))
+	}
+}
+
+// Promoting an import under a budget with a term gives it the longest end the term allows and refuses a later one.
+func TestMaxTerm_Promote(t *testing.T) {
+	svc, store := newSvc(t, common.TokenList{"group:root"})
+	fixClock(svc)
+	to := mustCreate(t, svc, tree.CreateNodeRequest{ParentID: model.RootNodeID, Kind: model.KindBudget, Limit: cores(10), MaxProjectTermDays: days(30)})
+	importNode := func(id string) {
+		t.Helper()
+		if err := store.UpsertNode(context.Background(), model.Node{ID: id, Kind: model.KindProject, ParentID: new(model.UnassignedNodeID), Status: model.StatusImported, Name: id, Limit: cores(1)}); err != nil {
+			t.Fatalf("import: %v", err)
+		}
+	}
+	importNode("p_late")
+	if _, err := svc.PromoteNode("p_late", tree.PromoteNodeRequest{NewParentID: to.ID, Owner: "stud@x", Reason: "t", TerminationDate: ptr(inDays(31))}, rootActor(), rootTokens); err == nil || !strings.Contains(err.Error(), "30 days") {
+		t.Fatalf("an end past the term should be refused naming it, got %v", err)
+	}
+	importNode("p_open")
+	n, err := svc.PromoteNode("p_open", tree.PromoteNodeRequest{NewParentID: to.ID, Owner: "stud@x", Reason: "t"}, rootActor(), rootTokens)
+	if err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+	if endOf(n) != inDays(30) {
+		t.Fatalf("a promoted project without an end should run the full term, got %s", endOf(n))
 	}
 }

@@ -163,12 +163,9 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 	// Nothing outlives the budget it draws from, and a project runs no longer
 	// than the budgets above allow: no end asked means the latest allowed, a
 	// later one is refused. A sub-budget inherits the term cap the same way.
-	var terminationDate *string
 	var maxTerm *int
-	if req.Kind == model.KindProject {
-		terminationDate, err = fitProjectEnd(req.TerminationDate, parentChain, time.Now())
-	} else {
-		terminationDate, err = fitEnd(req.TerminationDate, chainEnd(parentChain))
+	terminationDate, err := s.fitNodeEnd(req.Kind, req.TerminationDate, parentChain)
+	if req.Kind == model.KindBudget {
 		if err == nil {
 			maxTerm, err = fitMaxTerm(req.MaxProjectTermDays, chainMaxTerm(parentChain))
 		}
@@ -194,7 +191,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		return model.Node{}, err
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := s.now().UTC().Format(time.RFC3339)
 	node := model.Node{
 		Kind:            req.Kind,
 		ParentID:        &parent.ID,
@@ -539,7 +536,7 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 			return model.Node{}, fmt.Errorf("the budget above ends on %s, so this one needs an end date too", dateOnly(*bound))
 		}
 		if req.TerminationDate != nil {
-			if _, err := fitEnd(req.TerminationDate, chainEnd(chain)); err != nil {
+			if _, err := s.fitNodeEnd(current.Kind, req.TerminationDate, chain); err != nil {
 				return model.Node{}, err
 			}
 		}
@@ -632,7 +629,7 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 	}
 	if req.MaxProjectTermDays != nil {
 		days := *updated.MaxProjectTermDays
-		if _, err := s.shortenSubtreeTerms(ctx, []string{updated.ID}, days, time.Now(), actor, termReason(updated, days)); err != nil {
+		if _, err := s.shortenSubtreeTerms(ctx, []string{updated.ID}, days, s.now(), actor, termReason(updated, days)); err != nil {
 			return model.Node{}, err
 		}
 	}
@@ -692,12 +689,7 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor model.Ac
 	}
 
 	if req.TerminationDate != nil {
-		if current.IsLeaf() {
-			_, err = fitProjectEnd(req.TerminationDate, chain, time.Now())
-		} else {
-			_, err = fitEnd(req.TerminationDate, chainEnd(chain))
-		}
-		if err != nil {
+		if _, err := s.fitNodeEnd(current.Kind, req.TerminationDate, chain); err != nil {
 			return model.Node{}, err
 		}
 	}
@@ -955,10 +947,7 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor model.Act
 	// Requests made before the budget above got (or moved up) its end still
 	// ask for more: they are granted to the budget's end, not refused whole.
 	// The same for a project's maximum term, counted from today.
-	bound := chainEnd(ancestors)
-	if current.IsLeaf() {
-		bound, _ = projectBound(ancestors, time.Now())
-	}
+	bound, _ := s.endBound(current.Kind, ancestors)
 	if bound != nil &&
 		(finalTerminationDate == nil || !endsNoLater(*finalTerminationDate, bound)) {
 		finalTerminationDate = bound

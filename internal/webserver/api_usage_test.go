@@ -7,11 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
-	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"github.com/pfisterer/openstack-management-api/internal/core/usage"
-	"github.com/pfisterer/openstack-management-api/internal/dev"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 )
 
@@ -19,16 +16,7 @@ import (
 // below the CS faculty, p_004 in the biology department.
 func usageRouter(t *testing.T, prices *usage.Prices) http.Handler {
 	t.Helper()
-	store, sugar := newTestStore(t)
-	ids, nodes := dev.DefaultMockTreeState()
-	if err := store.Seed(context.Background(), ids, nodes); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	svc := tree.NewService(store, dev.NewMockRoleProvider(), quotaResources,
-		rootAdminTokens, 10*time.Second, common.DefaultMaxAuthorizedUsers, testAccounting, sugar)
-	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
-		t.Fatalf("bootstrap: %v", err)
-	}
+	tr := newTestTree(t, mockNodes(), testAccounting)
 	now := time.Now().UTC()
 	yesterday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -1)
 	rows := usage.NewMemoryStore()
@@ -36,15 +24,9 @@ func usageRouter(t *testing.T, prices *usage.Prices) http.Handler {
 		{NodeID: "p_001", VCPUHours: 10, BudgetPath: []usage.PathEntry{{ID: "b_cs_faculty"}, {ID: "b_dept_cs"}, {ID: model.RootNodeID}}},
 		{NodeID: "p_004", VCPUHours: 5, BudgetPath: []usage.PathEntry{{ID: "b_dept_bio"}, {ID: model.RootNodeID}}},
 	})
-	return webserver.SetupGinWebserver(webserver.SetupConfig{
-		DevMode: true,
-		Log:     sugar,
-		API: webserver.APIConfig{
-			Service: svc, Identity: testIdentity(store, sugar), Catalog: common.StaticCatalog(quotaResources), ActAsTokens: rootAdminTokens,
-			Usage: rows, UsagePrices: prices,
-		},
-		RootAdminTokens: rootAdminTokens,
-		AuthMiddleware:  dev.DummyAuthMiddleware(""),
+	return tr.router(func(c *webserver.SetupConfig) {
+		c.API.Usage = rows
+		c.API.UsagePrices = prices
 	})
 }
 

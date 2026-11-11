@@ -1,6 +1,7 @@
 package webserver
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -27,24 +28,13 @@ import (
 //	@ID				getNode
 //	@Router			/v1/nodes/{id} [get]
 func getNode(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
-	return func(c *gin.Context) {
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
+	return respond(cfg, http.StatusOK, func(c *gin.Context, auth identity.AuthContext) (*model.Node, error) {
+		node, err := cfg.Service.GetNode(c.Param("id"), auth.EffectiveTokens)
+		if err == nil && node == nil {
+			return nil, common.ErrNotFound
 		}
-		node, err := svc.GetNode(c.Param("id"), auth.EffectiveTokens)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		if node == nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
-			return
-		}
-		c.JSON(http.StatusOK, node)
-	}
+		return node, err
+	})
 }
 
 // listNodeChildren returns the direct children of a budget node.
@@ -75,18 +65,7 @@ func getNode(cfg APIConfig) gin.HandlerFunc {
 //	@ID				listNodeChildren
 //	@Router			/v1/nodes/{id}/children [get]
 func listNodeChildren(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
-	return func(c *gin.Context) {
-		limit, offset, err := parsePagination(c)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid pagination parameters"})
-			return
-		}
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
+	return listPage(cfg, func(c *gin.Context, auth identity.AuthContext, limit, offset int) (tree.NodePage, error) {
 		filter := tree.ChildFilter{
 			Kind:      c.Query("kind"),
 			Query:     c.Query("q"),
@@ -104,16 +83,10 @@ func listNodeChildren(cfg APIConfig) gin.HandlerFunc {
 			}
 		}
 		if err := filter.Validate(); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
+			return tree.NodePage{}, err
 		}
-		children, err := svc.ListChildren(c.Param("id"), filter, auth.EffectiveTokens, limit, offset)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, children)
-	}
+		return cfg.Service.ListChildren(c.Param("id"), filter, auth.EffectiveTokens, limit, offset)
+	})
 }
 
 // listMyNodes returns the project leaves the current user owns or administers.
@@ -130,25 +103,9 @@ func listNodeChildren(cfg APIConfig) gin.HandlerFunc {
 //	@ID				listMyNodes
 //	@Router			/v1/nodes/mine [get]
 func listMyNodes(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
-	return func(c *gin.Context) {
-		limit, offset, err := parsePagination(c)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid pagination parameters"})
-			return
-		}
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		nodes, err := svc.ListMine(auth.UserEmail, auth.EffectiveTokens, limit, offset)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, nodes)
-	}
+	return listPage(cfg, func(c *gin.Context, auth identity.AuthContext, limit, offset int) (tree.NodePage, error) {
+		return cfg.Service.ListMine(auth.UserEmail, auth.EffectiveTokens, limit, offset)
+	})
 }
 
 // listNodesToManage returns nodes awaiting a decision by the caller.
@@ -166,30 +123,13 @@ func listMyNodes(cfg APIConfig) gin.HandlerFunc {
 //	@ID				listNodesToManage
 //	@Router			/v1/nodes/to-manage [get]
 func listNodesToManage(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
-	return func(c *gin.Context) {
-		limit, offset, err := parsePagination(c)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid pagination parameters"})
-			return
-		}
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
+	return listPage(cfg, func(c *gin.Context, auth identity.AuthContext, limit, offset int) (tree.NodePage, error) {
 		scope := c.Query("scope")
 		if scope != "" && scope != "direct" && scope != "subtree" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": `scope must be "direct" or "subtree"`})
-			return
+			return tree.NodePage{}, errors.New(`scope must be "direct" or "subtree"`)
 		}
-		nodes, err := svc.ListToManage(auth.EffectiveTokens, scope == "subtree", limit, offset)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, nodes)
-	}
+		return cfg.Service.ListToManage(auth.EffectiveTokens, scope == "subtree", limit, offset)
+	})
 }
 
 // listMyBudgets returns the budgets the caller directly administers.
@@ -206,25 +146,9 @@ func listNodesToManage(cfg APIConfig) gin.HandlerFunc {
 //	@ID				listMyBudgets
 //	@Router			/v1/nodes/my-budgets [get]
 func listMyBudgets(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
-	return func(c *gin.Context) {
-		limit, offset, err := parsePagination(c)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid pagination parameters"})
-			return
-		}
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		nodes, err := svc.ListMyBudgets(auth.EffectiveTokens, limit, offset)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, nodes)
-	}
+	return listPage(cfg, func(c *gin.Context, auth identity.AuthContext, limit, offset int) (tree.NodePage, error) {
+		return cfg.Service.ListMyBudgets(auth.EffectiveTokens, limit, offset)
+	})
 }
 
 // listEligibleBudgets returns the budgets the caller may request under.
@@ -241,25 +165,9 @@ func listMyBudgets(cfg APIConfig) gin.HandlerFunc {
 //	@ID				listEligibleBudgets
 //	@Router			/v1/nodes/eligible-for-me [get]
 func listEligibleBudgets(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
-	return func(c *gin.Context) {
-		limit, offset, err := parsePagination(c)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid pagination parameters"})
-			return
-		}
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		nodes, err := svc.ListEligibleForMe(auth.EffectiveTokens, limit, offset)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, nodes)
-	}
+	return listPage(cfg, func(c *gin.Context, auth identity.AuthContext, limit, offset int) (tree.NodePage, error) {
+		return cfg.Service.ListEligibleForMe(auth.EffectiveTokens, limit, offset)
+	})
 }
 
 // listEligibleBudgetsForOwner returns budgets a specific owner may request under.
@@ -279,30 +187,13 @@ func listEligibleBudgets(cfg APIConfig) gin.HandlerFunc {
 //	@ID				listEligibleBudgetsForOwner
 //	@Router			/v1/nodes/eligible-for-owner [get]
 func listEligibleBudgetsForOwner(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
-	return func(c *gin.Context) {
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
+	return listPage(cfg, func(c *gin.Context, auth identity.AuthContext, limit, offset int) (tree.NodePage, error) {
 		ownerTokens := c.QueryArray("owner_token")
 		if len(ownerTokens) == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "at least one owner_token query parameter is required"})
-			return
+			return tree.NodePage{}, errors.New("at least one owner_token query parameter is required")
 		}
-		limit, offset, err := parsePagination(c)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid pagination parameters"})
-			return
-		}
-		nodes, err := svc.ListEligibleForOwner(auth.EffectiveTokens, common.TokenList(ownerTokens), limit, offset)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, nodes)
-	}
+		return cfg.Service.ListEligibleForOwner(auth.EffectiveTokens, common.TokenList(ownerTokens), limit, offset)
+	})
 }
 
 // searchNodes finds nodes anywhere below the budgets the caller administers.
@@ -321,30 +212,13 @@ func listEligibleBudgetsForOwner(cfg APIConfig) gin.HandlerFunc {
 //	@ID				searchNodes
 //	@Router			/v1/nodes/search [get]
 func searchNodes(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
-	return func(c *gin.Context) {
-		limit, offset, err := parsePagination(c)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid pagination parameters"})
-			return
-		}
+	return listPage(cfg, func(c *gin.Context, auth identity.AuthContext, limit, offset int) (tree.NodePage, error) {
 		query := strings.TrimSpace(c.Query("q"))
 		if query == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "q must not be empty"})
-			return
+			return tree.NodePage{}, errors.New("q must not be empty")
 		}
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		page, err := svc.SearchNodes(auth.EffectiveTokens, query, limit, offset)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, page)
-	}
+		return cfg.Service.SearchNodes(auth.EffectiveTokens, query, limit, offset)
+	})
 }
 
 // createNode creates a child node (budget or project leaf) under a parent budget.
@@ -438,25 +312,10 @@ func requestNodeChange(cfg APIConfig) gin.HandlerFunc {
 //	@ID				approveNode
 //	@Router			/v1/nodes/{id}/approve [post]
 func approveNode(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
-	return func(c *gin.Context) {
-		var req tree.ApproveNodeRequest
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "expected_revision is required: the revision of the request as it was shown"})
-			return
-		}
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		node, err := svc.ApproveNode(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, node)
-	}
+	read := jsonBody[tree.ApproveNodeRequest]("expected_revision is required: the revision of the request as it was shown")
+	return handle(cfg, http.StatusOK, read, func(c *gin.Context, req tree.ApproveNodeRequest, auth identity.AuthContext) (model.Node, error) {
+		return cfg.Service.ApproveNode(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
+	})
 }
 
 // rejectNode rejects a pending node or discards pending changes.
@@ -478,22 +337,9 @@ func approveNode(cfg APIConfig) gin.HandlerFunc {
 //	@ID				rejectNode
 //	@Router			/v1/nodes/{id}/reject [post]
 func rejectNode(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
-	return func(c *gin.Context) {
-		var req tree.RejectNodeRequest
-		_ = c.ShouldBindJSON(&req)
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		node, err := svc.RejectNode(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, node)
-	}
+	return handle(cfg, http.StatusOK, lenientJSONBody[tree.RejectNodeRequest], func(c *gin.Context, req tree.RejectNodeRequest, auth identity.AuthContext) (model.Node, error) {
+		return cfg.Service.RejectNode(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
+	})
 }
 
 // releaseNode releases an approved project leaf.
@@ -514,28 +360,10 @@ func rejectNode(cfg APIConfig) gin.HandlerFunc {
 //	@ID				releaseNode
 //	@Router			/v1/nodes/{id}/release [post]
 func releaseNode(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
-	return func(c *gin.Context) {
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		// The body is optional: a plain release sends none.
-		var req tree.ReleaseNodeRequest
-		if c.Request.ContentLength != 0 {
-			if err := c.ShouldBindJSON(&req); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-				return
-			}
-		}
-		node, err := svc.ReleaseNode(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, node)
-	}
+	// The body is optional: a plain release sends none.
+	return handle(cfg, http.StatusOK, optionalJSONBody[tree.ReleaseNodeRequest], func(c *gin.Context, req tree.ReleaseNodeRequest, auth identity.AuthContext) (model.Node, error) {
+		return cfg.Service.ReleaseNode(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
+	})
 }
 
 // requestNodeDeletion marks a released or archived project for deletion.
@@ -553,7 +381,7 @@ func releaseNode(cfg APIConfig) gin.HandlerFunc {
 //	@ID				requestNodeDeletion
 //	@Router			/v1/nodes/{id}/deletion [post]
 func requestNodeDeletion(cfg APIConfig) gin.HandlerFunc {
-	return actOnNode(cfg, func(c *gin.Context, auth identity.AuthContext) (model.Node, error) {
+	return respond(cfg, http.StatusOK, func(c *gin.Context, auth identity.AuthContext) (model.Node, error) {
 		return cfg.Service.RequestDeletion(c.Param("id"), uiActor(auth), auth.EffectiveTokens)
 	})
 }
@@ -646,7 +474,7 @@ func setNodeAttributes(cfg APIConfig) gin.HandlerFunc {
 //	@ID				removeNodeExternalGroup
 //	@Router			/v1/nodes/{id}/external-groups/{groupId} [delete]
 func removeNodeExternalGroup(cfg APIConfig) gin.HandlerFunc {
-	return actOnNode(cfg, func(c *gin.Context, auth identity.AuthContext) (model.Node, error) {
+	return respond(cfg, http.StatusOK, func(c *gin.Context, auth identity.AuthContext) (model.Node, error) {
 		return cfg.Service.RemoveExternalGroup(c.Param("id"), c.Param("groupId"), uiActor(auth), auth.EffectiveTokens)
 	})
 }
@@ -692,20 +520,9 @@ func setNodeAllocation(cfg APIConfig) gin.HandlerFunc {
 //	@ID				listAllocationSources
 //	@Router			/v1/nodes/{id}/allocation-sources [get]
 func listAllocationSources(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
-	return func(c *gin.Context) {
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		nodes, err := svc.AllocationSources(c.Param("id"), auth.EffectiveTokens)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, nodes)
-	}
+	return respond(cfg, http.StatusOK, func(c *gin.Context, auth identity.AuthContext) ([]model.Node, error) {
+		return cfg.Service.AllocationSources(c.Param("id"), auth.EffectiveTokens)
+	})
 }
 
 // promoteNode converts an imported leaf into a managed request.
@@ -746,56 +563,7 @@ func promoteNode(cfg APIConfig) gin.HandlerFunc {
 //	@ID				deleteNode
 //	@Router			/v1/nodes/{id} [delete]
 func deleteNode(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Service
-	return func(c *gin.Context) {
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		if err := svc.DeleteNode(c.Param("id"), uiActor(auth), auth.EffectiveTokens); err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.Status(http.StatusNoContent)
-	}
-}
-
-// writeNode is the shape of a handler that writes a node from a JSON body: the body bound to Req (400 when it does not bind), the caller (401 without one), the service call (its error through respondError) and the node it returns as JSON with status. The swagger annotations stay on the named handler that returns it.
-func writeNode[Req any](cfg APIConfig, status int, call func(c *gin.Context, req Req, auth identity.AuthContext) (model.Node, error)) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		var req Req
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		node, err := call(c, req, auth)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.JSON(status, node)
-	}
-}
-
-// actOnNode is writeNode for an action without a body: the caller (401 without one), the service call and the node it returns, 200.
-func actOnNode(cfg APIConfig, call func(c *gin.Context, auth identity.AuthContext) (model.Node, error)) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
-		node, err := call(c, auth)
-		if err != nil {
-			cfg.respondError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, node)
-	}
+	return respond(cfg, http.StatusNoContent, func(c *gin.Context, auth identity.AuthContext) (struct{}, error) {
+		return struct{}{}, cfg.Service.DeleteNode(c.Param("id"), uiActor(auth), auth.EffectiveTokens)
+	})
 }

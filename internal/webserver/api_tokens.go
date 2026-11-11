@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/cloud-self-service-golib/token"
+	"github.com/pfisterer/openstack-management-api/internal/identity"
 	"go.uber.org/zap"
 )
 
@@ -102,14 +103,14 @@ func RegisterTokenRoutes(v1 *gin.RouterGroup, cfg TokenConfig, log *zap.SugaredL
 	}
 }
 
-// tokenSubject is the identity a token belongs to: the person the request acts as, like everything else in this API. An admin acting on somebody's behalf (X-Act-As) lists and revokes THAT person's tokens — cleaning them up for a ticket is one of the reasons to act on someone's behalf. Issuing one is not: see createToken.
-func tokenSubject(c *gin.Context) (string, bool) {
-	auth, err := mustGetAuthContext(c)
+// tokenCaller is the caller with the identity a token belongs to (UserEmail): the person the request acts as, like everything else in this API. An admin acting on somebody's behalf (X-Act-As) lists and revokes THAT person's tokens — cleaning them up for a ticket is one of the reasons to act on someone's behalf. Issuing one is not: see createToken. Without a caller, or one without an identity, the request is answered with 401 and ok is false.
+func tokenCaller(c *gin.Context) (auth identity.AuthContext, ok bool) {
+	auth, err := identity.FromContext(c)
 	if err != nil || auth.UserEmail == "" {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-		return "", false
+		return identity.AuthContext{}, false
 	}
-	return auth.UserEmail, true
+	return auth, true
 }
 
 // listTokens returns the caller's API tokens.
@@ -124,11 +125,11 @@ func tokenSubject(c *gin.Context) (string, bool) {
 // @Router /v1/tokens [get]
 func listTokens(cfg TokenConfig, log *zap.SugaredLogger) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		subject, ok := tokenSubject(c)
+		auth, ok := tokenCaller(c)
 		if !ok {
 			return
 		}
-
+		subject := auth.UserEmail
 		records, err := cfg.Service.List(c.Request.Context(), subject)
 		if err != nil {
 			log.Errorw("listing tokens failed", "subject", subject, "error", err)
@@ -160,15 +161,11 @@ func listTokens(cfg TokenConfig, log *zap.SugaredLogger) gin.HandlerFunc {
 // @Router /v1/tokens [post]
 func createToken(cfg TokenConfig, log *zap.SugaredLogger) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		subject, ok := tokenSubject(c)
+		auth, ok := tokenCaller(c)
 		if !ok {
 			return
 		}
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
+		subject := auth.UserEmail
 		// A token issued while acting on behalf would hand the admin a credential that IS the person, outliving the session and the act-as rule that allowed it; and the person would find a token they never made.
 		if auth.OnBehalf() {
 			c.JSON(http.StatusForbidden, gin.H{"error": "API tokens cannot be created while acting on behalf of someone else; the person has to create their own"})
@@ -237,11 +234,11 @@ func deleteToken(cfg TokenConfig, log *zap.SugaredLogger) gin.HandlerFunc {
 			return
 		}
 
-		subject, ok := tokenSubject(c)
+		auth, ok := tokenCaller(c)
 		if !ok {
 			return
 		}
-
+		subject := auth.UserEmail
 		err = cfg.Service.Revoke(c.Request.Context(), subject, uint(id))
 		switch {
 		case errors.Is(err, token.ErrNotFound):

@@ -1,17 +1,12 @@
 package webserver
 
 import (
-	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
-	"github.com/pfisterer/openstack-management-api/internal/common"
-)
+	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 
-// TokenListResponse wraps the group tokens for list endpoints.
-type TokenListResponse struct {
-	Tokens common.TokenList `json:"tokens"`
-}
+	"github.com/gin-gonic/gin"
+)
 
 // PrincipalSearchResponse wraps everything a token field may be filled with:
 // groups with their labels, and bare email addresses for individual people.
@@ -35,15 +30,12 @@ type PrincipalSearchResponse struct {
 //	@ID				searchPrincipals
 //	@Router			/v1/principals/search [get]
 func searchPrincipals(cfg APIConfig) gin.HandlerFunc {
-	svc := cfg.Identity
 	return func(c *gin.Context) {
-		limit, _, err := parsePagination(c)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid pagination parameters"})
+		limit, _, ok := pagination(c)
+		if !ok {
 			return
 		}
-
-		groups, users, err := svc.SearchPrincipals(c.Query("q"), limit)
+		groups, users, err := cfg.Identity.SearchPrincipals(c.Query("q"), limit)
 		if err != nil {
 			cfg.respondInternal(c, err)
 			return

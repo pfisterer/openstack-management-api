@@ -251,15 +251,6 @@ func RunApplication() {
 		logger.Fatal("Failed to initialize authentication middleware", zap.Error(err))
 	}
 
-	// Add dummy dev users from mock data if dummy auth is enabled
-	dummyDevUsers := []string{}
-	if config.WebServer.DummyAuth {
-		identities, _ := dev.DefaultMockTreeState()
-		for _, ident := range identities {
-			dummyDevUsers = append(dummyDevUsers, ident.Email)
-		}
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

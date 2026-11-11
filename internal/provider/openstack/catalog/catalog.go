@@ -78,9 +78,10 @@ type Store interface {
 	Upsert(ctx context.Context, e Entry) error
 }
 
+// ErrNotFound and ErrConflict are the tree's (common): they mean the same here, and the API answers both with the one mapping. ErrInvalid is the catalogue's own.
 var (
-	ErrNotFound = errors.New("not found")
-	ErrConflict = errors.New("conflict")
+	ErrNotFound = common.ErrNotFound
+	ErrConflict = common.ErrConflict
 	ErrInvalid  = errors.New("invalid")
 )
 

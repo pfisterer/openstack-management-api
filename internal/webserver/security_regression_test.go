@@ -18,7 +18,6 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
-	"github.com/pfisterer/openstack-management-api/internal/dev"
 	"github.com/pfisterer/openstack-management-api/internal/identity"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 )
@@ -68,11 +67,7 @@ func TestAPI_BodyTooLarge(t *testing.T) {
 // A failure of the service answers 500 with a generic message; the detail stays in the log.
 func TestAPI_InternalErrorsAreNotShown(t *testing.T) {
 	store, sugar := newTestStore(t)
-	ids, nodes := dev.DefaultMockTreeState()
-	if err := store.Seed(context.Background(), ids, nodes); err != nil {
-		t.Fatal(err)
-	}
-	h := routerFromStoreAs(t, "", sugar, brokenNodeStore{Store: store, broken: "p_002"}, nil, testAccounting)
+	h := newTestTreeOn(t, brokenNodeStore{Store: store, broken: "p_002"}, sugar, mockNodes(), testAccounting).router()
 	rr := do(t, h, http.MethodGet, "/v1/nodes/p_002", "", nil)
 	assertStatus(t, rr, http.StatusInternalServerError)
 	if strings.Contains(rr.Body.String(), "10.0.0.5") || !strings.Contains(rr.Body.String(), "internal error") {
@@ -101,11 +96,6 @@ func (s brokenNodeStore) GetNode(ctx context.Context, id string) (*model.Node, e
 // tokenRouter is the API behind an authentication that says whether the caller came with an API token, with a token policy that has a maximum lifetime.
 func tokenRouter(t *testing.T, viaToken bool) http.Handler {
 	t.Helper()
-	store, sugar := newTestStore(t)
-	svc := tree.NewService(store, dev.NewMockRoleProvider(), quotaResources, rootAdminTokens, 10*time.Second, common.DefaultMaxAuthorizedUsers, testAccounting, sugar)
-	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
-		t.Fatal(err)
-	}
 	auth := func(c *gin.Context) {
 		ginweb.SetReadOnly(c, false)
 		identity.SetAuthenticated(c, &common.UserClaims{Email: userStudent}, common.TokenList{"user:" + userStudent})
@@ -114,16 +104,9 @@ func tokenRouter(t *testing.T, viaToken bool) http.Handler {
 		}
 		c.Next()
 	}
-	return webserver.SetupGinWebserver(webserver.SetupConfig{
-		DevMode: true,
-		Log:     sugar,
-		API:     webserver.APIConfig{Service: svc, Identity: testIdentity(store, sugar), Catalog: common.StaticCatalog(quotaResources), ActAsTokens: rootAdminTokens},
-		Tokens: webserver.TokenConfig{
-			Service: token.NewService("os_mgt_", token.NewMemoryStore()),
-			TTL:     token.TTLPolicy{Default: 24 * time.Hour, Max: 365 * 24 * time.Hour},
-		},
-		RootAdminTokens: rootAdminTokens,
-		AuthMiddleware:  auth,
+	return newTestTree(t, nil, testAccounting).router(func(c *webserver.SetupConfig) {
+		c.AuthMiddleware = auth
+		c.Tokens.TTL = token.TTLPolicy{Default: 24 * time.Hour, Max: 365 * 24 * time.Hour}
 	})
 }
 

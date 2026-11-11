@@ -26,38 +26,47 @@ func RegisterCatalogAdminRoutes(v1 *gin.RouterGroup, cfg APIConfig, rootAdminTok
 	}
 }
 
-// catalogError answers err with the status it stands for; anything the catalogue does not name is the service's own failure, answered with a generic message and logged.
+// catalogError answers err with the status it stands for: ErrUnavailable with 503, what the catalogue names otherwise (invalid, and the not-found and conflict it shares with the tree) with its message as respondError answers it; anything else is the service's own failure, answered with a generic message and logged.
 func (cfg APIConfig) catalogError(c *gin.Context, err error) {
-	status := http.StatusInternalServerError
 	switch {
-	case errors.Is(err, catalog.ErrNotFound):
-		status = http.StatusNotFound
-	case errors.Is(err, catalog.ErrConflict):
-		status = http.StatusConflict
-	case errors.Is(err, catalog.ErrInvalid):
-		status = http.StatusBadRequest
 	case errors.Is(err, catalog.ErrUnavailable):
-		status = http.StatusServiceUnavailable
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
+	case errors.Is(err, catalog.ErrInvalid), errors.Is(err, catalog.ErrNotFound), errors.Is(err, catalog.ErrConflict):
+		cfg.respondError(c, err)
 	default:
 		cfg.respondInternal(c, err)
-		return
 	}
-	c.JSON(status, gin.H{"error": err.Error()})
 }
 
-// withCatalog answers 503 where there is nothing to manage, and the actor's
-// email otherwise.
-func withCatalog(cfg APIConfig, c *gin.Context) (*catalog.Admin, string, bool) {
-	if cfg.CatalogAdmin == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "the catalogue cannot be managed here"})
-		return nil, "", false
+// catalogOp is the shape of a catalogue handler: 503 where there is nothing to manage, the caller (401 without one), the body as read says (400 where it refuses it), the step with the catalogue and the actor's email, its error through catalogError, and what it returns as JSON with status — no body for 204. done, where given, is told what was done: the log line.
+func catalogOp[In, Out any](cfg APIConfig, status int, read bodyReader[In], step func(c *gin.Context, admin *catalog.Admin, actor string, in In) (Out, error), done func(out Out, actor string)) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if cfg.CatalogAdmin == nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "the catalogue cannot be managed here"})
+			return
+		}
+		auth, ok := caller(c)
+		if !ok {
+			return
+		}
+		var in In
+		if !read(c, &in) {
+			return
+		}
+		out, err := step(c, cfg.CatalogAdmin, auth.ActorEmail, in)
+		if err != nil {
+			cfg.catalogError(c, err)
+			return
+		}
+		if done != nil {
+			done(out, auth.ActorEmail)
+		}
+		if status == http.StatusNoContent {
+			c.Status(status)
+			return
+		}
+		c.JSON(status, out)
 	}
-	auth, err := mustGetAuthContext(c)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-		return nil, "", false
-	}
-	return cfg.CatalogAdmin, auth.ActorEmail, true
 }
 
 // listCatalog lists the availabilities.
@@ -72,18 +81,9 @@ func withCatalog(cfg APIConfig, c *gin.Context) (*catalog.Admin, string, bool) {
 //	@ID				listCatalog
 //	@Router			/v1/admin/catalog [get]
 func listCatalog(cfg APIConfig) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		admin, _, ok := withCatalog(cfg, c)
-		if !ok {
-			return
-		}
-		out, err := admin.List(c.Request.Context())
-		if err != nil {
-			cfg.catalogError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, out)
-	}
+	return catalogOp(cfg, http.StatusOK, noBody[struct{}], func(c *gin.Context, admin *catalog.Admin, _ string, _ struct{}) ([]catalog.View, error) {
+		return admin.List(c.Request.Context())
+	}, nil)
 }
 
 // addCatalogEntry offers a new availability.
@@ -102,24 +102,11 @@ func listCatalog(cfg APIConfig) gin.HandlerFunc {
 //	@ID				addCatalogEntry
 //	@Router			/v1/admin/catalog [post]
 func addCatalogEntry(cfg APIConfig, log *zap.SugaredLogger) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		admin, actor, ok := withCatalog(cfg, c)
-		if !ok {
-			return
-		}
-		var in catalog.NewEntry
-		if err := c.ShouldBindJSON(&in); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		e, err := admin.Add(c.Request.Context(), in, actor)
-		if err != nil {
-			cfg.catalogError(c, err)
-			return
-		}
+	return catalogOp(cfg, http.StatusCreated, jsonBody[catalog.NewEntry](""), func(c *gin.Context, admin *catalog.Admin, actor string, in catalog.NewEntry) (catalog.Entry, error) {
+		return admin.Add(c.Request.Context(), in, actor)
+	}, func(e catalog.Entry, actor string) {
 		log.Infow("Availability added", "resource", e.ID, "grant_type", e.Grant.Type, "target", e.Grant.Target, "actor", actor)
-		c.JSON(http.StatusCreated, e)
-	}
+	})
 }
 
 // getCatalogEntry tells who holds an availability.
@@ -135,18 +122,9 @@ func addCatalogEntry(cfg APIConfig, log *zap.SugaredLogger) gin.HandlerFunc {
 //	@ID				getCatalogEntry
 //	@Router			/v1/admin/catalog/{id} [get]
 func getCatalogEntry(cfg APIConfig) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		admin, _, ok := withCatalog(cfg, c)
-		if !ok {
-			return
-		}
-		st, err := admin.Status(c.Request.Context(), c.Param("id"))
-		if err != nil {
-			cfg.catalogError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, st)
-	}
+	return catalogOp(cfg, http.StatusOK, noBody[struct{}], func(c *gin.Context, admin *catalog.Admin, _ string, _ struct{}) (catalog.Status, error) {
+		return admin.Status(c.Request.Context(), c.Param("id"))
+	}, nil)
 }
 
 // updateCatalogEntry changes name, group and message.
@@ -164,23 +142,9 @@ func getCatalogEntry(cfg APIConfig) gin.HandlerFunc {
 //	@ID				updateCatalogEntry
 //	@Router			/v1/admin/catalog/{id} [put]
 func updateCatalogEntry(cfg APIConfig) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		admin, actor, ok := withCatalog(cfg, c)
-		if !ok {
-			return
-		}
-		var in catalog.NewEntry
-		if err := c.ShouldBindJSON(&in); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		e, err := admin.Update(c.Request.Context(), c.Param("id"), in, actor)
-		if err != nil {
-			cfg.catalogError(c, err)
-			return
-		}
-		c.JSON(http.StatusOK, e)
-	}
+	return catalogOp(cfg, http.StatusOK, jsonBody[catalog.NewEntry](""), func(c *gin.Context, admin *catalog.Admin, actor string, in catalog.NewEntry) (catalog.Entry, error) {
+		return admin.Update(c.Request.Context(), c.Param("id"), in, actor)
+	}, nil)
 }
 
 // WithdrawResponse is a withdrawn availability and how many nodes changed.
@@ -203,19 +167,12 @@ type WithdrawResponse struct {
 //	@ID				withdrawCatalogEntry
 //	@Router			/v1/admin/catalog/{id}/withdraw [post]
 func withdrawCatalogEntry(cfg APIConfig, log *zap.SugaredLogger) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		admin, actor, ok := withCatalog(cfg, c)
-		if !ok {
-			return
-		}
+	return catalogOp(cfg, http.StatusOK, noBody[struct{}], func(c *gin.Context, admin *catalog.Admin, actor string, _ struct{}) (WithdrawResponse, error) {
 		e, n, err := admin.Withdraw(c.Request.Context(), c.Param("id"), actor)
-		if err != nil {
-			cfg.catalogError(c, err)
-			return
-		}
-		log.Infow("Availability withdrawn", "resource", e.ID, "nodes_changed", n, "actor", actor)
-		c.JSON(http.StatusOK, WithdrawResponse{Entry: e, Changed: n})
-	}
+		return WithdrawResponse{Entry: e, Changed: n}, err
+	}, func(out WithdrawResponse, actor string) {
+		log.Infow("Availability withdrawn", "resource", out.Entry.ID, "nodes_changed", out.Changed, "actor", actor)
+	})
 }
 
 // restoreCatalogEntry offers a withdrawn availability again.
@@ -232,19 +189,11 @@ func withdrawCatalogEntry(cfg APIConfig, log *zap.SugaredLogger) gin.HandlerFunc
 //	@ID				restoreCatalogEntry
 //	@Router			/v1/admin/catalog/{id}/restore [post]
 func restoreCatalogEntry(cfg APIConfig, log *zap.SugaredLogger) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		admin, actor, ok := withCatalog(cfg, c)
-		if !ok {
-			return
-		}
-		e, err := admin.Restore(c.Request.Context(), c.Param("id"), actor)
-		if err != nil {
-			cfg.catalogError(c, err)
-			return
-		}
+	return catalogOp(cfg, http.StatusOK, noBody[struct{}], func(c *gin.Context, admin *catalog.Admin, actor string, _ struct{}) (catalog.Entry, error) {
+		return admin.Restore(c.Request.Context(), c.Param("id"), actor)
+	}, func(e catalog.Entry, actor string) {
 		log.Infow("Availability restored", "resource", e.ID, "actor", actor)
-		c.JSON(http.StatusOK, e)
-	}
+	})
 }
 
 // removeCatalogEntry takes a withdrawn availability out of the catalogue.
@@ -261,17 +210,10 @@ func restoreCatalogEntry(cfg APIConfig, log *zap.SugaredLogger) gin.HandlerFunc 
 //	@ID				removeCatalogEntry
 //	@Router			/v1/admin/catalog/{id} [delete]
 func removeCatalogEntry(cfg APIConfig, log *zap.SugaredLogger) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		admin, actor, ok := withCatalog(cfg, c)
-		if !ok {
-			return
-		}
+	return catalogOp(cfg, http.StatusNoContent, noBody[struct{}], func(c *gin.Context, admin *catalog.Admin, actor string, _ struct{}) (string, error) {
 		id := c.Param("id")
-		if err := admin.Remove(c.Request.Context(), id, actor); err != nil {
-			cfg.catalogError(c, err)
-			return
-		}
+		return id, admin.Remove(c.Request.Context(), id, actor)
+	}, func(id string, actor string) {
 		log.Infow("Availability removed", "resource", id, "actor", actor)
-		c.Status(http.StatusNoContent)
-	}
+	})
 }

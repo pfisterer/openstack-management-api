@@ -265,6 +265,15 @@ func (a Actor) Channel() string {
 // the ones that are NOT the UI stand out.
 func UIActor(email string) Actor { return Actor{Email: email} }
 
+// ActorFor is the caller of a change made as user, by actor, through via (empty: the UI): the person acted as, with the admin who acted for them in ActedBy where that is somebody else (X-Act-As). The REST handlers and the MCP tools both build their actor here, so acting on behalf lands in the history the same way from either.
+func ActorFor(user, actor, via string) Actor {
+	a := Actor{Email: user, Via: via}
+	if actor != user {
+		a.ActedBy = actor
+	}
+	return a
+}
+
 // PurgeProgress is one pass of emptying a project: the step it is in, of how
 // many, and — when it is not just waiting for OpenStack to finish deleting —
 // why it is held up.

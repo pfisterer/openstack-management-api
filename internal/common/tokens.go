@@ -55,6 +55,11 @@ func NewTokenSet(tokens TokenList) TokenSet {
 	return s
 }
 
+// CanonicalTokenSet is the set of tokens in canonical spelling: what a configured list (ROOT_ADMIN_TOKENS) is compared against the tokens of a request with, which arrive canonical. Compared raw, a configured "Group:X" would match nothing.
+func CanonicalTokenSet(tokens TokenList) TokenSet {
+	return NewTokenSet(CanonicalTokens(tokens))
+}
+
 // Contains reports whether token is in the set.
 func (s TokenSet) Contains(token string) bool {
 	_, ok := s[token]

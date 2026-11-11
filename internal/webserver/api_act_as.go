@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/identity"
 )
 
 // actAsResponse tells the UI whether the caller may act on behalf of another person and on whose behalf the request acted.
@@ -30,20 +31,16 @@ type actAsResponse struct {
 //	@ID				getActAs
 //	@Router			/v1/act-as [get]
 func getActAs(cfg APIConfig) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
-			return
-		}
+	allowed := common.CanonicalTokenSet(cfg.ActAsTokens)
+	return respond(cfg, http.StatusOK, func(c *gin.Context, auth identity.AuthContext) (actAsResponse, error) {
 		resp := actAsResponse{
-			MayActAs:        len(cfg.ActAsTokens) > 0 && common.NewTokenSet(common.CanonicalTokens(cfg.ActAsTokens)).ContainsAny(auth.OriginalTokens),
+			MayActAs:        allowed.ContainsAny(auth.OriginalTokens),
 			Actor:           auth.ActorEmail,
 			EffectiveTokens: auth.EffectiveTokens,
 		}
 		if auth.OnBehalf() {
 			resp.ActingAs = auth.UserEmail
 		}
-		c.JSON(http.StatusOK, resp)
-	}
+		return resp, nil
+	})
 }

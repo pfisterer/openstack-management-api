@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"slices"
 
 	"github.com/pfisterer/openstack-management-api/internal/identity"
@@ -64,11 +63,7 @@ type mcpCaller struct {
 //
 // actorEmail stays for OUR log lines, where the real caller is the useful one.
 func (c mcpCaller) serviceActor() model.Actor {
-	a := model.Actor{Email: c.userEmail, Via: model.ChannelMCP}
-	if c.actorEmail != c.userEmail {
-		a.ActedBy = c.actorEmail
-	}
-	return a
+	return model.ActorFor(c.userEmail, c.actorEmail, model.ChannelMCP)
 }
 
 // ReadOnly satisfies mcpserve.Caller: whether this request's credential may
@@ -95,9 +90,8 @@ func RegisterMCPRoutes(group *gin.RouterGroup, cfg APIConfig, log *zap.SugaredLo
 	})
 
 	group.Any("", func(c *gin.Context) {
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
+		auth, ok := caller(c)
+		if !ok {
 			return
 		}
 		caller := mcpCaller{
@@ -230,6 +224,8 @@ func toMCPProjects(page tree.NodePage) []mcpProject {
 
 // mcpPageInput is the paging every listing tool takes. Zero means "the default",
 // so a model that omits it still gets a sensible answer.
+//
+// The pages are smaller than REST's (common.DefaultPageLimit, common.MaxPageLimit): a page lands in a model's context, where 50 projects with their limits are already a lot to read, and a model that wants more pages through.
 type mcpPageInput struct {
 	Limit  int `json:"limit,omitempty" jsonschema:"how many to return, default 50"`
 	Offset int `json:"offset,omitempty" jsonschema:"how many to skip, for paging"`
@@ -395,10 +391,7 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpPageInput) (*mcp.CallToolResult, mcpProjectList, error) {
 		limit, offset := in.resolve()
 		page, err := cfg.Service.ListMine(caller.userEmail, caller.tokens, limit, offset)
-		if err != nil {
-			return nil, mcpProjectList{}, mcpServiceError(log, err, "list projects")
-		}
-		return nil, mcpProjectList{Projects: toMCPProjects(page), Total: page.Total}, nil
+		return listResult(log, page, err, "list projects")
 	})
 
 	mcpserve.AddTool(s, caller, false, &mcp.Tool{
@@ -407,22 +400,16 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpPageInput) (*mcp.CallToolResult, mcpProjectList, error) {
 		limit, offset := in.resolve()
 		page, err := cfg.Service.ListMyBudgets(caller.tokens, limit, offset)
-		if err != nil {
-			return nil, mcpProjectList{}, mcpServiceError(log, err, "list budgets")
-		}
-		return nil, mcpProjectList{Projects: toMCPProjects(page), Total: page.Total}, nil
+		return listResult(log, page, err, "list budgets")
 	})
 
 	mcpserve.AddTool(s, caller, false, &mcp.Tool{
 		Name:        "get_project",
 		Description: "Look up one project or budget by id.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpGetInput) (*mcp.CallToolResult, mcpProject, error) {
-		node, err := cfg.Service.GetNode(in.ID, caller.tokens)
+		node, err := mcpLookup(cfg, caller, log, in.ID)
 		if err != nil {
-			return nil, mcpProject{}, mcpServiceError(log, err, "get %q", in.ID)
-		}
-		if node == nil {
-			return nil, mcpProject{}, fmt.Errorf("no project or budget with id %q, or it is not visible to you", in.ID)
+			return nil, mcpProject{}, err
 		}
 		return nil, toMCPProject(*node), nil
 	})
@@ -433,10 +420,7 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpSearchInput) (*mcp.CallToolResult, mcpProjectList, error) {
 		limit, offset := in.resolve()
 		page, err := cfg.Service.SearchNodes(caller.tokens, in.Query, limit, offset)
-		if err != nil {
-			return nil, mcpProjectList{}, mcpServiceError(log, err, "search")
-		}
-		return nil, mcpProjectList{Projects: toMCPProjects(page), Total: page.Total}, nil
+		return listResult(log, page, err, "search")
 	})
 
 	mcpserve.AddTool(s, caller, false, &mcp.Tool{
@@ -446,10 +430,7 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpPageInput) (*mcp.CallToolResult, mcpProjectList, error) {
 		limit, offset := in.resolve()
 		page, err := cfg.Service.ListEligibleForMe(caller.tokens, limit, offset)
-		if err != nil {
-			return nil, mcpProjectList{}, mcpServiceError(log, err, "list requestable budgets")
-		}
-		return nil, mcpProjectList{Projects: toMCPProjects(page), Total: page.Total}, nil
+		return listResult(log, page, err, "list requestable budgets")
 	})
 
 	mcpserve.AddTool(s, caller, false, &mcp.Tool{
@@ -459,10 +440,7 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpToDecideInput) (*mcp.CallToolResult, mcpProjectList, error) {
 		limit, offset := in.resolve()
 		page, err := cfg.Service.ListToManage(caller.tokens, in.IncludeSubtree, limit, offset)
-		if err != nil {
-			return nil, mcpProjectList{}, mcpServiceError(log, err, "list requests to decide")
-		}
-		return nil, mcpProjectList{Projects: toMCPProjects(page), Total: page.Total}, nil
+		return listResult(log, page, err, "list requests to decide")
 	})
 
 	mcpserve.AddTool(s, caller, false, &mcp.Tool{
@@ -471,10 +449,7 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpBudgetContentsInput) (*mcp.CallToolResult, mcpProjectList, error) {
 		limit, offset := in.resolve()
 		page, err := cfg.Service.ListChildren(in.ID, tree.ChildFilter{}, caller.tokens, limit, offset)
-		if err != nil {
-			return nil, mcpProjectList{}, mcpServiceError(log, err, "list contents of %q", in.ID)
-		}
-		return nil, mcpProjectList{Projects: toMCPProjects(page), Total: page.Total}, nil
+		return listResult(log, page, err, "list contents of %q", in.ID)
 	})
 
 	registerProjectWriteTools(s, cfg, caller, log)
@@ -598,12 +573,9 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 			"changes, edit this list and release it, but not approve its requests or hand it to someone else. " +
 			"It grants no access in OpenStack. The list replaces the current one.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpSetAdminsInput) (*mcp.CallToolResult, mcpProject, error) {
-		current, err := cfg.Service.GetNode(in.ID, caller.tokens)
+		current, err := mcpLookup(cfg, caller, log, in.ID)
 		if err != nil {
-			return nil, mcpProject{}, mcpServiceError(log, err, "look up %q", in.ID)
-		}
-		if current == nil {
-			return nil, mcpProject{}, fmt.Errorf("no project with id %q, or it is not visible to you", in.ID)
+			return nil, mcpProject{}, err
 		}
 		if current.Kind != model.KindProject {
 			return nil, mcpProject{}, fmt.Errorf("%q is a budget; who approves there is changed in the UI", in.ID)
@@ -739,12 +711,9 @@ func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log 
 func registerDestructiveTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *zap.SugaredLogger) {
 	// confirmName fails unless the caller echoed the node's current name back.
 	confirmName := func(id, confirm string) (*model.Node, error) {
-		node, err := cfg.Service.GetNode(id, caller.tokens)
+		node, err := mcpLookup(cfg, caller, log, id)
 		if err != nil {
-			return nil, mcpServiceError(log, err, "look up %q", id)
-		}
-		if node == nil {
-			return nil, fmt.Errorf("no project or budget with id %q, or it is not visible to you", id)
+			return nil, err
 		}
 		if err := mcpserve.ConfirmEcho("confirm_name", confirm, node.Name, fmt.Sprintf("%q", id)); err != nil {
 			return nil, err
@@ -796,6 +765,26 @@ func registerDestructiveTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, lo
 		}
 		return nil, toMCPProject(*node), nil
 	})
+}
+
+// mcpLookup is the node id names as the caller sees it: the service's error as mcpServiceError reports it, and, where there is none or it is not theirs to see, a message a model can act on.
+func mcpLookup(cfg APIConfig, caller mcpCaller, log *zap.SugaredLogger, id string) (*model.Node, error) {
+	node, err := cfg.Service.GetNode(id, caller.tokens)
+	if err != nil {
+		return nil, mcpServiceError(log, err, "look up %q", id)
+	}
+	if node == nil {
+		return nil, fmt.Errorf("no project or budget with id %q, or it is not visible to you", id)
+	}
+	return node, nil
+}
+
+// listResult ends a listing tool: the page as a project list with its total, or the service's error as mcpServiceError reports it, format and args naming the operation.
+func listResult(log *zap.SugaredLogger, page tree.NodePage, err error, format string, args ...any) (*mcp.CallToolResult, mcpProjectList, error) {
+	if err != nil {
+		return nil, mcpProjectList{}, mcpServiceError(log, err, format, args...)
+	}
+	return nil, mcpProjectList{Projects: toMCPProjects(page), Total: page.Total}, nil
 }
 
 // nodeResult ends a tool that writes a node: the node the service returned, or its error as mcpServiceError reports it, format and args naming the operation.

@@ -42,10 +42,7 @@ func TestViews_ToManage(t *testing.T) {
 	rr := do(t, h, http.MethodGet, "/v1/nodes/to-manage", userFaculty, nil)
 	assertStatus(t, rr, http.StatusOK)
 	nodes := decodePage(t, rr)
-	got := map[string]bool{}
-	for _, n := range nodes {
-		got[n.ID] = true
-	}
+	got := idSet(nodes)
 	if !got["p_002"] || !got["p_003"] || got["b_cs_expansion"] || got["p_imported_001"] {
 		t.Errorf("faculty to-manage wrong: %v", nodeIDs(nodes))
 	}
@@ -56,10 +53,7 @@ func TestViews_ToManage(t *testing.T) {
 	rr = do(t, h, http.MethodGet, "/v1/nodes/to-manage", userRoot, nil)
 	assertStatus(t, rr, http.StatusOK)
 	nodes = decodePage(t, rr)
-	got = map[string]bool{}
-	for _, n := range nodes {
-		got[n.ID] = true
-	}
+	got = idSet(nodes)
 	if !got["p_imported_001"] || got["p_002"] || got["p_003"] || got["b_cs_expansion"] {
 		t.Errorf("root to-manage (direct) wrong: %v", nodeIDs(nodes))
 	}
@@ -68,10 +62,7 @@ func TestViews_ToManage(t *testing.T) {
 	rr = do(t, h, http.MethodGet, "/v1/nodes/to-manage?scope=subtree", userRoot, nil)
 	assertStatus(t, rr, http.StatusOK)
 	nodes = decodePage(t, rr)
-	got = map[string]bool{}
-	for _, n := range nodes {
-		got[n.ID] = true
-	}
+	got = idSet(nodes)
 	for _, want := range []string{"p_002", "p_003", "b_cs_expansion", "p_imported_001"} {
 		if !got[want] {
 			t.Errorf("root to-manage (subtree) should contain %s, got %v", want, nodeIDs(nodes))
@@ -97,10 +88,7 @@ func TestViews_EligibleForMe(t *testing.T) {
 	assertStatus(t, rr, http.StatusOK)
 	nodes := decodePage(t, rr)
 	// Students are eligible under the faculty pool and the auto-approve budget.
-	got := map[string]bool{}
-	for _, n := range nodes {
-		got[n.ID] = true
-	}
+	got := idSet(nodes)
 	if !got["b_cs_faculty"] || !got["b_cs_students"] || len(nodes) != 2 {
 		t.Errorf("student eligible-for-me wrong: %v", nodeIDs(nodes))
 	}
@@ -167,10 +155,7 @@ func TestSearchNodes_ScopedToManagedSubtree(t *testing.T) {
 	rr := do(t, h, http.MethodGet, "/v1/nodes/search?q=ml+workload", userFaculty, nil)
 	assertStatus(t, rr, http.StatusOK)
 	found := decodePage(t, rr)
-	ids := map[string]bool{}
-	for _, n := range found {
-		ids[n.ID] = true
-	}
+	ids := idSet(found)
 	if !ids["p_003"] {
 		t.Errorf("faculty should find their own ML project, got %v", nodeIDs(found))
 	}
@@ -204,10 +189,7 @@ func TestSearchNodes_MatchesOwnerAndOpenStackProject(t *testing.T) {
 	rr = do(t, h, http.MethodGet, "/v1/nodes/search?q="+userStudent, userFaculty, nil)
 	assertStatus(t, rr, http.StatusOK)
 	found := decodePage(t, rr)
-	ids := map[string]bool{}
-	for _, n := range found {
-		ids[n.ID] = true
-	}
+	ids := idSet(found)
 	if !ids["p_002"] {
 		t.Errorf("searching a person's email should find the project they own, got %v", nodeIDs(found))
 	}

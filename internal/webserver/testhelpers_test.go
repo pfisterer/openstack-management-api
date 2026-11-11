@@ -4,11 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/pfisterer/cloud-self-service-golib/token"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/pfisterer/cloud-self-service-golib/token"
 
 	"github.com/pfisterer/openstack-management-api/internal/identity"
 
@@ -62,16 +63,91 @@ var testAccounting = tree.Accounting{ChargeInUse: true, ChargeReleased: true}
 // rootAdminTokens mirrors the root-level tokens in mock data.
 var rootAdminTokens = common.TokenList{"group:root_uni", "user:root.admin@uni.example"}
 
-// setupRouter builds a Gin engine wired with:
-//   - DummyAuthMiddleware: signed in as the root admin, other people via X-Act-As
-//   - In-memory store seeded from DefaultMockTreeState
-//   - MockRoleProvider
-//   - No reconciler (reconciler endpoints return 503)
+// testTree is a tree service over a fresh in-memory store, bootstrapped like app.go does: the structural nodes exist and the root admin scope is synced to rootAdminTokens. Every test router is built over one (see config).
+type testTree struct {
+	svc   *tree.Service
+	store nodestore.Store
+	log   *zap.SugaredLogger
+}
+
+// mockNodes is the mock tree (DefaultMockTreeState), the seed most tests run against.
+func mockNodes() []model.Node {
+	_, nodes := dev.DefaultMockTreeState()
+	return nodes
+}
+
+// newTestTree builds a testTree seeded with nodes (nil: the structural nodes only, so a scenario builds the whole tree through the API) under the accounting acc. The identities always come from the mock state, which is where DummyAuthMiddleware resolves a caller's tokens. before runs on the service ahead of Bootstrap, e.g. UseCatalog.
+func newTestTree(t *testing.T, nodes []model.Node, acc tree.Accounting, before ...func(*tree.Service)) testTree {
+	t.Helper()
+	store, sugar := newTestStore(t)
+	return newTestTreeOn(t, store, sugar, nodes, acc, before...)
+}
+
+// newTestTreeOn is newTestTree over a store the test brings, e.g. one that fails on purpose.
+func newTestTreeOn(t *testing.T, store nodestore.Store, sugar *zap.SugaredLogger, nodes []model.Node, acc tree.Accounting, before ...func(*tree.Service)) testTree {
+	t.Helper()
+	ids, _ := dev.DefaultMockTreeState()
+	if err := store.Seed(context.Background(), ids, nodes); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	svc := tree.NewService(store, dev.NewMockRoleProvider(), quotaResources, rootAdminTokens, 10*time.Second, common.DefaultMaxAuthorizedUsers, acc, sugar)
+	for _, f := range before {
+		f(svc)
+	}
+	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
+		t.Fatalf("bootstrap tree: %v", err)
+	}
+	return testTree{svc: svc, store: store, log: sugar}
+}
+
+// config is the SetupConfig every test router starts from: dev mode, the root admin signed in (DummyAuthMiddleware; other people are reached via X-Act-As), the static catalogue, a memory token service, the root admin tokens of the mock tree as both the admin and the act-as allowlist (exactly as app.go wires it), and no reconciler. A test changes what it is about, see router.
+func (tr testTree) config() webserver.SetupConfig {
+	return webserver.SetupConfig{
+		DevMode: true,
+		Log:     tr.log,
+		API: webserver.APIConfig{
+			Service:     tr.svc,
+			Identity:    testIdentity(tr.store, tr.log),
+			Catalog:     common.StaticCatalog(quotaResources),
+			ActAsTokens: rootAdminTokens,
+		},
+		RootAdminTokens: rootAdminTokens,
+		Tokens:          webserver.TokenConfig{Service: token.NewService("os_mgt_", token.NewMemoryStore()), TTL: token.TTLPolicy{Default: 24 * time.Hour}},
+		AuthMiddleware:  dev.DummyAuthMiddleware(""),
+	}
+}
+
+// router is the test router over config, changed by each adjust in turn.
+func (tr testTree) router(adjust ...func(*webserver.SetupConfig)) http.Handler {
+	cfg := tr.config()
+	for _, f := range adjust {
+		f(&cfg)
+	}
+	return webserver.SetupGinWebserver(cfg)
+}
+
+// setupRouter is the default test router: the mock tree, the root admin signed in, no reconciler (its endpoints return 503).
 func setupRouter(t *testing.T) http.Handler { return setupRouterWith(t, nil) }
 
-// setupRouterCORS builds the test router with an explicit CORS allowlist, in
-// PRODUCTION mode — the CORS rules are what production applies, and dev mode
-// deliberately relaxes them for loopback origins.
+// setupRouterWith is setupRouter with an injectable ReconcilerAPI (nil = reconciler disabled → 503 on the admin endpoints).
+func setupRouterWith(t *testing.T, rec webserver.ReconcilerAPI) http.Handler {
+	t.Helper()
+	return newTestTree(t, mockNodes(), testAccounting).router(func(c *webserver.SetupConfig) { c.Reconciler = rec })
+}
+
+// setupRouterSeeded builds the router with a CUSTOM node seed — used by the end-to-end scenario suite. The accounting policy is a parameter because it changes what the same lifecycle costs — see the scenario suite for why it does not just take the production default.
+func setupRouterSeeded(t *testing.T, nodes []model.Node, acc tree.Accounting) http.Handler {
+	t.Helper()
+	return newTestTree(t, nodes, acc).router()
+}
+
+// setupRouterSignedInAs builds the seeded test router with somebody other than the root admin signed in — for what a caller may NOT do, which acting on behalf of them cannot show.
+func setupRouterSignedInAs(t *testing.T, devUser string) http.Handler {
+	t.Helper()
+	return newTestTree(t, mockNodes(), testAccounting).router(func(c *webserver.SetupConfig) { c.AuthMiddleware = dev.DummyAuthMiddleware(devUser) })
+}
+
+// setupRouterCORS builds the test router with an explicit CORS allowlist, in PRODUCTION mode — the CORS rules are what production applies, and dev mode deliberately relaxes them for loopback origins.
 func setupRouterCORS(t *testing.T, corsOrigins ...string) http.Handler {
 	t.Helper()
 	return corsRouter(t, false, corsOrigins...)
@@ -80,51 +156,10 @@ func setupRouterCORS(t *testing.T, corsOrigins ...string) http.Handler {
 // corsRouter builds a router that only differs in DevMode and the allowlist.
 func corsRouter(t *testing.T, devMode bool, corsOrigins ...string) http.Handler {
 	t.Helper()
-	store, sugar := newTestStore(t)
-	svc := tree.NewService(store, dev.NewMockRoleProvider(), quotaResources,
-		rootAdminTokens, 10*time.Second, common.DefaultMaxAuthorizedUsers, testAccounting, sugar)
-	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
-		t.Fatalf("bootstrap tree: %v", err)
-	}
-	return webserver.SetupGinWebserver(webserver.SetupConfig{
-		DevMode:            devMode,
-		Log:                sugar,
-		API:                webserver.APIConfig{Service: svc, Identity: testIdentity(store, sugar), ActAsTokens: rootAdminTokens},
-		RootAdminTokens:    rootAdminTokens,
-		AuthMiddleware:     dev.DummyAuthMiddleware(""),
-		CORSAllowedOrigins: corsOrigins,
+	return newTestTree(t, nil, testAccounting).router(func(c *webserver.SetupConfig) {
+		c.DevMode = devMode
+		c.CORSAllowedOrigins = corsOrigins
 	})
-}
-
-// setupRouterWith builds the test router with an injectable ReconcilerAPI
-// (nil = reconciler disabled → 503 on the admin endpoints).
-func setupRouterWith(t *testing.T, rec webserver.ReconcilerAPI) http.Handler {
-	t.Helper()
-	store, sugar := newTestStore(t)
-	ids, nodes := dev.DefaultMockTreeState()
-	if err := store.Seed(context.Background(), ids, nodes); err != nil {
-		t.Fatalf("seed mock state: %v", err)
-	}
-	return routerFromStore(t, sugar, store, rec, testAccounting)
-}
-
-// setupRouterSeeded builds the router with a CUSTOM node seed — used by the
-// end-to-end scenario suite. Identities still come from DefaultMockTreeState
-// because the DummyAuthMiddleware resolves the caller's tokens from there.
-// The service bootstrap runs afterwards, so the structural root/unassigned nodes
-// always exist and the root admin scope is synced to rootAdminTokens.
-//
-// The accounting policy is a parameter because it changes what the same
-// lifecycle costs — see the scenario suite for why it does not just take the
-// production default.
-func setupRouterSeeded(t *testing.T, nodes []model.Node, acc tree.Accounting) http.Handler {
-	t.Helper()
-	store, sugar := newTestStore(t)
-	ids, _ := dev.DefaultMockTreeState()
-	if err := store.Seed(context.Background(), ids, nodes); err != nil {
-		t.Fatalf("seed scenario state: %v", err)
-	}
-	return routerFromStore(t, sugar, store, nil, acc)
 }
 
 func newTestStore(t *testing.T) (nodestore.Store, *zap.SugaredLogger) {
@@ -135,59 +170,6 @@ func newTestStore(t *testing.T) (nodestore.Store, *zap.SugaredLogger) {
 	}
 	sugar := log.Sugar()
 	return nodestore.NewInMemoryStore(sugar), sugar
-}
-
-func routerFromStore(t *testing.T, sugar *zap.SugaredLogger, store nodestore.Store, rec webserver.ReconcilerAPI, acc tree.Accounting, corsOrigins ...string) http.Handler {
-	t.Helper()
-	return routerFromStoreAs(t, "", sugar, store, rec, acc, corsOrigins...)
-}
-
-// setupRouterSignedInAs builds the seeded test router with somebody other than the root admin signed in — for what a caller may NOT do, which acting on behalf of them cannot show.
-func setupRouterSignedInAs(t *testing.T, devUser string) http.Handler {
-	t.Helper()
-	store, sugar := newTestStore(t)
-	ids, nodes := dev.DefaultMockTreeState()
-	if err := store.Seed(context.Background(), ids, nodes); err != nil {
-		t.Fatalf("seed mock state: %v", err)
-	}
-	return routerFromStoreAs(t, devUser, sugar, store, nil, testAccounting)
-}
-
-func routerFromStoreAs(t *testing.T, devUser string, sugar *zap.SugaredLogger, store nodestore.Store, rec webserver.ReconcilerAPI, acc tree.Accounting, corsOrigins ...string) http.Handler {
-	t.Helper()
-	svc := tree.NewService(
-		store,
-		dev.NewMockRoleProvider(),
-		quotaResources,
-		rootAdminTokens,
-		10*time.Second,
-		common.DefaultMaxAuthorizedUsers,
-		acc,
-		sugar,
-	)
-	// Same as app.go: ensure the structural nodes exist and the root admin scope
-	// is synced from the configured tokens.
-	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
-		t.Fatalf("bootstrap tree: %v", err)
-	}
-	return webserver.SetupGinWebserver(webserver.SetupConfig{
-		DevMode:      true,
-		Log:          sugar,
-		StaticConfig: webserver.StaticConfig{},
-		API: webserver.APIConfig{
-			Service:  svc,
-			Identity: testIdentity(store, sugar),
-			Catalog:  common.StaticCatalog(quotaResources),
-			// Role-switch allowlist = the (mixed user+group) root admin tokens,
-			// exactly as app.go wires it. canUseRoleSwitch accepts either kind.
-			ActAsTokens: rootAdminTokens,
-		},
-		Reconciler:         rec,
-		RootAdminTokens:    rootAdminTokens,
-		Tokens:             webserver.TokenConfig{Service: token.NewService("os_mgt_", token.NewMemoryStore()), TTL: token.TTLPolicy{Default: 24 * time.Hour}},
-		AuthMiddleware:     dev.DummyAuthMiddleware(devUser),
-		CORSAllowedOrigins: corsOrigins,
-	})
 }
 
 // do sends an HTTP request to the handler as the given user and returns the recorder.
@@ -250,6 +232,15 @@ func nodeIDs(ns []model.Node) []string {
 	ids := make([]string, len(ns))
 	for i, n := range ns {
 		ids[i] = n.ID
+	}
+	return ids
+}
+
+// idSet is the ids of a node slice as a set, for asserting who is and is not in a listing.
+func idSet(ns []model.Node) map[string]bool {
+	ids := make(map[string]bool, len(ns))
+	for _, n := range ns {
+		ids[n.ID] = true
 	}
 	return ids
 }

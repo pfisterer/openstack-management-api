@@ -16,7 +16,6 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
-	"github.com/pfisterer/openstack-management-api/internal/dev"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 )
 
@@ -31,16 +30,7 @@ func mcpTestServer(t *testing.T) *httptest.Server {
 // which is how a test looks at what a tool actually wrote.
 func mcpTestServerWithService(t *testing.T) (*httptest.Server, *tree.Service) {
 	t.Helper()
-	store, sugar := newTestStore(t)
-	ids, nodes := dev.DefaultMockTreeState()
-	if err := store.Seed(context.Background(), ids, nodes); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	svc := tree.NewService(store, dev.NewMockRoleProvider(), quotaResources,
-		rootAdminTokens, 10*time.Second, common.DefaultMaxAuthorizedUsers, testAccounting, sugar)
-	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
-		t.Fatalf("bootstrap: %v", err)
-	}
+	tr := newTestTree(t, mockNodes(), testAccounting)
 
 	lookup := func(_ context.Context, secret string) (identity.TokenLookupResult, error) {
 		switch secret {
@@ -55,17 +45,12 @@ func mcpTestServerWithService(t *testing.T) (*httptest.Server, *tree.Service) {
 		return rootAdminTokens, nil
 	}
 
-	h := webserver.SetupGinWebserver(webserver.SetupConfig{
-		DevMode:         true,
-		Log:             sugar,
-		StaticConfig:    webserver.StaticConfig{},
-		API:             webserver.APIConfig{Service: svc, Identity: testIdentity(store, sugar), ActAsTokens: rootAdminTokens},
-		RootAdminTokens: rootAdminTokens,
-		AuthMiddleware:  identity.CombinedAuthMiddleware(nil, lookup, resolve, sugar),
+	h := tr.router(func(c *webserver.SetupConfig) {
+		c.AuthMiddleware = identity.CombinedAuthMiddleware(nil, lookup, resolve, tr.log)
 	})
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	return srv, svc
+	return srv, tr.svc
 }
 
 // bearerTransport puts the API token on every request, the way an MCP client
@@ -212,40 +197,57 @@ func TestMCP_DestructiveToolsNeedAWriteToken(t *testing.T) {
 // that accepted any error would pass even with the check removed.
 func TestMCP_DestructiveToolsRefuseAMismatchedName(t *testing.T) {
 	session := mcpSession(t, mcpTestServer(t), writeSecret)
+	id, name := firstBudget(t, session)
 
-	budgets, err := session.CallTool(context.Background(), &mcp.CallToolParams{
-		Name: "list_my_budgets", Arguments: map[string]any{},
-	})
-	if err != nil || budgets.IsError {
-		t.Fatalf("list budgets: %v %+v", err, budgets)
-	}
-	var list struct {
-		Projects []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"projects"`
-	}
-	if err := json.Unmarshal(mustJSON(t, budgets.StructuredContent), &list); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(list.Projects) == 0 {
-		t.Fatal("the test identity manages no budget; the fixture cannot exercise this")
-	}
-	target := list.Projects[0]
-
-	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
-		Name:      "delete_budget",
-		Arguments: map[string]any{"id": target.ID, "confirm_name": target.Name + " (wrong)"},
-	})
-	if err != nil {
-		t.Fatalf("call: %v", err)
-	}
+	res := callTool(t, session, "delete_budget", map[string]any{"id": id, "confirm_name": name + " (wrong)"})
 	if !res.IsError {
-		t.Fatalf("a mismatched confirm_name deleted %q anyway", target.ID)
+		t.Fatalf("a mismatched confirm_name deleted %q anyway", id)
 	}
 	if msg := mustText(t, res); !strings.Contains(msg, "confirm_name") {
 		t.Errorf("refused for the wrong reason: %s", msg)
 	}
+}
+
+// callTool calls a tool and returns what it answered. A failure to call fails the test; what the tool reports (IsError) is the test's to look at.
+func callTool(t *testing.T, session *mcp.ClientSession, name string, args map[string]any) *mcp.CallToolResult {
+	t.Helper()
+	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: args})
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	return res
+}
+
+// decodeResult decodes a tool's structured answer into v.
+func decodeResult(t *testing.T, res *mcp.CallToolResult, v any) {
+	t.Helper()
+	if err := json.Unmarshal(mustJSON(t, res.StructuredContent), v); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+}
+
+// firstBudget is the first budget the test identity manages, as list_my_budgets answers it; the fixture cannot exercise a budget tool without one.
+func firstBudget(t *testing.T, session *mcp.ClientSession) (id, name string) {
+	t.Helper()
+	res := callTool(t, session, "list_my_budgets", map[string]any{})
+	if res.IsError {
+		t.Fatalf("list budgets: %s", mustText(t, res))
+	}
+	var list struct {
+		Projects []struct {
+			ID   string `json:"id"`
+			Kind string `json:"kind"`
+			Name string `json:"name"`
+		} `json:"projects"`
+	}
+	decodeResult(t, res, &list)
+	if len(list.Projects) == 0 {
+		t.Fatal("the test identity manages no budget; the fixture cannot exercise this")
+	}
+	if list.Projects[0].Kind != model.KindBudget {
+		t.Errorf("kind = %q, want budget", list.Projects[0].Kind)
+	}
+	return list.Projects[0].ID, list.Projects[0].Name
 }
 
 // mustText returns the text a failing tool call reported.
@@ -352,46 +354,21 @@ func TestMCP_ToolsDeclareTheirRequiredArguments(t *testing.T) {
 func TestMCP_ChangesAreRecordedAsComingFromAnAgent(t *testing.T) {
 	srv, svc := mcpTestServerWithService(t)
 	session := mcpSession(t, srv, writeSecret)
+	budgetID, _ := firstBudget(t, session)
 
-	budgets, err := session.CallTool(context.Background(), &mcp.CallToolParams{
-		Name: "list_my_budgets", Arguments: map[string]any{},
+	res := callTool(t, session, "create_project", map[string]any{
+		"budget_id": budgetID,
+		"name":      "provenance-probe",
+		"reason":    "checking that the history says where this came from",
+		"limit":     map[string]any{"cores": 1},
 	})
-	if err != nil {
-		t.Fatalf("list budgets: %v", err)
-	}
-	var list struct {
-		Projects []struct {
-			ID string `json:"id"`
-		} `json:"projects"`
-	}
-	if err := json.Unmarshal(mustJSON(t, budgets.StructuredContent), &list); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if len(list.Projects) == 0 {
-		t.Fatal("the test identity manages no budget; the fixture cannot exercise this")
-	}
-
-	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{
-		Name: "create_project",
-		Arguments: map[string]any{
-			"budget_id": list.Projects[0].ID,
-			"name":      "provenance-probe",
-			"reason":    "checking that the history says where this came from",
-			"limit":     map[string]any{"cores": 1},
-		},
-	})
-	if err != nil {
-		t.Fatalf("create_project: %v", err)
-	}
 	if res.IsError {
 		t.Fatalf("create_project failed: %+v", res.Content)
 	}
 	var created struct {
 		ID string `json:"id"`
 	}
-	if err := json.Unmarshal(mustJSON(t, res.StructuredContent), &created); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	decodeResult(t, res, &created)
 
 	node, err := svc.GetNode(created.ID, rootAdminTokens)
 	if err != nil || node == nil {
@@ -416,36 +393,12 @@ func TestMCP_ChangesAreRecordedAsComingFromAnAgent(t *testing.T) {
 // project, in canonical spelling.
 func TestMCP_SetProjectAdmins(t *testing.T) {
 	session := mcpSession(t, mcpTestServer(t), writeSecret)
-	call := func(name string, args map[string]any) *mcp.CallToolResult {
-		t.Helper()
-		res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: args})
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		return res
-	}
-	var list struct {
-		Projects []struct {
-			ID     string   `json:"id"`
-			Kind   string   `json:"kind"`
-			Admins []string `json:"admins"`
-			Shared bool     `json:"shared"`
-		} `json:"projects"`
-	}
-
-	budgets := call("list_my_budgets", map[string]any{})
-	if err := json.Unmarshal(mustJSON(t, budgets.StructuredContent), &list); err != nil || len(list.Projects) == 0 {
-		t.Fatalf("no budget to test with: %v", err)
-	}
-	budgetID := list.Projects[0].ID
-	if list.Projects[0].Kind != model.KindBudget {
-		t.Errorf("kind = %q, want budget", list.Projects[0].Kind)
-	}
-	if res := call("set_project_admins", map[string]any{"id": budgetID, "admins": []string{"user:x@y"}}); !res.IsError {
+	budgetID, _ := firstBudget(t, session)
+	if res := callTool(t, session, "set_project_admins", map[string]any{"id": budgetID, "admins": []string{"user:x@y"}}); !res.IsError {
 		t.Fatal("set_project_admins changed who approves on a budget")
 	}
 
-	created := call("create_project", map[string]any{
+	created := callTool(t, session, "create_project", map[string]any{
 		"budget_id": budgetID, "name": "Shared lab", "reason": "a lab run by two", "limit": map[string]int{"cores": 1},
 		"admins": []string{"user:Co@Uni.example"},
 	})
@@ -457,14 +410,12 @@ func TestMCP_SetProjectAdmins(t *testing.T) {
 		Admins []string `json:"admins"`
 		Shared bool     `json:"shared"`
 	}
-	if err := json.Unmarshal(mustJSON(t, created.StructuredContent), &project); err != nil {
-		t.Fatal(err)
-	}
+	decodeResult(t, created, &project)
 	if !project.Shared || !slices.Equal(project.Admins, []string{"user:co@uni.example"}) {
 		t.Errorf("created project: shared %v, admins %v", project.Shared, project.Admins)
 	}
 
-	cleared := call("set_project_admins", map[string]any{"id": project.ID, "admins": []string{}})
+	cleared := callTool(t, session, "set_project_admins", map[string]any{"id": project.ID, "admins": []string{}})
 	if cleared.IsError {
 		t.Fatalf("clear admins: %s", mustText(t, cleared))
 	}
@@ -474,9 +425,7 @@ func TestMCP_SetProjectAdmins(t *testing.T) {
 		Admins []string `json:"admins"`
 		Shared bool     `json:"shared"`
 	}
-	if err := json.Unmarshal(mustJSON(t, cleared.StructuredContent), &after); err != nil {
-		t.Fatal(err)
-	}
+	decodeResult(t, cleared, &after)
 	if after.Shared || len(after.Admins) != 0 {
 		t.Errorf("after clearing: shared %v, admins %v", after.Shared, after.Admins)
 	}

@@ -3,13 +3,10 @@ package webserver_test
 import (
 	"context"
 	"encoding/json"
-	"github.com/pfisterer/openstack-management-api/internal/dev"
 	"net/http"
 	"slices"
 	"testing"
-	"time"
 
-	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/catalog"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
@@ -22,21 +19,10 @@ func catalogRouter(t *testing.T) http.Handler {
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := tree.NewService(store, dev.NewMockRoleProvider(), quotaResources,
-		rootAdminTokens, 10*time.Second, common.DefaultMaxAuthorizedUsers, testAccounting, sugar)
-	svc.UseCatalog(cat)
-	if err := svc.Bootstrap(context.Background(), nil, nil); err != nil {
-		t.Fatal(err)
-	}
-	return webserver.SetupGinWebserver(webserver.SetupConfig{
-		DevMode: true,
-		Log:     sugar,
-		API: webserver.APIConfig{
-			Service: svc, Identity: testIdentity(store, sugar), Catalog: cat, CatalogAdmin: &catalog.Admin{Catalog: cat, Tree: svc},
-			ActAsTokens: rootAdminTokens,
-		},
-		RootAdminTokens: rootAdminTokens,
-		AuthMiddleware:  dev.DummyAuthMiddleware(""),
+	tr := newTestTreeOn(t, store, sugar, nil, testAccounting, func(svc *tree.Service) { svc.UseCatalog(cat) })
+	return tr.router(func(c *webserver.SetupConfig) {
+		c.API.Catalog = cat
+		c.API.CatalogAdmin = &catalog.Admin{Catalog: cat, Tree: tr.svc}
 	})
 }
 

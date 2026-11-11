@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/reconciler"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 )
@@ -60,6 +61,24 @@ func TestReconcilerEndpoints_RootGated(t *testing.T) {
 	}
 	if rec.triggered != 1 {
 		t.Errorf("reconciler should have been triggered once, got %d", rec.triggered)
+	}
+}
+
+// ROOT_ADMIN_TOKENS is compared in canonical spelling, like every other token: configured as "GROUP:Root_Uni", a root admin still passes the admin gate and may act for others with the "group:root_uni" the role provider hands out. The gate used to compare the configured list raw while act-as canonicalised it, so the same person was a root admin on one endpoint and not on the other.
+func TestRootAdminTokens_CompareCanonically(t *testing.T) {
+	loud := common.TokenList{"GROUP:Root_Uni"}
+	h := newTestTree(t, mockNodes(), testAccounting).router(func(c *webserver.SetupConfig) {
+		c.RootAdminTokens = loud
+		c.API.ActAsTokens = loud
+		c.Reconciler = &fakeReconciler{}
+	})
+	assertStatus(t, do(t, h, http.MethodGet, "/v1/admin/reconcile/status", "", nil), http.StatusOK)
+	rr := do(t, h, http.MethodGet, "/v1/act-as", "", nil)
+	assertStatus(t, rr, http.StatusOK)
+	var st actAsState
+	mustDecode(t, rr, &st)
+	if !st.MayActAs {
+		t.Errorf("a root admin configured in upper case may act for others, got %+v", st)
 	}
 }
 

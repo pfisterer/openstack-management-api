@@ -1,10 +1,7 @@
 package webserver
 
 import (
-	"fmt"
 	"net/http"
-	"strconv"
-	"strings"
 
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/roles"
@@ -22,11 +19,6 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/catalog"
 	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/reconciler"
 	"go.uber.org/zap"
-)
-
-const (
-	defaultPageLimit = common.DefaultPageLimit
-	maxPageLimit     = common.MaxPageLimit
 )
 
 // ReconcilerAPI is the minimal interface the admin endpoint needs from the reconciler.
@@ -196,7 +188,7 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 	gin.DefaultWriter = ginLogWriter
 	gin.DefaultErrorWriter = ginLogWriter
 	router.Use(ginzap.RecoveryWithZap(cfg.Log.Desugar(), true))
-	router.Use(LimitRequestBody(MaxRequestBodyBytes))
+	router.Use(ginweb.LimitRequestBody(MaxRequestBodyBytes))
 
 	// Setup static file serving routes
 	staticGroup := router.Group("/")
@@ -264,22 +256,8 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 	return router
 }
 
-// MaxRequestBodyBytes bounds a request body. The largest legitimate one — a project with its full list of members and a long reason — is a few kilobytes; without a bound a single request could make the server read and decode as much as it is sent.
+// MaxRequestBodyBytes bounds a request body (ginweb.LimitRequestBody: 413 where the request announces more, a failed read where it does not). The largest legitimate one — a project with its full list of members and a long reason — is a few kilobytes; without a bound a single request could make the server read and decode as much as it is sent.
 const MaxRequestBodyBytes = 1 << 20
-
-// LimitRequestBody refuses a body larger than limit: at once with 413 where the request announces its length, and by failing the read (MaxBytesReader) where it does not.
-func LimitRequestBody(limit int64) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if c.Request.ContentLength > limit {
-			c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{"error": fmt.Sprintf("request body larger than %d bytes", limit)})
-			return
-		}
-		if c.Request.Body != nil {
-			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
-		}
-		c.Next()
-	}
-}
 
 // resources is the current catalogue; none where no catalogue is configured.
 func (cfg APIConfig) resources() []common.Resource {
@@ -416,35 +394,4 @@ func getConfig(cfg APIConfig) gin.HandlerFunc {
 		}
 		c.JSON(http.StatusOK, config)
 	}
-}
-
-func parsePagination(c *gin.Context) (int, int, error) {
-	limit := defaultPageLimit
-	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
-		parsedLimit, err := strconv.Atoi(raw)
-		if err != nil {
-			return 0, 0, err
-		}
-		if parsedLimit <= 0 {
-			return 0, 0, fmt.Errorf("limit must be positive")
-		}
-		if parsedLimit > maxPageLimit {
-			parsedLimit = maxPageLimit
-		}
-		limit = parsedLimit
-	}
-
-	offset := 0
-	if raw := strings.TrimSpace(c.Query("offset")); raw != "" {
-		parsedOffset, err := strconv.Atoi(raw)
-		if err != nil {
-			return 0, 0, err
-		}
-		if parsedOffset < 0 {
-			return 0, 0, fmt.Errorf("offset must be non-negative")
-		}
-		offset = parsedOffset
-	}
-
-	return limit, offset, nil
 }

@@ -71,9 +71,8 @@ func usagePeriod(c *gin.Context, now time.Time) (from, to time.Time, err error) 
 func getNodeUsage(cfg APIConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		mapping := usage.MappingFrom(cfg.resources())
-		auth, err := mustGetAuthContext(c)
-		if err != nil {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
+		auth, ok := caller(c)
+		if !ok {
 			return
 		}
 		from, to, err := usagePeriod(c, time.Now().UTC())

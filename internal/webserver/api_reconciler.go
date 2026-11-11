@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/identity"
 	"go.uber.org/zap"
 )
 
@@ -15,7 +16,7 @@ import (
 // ensuring the CORS middleware on the parent group handles preflight and actual requests.
 func RegisterReconcilerRoutes(v1 *gin.RouterGroup, rec ReconcilerAPI, rootAdminTokens common.TokenList, log *zap.SugaredLogger) {
 	admin := v1.Group("/admin/reconcile")
-	admin.Use(requireRootAdmin(rootAdminTokens, log))
+	admin.Use(requireRootAdmin(rootAdminTokens, log), reconcilerAvailable(rec))
 	{
 		// GET /v1/admin/reconcile/status — returns outcome of the last reconciliation run.
 		admin.GET("/status", getReconcilerStatus(rec))
@@ -25,32 +26,40 @@ func RegisterReconcilerRoutes(v1 *gin.RouterGroup, rec ReconcilerAPI, rootAdminT
 	}
 }
 
-// requireRootAdmin returns a middleware that aborts with 403 if the caller does not hold
-// at least one token from rootAdminTokens.
+// requireRootAdmin returns a middleware that aborts with 403 if the caller does not hold at least one token from rootAdminTokens, compared in canonical spelling like every token (common.CanonicalTokenSet).
 func requireRootAdmin(rootAdminTokens common.TokenList, log *zap.SugaredLogger) gin.HandlerFunc {
-	allowed := make(map[string]struct{}, len(rootAdminTokens))
-	for _, t := range rootAdminTokens {
-		allowed[t] = struct{}{}
-	}
+	allowed := common.CanonicalTokenSet(rootAdminTokens)
 	return func(c *gin.Context) {
 		// Gate on the EFFECTIVE tokens, not the real caller's, so acting on behalf of
 		// somebody is faithful: while a root admin acts for a non-root user, admin
 		// actions are denied (they must switch back first). Actions therefore always
 		// match the identity on screen.
-		auth, err := mustGetAuthContext(c)
+		auth, err := identity.FromContext(c)
 		if err != nil {
 			log.Warnw("Reconciler admin: failed to resolve auth context", "error", err)
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 			return
 		}
-		for _, t := range auth.EffectiveTokens {
-			if _, ok := allowed[t]; ok {
-				c.Next()
-				return
-			}
+		if allowed.ContainsAny(auth.EffectiveTokens) {
+			c.Next()
+			return
 		}
 		log.Warnw("Reconciler admin: access denied (not a root admin)", "effective_tokens", auth.EffectiveTokens, "actor", auth.ActorEmail)
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+	}
+}
+
+// reconcilerAvailable answers 503 while there is no reconciler to talk to: none configured, or one still connecting to OpenStack — which is a different thing, and the API says which.
+func reconcilerAvailable(rec ReconcilerAPI) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		switch {
+		case rec == nil:
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "reconciler is disabled"})
+		case !rec.Ready():
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "reconciler is enabled but still connecting to OpenStack"})
+		default:
+			c.Next()
+		}
 	}
 }
 
@@ -68,14 +77,6 @@ func requireRootAdmin(rootAdminTokens common.TokenList, log *zap.SugaredLogger) 
 //	@Router			/v1/admin/reconcile/status [get]
 func getReconcilerStatus(rec ReconcilerAPI) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if rec == nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "reconciler is disabled"})
-			return
-		}
-		if !rec.Ready() {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "reconciler is enabled but still connecting to OpenStack"})
-			return
-		}
 		c.JSON(http.StatusOK, rec.GetStatus())
 	}
 }
@@ -94,14 +95,6 @@ func getReconcilerStatus(rec ReconcilerAPI) gin.HandlerFunc {
 //	@Router			/v1/admin/reconcile/trigger [post]
 func triggerReconcile(rec ReconcilerAPI, log *zap.SugaredLogger) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if rec == nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "reconciler is disabled"})
-			return
-		}
-		if !rec.Ready() {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "reconciler is enabled but still connecting to OpenStack"})
-			return
-		}
 		log.Info("Manual reconciliation triggered via API")
 		rec.Trigger()
 		c.JSON(http.StatusAccepted, gin.H{"message": "reconciliation triggered"})

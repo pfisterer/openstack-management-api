@@ -52,7 +52,7 @@ type Effective interface {
 //
 // mayActAs are the tokens that allow acting on behalf of another person (the root admins). The check runs on the actor's own tokens, never on the person's. A forbidden or malformed X-Act-As is refused rather than ignored: an admin who believes they act for somebody else and actually acts as themself would act on the wrong things.
 func EffectiveAuthMiddleware(svc Effective, mayActAs common.TokenList, log *zap.SugaredLogger) gin.HandlerFunc {
-	allowed := common.NewTokenSet(common.CanonicalTokens(mayActAs))
+	allowed := common.CanonicalTokenSet(mayActAs)
 	return func(c *gin.Context) {
 		actorEmail, originalTokens, err := ResolveOriginalAuthContext(c)
 		if err != nil {

@@ -2,7 +2,7 @@ module github.com/pfisterer/openstack-management-api
 
 go 1.26.0
 
-toolchain go1.27.3
+toolchain go1.27.4
 
 require (
 	github.com/gin-contrib/cors v1.7.7

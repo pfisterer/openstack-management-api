@@ -82,6 +82,8 @@ type UpdateNodeRequest struct {
 	AllowSubBudgetRequests         *bool              `json:"allow_sub_budget_requests,omitempty"`
 	AllowRequestsBeyondAutoApprove *bool              `json:"allow_requests_beyond_auto_approve,omitempty"`
 	AutoApproveExtensions          *bool              `json:"auto_approve_extensions,omitempty"`
+	// Reason is the budget's purpose (Node.Reason), required and at most common.MaxReasonLength characters as on creation. Budgets only: on a project it is refused like every edit beyond name and admins. Managers of the budget or above, like the other policy fields.
+	Reason *string `json:"reason,omitempty"`
 	// MaxProjectTermDays may not exceed the cap of a budget above. Lowering it
 	// is carried down: sub-budgets with a longer cap take the new one, and
 	// projects ending later than that many days from today are shortened.
@@ -216,6 +218,7 @@ const (
 var updateFieldClass = map[string]updateClass{
 	"Name":                           updateLabel,
 	"AdminScope":                     updateLabel,
+	"Reason":                         updatePolicy,
 	"EligibleRequesters":             updatePolicy,
 	"AutoApprove":                    updatePolicy,
 	"ClearAutoApprove":               updatePolicy,

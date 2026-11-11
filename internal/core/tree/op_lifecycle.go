@@ -393,6 +393,17 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 		}
 		updated.Name = strings.TrimSpace(*req.Name)
 	}
+	// The purpose obeys the rules of creation: required, and no longer than any other reason.
+	if req.Reason != nil {
+		purpose := strings.TrimSpace(*req.Reason)
+		if purpose == "" {
+			return model.Node{}, fmt.Errorf("a purpose is required")
+		}
+		if err := validateReason(purpose); err != nil {
+			return model.Node{}, err
+		}
+		updated.Reason = purpose
+	}
 	if req.AdminScope != nil {
 		updated.AdminScope = *req.AdminScope
 	}
@@ -469,6 +480,10 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 	if req.ClearTerminationDate || req.TerminationDate != nil {
 		historyEntry.TerminationDateFrom = current.TerminationDate
 		historyEntry.TerminationDateTo = updated.TerminationDate
+	}
+	if updated.Reason != current.Reason {
+		historyEntry.ReasonFrom = new(current.Reason)
+		historyEntry.ReasonTo = new(updated.Reason)
 	}
 
 	// An inherited limit is the one of the budget above and cannot be set by

@@ -327,7 +327,10 @@ type HistoryEntry struct {
 	// CapsFrom and CapsTo are the budget's own caps (common.Cap) that an entry changed, before and after: only the ids that differ; an id missing on one side was not set there.
 	CapsFrom common.Caps `json:"caps_from,omitempty"`
 	CapsTo   common.Caps `json:"caps_to,omitempty"`
-	Reason   *string     `json:"reason,omitempty"`
+	// ReasonFrom and ReasonTo are the node's purpose (Node.Reason) before and after an edit that changed it; Reason below is the note of the entry itself.
+	ReasonFrom *string `json:"reason_from,omitempty"`
+	ReasonTo   *string `json:"reason_to,omitempty"`
+	Reason     *string `json:"reason,omitempty"`
 }
 
 // StatusUsage groups the aggregated limits and contributing leaf IDs for one status.

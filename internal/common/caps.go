@@ -32,6 +32,8 @@ type Cap struct {
 	Grant bool `json:"grant,omitempty"`
 	// Together names a set of caps that are set all together or not at all.
 	Together string `json:"together,omitempty"`
+	// Default is the value the UI pre-fills when someone switches the cap on (a Grant cap, before the budgets above tighten it); it passes Check. Absent, the UI starts from what the budgets above allow, else from Min.
+	Default *int `json:"default,omitempty"`
 }
 
 // Caps are the values of caps by id: a budget's own, or what applies below a chain of budgets.
@@ -99,7 +101,7 @@ func (d Cap) unitSuffix() string {
 	return " " + d.Unit
 }
 
-// ValidateCapDefs checks the caps of all providers at startup: ids unique and set, bounds sensible, a Together set within one provider and either all Grant or none.
+// ValidateCapDefs checks the caps of all providers at startup: ids unique and set, bounds sensible, a default within them, a Together set within one provider and either all Grant or none.
 func ValidateCapDefs(defs []Cap) error {
 	seen := map[string]bool{}
 	together := map[string]Cap{}
@@ -119,6 +121,11 @@ func ValidateCapDefs(defs []Cap) error {
 		}
 		if len(d.Choices) > 0 && d.Unbounded {
 			return fmt.Errorf("cap %q: a choice has no unbounded value", d.ID)
+		}
+		if d.Default != nil {
+			if err := d.Check(*d.Default); err != nil {
+				return fmt.Errorf("cap %q: default: %w", d.ID, err)
+			}
 		}
 		if d.Together == "" {
 			continue

@@ -37,6 +37,9 @@ const (
 	groupWorkspaces   = "Workspaces"
 	groupBatchJobs    = "Batch jobs"
 	togetherBatchJobs = "batch-jobs"
+	// What switching batch jobs on in a budget pre-fills (Cap.Default), the AI service's defaults for a project's batch jobs.
+	defaultJobsPerPerson = 2
+	defaultJobHours      = 4
 )
 
 // Caps are the caps the AI service declares.
@@ -49,8 +52,8 @@ var Caps = []common.Cap{
 	{ID: CapReleaseGPUMaxHours, Name: "GPU: upper bound", Group: groupReleaseGPU, Unit: "h", Min: 1, Max: maxReleaseHours, Unbounded: true, Message: "hours after its start a GPU workspace or kernel ends at the latest; 0 = none (only for projects with GPUs of their own)"},
 	{ID: CapWorkspaceScratchGB, Name: "Local storage per workspace", Group: groupWorkspaces, Unit: "GB", Min: 1, Max: maxScratchGB, Message: "what a workspace or GPU kernel may write outside its home"},
 	{ID: CapBatchPriority, Name: "Batch priority", Group: groupBatchJobs, Choices: []string{batchPreemptible, batchGuaranteed}, Message: "whether batch jobs may be preempted"},
-	{ID: CapBatchJobsPerPerson, Name: "Batch jobs per person", Group: groupBatchJobs, Min: 1, Max: maxJobsPerPerson, Grant: true, Together: togetherBatchJobs, Message: "batch jobs a person may have running and waiting at the same time"},
-	{ID: CapBatchMaxHours, Name: "Batch job run time", Group: groupBatchJobs, Unit: "h", Min: 1, Max: maxJobHours, Grant: true, Together: togetherBatchJobs, Message: "how long one batch job may run at the latest"},
+	{ID: CapBatchJobsPerPerson, Name: "Batch jobs per person", Group: groupBatchJobs, Min: 1, Max: maxJobsPerPerson, Grant: true, Together: togetherBatchJobs, Default: new(defaultJobsPerPerson), Message: "batch jobs a person may have running and waiting at the same time"},
+	{ID: CapBatchMaxHours, Name: "Batch job run time", Group: groupBatchJobs, Unit: "h", Min: 1, Max: maxJobHours, Grant: true, Together: togetherBatchJobs, Default: new(defaultJobHours), Message: "how long one batch job may run at the latest"},
 }
 
 func init() {

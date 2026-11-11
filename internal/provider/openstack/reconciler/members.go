@@ -33,7 +33,7 @@ import (
 // Keeping such an account costs nothing: without a role it reaches nothing,
 // and the next SSO login would bring it back anyway. Turn it on only where
 // the service user sees every assignment (system or cloud-wide admin).
-func (r *Reconciler) pruneOrphanedUsers(res *reconcileResult) {
+func (r *Reconciler) pruneOrphanedUsers(res *Counters) {
 	if r.osClient == nil {
 		return
 	}
@@ -48,7 +48,7 @@ func (r *Reconciler) pruneOrphanedUsers(res *reconcileResult) {
 		r.log.Infow("Deleting orphaned managed user (no project memberships)",
 			"user_id", u.ID, "name", u.Name, "dry_run", r.cfg.DryRun)
 		if r.cfg.DryRun {
-			res.orphanedUsersRemoved++
+			res.OrphanedUsersRemoved++
 			continue
 		}
 		if err := r.osClient.DeleteUser(u.ID); err != nil {
@@ -56,7 +56,7 @@ func (r *Reconciler) pruneOrphanedUsers(res *reconcileResult) {
 				"user_id", u.ID, "name", u.Name, "error", err)
 			continue
 		}
-		res.orphanedUsersRemoved++
+		res.OrphanedUsersRemoved++
 	}
 }
 
@@ -189,7 +189,7 @@ func collectGroupTokens(leaves []model.Node) map[string]struct{} {
 // in active leaves, populates each group's membership from the role provider,
 // and returns a map of groupToken → Keystone group ID for use in project assignment.
 // Non-fatal: errors for individual groups are logged but do not abort the run.
-func (r *Reconciler) syncGroups(ctx context.Context, activeLeaves []model.Node, res *reconcileResult) map[string]string {
+func (r *Reconciler) syncGroups(ctx context.Context, activeLeaves []model.Node, res *Counters) map[string]string {
 	if r.osClient == nil {
 		return nil
 	}
@@ -220,7 +220,7 @@ func (r *Reconciler) syncGroups(ctx context.Context, activeLeaves []model.Node, 
 		} else {
 			r.log.Infow("Creating OS group", "group", osGroupName, "dry_run", r.cfg.DryRun)
 			if r.cfg.DryRun {
-				res.groupsCreated++
+				res.GroupsCreated++
 				continue
 			}
 			created, err := r.osClient.CreateGroup(osGroupName, managedGroupDescription)
@@ -229,7 +229,7 @@ func (r *Reconciler) syncGroups(ctx context.Context, activeLeaves []model.Node, 
 				continue
 			}
 			groupID = created.ID
-			res.groupsCreated++
+			res.GroupsCreated++
 		}
 
 		groupTokenToOSID[token] = groupID
@@ -246,7 +246,7 @@ func (r *Reconciler) syncGroups(ctx context.Context, activeLeaves []model.Node, 
 // syncGroupMembers reconciles the Keystone group's user list against the users
 // returned by the role provider for that group token.
 // Non-fatal: errors for individual users are logged and skipped.
-func (r *Reconciler) syncGroupMembers(ctx context.Context, groupToken, groupName, groupID string, res *reconcileResult) {
+func (r *Reconciler) syncGroupMembers(ctx context.Context, groupToken, groupName, groupID string, res *Counters) {
 	desiredEmails, err := r.roleProvider.GetGroupUsers(ctx, groupToken)
 	if err != nil {
 		r.log.Warnw("Could not fetch group users from role provider",
@@ -278,7 +278,7 @@ func (r *Reconciler) syncGroupMembers(ctx context.Context, groupToken, groupName
 	}
 
 	if r.cfg.DryRun {
-		res.groupsSynced++
+		res.GroupsSynced++
 		return
 	}
 
@@ -320,7 +320,7 @@ func (r *Reconciler) syncGroupMembers(ctx context.Context, groupToken, groupName
 		}
 	}
 
-	res.groupsSynced++
+	res.GroupsSynced++
 }
 
 // syncGroupAssignments reconciles the Keystone group role assignments for a

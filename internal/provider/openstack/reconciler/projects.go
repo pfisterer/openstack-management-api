@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/pfisterer/cloud-self-service-golib/retry"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
@@ -12,7 +13,7 @@ import (
 
 // createOpenstackProjectForLeaf creates a new OpenStack project for an approved leaf
 // and applies the full initial quota (managed fields + network defaults).
-func (r *Reconciler) createOpenstackProjectForLeaf(_ context.Context, leaf model.Node, description string) (osclient.ProjectInfo, error) {
+func (r *Reconciler) createOpenstackProjectForLeaf(ctx context.Context, leaf model.Node, description string) (osclient.ProjectInfo, error) {
 	name := buildProjectName(leaf)
 
 	r.log.Infow("Creating OS project for leaf",
@@ -27,34 +28,17 @@ func (r *Reconciler) createOpenstackProjectForLeaf(_ context.Context, leaf model
 		return osclient.ProjectInfo{}, fmt.Errorf("create project: %w", err)
 	}
 
-	// Compose a full quota set: managed resources from the leaf + static defaults.
-	// Static defaults (network quotas, volumes, snapshots) are driven entirely by the
-	// ManagedProject definitions — no separate DefaultNetworkQuotas struct needed.
+	// The full quota set: the managed resources from the leaf, and the static defaults (network quotas, volumes, snapshots) over them.
 	fullQuota := ProjectQuotaToQuotaSet(r.resources(), leaf.EffectiveLimit())
-	staticQuota := StaticProjectQuotaDefaults(r.resources())
-	mergeStaticIntoQuotaSet(&fullQuota, staticQuota)
+	applyStaticDefaults(&fullQuota, r.resources())
 	fullQuota.ProjectID = project.ID
 
-	// Retry quota set a few times: Nova/Cinder may not have propagated the new Keystone
-	// project yet and returns 503 for a few seconds after creation.
-	// If all attempts fail we do NOT delete the orphan — instead we return the project
-	// info so the reconciler stores the OSProjectID. On the next tick the project already
-	// exists and quota sync goes through syncQuota, which will keep retrying every interval
-	// until Nova is healthy again. Deleting and recreating on every failure loops forever.
-	const maxQuotaAttempts = 4
-	const quotaRetryDelay = 6 * time.Second
-	var quotaErr error
-	for attempt := 1; attempt <= maxQuotaAttempts; attempt++ {
-		quotaErr = r.osClient.UpdateProjectQuotas(project.ID, fullQuota)
-		if quotaErr == nil {
-			break
-		}
-		r.log.Warnw("Quota set attempt failed",
-			"project_id", project.ID, "attempt", attempt, "max", maxQuotaAttempts, "error", quotaErr)
-		if attempt < maxQuotaAttempts {
-			time.Sleep(quotaRetryDelay)
-		}
-	}
+	// Retry the quota set a few times — four attempts six seconds apart: Nova/Cinder may not have propagated the new Keystone project yet and return 503 for a few seconds after creation.
+	// If all attempts fail we do NOT delete the orphan — instead we return the project info so the reconciler stores the OSProjectID. On the next tick the project already exists and quota sync goes through syncQuota, which will keep retrying every interval until Nova is healthy again. Deleting and recreating on every failure loops forever.
+	quotaErr := retry.Do(ctx, retry.Policy{Total: 30 * time.Second, Initial: 6 * time.Second, Max: 6 * time.Second,
+		OnRetry: func(attempt int, err error, wait time.Duration) {
+			r.log.Warnw("Quota set attempt failed", "project_id", project.ID, "attempt", attempt, "retry_in", wait.String(), "error", err)
+		}}, func(context.Context) error { return r.osClient.UpdateProjectQuotas(project.ID, fullQuota) })
 	if quotaErr != nil {
 		r.log.Warnw("Quota set failed; project created but quota not applied — will retry on next reconcile tick",
 			"os_project_id", project.ID, "node_id", leaf.ID, "error", quotaErr)
@@ -82,6 +66,19 @@ func (r *Reconciler) persistOSSyncState(ctx context.Context, leafID, osProjectID
 	if err := r.nodes.RecordObservation(ctx, leafID, osProjectID, m); err != nil {
 		r.log.Warnw("Failed to persist OS sync state on leaf", "node_id", leafID, "error", err)
 	}
+}
+
+// removeLeaf removes a leaf through remove (TreeSync.RemoveImport or RemoveRetired) — nothing in a dry run, which counts as removed — and reports whether it counts: not when the removal failed, which is logged with failMsg and fields, and not when the tree declined because the leaf is no longer what the pass took it for.
+func (r *Reconciler) removeLeaf(ctx context.Context, remove func(context.Context, string) (bool, error), leafID, failMsg string, fields ...any) bool {
+	if r.cfg.DryRun {
+		return true
+	}
+	deleted, err := remove(ctx, leafID)
+	if err != nil {
+		r.log.Warnw(failMsg, append(fields, "error", err)...)
+		return false
+	}
+	return deleted
 }
 
 func (r *Reconciler) syncQuota(leaf model.Node, osProject osclient.ProjectInfo, description string) (*tree.Observation, error) {
@@ -134,9 +131,5 @@ func (r *Reconciler) syncQuota(leaf model.Node, osProject osclient.ProjectInfo, 
 		return nil, nil
 	}
 
-	return &tree.Observation{
-		Overcommitted: IsProjectOvercommitted(r.resources(), leaf.EffectiveLimit(), detail),
-		InUse:         ProjectInUse(r.resources(), detail),
-		Facts:         map[string]int{model.FactServers: detail.InUse.Instances, model.FactServerLimit: detail.Limit.Instances},
-	}, nil
+	return measure(r.resources(), leaf.EffectiveLimit(), detail), nil
 }

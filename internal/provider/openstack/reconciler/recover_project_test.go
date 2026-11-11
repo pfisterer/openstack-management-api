@@ -125,9 +125,10 @@ func TestChooseRecoverableProject(t *testing.T) {
 // live client.
 func newRecoveryReconciler(nodes TreeSync, cfg Config) *Reconciler {
 	cfg.DryRun = true
-	client := &osclient.OpenStackClient{}
-	client.SetTagConfig("managed", testTagPrefix)
-	return &Reconciler{nodes: nodes, osClient: client, cfg: cfg, log: zap.NewNop().Sugar()}
+	r := testReconciler(nodes, cfg)
+	r.osClient = &osclient.OpenStackClient{}
+	r.osClient.SetTagConfig("managed", testTagPrefix)
+	return r
 }
 
 // The recovered project must disappear from the import phase's view, or the same
@@ -137,7 +138,7 @@ func TestRecoverUntaggedProjectHidesItFromTheImportPhase(t *testing.T) {
 	r := newRecoveryReconciler(store, Config{})
 	leaf := model.Node{ID: "p_001", Bindings: boundTo("os-1")}
 	byOSID := map[string]osclient.ProjectInfo{"os-1": project("os-1")}
-	res := reconcileResult{}
+	res := Counters{}
 
 	got, ok := r.recoverUntaggedProject(context.Background(), leaf, byOSID,
 		map[string]model.Node{}, map[string]string{}, &res)
@@ -147,8 +148,8 @@ func TestRecoverUntaggedProjectHidesItFromTheImportPhase(t *testing.T) {
 	if _, still := byOSID["os-1"]; still {
 		t.Error("the recovered project is still visible to the import phase")
 	}
-	if res.projectsRetagged != 1 {
-		t.Errorf("projectsRetagged = %d, want 1", res.projectsRetagged)
+	if res.ProjectsRetagged != 1 {
+		t.Errorf("projectsRetagged = %d, want 1", res.ProjectsRetagged)
 	}
 }
 
@@ -160,7 +161,7 @@ func TestRecoverUntaggedProjectRemovesTheShadowingImport(t *testing.T) {
 	r := newRecoveryReconciler(store, Config{})
 	leaf := model.Node{ID: "p_001", Bindings: boundTo("os-1")}
 	imported := map[string]model.Node{"os-1": {ID: "p_shadow", Bindings: boundTo("os-1"), Status: model.StatusImported}}
-	res := reconcileResult{}
+	res := Counters{}
 
 	if _, ok := r.recoverUntaggedProject(context.Background(), leaf,
 		map[string]osclient.ProjectInfo{"os-1": project("os-1")},
@@ -170,7 +171,7 @@ func TestRecoverUntaggedProjectRemovesTheShadowingImport(t *testing.T) {
 	if _, still := imported["os-1"]; still {
 		t.Error("the shadowing import is still in the map and would be treated as stale")
 	}
-	if res.importedRemoved != 1 {
-		t.Errorf("importedRemoved = %d, want 1", res.importedRemoved)
+	if res.ImportedRemoved != 1 {
+		t.Errorf("importedRemoved = %d, want 1", res.ImportedRemoved)
 	}
 }

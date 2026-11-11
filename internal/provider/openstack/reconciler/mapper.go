@@ -4,6 +4,8 @@ import (
 	"math"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 )
 
@@ -45,32 +47,24 @@ func multiplierOf(r osclient.ManagedResource) int {
 	return r.OSMultiplier
 }
 
-// StaticProjectQuotaDefaults builds a QuotaSet from every ManagedProject that has
-// Static: true, using each resource's Default value. This replaces the old
-// ReconcilerConfiguration.DefaultNetworkQuotas struct: to change a static quota
-// default, update the Default field in the ManagedProject definition; no other
-// file needs to change.
-func StaticProjectQuotaDefaults(resources []osclient.ManagedResource) osclient.QuotaSet {
-	var qs osclient.QuotaSet
-	for _, res := range resources {
-		if !res.Static || res.OSQuotaField == "" {
-			continue
-		}
-		fa, ok := quotaFields[res.OSQuotaField]
-		if !ok {
-			continue
-		}
-		fa.set(&qs, toOSQuota(res.Default, multiplierOf(res)))
+// quotaFieldOf is the QuotaSet accessor of a resource's OSQuotaField; false for a resource without one, or with one the mapper does not know.
+func quotaFieldOf(r osclient.ManagedResource) (quotaField, bool) {
+	if r.OSQuotaField == "" {
+		return quotaField{}, false
 	}
-	return qs
+	fa, ok := quotaFields[r.OSQuotaField]
+	return fa, ok
 }
 
-// mergeStaticIntoQuotaSet writes every field from src into dst where src has a
-// non-zero value. Used to overlay static quota defaults on top of a managed QuotaSet.
-func mergeStaticIntoQuotaSet(dst *osclient.QuotaSet, src osclient.QuotaSet) {
-	for _, fa := range quotaFields {
-		if v := fa.get(src); v != 0 {
-			fa.set(dst, v)
+// applyStaticDefaults writes the Default of every resource with Static: true into qs, over what is there, where the converted default is not zero. The static defaults (network quotas, volumes, snapshots) are driven by the resource definitions alone: to change one, change its Default; no other file needs to change.
+func applyStaticDefaults(qs *osclient.QuotaSet, resources []osclient.ManagedResource) {
+	for _, res := range resources {
+		fa, ok := quotaFieldOf(res)
+		if !ok || !res.Static {
+			continue
+		}
+		if v := toOSQuota(res.Default, multiplierOf(res)); v != 0 {
+			fa.set(qs, v)
 		}
 	}
 }
@@ -103,10 +97,7 @@ func toOSQuota(value, multiplier int) int {
 func ProjectQuotaToQuotaSet(resources []osclient.ManagedResource, rq common.ProjectQuota) osclient.QuotaSet {
 	var qs osclient.QuotaSet
 	for _, res := range resources {
-		if res.OSQuotaField == "" {
-			continue
-		}
-		fa, ok := quotaFields[res.OSQuotaField]
+		fa, ok := quotaFieldOf(res)
 		if !ok {
 			continue
 		}
@@ -130,21 +121,13 @@ func ProjectQuotaToQuotaSet(resources []osclient.ManagedResource, rq common.Proj
 func QuotaSetToProjectQuota(resources []osclient.ManagedResource, qs osclient.QuotaSet) common.ProjectQuota {
 	rq := make(common.ProjectQuota, len(resources))
 	for _, res := range resources {
-		if res.OSQuotaField == "" {
-			continue
+		if fa, ok := quotaFieldOf(res); ok {
+			rq[res.ID] = fa.get(qs) / multiplierOf(res)
 		}
-		fa, ok := quotaFields[res.OSQuotaField]
-		if !ok {
-			continue
-		}
-		rq[res.ID] = fa.get(qs) / multiplierOf(res)
 	}
 	return rq
 }
 
-// IsProjectOvercommitted returns true when any resource marked OSOvercommitCheck has its
-// in-use value (from the OS quota detail) exceeding the approved quota limit.
-// A limit of common.UnlimitedQuota (-1) or zero is never treated as overcommitted.
 // ProjectInUse translates OpenStack's in-use counters into our resource ids, so
 // the platform can show what a project actually consumes next to what it claims.
 //
@@ -162,11 +145,8 @@ func ProjectInUse(resources []osclient.ManagedResource, detail *osclient.Project
 	}
 	inUse := make(common.ProjectQuota)
 	for _, res := range resources {
-		if !res.OSOvercommitCheck || res.OSQuotaField == "" {
-			continue
-		}
-		fa, ok := quotaFields[res.OSQuotaField]
-		if !ok {
+		fa, ok := quotaFieldOf(res)
+		if !ok || !res.OSOvercommitCheck {
 			continue
 		}
 		inUse[res.ID] = fa.get(detail.InUse) / multiplierOf(res)
@@ -174,42 +154,21 @@ func ProjectInUse(resources []osclient.ManagedResource, detail *osclient.Project
 	return inUse
 }
 
+// IsProjectOvercommitted returns true when a resource marked OSOvercommitCheck has more in use (ProjectInUse) than the approved quota limit allows. A limit of common.UnlimitedQuota (-1) or zero is never treated as overcommitted.
 func IsProjectOvercommitted(resources []osclient.ManagedResource, approvedRQ common.ProjectQuota, detail *osclient.ProjectQuotaDetail) bool {
-	if detail == nil {
-		return false
-	}
-	for _, res := range resources {
-		if !res.OSOvercommitCheck || res.OSQuotaField == "" {
-			continue
-		}
-		fa, ok := quotaFields[res.OSQuotaField]
-		if !ok {
-			continue
-		}
-		inUse := fa.get(detail.InUse) / multiplierOf(res)
-		limit := approvedRQ[res.ID]
-		if limit == common.UnlimitedQuota || limit <= 0 {
-			continue
-		}
-		if inUse > limit {
+	for id, inUse := range ProjectInUse(resources, detail) {
+		if limit := approvedRQ[id]; limit > 0 && limit != common.UnlimitedQuota && inUse > limit {
 			return true
 		}
 	}
 	return false
 }
 
-// quotaEqual compares two resource maps by value, treating a missing key and a
-// zero as different: a resource OpenStack does not report an in-use counter for
-// must not look like one that is measured and idle.
-func quotaEqual(a, b common.ProjectQuota) bool {
-	if len(a) != len(b) {
-		return false
+// measure is what a project uses, as a pass read it from its quota detail: whether it holds more than limit allows, what of each resource is in use, and the counts beside them.
+func measure(resources []osclient.ManagedResource, limit common.ProjectQuota, detail *osclient.ProjectQuotaDetail) *tree.Observation {
+	return &tree.Observation{
+		Overcommitted: IsProjectOvercommitted(resources, limit, detail),
+		InUse:         ProjectInUse(resources, detail),
+		Facts:         map[string]int{model.FactServers: detail.InUse.Instances, model.FactServerLimit: detail.Limit.Instances},
 	}
-	for id, av := range a {
-		bv, ok := b[id]
-		if !ok || av != bv {
-			return false
-		}
-	}
-	return true
 }

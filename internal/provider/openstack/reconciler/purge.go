@@ -183,20 +183,20 @@ func deletionDue(mode string, leaf model.Node, tags []string, pendingPrefix stri
 // next one, so a project takes a few passes, and one that cannot be emptied
 // (a protected image, a port somebody else put on its network) stays, named
 // in the log on every pass, instead of being deleted with things left in it.
-func (r *Reconciler) purgeRetiredProject(ctx context.Context, osProject osclient.ProjectInfo, leaf model.Node, scopeParentID string, res *reconcileResult) {
+func (r *Reconciler) purgeRetiredProject(ctx context.Context, osProject osclient.ProjectInfo, leaf model.Node, res *Counters) {
 	log := r.log.With("node_id", leaf.ID, "os_project_id", osProject.ID)
 	open := func(id string) (projectSession, error) { return r.osClient.OpenProjectSession(id) }
-	out := purgeProject(r.osClient, open, osProject, scopeParentID,
+	out := purgeProject(r.osClient, open, osProject, r.scopeParentID,
 		purgeOptions{dryRun: r.cfg.DryRun, dnsAndObjects: r.cfg.PurgeDNSAndObjectStorage, skip: r.cfg.PurgeSkipStages}, log)
-	res.resourcesPurged += out.removed
+	res.ResourcesPurged += out.removed
 	if !out.deleted {
 		if out.stage != "refused" && !r.cfg.DryRun {
-			res.purgesPending++
+			res.PurgesPending++
 			r.recordPurgeProgress(ctx, leaf.ID, out, log)
 		}
 		return
 	}
-	res.projectsDeleted++
+	res.ProjectsDeleted++
 	// What the project was granted outlives it in Neutron, Glance and Nova.
 	revokeGrants(r.osClient, r.resources(), osProject.ID, r.cfg.DryRun, log)
 	// The project is gone; the leaf goes with it. Should this fail, the next
@@ -205,7 +205,7 @@ func (r *Reconciler) purgeRetiredProject(ctx context.Context, osProject osclient
 		log.Warnw("Purge: project deleted, but the leaf could not be removed", "error", err)
 		return
 	}
-	res.releasedLeavesRemoved++
+	res.ReleasedLeavesRemoved++
 }
 
 // recordPurgeProgress reports where emptying the project stands; the tree
@@ -247,12 +247,13 @@ func purgeProject(c purgeClient, open func(string) (projectSession, error), proj
 			log.Warnw("Purge: the cloud offers services whose resources are not emptied and may be left behind", "service_types", left)
 		}
 	}
+	// scoped is a stage over a service of the project session. The session is the project's, but a listing is checked against the project all the same.
 	scoped := func(kind string, list func() ([]osclient.Resource, error), del func(osclient.Resource) error) func() bool {
 		return func() bool {
 			if s == nil {
 				return true // dry run: no session to look with
 			}
-			return p.scoped(kind, list, del)
+			return p.stage(kind, list, waiting, del)
 		}
 	}
 	reportOnly := func(kind string, has func() bool, list func() ([]osclient.Resource, error), stage func() bool) func() bool {
@@ -412,22 +413,58 @@ func (p *purger) access(project osclient.ProjectInfo) bool {
 	return ready || p.dryRun
 }
 
-// scoped is a stage over a service of the project session. The session is
-// the project's, but a listing is checked against the project all the same.
-func (p *purger) scoped(kind string, list func() ([]osclient.Resource, error), del func(osclient.Resource) error) bool {
+// stage lists one kind of the project's resources and deletes them. classify says of each item whether it is deleted and whether it holds the stage: one already in deletion is not asked again but holds it until it is gone, one that stays for good (a DHCP port, the "default" security group) does neither. Reports whether the stage is empty.
+func (p *purger) stage(kind string, list func() ([]osclient.Resource, error), classify func(osclient.Resource) (remove, holds bool), del func(osclient.Resource) error) bool {
 	items, err := list()
 	if err != nil {
 		p.listFailed(kind, err)
 		return false
 	}
-	items = p.owned(kind, items)
-	for _, it := range items {
-		if inDeletion(it.Status) {
-			continue
+	left := 0
+	for _, it := range p.owned(kind, items) {
+		remove, holds := classify(it)
+		if holds {
+			left++
 		}
-		p.do(kind, it.ID, it.Name, func() error { return del(it) })
+		if remove {
+			p.do(kind, it.ID, it.Name, func() error { return del(it) })
+		}
 	}
-	return len(items) == 0
+	return left == 0
+}
+
+// waiting classifies for a stage whose items are deleted unless already on their way out (inDeletion), and all of them hold the stage.
+func waiting(r osclient.Resource) (bool, bool) { return !inDeletion(r.Status), true }
+
+// every classifies for a stage that deletes all of its items.
+func every(osclient.Resource) (bool, bool) { return true, true }
+
+// unless classifies for a stage that leaves the items keep says alone, for good: they neither are deleted nor hold the stage.
+func unless(keep func(osclient.Resource) bool) func(osclient.Resource) (bool, bool) {
+	return func(r osclient.Resource) (bool, bool) {
+		if keep(r) {
+			return false, false
+		}
+		return true, true
+	}
+}
+
+// resources is what a listing of another type is, as the stage reads it.
+func resources[T any](list []T, as func(T) osclient.Resource) []osclient.Resource {
+	out := make([]osclient.Resource, 0, len(list))
+	for _, it := range list {
+		out = append(out, as(it))
+	}
+	return out
+}
+
+// serverResource and floatingIPResource read a server and a floating IP as a stage's resource; a floating IP is named by its address.
+func serverResource(s osclient.ServerInfo) osclient.Resource {
+	return osclient.Resource{ID: s.ID, Name: s.Name, Status: s.Status, ProjectID: s.ProjectID}
+}
+
+func floatingIPResource(ip osclient.FloatingIPInfo) osclient.Resource {
+	return osclient.Resource{ID: ip.ID, Name: ip.Address, ProjectID: ip.ProjectID}
 }
 
 // objectsPerPass bounds how many objects one pass deletes, so a big bucket is
@@ -499,26 +536,22 @@ func (p *purger) result(stage string) purgeResult {
 // the project is gone nothing does. A failure leaves an empty group behind
 // and is only logged.
 func (p *purger) removeDefaultSecurityGroups() {
-	groups, err := p.c.ListProjectSecurityGroups(p.projectID)
-	if err != nil {
-		p.log.Warnw("Purge: could not list the default security group of the deleted project", "error", err)
-		return
-	}
-	for _, g := range p.owned("security group", groups) {
-		if g.Name == "default" {
-			p.do("security group", g.ID, g.Name, func() error { return p.c.DeleteSecurityGroup(g.ID) })
-		}
-	}
+	p.stage("default security group", func() ([]osclient.Resource, error) { return p.c.ListProjectSecurityGroups(p.projectID) },
+		unless(func(g osclient.Resource) bool { return g.Name != "default" }),
+		func(g osclient.Resource) error { return p.c.DeleteSecurityGroup(g.ID) })
 }
 
-// owned keeps what belongs to the project, and says so loudly about anything
-// else: a service that ignored the project filter must not turn into deleting
-// somebody else's resources.
+// owned keeps what belongs to the project (ownedBy).
 func (p *purger) owned(kind string, items []osclient.Resource) []osclient.Resource {
-	var out []osclient.Resource
+	return ownedBy(p.log, kind, p.projectID, items, func(r osclient.Resource) (string, string) { return r.ID, r.ProjectID })
+}
+
+// ownedBy keeps the items that belong to the project, and says so loudly about anything else: a service that ignored the project filter must not turn into acting on somebody else's resources. identify gives an item's id and its project.
+func ownedBy[T any](log *zap.SugaredLogger, kind, projectID string, items []T, identify func(T) (id, project string)) []T {
+	var out []T
 	for _, it := range items {
-		if it.ProjectID != p.projectID {
-			p.log.Errorw("Purge: listing returned a resource of another project — skipped", "kind", kind, "id", it.ID, "its_project_id", it.ProjectID)
+		if id, project := identify(it); project != projectID {
+			log.Errorw("Listing returned a resource of another project — skipped", "kind", kind, "id", id, "its_project_id", project)
 			continue
 		}
 		out = append(out, it)
@@ -541,60 +574,28 @@ func (p *purger) do(kind, id, name string, fn func() error) {
 	p.removed++
 }
 
-// simple is a stage that lists and deletes one kind of resource.
+// simple is a stage that lists and deletes one kind of resource of the client.
 func (p *purger) simple(kind string, list func(string) ([]osclient.Resource, error), del func(string) error) func() bool {
 	return func() bool {
-		items, err := list(p.projectID)
-		if err != nil {
-			p.listFailed(kind, err)
-			return false
-		}
-		items = p.owned(kind, items)
-		for _, it := range items {
-			if inDeletion(it.Status) {
-				continue
-			}
-			p.do(kind, it.ID, it.Name, func() error { return del(it.ID) })
-		}
-		return len(items) == 0
+		return p.stage(kind, func() ([]osclient.Resource, error) { return list(p.projectID) }, waiting, func(r osclient.Resource) error { return del(r.ID) })
 	}
 }
 
 func (p *purger) floatingIPs() bool {
-	ips, err := p.c.ListProjectFloatingIPs(p.projectID)
-	if err != nil {
-		p.listFailed("floating IP", err)
-		return false
-	}
-	items := make([]osclient.Resource, 0, len(ips))
-	for _, ip := range ips {
-		items = append(items, osclient.Resource{ID: ip.ID, Name: ip.Address, ProjectID: ip.ProjectID})
-	}
-	items = p.owned("floating IP", items)
-	for _, it := range items {
-		p.do("floating IP", it.ID, it.Name, func() error { return p.c.ReleaseFloatingIP(it.ID) })
-	}
-	return len(items) == 0
+	return p.stage("floating IP", func() ([]osclient.Resource, error) {
+		ips, err := p.c.ListProjectFloatingIPs(p.projectID)
+		return resources(ips, floatingIPResource), err
+	}, every, func(r osclient.Resource) error { return p.c.ReleaseFloatingIP(r.ID) })
 }
 
+// servers deletes the project's servers; one Nova has deleted, or soft-deleted and keeps for a while, is not asked again but holds the stage until it is gone.
 func (p *purger) servers() bool {
-	list, err := p.c.ListProjectServers(p.projectID)
-	if err != nil {
-		p.listFailed("server", err)
-		return false
-	}
-	items := make([]osclient.Resource, 0, len(list))
-	for _, s := range list {
-		items = append(items, osclient.Resource{ID: s.ID, Name: s.Name, Status: s.Status, ProjectID: s.ProjectID})
-	}
-	items = p.owned("server", items)
-	for _, it := range items {
-		if it.Status == "DELETED" || it.Status == "SOFT_DELETED" {
-			continue
-		}
-		p.do("server", it.ID, it.Name, func() error { return p.c.DeleteServer(it.ID) })
-	}
-	return len(items) == 0
+	return p.stage("server", func() ([]osclient.Resource, error) {
+		list, err := p.c.ListProjectServers(p.projectID)
+		return resources(list, serverResource), err
+	}, func(r osclient.Resource) (bool, bool) {
+		return r.Status != "DELETED" && r.Status != "SOFT_DELETED", true
+	}, func(r osclient.Resource) error { return p.c.DeleteServer(r.ID) })
 }
 
 // routers detaches every router from its subnets first — Neutron refuses to
@@ -628,42 +629,18 @@ func (p *purger) routers() bool {
 // ports deletes what is left once servers and routers are gone — ports made
 // by hand, or left over. DHCP ports belong to their network and go with it.
 func (p *purger) ports() bool {
-	ports, err := p.c.ListProjectPorts(p.projectID)
-	if err != nil {
-		p.listFailed("port", err)
-		return false
-	}
-	ports = p.owned("port", ports)
-	left := 0
-	for _, port := range ports {
-		if port.DeviceOwner == "network:dhcp" {
-			continue
-		}
-		left++
-		p.do("port", port.ID, port.Name, func() error { return p.c.DeletePort(port.ID) })
-	}
-	return left == 0
+	return p.stage("port", func() ([]osclient.Resource, error) { return p.c.ListProjectPorts(p.projectID) },
+		unless(func(port osclient.Resource) bool { return port.DeviceOwner == "network:dhcp" }),
+		func(port osclient.Resource) error { return p.c.DeletePort(port.ID) })
 }
 
 // securityGroups deletes every group except "default": Neutron creates that
 // one again whenever the project's groups are listed, so deleting it would
 // never finish, and it holds nothing.
 func (p *purger) securityGroups() bool {
-	groups, err := p.c.ListProjectSecurityGroups(p.projectID)
-	if err != nil {
-		p.listFailed("security group", err)
-		return false
-	}
-	groups = p.owned("security group", groups)
-	left := 0
-	for _, g := range groups {
-		if g.Name == "default" {
-			continue
-		}
-		left++
-		p.do("security group", g.ID, g.Name, func() error { return p.c.DeleteSecurityGroup(g.ID) })
-	}
-	return left == 0
+	return p.stage("security group", func() ([]osclient.Resource, error) { return p.c.ListProjectSecurityGroups(p.projectID) },
+		unless(func(g osclient.Resource) bool { return g.Name == "default" }),
+		func(g osclient.Resource) error { return p.c.DeleteSecurityGroup(g.ID) })
 }
 
 // inDeletion: already on its way out, asking again only produces an error.

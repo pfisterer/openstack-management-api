@@ -116,24 +116,21 @@ func mapValues(m map[string]any) []any {
 	return out
 }
 
-// grantResourceIDs are the availabilities of the catalogue that syncGrants carries out.
-func grantResourceIDs(defs []osclient.ManagedResource) []string {
-	var out []string
-	for _, def := range defs {
-		if def.IsBool() && def.Grant != nil {
-			out = append(out, def.ID)
-		}
-	}
-	return out
+// grantDefs are the availabilities of the catalogue: the bool resources OpenStack grants per project (syncGrants).
+func grantDefs(defs []osclient.ManagedResource) []osclient.ManagedResource {
+	return slices.DeleteFunc(slices.Clone(defs), func(def osclient.ManagedResource) bool { return !def.IsBool() || def.Grant == nil })
 }
 
-// quotaResourceIDs are the resources of the catalogue that a quota update sets.
-func quotaResourceIDs(defs []osclient.ManagedResource) []string {
-	var out []string
+// quotaDefs are the resources of the catalogue that a quota update sets.
+func quotaDefs(defs []osclient.ManagedResource) []osclient.ManagedResource {
+	return slices.DeleteFunc(slices.Clone(defs), func(def osclient.ManagedResource) bool { return def.OSQuotaField == "" || def.IsBool() })
+}
+
+// resourceIDs are the ids of defs.
+func resourceIDs(defs []osclient.ManagedResource) []string {
+	out := make([]string, 0, len(defs))
 	for _, def := range defs {
-		if def.OSQuotaField != "" && !def.IsBool() {
-			out = append(out, def.ID)
-		}
+		out = append(out, def.ID)
 	}
 	return out
 }
@@ -147,14 +144,10 @@ func quotaSyncErrors(defs []osclient.ManagedResource, err error) map[string]mode
 		fields = osclient.QuotaServiceFields[qe.Service]
 	}
 	out := map[string]model.SyncError{}
-	for _, def := range defs {
-		if def.OSQuotaField == "" || def.IsBool() {
-			continue
+	for _, def := range quotaDefs(defs) {
+		if fields == nil || slices.Contains(fields, def.OSQuotaField) {
+			out[def.ID] = e
 		}
-		if fields != nil && !slices.Contains(fields, def.OSQuotaField) {
-			continue
-		}
-		out[def.ID] = e
 	}
 	return out
 }

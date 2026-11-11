@@ -15,7 +15,7 @@ import (
 // Tree is what the syncer needs of the tree (tree.ProviderSync).
 type Tree interface {
 	Leaves(ctx context.Context, statuses []string) ([]model.Node, error)
-	Budgets(ctx context.Context) ([]model.Node, error)
+	Budgets(ctx context.Context) (map[string]model.Node, error)
 	RecordObservation(ctx context.Context, leafID, externalID string, o *tree.Observation) error
 	RemoveRetired(ctx context.Context, leafID string) (bool, error)
 	Changes() <-chan struct{}
@@ -45,28 +45,16 @@ type Result struct {
 	Synced, Ended, Expired, Deleted, Removed, Orphans, Failed int
 }
 
-// Run passes once right away and then on every tick and change until ctx ends.
+// Run passes once right away and then on every tick and change until ctx ends (tree.RunLoop).
 func (s *Syncer) Run(ctx context.Context) {
-	interval := s.Interval
-	if interval <= 0 {
-		interval = 5 * time.Minute
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
+	tree.RunLoop(ctx, s.Interval, s.Tree.Changes(), nil, func(ctx context.Context) {
 		res, err := s.Pass(ctx)
 		if err != nil {
 			s.Log.Warnw("aiaas: pass failed", "error", err)
 		} else {
 			s.Log.Infow("aiaas: pass complete", "synced", res.Synced, "ended", res.Ended, "expired", res.Expired, "deleted", res.Deleted, "removed", res.Removed, "orphans", res.Orphans, "failed", res.Failed)
 		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		case <-s.Tree.Changes():
-		}
-	}
+	})
 }
 
 var statuses = []string{model.StatusApproved, model.StatusChangePending, model.StatusReleased, model.StatusArchived}
@@ -89,13 +77,9 @@ func (s *Syncer) Pass(ctx context.Context) (Result, error) {
 		return res, err
 	}
 	// The budgets, for the release maximums and the local storage per workspace each project inherits along its chain: loaded once per pass rather than per leaf.
-	list, err := s.Tree.Budgets(ctx)
+	budgets, err := s.Tree.Budgets(ctx)
 	if err != nil {
 		return res, err
-	}
-	budgets := make(map[string]model.Node, len(list))
-	for _, b := range list {
-		budgets[b.ID] = b
 	}
 	resources := s.Resources()
 	now := time.Now
@@ -142,7 +126,7 @@ func (s *Syncer) Pass(ctx context.Context) (Result, error) {
 			continue
 		}
 		p := ProjectFor(leaf, resources)
-		chain := chainOf(leaf, budgets)
+		chain := tree.BudgetChain(budgets, leaf)
 		p.Release = ReleaseFor(chain)
 		p.WorkspaceScratchGB = ScratchFor(chain)
 		p.BatchPriority = BatchPriorityFor(chain)

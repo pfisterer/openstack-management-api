@@ -9,9 +9,9 @@ import (
 	"go.uber.org/zap"
 )
 
-func releasedTestReconciler(t *testing.T, nodes TreeSync, cfg Config) *Reconciler {
-	t.Helper()
-	return &Reconciler{nodes: nodes, cfg: cfg, log: zap.NewNop().Sugar()}
+// testReconciler is a reconciler over nodes with cfg and its defaults, without OpenStack and without a log: what the tests of the tree side of a pass need.
+func testReconciler(nodes TreeSync, cfg Config) *Reconciler {
+	return &Reconciler{nodes: nodes, cfg: withDefaults(cfg), log: zap.NewNop().Sugar()}
 }
 
 // The case the change exists for: the project is no longer in the reconciler's
@@ -19,9 +19,9 @@ func releasedTestReconciler(t *testing.T, nodes TreeSync, cfg Config) *Reconcile
 // the same. The released record has served its purpose and goes.
 func TestReleasedLeafIsRemovedOnceItsProjectIsGone(t *testing.T) {
 	store := &deletedStore{}
-	r := releasedTestReconciler(t, store, Config{})
+	r := testReconciler(store, Config{})
 
-	var res reconcileResult
+	var res Counters
 	r.removeReleasedLeavesWithoutProject(context.Background(),
 		map[string]model.Node{
 			"p_1": {ID: "p_1", Bindings: boundTo("os-1")},
@@ -31,8 +31,8 @@ func TestReleasedLeafIsRemovedOnceItsProjectIsGone(t *testing.T) {
 	if len(store.deleted) != 2 {
 		t.Errorf("deleted %v, want both", store.deleted)
 	}
-	if res.releasedLeavesRemoved != 2 {
-		t.Errorf("counted %d removals, want 2", res.releasedLeavesRemoved)
+	if res.ReleasedLeavesRemoved != 2 {
+		t.Errorf("counted %d removals, want 2", res.ReleasedLeavesRemoved)
 	}
 }
 
@@ -40,14 +40,14 @@ func TestReleasedLeafIsRemovedOnceItsProjectIsGone(t *testing.T) {
 // empty map is the normal case: everything released still has its project.
 func TestReleasedLeafCleanupDoesNothingWhenAllProjectsAreInScope(t *testing.T) {
 	store := &deletedStore{}
-	r := releasedTestReconciler(t, store, Config{})
+	r := testReconciler(store, Config{})
 
-	var res reconcileResult
+	var res Counters
 	r.removeReleasedLeavesWithoutProject(context.Background(),
 		map[string]model.Node{}, map[string]osclient.ProjectInfo{}, &res)
 
-	if len(store.deleted) != 0 || res.releasedLeavesRemoved != 0 {
-		t.Errorf("deleted %v / counted %d, want nothing", store.deleted, res.releasedLeavesRemoved)
+	if len(store.deleted) != 0 || res.ReleasedLeavesRemoved != 0 {
+		t.Errorf("deleted %v / counted %d, want nothing", store.deleted, res.ReleasedLeavesRemoved)
 	}
 }
 
@@ -69,9 +69,9 @@ func TestReleasedLeafRemovalRespectsTheSafetySwitches(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			store := &deletedStore{}
-			r := releasedTestReconciler(t, store, tc.cfg)
+			r := testReconciler(store, tc.cfg)
 
-			var res reconcileResult
+			var res Counters
 			r.removeReleasedLeavesWithoutProject(context.Background(),
 				map[string]model.Node{"p_1": {ID: "p_1", Bindings: boundTo("os-1")}},
 				map[string]osclient.ProjectInfo{}, &res)
@@ -79,8 +79,8 @@ func TestReleasedLeafRemovalRespectsTheSafetySwitches(t *testing.T) {
 			if len(store.deleted) != tc.wantDeleted {
 				t.Errorf("deleted %v, want %d", store.deleted, tc.wantDeleted)
 			}
-			if res.releasedLeavesRemoved != tc.wantCounted {
-				t.Errorf("counted %d, want %d", res.releasedLeavesRemoved, tc.wantCounted)
+			if res.ReleasedLeavesRemoved != tc.wantCounted {
+				t.Errorf("counted %d, want %d", res.ReleasedLeavesRemoved, tc.wantCounted)
 			}
 		})
 	}
@@ -91,14 +91,14 @@ func TestReleasedLeafRemovalRespectsTheSafetySwitches(t *testing.T) {
 // project ID is the second witness that survives it.
 func TestReleasedLeafWithAnUntaggedProjectInScopeIsKept(t *testing.T) {
 	store := &deletedStore{}
-	r := releasedTestReconciler(t, store, Config{})
+	r := testReconciler(store, Config{})
 
-	var res reconcileResult
+	var res Counters
 	r.removeReleasedLeavesWithoutProject(context.Background(),
 		map[string]model.Node{"p_1": {ID: "p_1", Bindings: boundTo("os-1")}},
 		map[string]osclient.ProjectInfo{"os-1": {ID: "os-1"}}, &res)
 
-	if len(store.deleted) != 0 || res.releasedLeavesRemoved != 0 {
-		t.Errorf("deleted %v / counted %d, want nothing", store.deleted, res.releasedLeavesRemoved)
+	if len(store.deleted) != 0 || res.ReleasedLeavesRemoved != 0 {
+		t.Errorf("deleted %v / counted %d, want nothing", store.deleted, res.ReleasedLeavesRemoved)
 	}
 }

@@ -72,9 +72,60 @@ func concerns(n model.Node, provider string, resourceIDs []string) bool {
 	return slices.ContainsFunc(resourceIDs, limit.Holds)
 }
 
-// Budgets returns every budget, for naming a project's path in the tree.
-func (p *ProviderSync) Budgets(ctx context.Context) ([]model.Node, error) {
-	return p.store.ListNodes(ctx, nodestore.NodeQuery{Kinds: []string{model.KindBudget}}, 0, 0)
+// Budgets returns every budget by id, the root among them, for a project's path in the tree (BudgetChain).
+func (p *ProviderSync) Budgets(ctx context.Context) (map[string]model.Node, error) {
+	list, err := p.store.ListNodes(ctx, nodestore.NodeQuery{Kinds: []string{model.KindBudget}}, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	budgets := make(map[string]model.Node, len(list))
+	for _, b := range list {
+		budgets[b.ID] = b
+	}
+	return budgets, nil
+}
+
+// BudgetChain is the budgets above a leaf, parent first and the root last when it is among budgets; it stops at a budget it does not know or at a cycle.
+func BudgetChain(budgets map[string]model.Node, leaf model.Node) []model.Node {
+	var out []model.Node
+	seen := map[string]bool{}
+	for id := leaf.ParentID; id != nil && !seen[*id]; {
+		seen[*id] = true
+		b, ok := budgets[*id]
+		if !ok {
+			break
+		}
+		out = append(out, b)
+		id = b.ParentID
+	}
+	return out
+}
+
+// DefaultSyncInterval is how often a provider passes over the tree when it is not told otherwise.
+const DefaultSyncInterval = 5 * time.Minute
+
+// RunLoop runs pass once right away and then on every tick of interval (DefaultSyncInterval when not positive), on every receive from changes (Changes) and on every receive from trigger, until ctx ends. A change announced before the first run is drained: that run covers it. A nil channel never receives.
+func RunLoop(ctx context.Context, interval time.Duration, changes, trigger <-chan struct{}, pass func(context.Context)) {
+	if interval <= 0 {
+		interval = DefaultSyncInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	select {
+	case <-changes:
+	default:
+	}
+	pass(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		case <-changes:
+		case <-trigger:
+		}
+		pass(ctx)
+	}
 }
 
 // RecordExternalID records the project created for a leaf, whatever the leaf's

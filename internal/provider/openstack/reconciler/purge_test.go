@@ -33,6 +33,26 @@ type fakeCloud struct {
 	selfRole bool
 	// session is what signing in to the project finds.
 	session *fakeSession
+
+	// Archiving: the servers shelved, whether the quotas were frozen, and every project update; fail["quotas"] and fail["list-ips"] make those calls fail.
+	shelved []string
+	frozen  bool
+	updates []osclient.ProjectUpdateOpts
+}
+
+func (f *fakeCloud) ShelveServer(id string) error {
+	if f.fail[id] {
+		return errors.New("nope")
+	}
+	f.shelved = append(f.shelved, id)
+	return nil
+}
+func (f *fakeCloud) FreezeProjectQuotas(string) error {
+	if f.fail["quotas"] {
+		return errors.New("nope")
+	}
+	f.frozen = true
+	return nil
 }
 
 func newFakeCloud() *fakeCloud {
@@ -71,6 +91,7 @@ func (f *fakeCloud) UpdateProject(_ string, opts osclient.ProjectUpdateOpts) (*p
 	if opts.Enabled != nil {
 		f.enabled = *opts.Enabled
 	}
+	f.updates = append(f.updates, opts)
 	return &projects.Project{}, nil
 }
 func (f *fakeCloud) open(string) (projectSession, error) {
@@ -154,6 +175,9 @@ func (f *fakeCloud) DeleteServer(id string) error {
 	return nil
 }
 func (f *fakeCloud) ListProjectFloatingIPs(string) ([]osclient.FloatingIPInfo, error) {
+	if f.fail["list-ips"] {
+		return nil, errors.New("nope")
+	}
 	return slices.Clone(f.ips), nil
 }
 func (f *fakeCloud) ReleaseFloatingIP(id string) error {

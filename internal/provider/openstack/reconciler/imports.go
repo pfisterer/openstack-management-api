@@ -31,7 +31,7 @@ func (r *Reconciler) promoteImportedLeaves(
 	osProjectByOSID map[string]osclient.ProjectInfo,
 	importedByOSProjectID map[string]model.Node,
 	osProjectByResourceID map[string]osclient.ProjectInfo,
-	res *reconcileResult,
+	res *Counters,
 ) {
 	for _, leaf := range existingImported {
 		if !slices.Contains(leaf.Flags, model.FlagPromoteOnReconcile) {
@@ -54,9 +54,6 @@ func (r *Reconciler) promoteImportedLeaves(
 					"node_id", leaf.ID, "os_project_id", osProject.ID, "error", err)
 				continue
 			}
-		}
-
-		if !r.cfg.DryRun {
 			// The members as OpenStack has them NOW. The leaf only knows them as
 			// of the last pass before the promotion was asked for, and once the
 			// project is approved the member sync removes everyone the leaf does
@@ -87,32 +84,23 @@ func (r *Reconciler) promoteImportedLeaves(
 		delete(importedByOSProjectID, osID(leaf))
 		osProjectByResourceID[leaf.ID] = osProject
 
-		res.projectsPromoted++
+		res.ProjectsPromoted++
 	}
 }
 
 // removeStaleImports deletes imported leaves whose OpenStack project is no longer
 // in scope — each only if it is still an import when the delete happens.
-func (r *Reconciler) removeStaleImports(ctx context.Context, importedByOSProjectID map[string]model.Node, osProjectByOSID map[string]osclient.ProjectInfo, res *reconcileResult) {
+func (r *Reconciler) removeStaleImports(ctx context.Context, importedByOSProjectID map[string]model.Node, osProjectByOSID map[string]osclient.ProjectInfo, res *Counters) {
 	for osID, staleLeaf := range importedByOSProjectID {
 		if _, stillInScope := osProjectByOSID[osID]; stillInScope {
 			continue
 		}
 		r.log.Infow("Removing stale imported leaf (OS project gone from scope)",
 			"node_id", staleLeaf.ID, "os_project_id", osID)
-		if !r.cfg.DryRun {
-			deleted, err := r.nodes.RemoveImport(ctx, staleLeaf.ID)
-			if err != nil {
-				r.log.Warnw("Failed to delete stale imported leaf",
-					"id", staleLeaf.ID, "error", err)
-				continue
-			}
-			if !deleted {
-				// Promoted or moved since the pass loaded it: no longer an import.
-				continue
-			}
+		// Not removed when promoted or moved since the pass loaded it: no longer an import.
+		if r.removeLeaf(ctx, r.nodes.RemoveImport, staleLeaf.ID, "Failed to delete stale imported leaf", "id", staleLeaf.ID) {
+			res.ImportedRemoved++
 		}
-		res.importedRemoved++
 	}
 }
 
@@ -124,32 +112,28 @@ func (r *Reconciler) upsertImported(
 	osProject osclient.ProjectInfo,
 	existing map[string]model.Node,
 	grantUse osclient.GrantUse,
-	res *reconcileResult,
+	res *Counters,
 ) {
+	// prev is the leaf of an earlier pass, if any; its ID stays stable across passes.
+	prev, known := existing[osProject.ID]
 	syntheticID := "p_" + uuid.New().String()
-	if prev, ok := existing[osProject.ID]; ok {
-		syntheticID = prev.ID // keep the existing ID stable across reconcile runs
+	if known {
+		syntheticID = prev.ID
 	}
 
-	var osLimit common.ProjectQuota
-	// What the import uses, from the same response as its limit; nil when that
-	// could not be read, and then the last known values stay.
+	// What the import uses, from the same response as its limit; nil when that could not be read, and then the last known values stay. Its limit is its OpenStack quota, so overcommitted means OpenStack already holds more than the quota allows.
+	osLimit := common.ProjectQuota{}
 	var measured *tree.Observation
 	detail, err := r.osClient.GetProjectQuotaDetail(osProject.ID)
 	if err != nil {
 		r.log.Warnw("Could not fetch quota for import",
 			"os_project_id", osProject.ID, "error", err)
-		osLimit = common.ProjectQuota{}
 	} else {
 		osLimit = QuotaSetToProjectQuota(r.resources(), detail.Limit)
-		measured = measureImport(r.resources(), osLimit, detail)
+		measured = measure(r.resources(), osLimit, detail)
 		measured.GrantUse = projectGrantUse(r.resources(), grantUse, osProject.ID)
 	}
-	var prevLimit common.ProjectQuota
-	if prev, ok := existing[osProject.ID]; ok {
-		prevLimit = prev.Limit
-	}
-	importGrants(r.osClient, r.resources(), osProject.ID, osLimit, prevLimit, r.log)
+	importGrants(r.osClient, r.resources(), osProject.ID, osLimit, prev.Limit, r.log)
 
 	// Resolve project members. The tree model has no owner for imports (the owner
 	// is assigned at promotion time) — every member is recorded as an authorized
@@ -213,7 +197,6 @@ func (r *Reconciler) upsertImported(
 		"node_id", syntheticID, "os_project_id", osProject.ID,
 		"project_name", osProject.Name, "dry_run", r.cfg.DryRun)
 
-	_, known := existing[osProject.ID]
 	if !known {
 		leaf.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	}
@@ -234,10 +217,10 @@ func (r *Reconciler) upsertImported(
 		}
 	}
 
-	if _, wasKnown := existing[osProject.ID]; wasKnown {
-		res.projectsSynced++
+	if known {
+		res.ProjectsSynced++
 	} else {
-		res.importedLeaves++
+		res.ImportedLeaves++
 	}
 }
 
@@ -249,10 +232,7 @@ func (r *Reconciler) upsertImported(
 // servers still attached to it. A grant that cannot be read keeps the value of
 // the last pass, so a passing error does not read as "not granted".
 func importGrants(c grantClient, defs []osclient.ManagedResource, osProjectID string, limit, prev common.ProjectQuota, log *zap.SugaredLogger) {
-	for _, def := range defs {
-		if !def.IsBool() || def.Grant == nil {
-			continue
-		}
+	for _, def := range grantDefs(defs) {
 		has, err := c.HasGrant(*def.Grant, osProjectID)
 		if err != nil {
 			log.Warnw("Could not read availability for import",
@@ -267,17 +247,6 @@ func importGrants(c grantClient, defs []osclient.ManagedResource, osProjectID st
 		} else {
 			limit[def.ID] = 0
 		}
-	}
-}
-
-// measureImport is what an imported project uses, read like a managed one's.
-// Its limit is its OpenStack quota, so overcommitted means OpenStack already
-// holds more than the quota allows.
-func measureImport(resources []osclient.ManagedResource, limit common.ProjectQuota, detail *osclient.ProjectQuotaDetail) *tree.Observation {
-	return &tree.Observation{
-		Overcommitted: IsProjectOvercommitted(resources, limit, detail),
-		InUse:         ProjectInUse(resources, detail),
-		Facts:         map[string]int{model.FactServers: detail.InUse.Instances, model.FactServerLimit: detail.Limit.Instances},
 	}
 }
 

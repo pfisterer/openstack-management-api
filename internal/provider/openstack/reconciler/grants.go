@@ -67,10 +67,7 @@ func (r *Reconciler) syncGrants(leaf model.Node, osProjectID string) map[string]
 func syncGrants(c grantClient, defs []osclient.ManagedResource, leaf model.Node, osProjectID string, dryRun bool, log *zap.SugaredLogger) map[string]model.SyncError {
 	var failed map[string]model.SyncError
 	holds := leaf.EffectiveLimit()
-	for _, def := range defs {
-		if !def.IsBool() || def.Grant == nil {
-			continue
-		}
+	for _, def := range grantDefs(defs) {
 		wanted := holds[def.ID] == 1
 
 		if dryRun {
@@ -136,10 +133,7 @@ func revokeGrants(c grantClient, defs []osclient.ManagedResource, osProjectID st
 		return 0
 	}
 	removed := 0
-	for _, def := range defs {
-		if !def.IsBool() || def.Grant == nil {
-			continue
-		}
+	for _, def := range grantDefs(defs) {
 		if dryRun {
 			log.Infow("Dry run: would remove the availability of the deleted project",
 				"os_project_id", osProjectID, "resource", def.ID, "grant_type", def.Grant.Type, "target", def.Grant.Target)
@@ -165,10 +159,7 @@ func revokeGrants(c grantClient, defs []osclient.ManagedResource, osProjectID st
 // values are overwritten with "nothing".
 func (r *Reconciler) readGrantUse() osclient.GrantUse {
 	var flavors, images, networks []string
-	for _, def := range r.resources() {
-		if !def.IsBool() || def.Grant == nil {
-			continue
-		}
+	for _, def := range grantDefs(r.resources()) {
 		switch def.Grant.Type {
 		case osclient.GrantFlavor:
 			flavors = append(flavors, def.Grant.Target)
@@ -197,10 +188,8 @@ func projectGrantUse(defs []osclient.ManagedResource, use osclient.GrantUse, osP
 		return nil
 	}
 	out := common.ProjectQuota{}
-	for _, def := range defs {
-		if def.IsBool() && def.Grant != nil {
-			out[def.ID] = use[osProjectID][def.Grant.Target]
-		}
+	for _, def := range grantDefs(defs) {
+		out[def.ID] = use[osProjectID][def.Grant.Target]
 	}
 	return out
 }

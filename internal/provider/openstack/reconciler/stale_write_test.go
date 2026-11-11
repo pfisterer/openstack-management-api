@@ -18,9 +18,8 @@ import (
 
 func staleWriteReconciler(t *testing.T) (*Reconciler, *nodestore.InMemoryStore) {
 	t.Helper()
-	log := zap.NewNop().Sugar()
-	store := nodestore.NewInMemoryStore(log)
-	return &Reconciler{nodes: tree.NewProviderSync(store, osclient.Provider), log: log}, store
+	store := nodestore.NewInMemoryStore(zap.NewNop().Sugar())
+	return testReconciler(tree.NewProviderSync(store, osclient.Provider), Config{}), store
 }
 
 func TestOSSyncStateDoesNotRevertAChangeMadeDuringThePass(t *testing.T) {
@@ -83,14 +82,14 @@ func TestStaleImportIsNotDeletedOnceItWasPromoted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var res reconcileResult
+	var res Counters
 	imported := map[string]model.Node{"os-gone": loaded}
 	r.removeStaleImports(ctx, imported, map[string]osclient.ProjectInfo{}, &res)
 
 	if got, _ := store.GetNode(ctx, "p_imp"); got == nil {
 		t.Fatal("a promoted leaf was deleted as a stale import")
 	}
-	if res.importedRemoved != 0 {
-		t.Errorf("counted %d removals, want 0", res.importedRemoved)
+	if res.ImportedRemoved != 0 {
+		t.Errorf("counted %d removals, want 0", res.ImportedRemoved)
 	}
 }

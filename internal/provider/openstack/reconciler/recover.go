@@ -67,7 +67,7 @@ func (r *Reconciler) recoverUntaggedProject(
 	osProjectByOSID map[string]osclient.ProjectInfo,
 	importedByOSProjectID map[string]model.Node,
 	claimed map[string]string,
-	res *reconcileResult,
+	res *Counters,
 ) (osclient.ProjectInfo, bool) {
 	osProject, ok := chooseRecoverableProject(r.osClient, leaf, osProjectByOSID, claimed, r.log)
 	if !ok {
@@ -88,7 +88,7 @@ func (r *Reconciler) recoverUntaggedProject(
 	}
 
 	claimed[osProject.ID] = leaf.ID
-	res.projectsRetagged++
+	res.ProjectsRetagged++
 
 	// Keep Phase 5 away from it: its copy of the tags is from before the repair,
 	// so it would import the project a second time as an unmanaged one.
@@ -102,17 +102,9 @@ func (r *Reconciler) recoverUntaggedProject(
 		delete(importedByOSProjectID, osProject.ID)
 		r.log.Infow("Removing the imported leaf that shadowed a managed project",
 			"node_id", leaf.ID, "shadow_node_id", shadow.ID, "os_project_id", osProject.ID)
-		if !r.cfg.DryRun {
-			deleted, err := r.nodes.RemoveImport(ctx, shadow.ID)
-			if err != nil {
-				r.log.Warnw("Failed to delete the shadowing imported leaf",
-					"shadow_node_id", shadow.ID, "error", err)
-			}
-			if err != nil || !deleted {
-				return osProject, true
-			}
+		if r.removeLeaf(ctx, r.nodes.RemoveImport, shadow.ID, "Failed to delete the shadowing imported leaf", "shadow_node_id", shadow.ID) {
+			res.ImportedRemoved++
 		}
-		res.importedRemoved++
 	}
 
 	return osProject, true

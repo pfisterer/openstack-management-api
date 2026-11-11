@@ -23,6 +23,7 @@
 package reconciler
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -45,7 +46,7 @@ import (
 // the reconciler only decides what it observed.
 type TreeSync interface {
 	Leaves(ctx context.Context, statuses []string) ([]model.Node, error)
-	Budgets(ctx context.Context) ([]model.Node, error)
+	Budgets(ctx context.Context) (map[string]model.Node, error)
 	RecordExternalID(ctx context.Context, leafID, externalID string) error
 	RecordObservation(ctx context.Context, leafID, externalID string, o *tree.Observation) error
 	MarkArchived(ctx context.Context, leafID string) error
@@ -134,17 +135,13 @@ type Config struct {
 	ContactTagPrefix string
 }
 
-// Status is returned by GetStatus to report the outcome of the last reconciliation run.
-type Status struct {
-	LastRunAt       time.Time `json:"last_run_at"`
-	LastError       string    `json:"last_error,omitempty"`
-	ProjectsSynced  int       `json:"projects_synced"`
-	ProjectsCreated int       `json:"projects_created"`
-	ImportedLeaves  int       `json:"imported_leaves"`
-	ImportedRemoved int       `json:"imported_removed"`
-	// ReleasedLeavesRemoved counts released records dropped because their
-	// OpenStack project has been deleted — the end of the handover that the
-	// pending-deletion tag starts.
+// Counters is what one run did; GetStatus reports the last successful run's.
+type Counters struct {
+	ProjectsSynced  int `json:"projects_synced"`
+	ProjectsCreated int `json:"projects_created"`
+	ImportedLeaves  int `json:"imported_leaves"`
+	ImportedRemoved int `json:"imported_removed"`
+	// ReleasedLeavesRemoved counts released records dropped because their OpenStack project has been deleted — the end of the handover that the pending-deletion tag starts.
 	ReleasedLeavesRemoved int `json:"released_leaves_removed"`
 	OrphanedUsersRemoved  int `json:"orphaned_users_removed"`
 	// OrphanedGrantsRemoved counts network shares deleted because their project no longer exists (sweepOrphanedGrants).
@@ -156,15 +153,21 @@ type Status struct {
 	ServersShelved            int `json:"servers_shelved"`
 	FloatingIPsReleased       int `json:"floating_ips_released"`
 	ProjectsDeleted           int `json:"projects_deleted"`
-	// ResourcesPurged counts what was deleted inside projects on their way to
-	// deletion — servers, volumes, networks and the like.
+	// ResourcesPurged counts what was deleted inside projects on their way to deletion — servers, volumes, networks and the like.
 	ResourcesPurged  int `json:"resources_purged"`
 	ProjectsPromoted int `json:"projects_promoted"`
-	// ProjectsRetagged counts managed projects whose resource-id tag was missing
-	// and had to be restored — see recoverUntaggedProject. Anything above zero
-	// means somebody edited tags in OpenStack.
-	ProjectsRetagged int  `json:"projects_retagged"`
-	Running          bool `json:"running"`
+	// ProjectsRetagged counts managed projects whose resource-id tag was missing and had to be restored — see recoverUntaggedProject. Anything above zero means somebody edited tags in OpenStack.
+	ProjectsRetagged int `json:"projects_retagged"`
+	// PurgesPending counts projects still being emptied after this pass (scheduleFollowUp); not part of the status.
+	PurgesPending int `json:"-"`
+}
+
+// Status is returned by GetStatus to report the outcome of the last reconciliation run.
+type Status struct {
+	LastRunAt time.Time `json:"last_run_at"`
+	LastError string    `json:"last_error,omitempty"`
+	Counters
+	Running bool `json:"running"`
 	// PreseedConflicts lists users whose Keystone account could not be resolved
 	// without guessing, so their role was NOT assigned. These need a human — a
 	// wrong guess creates an account nobody logs into while the role points
@@ -229,17 +232,11 @@ func New(
 	roleProvider roles.Provider,
 	log *zap.SugaredLogger,
 ) *Reconciler {
-	if cfg.Interval <= 0 {
-		cfg.Interval = 5 * time.Minute
-	}
-	if cfg.GroupPrefix == "" {
-		cfg.GroupPrefix = "managed-"
-	}
 	problems := &problemRecorder{}
 	return &Reconciler{
 		nodes:        nodes,
 		osClient:     osClient,
-		cfg:          cfg,
+		cfg:          withDefaults(cfg),
 		catalog:      osclient.StaticManaged(managedProjects),
 		roleProvider: roleProvider,
 		log:          withRecorder(log, problems),
@@ -248,33 +245,19 @@ func New(
 	}
 }
 
-// Start launches the background ticker and blocks until ctx is cancelled.
-// Call it in a goroutine from app.go.
+// withDefaults fills in what Config leaves at its zero value. The group prefix has none: an empty one is refused at startup (ValidateGroupPrefix), and config.go always sets it. An empty tag prefix switches that tag off and stays empty.
+func withDefaults(cfg Config) Config {
+	cfg.Interval = cmp.Or(cfg.Interval, tree.DefaultSyncInterval)
+	cfg.ReleasedDeleteGraceDays = cmp.Or(cfg.ReleasedDeleteGraceDays, 30)
+	cfg.ArchivedTagPrefix = cmp.Or(cfg.ArchivedTagPrefix, "archived:")
+	return cfg
+}
+
+// Start runs once right away, so the state is consistent from the first request, and then on every interval, trigger and change until ctx ends (tree.RunLoop). Call it in a goroutine from app.go.
 func (r *Reconciler) Start(ctx context.Context) {
 	r.log.Infow("Reconciler started", "interval", r.cfg.Interval, "dry_run", r.cfg.DryRun)
-	ticker := time.NewTicker(r.cfg.Interval)
-	defer ticker.Stop()
-
-	// Run once immediately on startup so the state is consistent from the first request. It covers whatever changed before, bootstrap included.
-	select {
-	case <-r.nodes.Changes():
-	default:
-	}
-	r.runOnce(ctx)
-
-	for {
-		select {
-		case <-ctx.Done():
-			r.log.Info("Reconciler stopped")
-			return
-		case <-ticker.C:
-			r.runOnce(ctx)
-		case <-r.trigger:
-			r.runOnce(ctx)
-		case <-r.nodes.Changes():
-			r.runOnce(ctx)
-		}
-	}
+	tree.RunLoop(ctx, r.cfg.Interval, r.nodes.Changes(), r.trigger, r.runOnce)
+	r.log.Info("Reconciler stopped")
 }
 
 // Trigger requests an immediate reconciliation run. Non-blocking: if a run is already
@@ -320,7 +303,7 @@ func (r *Reconciler) runOnce(ctx context.Context) {
 	r.problems.begin(time.Now())
 
 	result, err := r.Reconcile(ctx)
-	r.scheduleFollowUp(result.purgesPending)
+	r.scheduleFollowUp(result.PurgesPending)
 
 	// After the pass, not inside it: a day's usage is collected once and
 	// does nothing on the passes after, and a failure here must not mark
@@ -339,79 +322,21 @@ func (r *Reconciler) runOnce(ctx context.Context) {
 		r.log.Errorw("Reconciliation failed", "error", err)
 	} else {
 		r.status.LastError = ""
-		r.status.ProjectsSynced = result.projectsSynced
-		r.status.ProjectsCreated = result.projectsCreated
-		r.status.ImportedLeaves = result.importedLeaves
-		r.status.ImportedRemoved = result.importedRemoved
-		r.status.ReleasedLeavesRemoved = result.releasedLeavesRemoved
-		r.status.OrphanedUsersRemoved = result.orphanedUsersRemoved
-		r.status.OrphanedGrantsRemoved = result.orphanedGrantsRemoved
-		r.status.GroupsCreated = result.groupsCreated
-		r.status.GroupsSynced = result.groupsSynced
-		r.status.ProjectsTaggedForDeletion = result.projectsTaggedForDeletion
-		r.status.ProjectsArchived = result.projectsArchived
-		r.status.ServersShelved = result.serversShelved
-		r.status.FloatingIPsReleased = result.floatingIPsReleased
-		r.status.ProjectsDeleted = result.projectsDeleted
-		r.status.ResourcesPurged = result.resourcesPurged
-		r.status.ProjectsPromoted = result.projectsPromoted
-		r.status.ProjectsRetagged = result.projectsRetagged
-		r.log.Infow("Reconciliation complete",
-			"synced", result.projectsSynced,
-			"created", result.projectsCreated,
-			"imported", result.importedLeaves,
-			"imported_removed", result.importedRemoved,
-			"released_removed", result.releasedLeavesRemoved,
-			"orphaned_users_removed", result.orphanedUsersRemoved,
-			"orphaned_grants_removed", result.orphanedGrantsRemoved,
-			"groups_created", result.groupsCreated,
-			"groups_synced", result.groupsSynced,
-			"tagged_for_deletion", result.projectsTaggedForDeletion,
-			"archived", result.projectsArchived,
-			"deleted", result.projectsDeleted,
-			"purged", result.resourcesPurged,
-			"promoted", result.projectsPromoted,
-			"retagged", result.projectsRetagged)
+		r.status.Counters = result
+		r.log.Infow("Reconciliation complete", "counts", result)
 	}
 	r.mu.Unlock()
 	r.problems.end(time.Now(), err)
 }
 
-type reconcileResult struct {
-	projectsSynced            int
-	projectsCreated           int
-	importedLeaves            int
-	importedRemoved           int
-	releasedLeavesRemoved     int
-	orphanedUsersRemoved      int
-	orphanedGrantsRemoved     int
-	groupsCreated             int
-	groupsSynced              int
-	projectsTaggedForDeletion int
-	projectsArchived          int
-	serversShelved            int
-	floatingIPsReleased       int
-	projectsDeleted           int
-	resourcesPurged           int
-	// purgesPending counts projects still being emptied after this pass.
-	purgesPending    int
-	projectsPromoted int
-	projectsRetagged int
-}
-
-// listLeaves loads project leaves in the given statuses.
-func (r *Reconciler) listLeaves(ctx context.Context, statuses []string) ([]model.Node, error) {
-	return r.nodes.Leaves(ctx, statuses)
-}
-
 // Reconcile performs one full two-way sync and returns a summary.
 // Safe to call directly without Start (e.g. from tests).
-func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
-	var res reconcileResult
+func (r *Reconciler) Reconcile(ctx context.Context) (Counters, error) {
+	var res Counters
 
 	// ── Phase 1: load state from both sides ──────────────────────────────────
 
-	activeLeaves, err := r.listLeaves(ctx, model.ReconcilableStatuses)
+	activeLeaves, err := r.nodes.Leaves(ctx, model.ReconcilableStatuses)
 	if err != nil {
 		return res, fmt.Errorf("load active leaves: %w", err)
 	}
@@ -420,7 +345,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 	// OS project is already tracked (in any state) before deciding to import it.
 	// This prevents projects from being re-imported when their leaf is e.g.
 	// pending, rejected, or released.
-	allKnownLeaves, err := r.listLeaves(ctx, model.KnownStatuses)
+	allKnownLeaves, err := r.nodes.Leaves(ctx, model.KnownStatuses)
 	if err != nil {
 		return res, fmt.Errorf("load all known leaves: %w", err)
 	}
@@ -435,19 +360,15 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 		}
 	}
 
-	existingImported, err := r.listLeaves(ctx, []string{model.StatusImported})
+	existingImported, err := r.nodes.Leaves(ctx, []string{model.StatusImported})
 	if err != nil {
 		return res, fmt.Errorf("load imported leaves: %w", err)
 	}
 
 	// Every budget, so a project's description can name its path in the tree.
-	budgets, err := r.nodes.Budgets(ctx)
+	budgetByID, err := r.nodes.Budgets(ctx)
 	if err != nil {
 		return res, fmt.Errorf("load budgets: %w", err)
-	}
-	budgetByID := make(map[string]model.Node, len(budgets))
-	for _, b := range budgets {
-		budgetByID[b.ID] = b
 	}
 
 	scopeParentID, err := r.ensureScopeParent()
@@ -555,7 +476,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 				r.log.Warnw("Failed to create OS project for leaf", "node_id", leaf.ID, "error", err)
 				continue
 			}
-			res.projectsCreated++
+			res.ProjectsCreated++
 			leaf.EditBinding(osclient.Provider, func(b *model.Binding) { b.ExternalID = created.ID })
 			if !r.cfg.DryRun {
 				r.persistOSProjectID(ctx, leaf.ID, created.ID)
@@ -566,7 +487,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 			m, err := r.syncQuota(leaf, osProject, description)
 			if err != nil {
 				r.log.Warnw("Failed to sync quota for leaf", "node_id", leaf.ID, "os_project_id", osProject.ID, "error", err)
-				r.recordSyncErrors(ctx, leaf, quotaResourceIDs(r.resources()), quotaSyncErrors(r.resources(), err))
+				r.recordSyncErrors(ctx, leaf, resourceIDs(quotaDefs(r.resources())), quotaSyncErrors(r.resources(), err))
 				continue
 			}
 			if m != nil {
@@ -579,8 +500,8 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 			r.syncGroupAssignments(leaf, osProject.ID, groupTokenToOSID)
 			grantErrs := r.syncGrants(leaf, osProject.ID)
 			// The quota went through, so its resources are cleared along with the availabilities.
-			r.recordSyncErrors(ctx, leaf, slices.Concat(quotaResourceIDs(r.resources()), grantResourceIDs(r.resources())), grantErrs)
-			res.projectsSynced++
+			r.recordSyncErrors(ctx, leaf, resourceIDs(slices.Concat(quotaDefs(r.resources()), grantDefs(r.resources()))), grantErrs)
+			res.ProjectsSynced++
 		}
 	}
 
@@ -594,7 +515,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (reconcileResult, error) {
 			}
 			if releasedLeaf, wasReleased := releasedLeafByID[resourceID]; wasReleased {
 				// Leaf was released: tag, archive or delete the project.
-				r.handleReleasedProject(ctx, osProject, releasedLeaf, scopeParentID, &res)
+				r.handleReleasedProject(ctx, osProject, releasedLeaf, &res)
 				// Seen in OpenStack, so it is not a candidate for removal below.
 				delete(releasedLeafByID, resourceID)
 				delete(importedByOSProjectID, osID)

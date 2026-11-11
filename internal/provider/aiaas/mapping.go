@@ -188,19 +188,3 @@ func InUseFrom(st Status, resources []common.Resource) common.ProjectQuota {
 	}
 	return out
 }
-
-// chainOf is the budgets above a leaf, parent first, from the budgets by id; it stops at a budget it does not know or at a cycle.
-func chainOf(leaf model.Node, budgets map[string]model.Node) []model.Node {
-	var out []model.Node
-	seen := map[string]bool{}
-	for id := leaf.ParentID; id != nil && !seen[*id]; {
-		seen[*id] = true
-		b, ok := budgets[*id]
-		if !ok {
-			break
-		}
-		out = append(out, b)
-		id = b.ParentID
-	}
-	return out
-}

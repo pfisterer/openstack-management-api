@@ -53,7 +53,7 @@ func (r *Reconciler) removeReleasedLeavesWithoutProject(
 	ctx context.Context,
 	released map[string]model.Node,
 	osProjectByOSID map[string]osclient.ProjectInfo,
-	res *reconcileResult,
+	res *Counters,
 ) {
 	// Sorted, so a run is reproducible and its log reads the same twice.
 	ids := make([]string, 0, len(released))
@@ -84,18 +84,9 @@ func (r *Reconciler) removeReleasedLeavesWithoutProject(
 		r.log.Infow("Removing released leaf — its OpenStack project is gone",
 			"node_id", leaf.ID, "name", leaf.Name, "os_project_id", osID(leaf),
 			"dry_run", r.cfg.DryRun)
-		if !r.cfg.DryRun {
-			deleted, err := r.nodes.RemoveRetired(ctx, leaf.ID)
-			if err != nil {
-				r.log.Warnw("Failed to remove released leaf",
-					"node_id", leaf.ID, "error", err)
-				continue
-			}
-			if !deleted {
-				continue
-			}
+		if r.removeLeaf(ctx, r.nodes.RemoveRetired, leaf.ID, "Failed to remove released leaf", "node_id", leaf.ID) {
+			res.ReleasedLeavesRemoved++
 		}
-		res.releasedLeavesRemoved++
 	}
 }
 
@@ -113,14 +104,14 @@ func (r *Reconciler) removeReleasedLeavesWithoutProject(
 //
 // Each step looks at the project first and does only what is still missing,
 // so a pass that failed halfway is finished by the next one.
-func (r *Reconciler) handleReleasedProject(ctx context.Context, osProject osclient.ProjectInfo, leaf model.Node, scopeParentID string, res *reconcileResult) {
+func (r *Reconciler) handleReleasedProject(ctx context.Context, osProject osclient.ProjectInfo, leaf model.Node, res *Counters) {
 	// Archiving rewrites the tags too, so it starts from what tagging left.
 	osProject.Tags = r.tagReleasedProject(osProject, leaf, res)
 	if deletionDue(r.cfg.ReleasedDelete, leaf, osProject.Tags, r.cfg.PendingDeletionTagPrefix, time.Now()) {
-		r.purgeRetiredProject(ctx, osProject, leaf, scopeParentID, res)
+		r.purgeRetiredProject(ctx, osProject, leaf, res)
 		return
 	}
-	archived := r.isArchived(osProject.Tags)
+	archived := isArchived(osProject.Tags, r.cfg.ArchivedTagPrefix)
 	if r.cfg.ReleasedArchive && !archived {
 		archived = r.archiveReleasedProject(osProject, leaf, res)
 	}
@@ -129,16 +120,9 @@ func (r *Reconciler) handleReleasedProject(ctx context.Context, osProject osclie
 	}
 }
 
-// isArchived reports whether the project carries the archive mark.
-func (r *Reconciler) isArchived(tags []string) bool {
-	return slices.ContainsFunc(tags, func(t string) bool { return strings.HasPrefix(t, r.archivedTagPrefix()) })
-}
-
-func (r *Reconciler) archivedTagPrefix() string {
-	if r.cfg.ArchivedTagPrefix == "" {
-		return "archived:"
-	}
-	return r.cfg.ArchivedTagPrefix
+// isArchived reports whether the project carries the archive mark (<tagPrefix><date>).
+func isArchived(tags []string, tagPrefix string) bool {
+	return slices.ContainsFunc(tags, func(t string) bool { return strings.HasPrefix(t, tagPrefix) })
 }
 
 // markLeafArchived records in the tree what the project already shows: it is
@@ -161,7 +145,7 @@ func deletionDay(now time.Time, graceDays int) string {
 // tagReleasedProject writes the pending-deletion, contact and status tags.
 // Idempotent: the deletion day is set once and never moved — re-dating it on
 // every pass would push it out for ever.
-func (r *Reconciler) tagReleasedProject(osProject osclient.ProjectInfo, leaf model.Node, res *reconcileResult) []string {
+func (r *Reconciler) tagReleasedProject(osProject osclient.ProjectInfo, leaf model.Node, res *Counters) []string {
 	tagged := false
 	for _, tag := range osProject.Tags {
 		if strings.HasPrefix(tag, r.cfg.PendingDeletionTagPrefix) {
@@ -169,11 +153,7 @@ func (r *Reconciler) tagReleasedProject(osProject osclient.ProjectInfo, leaf mod
 		}
 	}
 
-	graceDays := r.cfg.ReleasedDeleteGraceDays
-	if graceDays <= 0 {
-		graceDays = 30
-	}
-	deletionDate := deletionDay(time.Now(), graceDays)
+	deletionDate := deletionDay(time.Now(), r.cfg.ReleasedDeleteGraceDays)
 	pending := ""
 	if !tagged {
 		pending = deletionDate
@@ -209,6 +189,6 @@ func (r *Reconciler) tagReleasedProject(osProject osclient.ProjectInfo, leaf mod
 			return osProject.Tags
 		}
 	}
-	res.projectsTaggedForDeletion++
+	res.ProjectsTaggedForDeletion++
 	return newTags
 }

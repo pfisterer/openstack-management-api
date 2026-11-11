@@ -15,14 +15,14 @@ type orphanClient interface {
 }
 
 // sweepOrphanedGrants runs sweepOrphanedGrants against OpenStack, for the policies owned by the project the network client works from and by the scope parent.
-func (r *Reconciler) sweepOrphanedGrants(known map[string]osclient.ProjectInfo, res *reconcileResult) {
+func (r *Reconciler) sweepOrphanedGrants(known map[string]osclient.ProjectInfo, res *Counters) {
 	var owners []string
 	for _, o := range []string{r.osClient.GrantOwnerProject(), r.scopeParentID} {
 		if o != "" && !slices.Contains(owners, o) {
 			owners = append(owners, o)
 		}
 	}
-	res.orphanedGrantsRemoved += sweepOrphanedGrants(r.osClient, r.resources(), owners, known, r.cfg.DryRun, r.log)
+	res.OrphanedGrantsRemoved += sweepOrphanedGrants(r.osClient, r.resources(), owners, known, r.cfg.DryRun, r.log)
 }
 
 // sweepOrphanedGrants deletes the network shares (RBAC policies) of the catalogue whose project no longer exists. Deleting a project never removed them, and they count against the rbac_policy quota of the project that owns them: on 19.10.2026 half of that quota was taken by projects long gone, and every new grant failed with OverQuota. Deleting a project now revokes its grants (revokeGrants); this catches what was left before, what that failed to remove and what goes when a project is deleted by hand.
@@ -41,8 +41,8 @@ func sweepOrphanedGrants(c orphanClient, defs []osclient.ManagedResource, owners
 	}
 	exists := map[string]bool{}
 	removed := 0
-	for _, def := range defs {
-		if !def.IsBool() || def.Grant == nil || def.Grant.Type != osclient.GrantNetwork || def.Grant.Target == "" {
+	for _, def := range grantDefs(defs) {
+		if def.Grant.Type != osclient.GrantNetwork || def.Grant.Target == "" {
 			continue
 		}
 		shares, err := c.ListNetworkShares(def.Grant.Target)

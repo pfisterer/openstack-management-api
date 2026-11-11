@@ -49,17 +49,6 @@ func TestProjectInUse_NilDetail(t *testing.T) {
 	}
 }
 
-// The in-use map is persisted and compared on every pass; a missing key and a
-// zero must not be conflated or the node would be rewritten in a loop.
-func TestQuotaEqual_DistinguishesMissingFromZero(t *testing.T) {
-	if quotaEqual(common.ProjectQuota{"cores": 0}, common.ProjectQuota{}) {
-		t.Error("a measured 0 and an unmeasured resource compared equal")
-	}
-	if !quotaEqual(common.ProjectQuota{"cores": 2, "ram": 4}, common.ProjectQuota{"ram": 4, "cores": 2}) {
-		t.Error("same values in another order compared unequal")
-	}
-}
-
 // An imported project is measured like a managed one, from the same quota
 // response that gives its limit — the table showed a dash for everything in
 // use, next to a quota that was real.
@@ -76,7 +65,7 @@ func TestMeasureImport(t *testing.T) {
 	limit := QuotaSetToProjectQuota(resources, detail.Limit)
 
 	var leaf model.Binding
-	tree.ApplyObservation(&leaf, "os-1", measureImport(resources, limit, detail))
+	tree.ApplyObservation(&leaf, "os-1", measure(resources, limit, detail))
 
 	if leaf.InUse["cores"] != 80 || leaf.InUse["ram"] != 160 || leaf.InUse["storage"] != 0 {
 		t.Errorf("in use = %v, want 80 cores, 160 GB RAM, 0 GB storage", leaf.InUse)

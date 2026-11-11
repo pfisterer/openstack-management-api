@@ -2,7 +2,6 @@ package reconciler
 
 import (
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/gophercloud/gophercloud/openstack/identity/v3/projects"
@@ -52,23 +51,20 @@ type archiveResult struct {
 // tag off, so the next pass tries again.
 //
 // Reports whether the project is archived now.
-func (r *Reconciler) archiveReleasedProject(osProject osclient.ProjectInfo, leaf model.Node, res *reconcileResult) bool {
+func (r *Reconciler) archiveReleasedProject(osProject osclient.ProjectInfo, leaf model.Node, res *Counters) bool {
 	out := archiveProject(r.osClient, osProject, r.cfg.ArchivedTagPrefix, r.cfg.DryRun, time.Now(),
 		r.log.With("node_id", leaf.ID, "os_project_id", osProject.ID))
-	res.serversShelved += out.shelved
-	res.floatingIPsReleased += out.ipsReleased
+	res.ServersShelved += out.shelved
+	res.FloatingIPsReleased += out.ipsReleased
 	if out.archived {
-		res.projectsArchived++
+		res.ProjectsArchived++
 	}
 	return out.archived
 }
 
 func archiveProject(c archiveClient, p osclient.ProjectInfo, tagPrefix string, dryRun bool, now time.Time, log *zap.SugaredLogger) archiveResult {
 	var out archiveResult
-	if tagPrefix == "" {
-		tagPrefix = "archived:"
-	}
-	if slices.ContainsFunc(p.Tags, func(t string) bool { return strings.HasPrefix(t, tagPrefix) }) {
+	if isArchived(p.Tags, tagPrefix) {
 		return out
 	}
 	if dryRun {
@@ -82,11 +78,7 @@ func archiveProject(c archiveClient, p osclient.ProjectInfo, tagPrefix string, d
 		log.Warnw("Archive: could not list floating IPs", "error", err)
 		complete = false
 	}
-	for _, ip := range ips {
-		if ip.ProjectID != p.ID {
-			log.Errorw("Archive: listing returned a floating IP of another project — skipped", "address", ip.Address, "its_project_id", ip.ProjectID)
-			continue
-		}
+	for _, ip := range ownedBy(log, "floating IP", p.ID, ips, func(ip osclient.FloatingIPInfo) (string, string) { return ip.Address, ip.ProjectID }) {
 		if err := c.ReleaseFloatingIP(ip.ID); err != nil {
 			log.Warnw("Archive: could not release floating IP", "address", ip.Address, "error", err)
 			complete = false
@@ -101,11 +93,7 @@ func archiveProject(c archiveClient, p osclient.ProjectInfo, tagPrefix string, d
 		log.Warnw("Archive: could not list servers", "error", err)
 		complete = false
 	}
-	for _, s := range servers {
-		if s.ProjectID != p.ID {
-			log.Errorw("Archive: listing returned a server of another project — skipped", "server", s.Name, "its_project_id", s.ProjectID)
-			continue
-		}
+	for _, s := range ownedBy(log, "server", p.ID, servers, func(s osclient.ServerInfo) (string, string) { return s.ID, s.ProjectID }) {
 		if s.Shelved() {
 			continue
 		}

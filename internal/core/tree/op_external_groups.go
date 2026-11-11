@@ -23,13 +23,13 @@ func (s *Service) RemoveExternalGroup(id, groupID string, actor model.Actor, use
 		return model.Node{}, err
 	}
 	if !current.IsLeaf() {
-		return model.Node{}, fmt.Errorf("only projects have external groups")
+		return model.Node{}, invalid("Externe Gruppen gibt es nur an Projekten.")
 	}
 	if !isOwner(userTokens, current) {
 		if manages, err := s.managesNode(ctx, userTokens, current); err != nil {
 			return model.Node{}, err
 		} else if !manages {
-			return model.Node{}, common.ErrForbidden
+			return model.Node{}, errNoPermission
 		}
 	}
 	// Whichever provider assigned it: group IDs are the provider's own, and only one of them knows this one.
@@ -41,7 +41,7 @@ func (s *Service) RemoveExternalGroup(id, groupID string, actor model.Actor, use
 		}
 	}
 	if provider == "" {
-		return model.Node{}, fmt.Errorf("external group %w", common.ErrNotFound)
+		return model.Node{}, refuse(common.ErrNotFound, "Die externe Gruppe wurde nicht gefunden.")
 	}
 	if name == "" {
 		name = groupID

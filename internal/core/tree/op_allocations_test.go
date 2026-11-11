@@ -126,7 +126,7 @@ func TestAllocation_WhoMay(t *testing.T) {
 	if _, err := f.allocate(t, ownerToken, gpu, "x"); !errors.Is(err, common.ErrForbidden) {
 		t.Errorf("the owner must not grant themselves, got %v", err)
 	}
-	if _, err := f.allocate(t, uniTokens, gpu, " "); err == nil || !strings.Contains(err.Error(), "reason") {
+	if _, err := f.allocate(t, uniTokens, gpu, " "); err == nil || !strings.Contains(err.Error(), "Begründung") {
 		t.Errorf("granting without a reason must be refused, got %v", err)
 	}
 	if _, err := f.allocate(t, rootTokens, common.ProjectQuota{"gpu": 2}, "x"); err != nil {
@@ -209,7 +209,7 @@ func TestAllocation_RefusesAnAvailabilityTheProjectHolds(t *testing.T) {
 	if _, err := f.svc.RequestChange(f.project.ID, tree.ChangeNodeRequest{Limit: &common.ProjectQuota{"cores": 4, "ipv4": 1}}, model.UIActor("mgr@x"), studMgr); err != nil {
 		t.Fatalf("project asks its own budget for ipv4: %v", err)
 	}
-	if _, err := f.allocate(t, uniTokens, common.ProjectQuota{"ipv4": 1}, "x"); err == nil || !strings.Contains(err.Error(), "already") {
+	if _, err := f.allocate(t, uniTokens, common.ProjectQuota{"ipv4": 1}, "x"); err == nil || !strings.Contains(err.Error(), "bereits") {
 		t.Errorf("an availability the project has from its own budget must not be allocated again, got %v", err)
 	}
 }

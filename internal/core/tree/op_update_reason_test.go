@@ -47,7 +47,7 @@ func TestUpdateNode_BudgetPurposeNeedsManager(t *testing.T) {
 // The purpose obeys the rules of creation: required, and at most common.MaxReasonLength characters.
 func TestUpdateNode_BudgetPurposeValidated(t *testing.T) {
 	f := newChangeFixture(t, nil, nil)
-	if _, err := f.svc.UpdateNode(f.budget.ID, tree.UpdateNodeRequest{Reason: ptr("   ")}, rootActor(), rootTokens); err == nil || !strings.Contains(err.Error(), "purpose is required") {
+	if _, err := f.svc.UpdateNode(f.budget.ID, tree.UpdateNodeRequest{Reason: ptr("   ")}, rootActor(), rootTokens); err == nil || !strings.Contains(err.Error(), "Zweck ist erforderlich") {
 		t.Fatalf("an empty purpose should be refused, got %v", err)
 	}
 	long := strings.Repeat("x", common.MaxReasonLength+1)
@@ -63,7 +63,7 @@ func TestUpdateNode_BudgetPurposeValidated(t *testing.T) {
 func TestUpdateNode_ProjectPurposeRefused(t *testing.T) {
 	f := newChangeFixture(t, &model.AutoApprove{}, nil)
 	p := f.approved(t, 1, nil)
-	if _, err := f.svc.UpdateNode(p.ID, tree.UpdateNodeRequest{Reason: ptr("other")}, model.UIActor("stud@x"), studTokens); err == nil || !strings.Contains(err.Error(), "only the name and the admins") {
+	if _, err := f.svc.UpdateNode(p.ID, tree.UpdateNodeRequest{Reason: ptr("other")}, model.UIActor("stud@x"), studTokens); err == nil || !strings.Contains(err.Error(), "nur Name und Admins") {
 		t.Fatalf("a project's purpose should not be a direct edit, got %v", err)
 	}
 }

@@ -32,7 +32,7 @@ func normalizeOwnerToken(raw string) (string, error) {
 	v := strings.TrimSpace(raw)
 	v = strings.TrimPrefix(v, "user:")
 	if v == "" || strings.Contains(v, ":") {
-		return "", fmt.Errorf("owner must be a plain email or user: token")
+		return "", invalid("Die verantwortliche Person muss als E-Mail-Adresse oder als user:-Token angegeben werden.")
 	}
 	return "user:" + strings.ToLower(v), nil
 }
@@ -70,12 +70,12 @@ func (s *Service) normalizeAuthorizedUsers(ctx context.Context, users []common.A
 	for i, user := range users {
 		token := common.CanonicalToken(user.Token)
 		if token == "" {
-			return nil, fmt.Errorf("invalid authorized_users: entry %d has empty token", i)
+			return nil, invalid("Mitglieder: Eintrag %d hat kein Token.", i)
 		}
 
 		role := strings.ToLower(strings.TrimSpace(user.Role))
 		if !slices.Contains(common.Roles, role) {
-			return nil, fmt.Errorf("invalid authorized_users: entry %d has role %q, expected one of %v", i, user.Role, common.Roles)
+			return nil, invalid("Mitglieder: Eintrag %d hat die Rolle %q, erlaubt sind %v.", i, user.Role, common.Roles)
 		}
 
 		switch {
@@ -83,7 +83,7 @@ func (s *Service) normalizeAuthorizedUsers(ctx context.Context, users []common.A
 			email := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(token, common.UserPrefix)))
 			// A plain address only: ParseAddress also accepts `Name <a@b>` and `a@b (comment)`, which would be stored and later resolved as a different person than the one displayed.
 			if addr, err := mail.ParseAddress(email); err != nil || addr.Address != email {
-				return nil, fmt.Errorf("invalid authorized_users: entry %d is not a valid email address", i)
+				return nil, invalid("Mitglieder: Eintrag %d ist keine gültige E-Mail-Adresse.", i)
 			}
 			token = common.UserPrefix + email
 
@@ -101,16 +101,16 @@ func (s *Service) normalizeAuthorizedUsers(ctx context.Context, users []common.A
 					return nil, fmt.Errorf("cannot verify group %q right now: %w: %w", token, common.ErrInternal, err)
 				}
 				if !exists {
-					return nil, fmt.Errorf("invalid authorized_users: entry %d references unknown group %q", i, token)
+					return nil, invalid("Mitglieder: Eintrag %d nennt die unbekannte Gruppe %q.", i, token)
 				}
 				if requireGroupMembership && !manager && !kept[token] && !caller.Contains(token) {
-					return nil, fmt.Errorf("%w: authorized_users entry %d: only members of group %q may add it", common.ErrForbidden, i, token)
+					return nil, refuse(common.ErrForbidden, "Mitglieder: Eintrag %d: Die Gruppe %q dürfen nur ihre eigenen Mitglieder hinzufügen.", i, token)
 				}
 				seenGroups[token] = true
 			}
 
 		default:
-			return nil, fmt.Errorf("invalid authorized_users: entry %d must be a %s or %s token", i, common.UserPrefix, common.GroupPrefix)
+			return nil, invalid("Mitglieder: Eintrag %d muss ein %s- oder %s-Token sein.", i, common.UserPrefix, common.GroupPrefix)
 		}
 
 		out = append(out, common.AuthorizedUser{Token: token, Role: role})
@@ -224,9 +224,9 @@ func checkMemberCount(n int, c memberCeiling) error {
 		return nil
 	}
 	if c.provider != "" {
-		return fmt.Errorf("at most %d authorized users in a project with resources of %s (got %d) — use a group token to grant access to a whole course or department", c.max, c.provider, n)
+		return invalid("Ein Projekt mit Ressourcen von %[2]s hat höchstens %[1]d Mitglieder, angegeben sind %[3]d. Für einen ganzen Kurs oder eine Abteilung eignet sich ein Gruppen-Token.", c.max, c.provider, n)
 	}
-	return fmt.Errorf("at most %d authorized users in a project (got %d) — use a group token to grant access to a whole course or department", c.max, n)
+	return invalid("Ein Projekt hat höchstens %d Mitglieder, angegeben sind %d. Für einen ganzen Kurs oder eine Abteilung eignet sich ein Gruppen-Token.", c.max, n)
 }
 
 // checkMemberCeilingFalls refuses a change that lowers the ceiling on the members of a project (from was, to next) below the members it already lists.

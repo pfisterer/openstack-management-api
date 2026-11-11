@@ -350,7 +350,7 @@ func TestCapacity_RefusalNamesTheResource(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	err := svc.checkCapacity(ctx, []model.Node{budget}, common.ProjectQuota{"cores": 5}, nil)
-	if err == nil || !strings.Contains(err.Error(), "cores asks 5, 4 free") {
+	if err == nil || !strings.Contains(err.Error(), "cores braucht 5, frei sind 4") {
 		t.Errorf("refusal = %v, want it to name cores with 5 asked and 4 free", err)
 	}
 }

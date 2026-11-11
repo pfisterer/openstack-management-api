@@ -220,7 +220,7 @@ func (s *Service) loadNode(ctx context.Context, id string) (*model.Node, error) 
 		return nil, fmt.Errorf("load node: %w", err)
 	}
 	if n == nil {
-		return nil, fmt.Errorf("node %w", common.ErrNotFound)
+		return nil, errNodeNotFound
 	}
 	return n, nil
 }
@@ -236,10 +236,10 @@ func (s *Service) loadLive(ctx context.Context, id string) (*model.Node, error) 
 		return nil, err
 	}
 	if n.Status == model.StatusImported {
-		return nil, fmt.Errorf("imported nodes change only by being promoted: %w", common.ErrForbidden)
+		return nil, refuse(common.ErrForbidden, "Ein importiertes Projekt ändert sich nur durch Übernehmen.")
 	}
 	if model.IsTerminalStatus(n.Status) {
-		return nil, fmt.Errorf("%w: a node in status %q cannot be changed", common.ErrConflict, n.Status)
+		return nil, refuse(common.ErrConflict, "Im Status %q lässt sich nichts mehr ändern.", n.Status)
 	}
 	return n, nil
 }

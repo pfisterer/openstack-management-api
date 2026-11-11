@@ -86,10 +86,10 @@ func wantCapError(t *testing.T, err error, limit int, provider string) {
 	if err == nil {
 		t.Fatalf("expected the ceiling of %d to apply, request was accepted", limit)
 	}
-	if !strings.Contains(err.Error(), fmt.Sprintf("at most %d authorized users", limit)) {
+	if !strings.Contains(err.Error(), fmt.Sprintf("höchstens %d Mitglieder", limit)) {
 		t.Errorf("error does not name the ceiling %d: %v", limit, err)
 	}
-	if provider != "" && !strings.Contains(err.Error(), "resources of "+provider) {
+	if provider != "" && !strings.Contains(err.Error(), "Ressourcen von "+provider) {
 		t.Errorf("error should name the provider %s: %v", provider, err)
 	}
 }

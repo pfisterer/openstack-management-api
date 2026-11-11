@@ -1,7 +1,6 @@
 package tree
 
 import (
-	"fmt"
 	"unicode/utf8"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
@@ -10,7 +9,7 @@ import (
 // validateName refuses a name longer than common.MaxNameLength characters. Names are shown in every listing and become OpenStack project names; a megabyte of name fills each of them.
 func validateName(name string) error {
 	if n := utf8.RuneCountInString(name); n > common.MaxNameLength {
-		return fmt.Errorf("the name is %d characters long, at most %d are allowed", n, common.MaxNameLength)
+		return invalid("Der Name ist %d Zeichen lang, erlaubt sind höchstens %d.", n, common.MaxNameLength)
 	}
 	return nil
 }
@@ -18,7 +17,7 @@ func validateName(name string) error {
 // validateReason refuses a reason longer than common.MaxReasonLength characters. Every reason is kept in the node's history.
 func validateReason(reason string) error {
 	if n := utf8.RuneCountInString(reason); n > common.MaxReasonLength {
-		return fmt.Errorf("the reason is %d characters long, at most %d are allowed", n, common.MaxReasonLength)
+		return invalid("Die Begründung ist %d Zeichen lang, erlaubt sind höchstens %d.", n, common.MaxReasonLength)
 	}
 	return nil
 }

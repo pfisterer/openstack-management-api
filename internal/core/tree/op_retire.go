@@ -27,13 +27,13 @@ func (s *Service) ReleaseNode(id string, req ReleaseNodeRequest, actor model.Act
 		return model.Node{}, err
 	}
 	if !current.IsLeaf() {
-		return model.Node{}, fmt.Errorf("only project leaves can be released; delete budgets instead")
+		return model.Node{}, invalid("Nur Projekte lassen sich löschen und beenden; ein Budget wird stattdessen als Budget gelöscht.")
 	}
 	if current.Status != model.StatusApproved {
-		return model.Node{}, fmt.Errorf("%w: cannot release node in status %q", common.ErrConflict, current.Status)
+		return model.Node{}, refuse(common.ErrConflict, "Im Status %q lässt sich das Projekt nicht löschen.", current.Status)
 	}
 	if req.Delete && !s.deletable(*current) {
-		return model.Node{}, fmt.Errorf("%w: projects cannot be deleted here", common.ErrConflict)
+		return model.Node{}, refuse(common.ErrConflict, "Projekte lassen sich hier nicht endgültig löschen.")
 	}
 	if err := s.authorizeRetirement(ctx, current, userTokens); err != nil {
 		return model.Node{}, err
@@ -43,7 +43,7 @@ func (s *Service) ReleaseNode(id string, req ReleaseNodeRequest, actor model.Act
 	var updated model.Node
 	if _, err := s.store.UpdateNode(ctx, id, func(n *model.Node) error {
 		if n.Status != model.StatusApproved {
-			return fmt.Errorf("%w: cannot release node in status %q", common.ErrConflict, n.Status)
+			return refuse(common.ErrConflict, "Im Status %q lässt sich das Projekt nicht löschen.", n.Status)
 		}
 		historyEntry := model.NewHistoryEntry("released", actor, model.StatusReleased)
 		historyEntry.StatusFrom = new(model.StatusApproved)
@@ -61,7 +61,7 @@ func (s *Service) ReleaseNode(id string, req ReleaseNodeRequest, actor model.Act
 		return model.Node{}, err
 	}
 	if updated.ID == "" {
-		return model.Node{}, fmt.Errorf("node %w", common.ErrNotFound)
+		return model.Node{}, errNodeNotFound
 	}
 	return updated, nil
 }
@@ -81,10 +81,10 @@ func (s *Service) RequestDeletion(id string, actor model.Actor, userTokens commo
 		return model.Node{}, err
 	}
 	if !s.deletable(*current) {
-		return model.Node{}, fmt.Errorf("%w: projects cannot be deleted here", common.ErrConflict)
+		return model.Node{}, refuse(common.ErrConflict, "Projekte lassen sich hier nicht endgültig löschen.")
 	}
 	if !current.IsLeaf() || !slices.Contains(model.RetiredStatuses, current.Status) {
-		return model.Node{}, fmt.Errorf("%w: only released or archived projects can be deleted", common.ErrConflict)
+		return model.Node{}, refuse(common.ErrConflict, "Endgültig löschen lassen sich nur gelöschte oder stillgelegte Projekte.")
 	}
 	if err := s.authorizeRetirement(ctx, current, userTokens); err != nil {
 		return model.Node{}, err
@@ -96,7 +96,7 @@ func (s *Service) RequestDeletion(id string, actor model.Actor, userTokens commo
 	var updated model.Node
 	if _, err := s.store.UpdateNode(ctx, id, func(n *model.Node) error {
 		if !slices.Contains(model.RetiredStatuses, n.Status) {
-			return fmt.Errorf("%w: only released or archived projects can be deleted", common.ErrConflict)
+			return refuse(common.ErrConflict, "Endgültig löschen lassen sich nur gelöschte oder stillgelegte Projekte.")
 		}
 		if !slices.Contains(n.Flags, model.FlagDeleteRequested) {
 			n.Flags = append(slices.Clone(n.Flags), model.FlagDeleteRequested)
@@ -122,7 +122,7 @@ func (s *Service) authorizeRetirement(ctx context.Context, current *model.Node, 
 		return err
 	}
 	if !manages {
-		return common.ErrForbidden
+		return errNoPermission
 	}
 	return nil
 }
@@ -174,16 +174,16 @@ func (s *Service) DeleteNode(id string, actor model.Actor, userTokens common.Tok
 		return err
 	}
 	if current.Kind != model.KindBudget {
-		return fmt.Errorf("project leaves are not deleted; reject or release them instead")
+		return invalid("Ein Projekt wird nicht als Budget gelöscht, sondern abgelehnt oder gelöscht.")
 	}
 	if current.ID == model.RootNodeID || current.ID == model.UnassignedNodeID {
-		return fmt.Errorf("structural nodes cannot be deleted: %w", common.ErrForbidden)
+		return refuse(common.ErrForbidden, "Die Struktur-Knoten (Wurzel und Nicht zugeordnet) lassen sich nicht löschen.")
 	}
 
 	if manages, err := s.managesNode(ctx, userTokens, current); err != nil {
 		return err
 	} else if !manages {
-		return common.ErrForbidden
+		return errNoPermission
 	}
 
 	// Collect the budget subtree, then every node inside it.
@@ -206,7 +206,7 @@ func (s *Service) DeleteNode(id string, actor model.Actor, userTokens common.Tok
 			n.Status == model.StatusImported ||
 			(n.IsLeaf() && n.Status == model.StatusApproved)
 		if blocked {
-			return fmt.Errorf("cannot delete: node %q (%s) is in status %q — decide or release it first", n.ID, n.Name, n.Status)
+			return invalid("Löschen nicht möglich: %q (%s) ist im Status %q. Erst darüber entscheiden oder das Projekt löschen.", n.ID, n.Name, n.Status)
 		}
 		if n.Kind != model.KindBudget { // budgets are already in deleteIDs via parentMap
 			deleteIDs = append(deleteIDs, n.ID)

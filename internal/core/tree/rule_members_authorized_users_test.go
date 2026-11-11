@@ -68,52 +68,52 @@ func TestAuthorizedUsersAreValidated(t *testing.T) {
 		{
 			name:    "an unknown relation on a known group is refused",
 			users:   []common.AuthorizedUser{{Token: dev.CourseGroup + "#tutor", Role: "member"}},
-			wantErr: "unknown group",
+			wantErr: "unbekannte Gruppe",
 		},
 		{
 			name:    "a relation on an unknown group is refused",
 			users:   []common.AuthorizedUser{{Token: "group:does-not-exist#dozent", Role: "member"}},
-			wantErr: "unknown group",
+			wantErr: "unbekannte Gruppe",
 		},
 		{
 			name:    "an unknown group is refused",
 			users:   []common.AuthorizedUser{{Token: "group:does-not-exist", Role: "member"}},
-			wantErr: "unknown group",
+			wantErr: "unbekannte Gruppe",
 		},
 		{
 			name:    "a group the requester does not belong to is refused",
 			users:   []common.AuthorizedUser{{Token: dev.RootGroup, Role: "member"}},
-			wantErr: "only members of group",
+			wantErr: "nur ihre eigenen Mitglieder",
 		},
 		{
 			name:    "an address with a display name is refused",
 			users:   []common.AuthorizedUser{{Token: "user:Mallory <victim@x.example>", Role: "member"}},
-			wantErr: "not a valid email",
+			wantErr: "keine gültige E-Mail-Adresse",
 		},
 		{
 			name:    "an address with a comment is refused",
 			users:   []common.AuthorizedUser{{Token: "user:victim@x.example (mallory)", Role: "member"}},
-			wantErr: "not a valid email",
+			wantErr: "keine gültige E-Mail-Adresse",
 		},
 		{
 			name:    "a malformed address is refused",
 			users:   []common.AuthorizedUser{{Token: "user:not-an-address", Role: "member"}},
-			wantErr: "not a valid email",
+			wantErr: "keine gültige E-Mail-Adresse",
 		},
 		{
 			name:    "an unsupported role is refused",
 			users:   []common.AuthorizedUser{{Token: "user:someone@x.example", Role: "superuser"}},
-			wantErr: "expected one of",
+			wantErr: "erlaubt sind",
 		},
 		{
 			name:    "a token without a prefix is refused",
 			users:   []common.AuthorizedUser{{Token: "someone@x.example", Role: "member"}},
-			wantErr: "must be a user: or group: token",
+			wantErr: "muss ein user:- oder group:-Token sein",
 		},
 		{
 			name:    "more entries than the configured maximum are refused",
 			users:   tooMany,
-			wantErr: "at most",
+			wantErr: "höchstens",
 		},
 	}
 
@@ -161,7 +161,7 @@ func TestAuthorizedUsers_GroupsNeedMembershipOrAManager(t *testing.T) {
 
 	if _, err := svc.CreateNode(tree.CreateNodeRequest{
 		ParentID: budget.ID, Kind: model.KindProject, Name: "p", Reason: "r", Limit: cores(1), AuthorizedUsers: rootGroup,
-	}, model.UIActor("student@x"), "student@x", requester); err == nil || !strings.Contains(err.Error(), "only members of group") {
+	}, model.UIActor("student@x"), "student@x", requester); err == nil || !strings.Contains(err.Error(), "nur ihre eigenen Mitglieder") {
 		t.Fatalf("a student put the root admins' group into a project: %v", err)
 	}
 
@@ -171,7 +171,7 @@ func TestAuthorizedUsers_GroupsNeedMembershipOrAManager(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if _, err := svc.RequestChange(project.ID, tree.ChangeNodeRequest{AuthorizedUsers: &rootGroup}, model.UIActor("student@x"), requester); err == nil || !strings.Contains(err.Error(), "only members of group") {
+	if _, err := svc.RequestChange(project.ID, tree.ChangeNodeRequest{AuthorizedUsers: &rootGroup}, model.UIActor("student@x"), requester); err == nil || !strings.Contains(err.Error(), "nur ihre eigenen Mitglieder") {
 		t.Fatalf("a student added the root admins' group by a change: %v", err)
 	}
 
@@ -198,7 +198,7 @@ func TestAuthorizedUsers_AnyExistingGroupWhileMembershipIsOff(t *testing.T) {
 	}
 	if _, err := svc.CreateNode(tree.CreateNodeRequest{
 		ParentID: budget.ID, Kind: model.KindProject, Name: "q", Reason: "r", Limit: cores(1), AuthorizedUsers: []common.AuthorizedUser{{Token: "group:does-not-exist", Role: "member"}},
-	}, model.UIActor("student@x"), "student@x", requester); err == nil || !strings.Contains(err.Error(), "unknown group") {
+	}, model.UIActor("student@x"), "student@x", requester); err == nil || !strings.Contains(err.Error(), "unbekannte Gruppe") {
 		t.Fatalf("an unknown group must still be refused: %v", err)
 	}
 }

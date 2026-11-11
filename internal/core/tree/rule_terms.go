@@ -51,7 +51,7 @@ func fitEnd(end, bound *string) (*string, error) {
 		return bound, nil
 	}
 	if !endsNoLater(*end, bound) {
-		return nil, fmt.Errorf("the end date %s is after the end of the budget above (%s) — nothing can outlive the budget it draws from", dateOnly(*end), dateOnly(*bound))
+		return nil, invalid("Das Enddatum %s liegt nach dem Ende des Budgets darüber (%s). Nichts kann länger laufen als das Budget, aus dem es kommt.", dateOnly(*end), dateOnly(*bound))
 	}
 	return end, nil
 }
@@ -92,7 +92,7 @@ func fitProjectEnd(end *string, chain []model.Node, now time.Time) (*string, err
 		return bound, nil
 	}
 	if !endsNoLater(*end, bound) {
-		return nil, fmt.Errorf("the end date %s is too far ahead: projects in this budget run at most %d days at a time, so until %s at the latest", dateOnly(*end), *term, dateOnly(*bound))
+		return nil, invalid("Das Enddatum %s liegt zu weit in der Zukunft: Projekte in diesem Budget laufen höchstens %d Tage am Stück, also längstens bis %s.", dateOnly(*end), *term, dateOnly(*bound))
 	}
 	return end, nil
 }
@@ -118,7 +118,7 @@ func (s *Service) fitNodeEnd(kind string, end *string, chain []model.Node) (*str
 // refused — a sub-budget may tighten the rule, not escape it.
 func fitMaxTerm(days, bound *int) (*int, error) {
 	if days != nil && *days < 1 {
-		return nil, fmt.Errorf("the maximum project term must be at least one day")
+		return nil, invalid("Die längste Laufzeit von Projekten muss mindestens einen Tag betragen.")
 	}
 	if bound == nil {
 		return days, nil
@@ -127,7 +127,7 @@ func fitMaxTerm(days, bound *int) (*int, error) {
 		return bound, nil
 	}
 	if *days > *bound {
-		return nil, fmt.Errorf("projects can run at most %d days in the budget above, so this one cannot allow %d", *bound, *days)
+		return nil, invalid("Im Budget darüber laufen Projekte höchstens %d Tage, deshalb kann dieses keine %d erlauben.", *bound, *days)
 	}
 	return days, nil
 }

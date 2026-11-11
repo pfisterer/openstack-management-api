@@ -55,7 +55,7 @@ func TestMaxTerm_CreateDefaultsAndRefuses(t *testing.T) {
 		ParentID: f.budget.ID, Kind: model.KindProject, Name: "vm", Reason: "vm",
 		Limit: cores(1), TerminationDate: ptr(inDays(181)),
 	}, model.UIActor("stud@x"), "stud@x", studTokens)
-	if err == nil || !strings.Contains(err.Error(), "180 days") {
+	if err == nil || !strings.Contains(err.Error(), "180 Tage") {
 		t.Fatalf("an end past the term should be refused naming it, got %v", err)
 	}
 	if _, err := f.svc.CreateNode(tree.CreateNodeRequest{
@@ -273,7 +273,7 @@ func TestMaxTerm_Promote(t *testing.T) {
 		}
 	}
 	importNode("p_late")
-	if _, err := svc.PromoteNode("p_late", tree.PromoteNodeRequest{NewParentID: to.ID, Owner: "stud@x", Reason: "t", TerminationDate: ptr(inDays(31))}, rootActor(), rootTokens); err == nil || !strings.Contains(err.Error(), "30 days") {
+	if _, err := svc.PromoteNode("p_late", tree.PromoteNodeRequest{NewParentID: to.ID, Owner: "stud@x", Reason: "t", TerminationDate: ptr(inDays(31))}, rootActor(), rootTokens); err == nil || !strings.Contains(err.Error(), "30 Tage") {
 		t.Fatalf("an end past the term should be refused naming it, got %v", err)
 	}
 	importNode("p_open")

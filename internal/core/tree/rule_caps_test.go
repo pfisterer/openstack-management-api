@@ -68,7 +68,7 @@ func TestCaps_NumberOnlyTightens(t *testing.T) {
 	if got := mustGet(t, f.svc, sub.ID).InheritedCaps["scratch"]; got != 20 {
 		t.Errorf("inherited %d, want 20", got)
 	}
-	if _, err := update(f, sub.ID, set("scratch", 21)); err == nil || !strings.Contains(err.Error(), "at most 20 GB") {
+	if _, err := update(f, sub.ID, set("scratch", 21)); err == nil || !strings.Contains(err.Error(), "höchstens 20 GB") {
 		t.Errorf("looser below should be refused, got %v", err)
 	}
 	if _, err := update(f, sub.ID, set("scratch", 5)); err != nil {
@@ -113,13 +113,13 @@ func TestCaps_UnboundedAndChoice(t *testing.T) {
 		t.Errorf("any bound below no bound: %v", err)
 	}
 	below := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: sub.ID, Kind: model.KindBudget, Limit: cores(1)})
-	if _, err := update(f, below.ID, set("gpu-max", 0)); err == nil || !strings.Contains(err.Error(), "at most 48 h, so this one cannot allow no bound") {
+	if _, err := update(f, below.ID, set("gpu-max", 0)); err == nil || !strings.Contains(err.Error(), "höchstens 48 h, deshalb kann dieses nicht no bound erlauben") {
 		t.Errorf("no bound below a bound should be refused, got %v", err)
 	}
 	if _, err := update(f, below.ID, set("gpu-max", 49)); err == nil {
 		t.Error("a longer bound below a bound should be refused")
 	}
-	if _, err := update(f, sub.ID, set("prio", 1)); err == nil || !strings.Contains(err.Error(), "at most preemptible, so this one cannot allow guaranteed") {
+	if _, err := update(f, sub.ID, set("prio", 1)); err == nil || !strings.Contains(err.Error(), "höchstens preemptible, deshalb kann dieses nicht guaranteed erlauben") {
 		t.Errorf("a looser choice below should be refused, got %v", err)
 	}
 	if _, err := update(f, sub.ID, set("prio", 2)); err == nil {
@@ -133,10 +133,10 @@ func TestCaps_GrantFromRoot(t *testing.T) {
 	if got := mustGet(t, f.svc, f.budget.ID).InheritedCaps; got["jobs"] != 0 || len(got) != 0 {
 		t.Fatalf("without the root's: inherited %+v, want none", got)
 	}
-	if _, err := update(f, f.budget.ID, set("jobs", 1, "hours", 1)); err == nil || !strings.Contains(err.Error(), "has none") {
+	if _, err := update(f, f.budget.ID, set("jobs", 1, "hours", 1)); err == nil || !strings.Contains(err.Error(), "hat das nicht") {
 		t.Errorf("switching on below a root without them should be refused, got %v", err)
 	}
-	if _, err := update(f, model.RootNodeID, set("jobs", 4)); err == nil || !strings.Contains(err.Error(), "together") {
+	if _, err := update(f, model.RootNodeID, set("jobs", 4)); err == nil || !strings.Contains(err.Error(), "zusammen gesetzt") {
 		t.Errorf("one of a pair should be refused, got %v", err)
 	}
 	if _, err := update(f, model.RootNodeID, set("jobs", 40, "hours", 12)); err != nil {
@@ -236,7 +236,7 @@ func TestCaps_Authz(t *testing.T) {
 	if _, err := update(f, p.ID, set("scratch", 5)); err == nil {
 		t.Error("caps on a project should be refused")
 	}
-	if _, err := f.svc.CreateNode(tree.CreateNodeRequest{ParentID: f.budget.ID, Kind: model.KindProject, Name: "p", Reason: "t", Limit: cores(1), Caps: common.Caps{"scratch": 5}}, rootActor(), "root@x", rootTokens); err == nil || !strings.Contains(err.Error(), "caps is a budget setting") {
+	if _, err := f.svc.CreateNode(tree.CreateNodeRequest{ParentID: f.budget.ID, Kind: model.KindProject, Name: "p", Reason: "t", Limit: cores(1), Caps: common.Caps{"scratch": 5}}, rootActor(), "root@x", rootTokens); err == nil || !strings.Contains(err.Error(), "caps ist eine Einstellung von Budgets") {
 		t.Errorf("caps on a new project should be refused, got %v", err)
 	}
 }

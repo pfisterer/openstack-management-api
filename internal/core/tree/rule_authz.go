@@ -16,7 +16,7 @@ func (s *Service) nodeChain(ctx context.Context, startID string) ([]model.Node, 
 	id := &startID
 	for id != nil {
 		if _, dup := seen[*id]; dup {
-			return nil, fmt.Errorf("cycle detected in node chain at %q", *id)
+			return nil, invalid("Die Budgetkette enthält bei %q einen Zyklus.", *id)
 		}
 		seen[*id] = struct{}{}
 		node, err := s.store.GetNode(ctx, *id)

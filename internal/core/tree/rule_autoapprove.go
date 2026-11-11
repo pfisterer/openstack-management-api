@@ -22,7 +22,7 @@ func validateSubBudgetRequests(a *model.AutoApprove, allowSubBudgetRequests *boo
 	if a == nil || a.IsPool() || (allowSubBudgetRequests != nil && !*allowSubBudgetRequests) {
 		return nil
 	}
-	return fmt.Errorf("a budget with a per-requester auto-approve limit cannot accept sub-budget requests: set allow_sub_budget_requests to false")
+	return invalid("Ein Budget mit persönlichen Grenzen der automatischen Genehmigung kann keine Teilbudget-Anfragen annehmen: allow_sub_budget_requests auf false setzen.")
 }
 
 // autoApprovable reports whether budget's auto-approve policy grants a leaf of

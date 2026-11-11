@@ -76,7 +76,7 @@ func TestAPI_InternalErrorsAreNotShown(t *testing.T) {
 	// A validation message is still the caller's to read.
 	rr = do(t, h, http.MethodPost, "/v1/nodes", "", tree.CreateNodeRequest{ParentID: "b_cs_faculty", Kind: model.KindProject, Name: " ", Reason: "r", Limit: common.ProjectQuota{}})
 	assertStatus(t, rr, http.StatusBadRequest)
-	if !strings.Contains(rr.Body.String(), "name is required") {
+	if !strings.Contains(rr.Body.String(), "Ein Name ist erforderlich") {
 		t.Fatalf("validation message lost: %s", rr.Body.String())
 	}
 }

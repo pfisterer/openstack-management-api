@@ -56,7 +56,7 @@ func (s *Service) SetAllocation(id string, req AllocationRequest, actor model.Ac
 		return model.Node{}, err
 	}
 	if current.Kind != model.KindProject {
-		return model.Node{}, fmt.Errorf("only a project draws from budgets above its own; a budget gets more from its parent")
+		return model.Node{}, invalid("Nur ein Projekt bekommt Sonderzuteilungen aus Budgets über seinem eigenen; ein Budget bekommt mehr von dem Budget darüber.")
 	}
 
 	chain, err := s.parentChainNodes(ctx, current)
@@ -65,10 +65,10 @@ func (s *Service) SetAllocation(id string, req AllocationRequest, actor model.Ac
 	}
 	at := slices.IndexFunc(chain, func(n model.Node) bool { return n.ID == req.BudgetID })
 	if at < 0 {
-		return model.Node{}, fmt.Errorf("budget %q is not above this project — a project draws only from budgets above its own", req.BudgetID)
+		return model.Node{}, invalid("Das Budget %q liegt nicht über diesem Projekt. Sonderzuteilungen kommen nur aus Budgets über dem eigenen.", req.BudgetID)
 	}
 	if at == 0 {
-		return model.Node{}, fmt.Errorf("this is the project's own budget — change its resources with a change request instead")
+		return model.Node{}, invalid("Das ist das eigene Budget des Projekts. Seine Ressourcen ändern sich über eine Änderungsanfrage.")
 	}
 	source := chain[at]
 
@@ -79,7 +79,7 @@ func (s *Service) SetAllocation(id string, req AllocationRequest, actor model.Ac
 		}
 	}
 	if len(held) == 0 && len(limit) == 0 {
-		return model.Node{}, fmt.Errorf("the project draws nothing from budget %q", nodeLabel(source))
+		return model.Node{}, invalid("Das Projekt hat keine Sonderzuteilung aus dem Budget %q.", nodeLabel(source))
 	}
 
 	raises := !s.limitShrinks(held, limit)
@@ -90,16 +90,16 @@ func (s *Service) SetAllocation(id string, req AllocationRequest, actor model.Ac
 		// limit; anything else belongs to whoever holds what is handed out.
 		holder := isOwner(userTokens, current) || callerSet.ContainsAny(current.AdminScope)
 		if !holder || raises {
-			return model.Node{}, common.ErrForbidden
+			return model.Node{}, errNoPermission
 		}
 	}
 
 	if raises {
 		if strings.TrimSpace(req.Reason) == "" {
-			return model.Node{}, fmt.Errorf("a reason is required: the managers of the budgets in between see this allocation and should know why it exists")
+			return model.Node{}, invalid("Eine Begründung ist erforderlich: Die Verwaltenden der Budgets dazwischen sehen diese Sonderzuteilung und sollen wissen, warum es sie gibt.")
 		}
 		if source.Status != model.StatusApproved {
-			return model.Node{}, fmt.Errorf("%w: budget %q is in status %q", common.ErrConflict, nodeLabel(source), source.Status)
+			return model.Node{}, refuse(common.ErrConflict, "Das Budget %q ist im Status %q.", nodeLabel(source), source.Status)
 		}
 		if err := s.validateAllocationAvailabilities(*current, *bindingInChain(chain[at:]), limit); err != nil {
 			return model.Node{}, err
@@ -165,7 +165,7 @@ func (s *Service) AllocationSources(id string, userTokens common.TokenList) ([]m
 		return nil, err
 	}
 	if project.Kind != model.KindProject {
-		return nil, fmt.Errorf("only a project draws from budgets above its own")
+		return nil, invalid("Nur ein Projekt bekommt Sonderzuteilungen aus Budgets über seinem eigenen.")
 	}
 	chain, err := s.parentChainNodes(ctx, project)
 	if err != nil {
@@ -184,7 +184,7 @@ func (s *Service) AllocationSources(id string, userTokens common.TokenList) ([]m
 	}
 	if len(out) == 0 {
 		if !isOwner(userTokens, project) && !managesNodeIn(callerSet, project, chain) {
-			return nil, common.ErrForbidden
+			return nil, errNoPermission
 		}
 		return []model.Node{}, nil
 	}
@@ -203,10 +203,10 @@ func (s *Service) validateAllocationAvailabilities(project, source model.Node, l
 			continue
 		}
 		if !grantsAvailability(&source, rid) {
-			return fmt.Errorf("%q is not available in budget %q", rid, nodeLabel(source))
+			return invalid("%q ist im Budget %q nicht verfügbar.", rid, nodeLabel(source))
 		}
 		if from := availabilitySource(project, rid, source.ID); from != "" {
-			return fmt.Errorf("the project already has %q from %s", rid, from)
+			return invalid("Das Projekt hat %q bereits aus %s.", rid, from)
 		}
 	}
 	return nil
@@ -217,11 +217,11 @@ func (s *Service) validateAllocationAvailabilities(project, source model.Node, l
 // waiting proposal for it), or another allocation. Empty when nowhere.
 func availabilitySource(project model.Node, rid, except string) string {
 	if project.Limit.Grants(rid) || (project.Pending != nil && project.Pending.Limit != nil && project.Pending.Limit.Grants(rid)) {
-		return "its own budget"
+		return "seinem eigenen Budget"
 	}
 	for _, a := range project.Allocations {
 		if a.BudgetID != except && a.Limit.Grants(rid) {
-			return fmt.Sprintf("budget %q", cmp.Or(a.BudgetName, a.BudgetID))
+			return fmt.Sprintf("dem Budget %q", cmp.Or(a.BudgetName, a.BudgetID))
 		}
 	}
 	return ""
@@ -236,7 +236,7 @@ func (s *Service) checkOwnLimitAgainstAllocations(project model.Node, limit comm
 		}
 		for _, a := range project.Allocations {
 			if a.Limit.Grants(rid) {
-				return fmt.Errorf("the project already has %q from budget %q — an availability comes from one place", rid, cmp.Or(a.BudgetName, a.BudgetID))
+				return invalid("Das Projekt hat %q bereits aus dem Budget %q. Eine Verfügbarkeit kommt nur aus einer Stelle.", rid, cmp.Or(a.BudgetName, a.BudgetID))
 			}
 		}
 	}
@@ -277,11 +277,11 @@ func (s *Service) checkAllocationsAfterMove(ctx context.Context, moved model.Nod
 			// Above the new parent, or inside the moved subtree (it moves along).
 			if above[a.BudgetID] || inside[a.BudgetID] {
 				if moved.Kind == model.KindProject && len(newParentChain) > 0 && newParentChain[0].ID == a.BudgetID {
-					return fmt.Errorf("%s draws an allocation from budget %q, its new own budget — remove the allocation first", nodeLabel(p), nodeLabel(newParentChain[0]))
+					return invalid("%s hat eine Sonderzuteilung aus dem Budget %q, das sein neues eigenes Budget wäre. Erst die Sonderzuteilung entfernen.", nodeLabel(p), nodeLabel(newParentChain[0]))
 				}
 				continue
 			}
-			return fmt.Errorf("%s draws an allocation from budget %q, which would no longer be above it — remove the allocation first", nodeLabel(p), a.BudgetID)
+			return invalid("%s hat eine Sonderzuteilung aus dem Budget %q, das dann nicht mehr darüber läge. Erst die Sonderzuteilung entfernen.", nodeLabel(p), a.BudgetID)
 		}
 	}
 	return nil

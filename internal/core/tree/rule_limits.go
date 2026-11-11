@@ -42,8 +42,7 @@ func (s *Service) checkAvailabilityWithdrawal(ctx context.Context, node model.No
 	}
 	for _, id := range withdrawn {
 		if names := holders[id]; len(names) > 0 {
-			return fmt.Errorf("%q cannot be withdrawn while %d node(s) below still hold it (e.g. %s)",
-				id, len(names), names[0])
+			return invalid("%q lässt sich nicht zurückziehen, solange es %d Budgets oder Projekte darunter noch haben (z. B. %s).", id, len(names), names[0])
 		}
 	}
 	return nil
@@ -131,13 +130,13 @@ func (s *Service) checkCapacity(ctx context.Context, ancestors []model.Node, add
 		deduct(committed, subtractLimit, s.countIDs())
 		needed, err := quotaAddChecked(committed, addLimit, s.countIDs())
 		if err != nil {
-			return fmt.Errorf("budget %q (%s) capacity exceeded: %w", ancestor.ID, ancestor.Name, err)
+			return invalid("Budget %q (%s) reicht nicht aus: %w", ancestor.ID, ancestor.Name, err)
 		}
 		if id, ok := shortfall(needed, ancestor.Limit, s.countIDs()); ok {
 			// Named, with the numbers: "capacity exceeded" alone leaves a
 			// request with ten resources to guess which one did not fit.
 			free := ancestor.Limit[id] - (needed[id] - addLimit[id])
-			return fmt.Errorf("budget %q (%s) capacity exceeded: %s asks %d, %d free", ancestor.ID, ancestor.Name, id, addLimit[id], max(free, 0))
+			return invalid("Budget %q (%s) reicht nicht aus: %s braucht %d, frei sind %d.", ancestor.ID, ancestor.Name, id, addLimit[id], max(free, 0))
 		}
 	}
 	return nil
@@ -166,10 +165,10 @@ func (s *Service) validateCounts(q common.ProjectQuota, bound func(id string) in
 			continue
 		}
 		if val < 0 {
-			return fmt.Errorf("limit for %q must not be negative (got %d)", key, val)
+			return invalid("Das Limit für %q darf nicht negativ sein (angegeben: %d).", key, val)
 		}
 		if limit := bound(key); val > limit {
-			return fmt.Errorf("limit for %q must not exceed %d (got %d)", key, limit, val)
+			return invalid("Das Limit für %q darf höchstens %d sein (angegeben: %d).", key, limit, val)
 		}
 	}
 	return nil
@@ -198,10 +197,10 @@ func (s *Service) validateBudgetLimit(q common.ProjectQuota) error {
 			continue
 		}
 		if val < 0 && val != common.UnlimitedQuota {
-			return fmt.Errorf("limit for %q must be >= 0 or %d for unlimited (got %d)", key, common.UnlimitedQuota, val)
+			return invalid("Das Limit für %q muss >= 0 sein oder %d für unbegrenzt (angegeben: %d).", key, common.UnlimitedQuota, val)
 		}
 		if val > common.MaxQuotaValue {
-			return fmt.Errorf("limit for %q must not exceed %d (got %d)", key, common.MaxQuotaValue, val)
+			return invalid("Das Limit für %q darf höchstens %d sein (angegeben: %d).", key, common.MaxQuotaValue, val)
 		}
 	}
 	return nil
@@ -222,7 +221,7 @@ func (s *Service) validateAvailabilities(q common.ProjectQuota) error {
 			continue
 		}
 		if val != 0 && val != 1 {
-			return fmt.Errorf("%q is an availability: it is granted (1) or not (0), got %d", key, val)
+			return invalid("%q ist eine Verfügbarkeit: freigegeben (1) oder nicht (0), angegeben: %d.", key, val)
 		}
 	}
 	return nil
@@ -250,10 +249,10 @@ func (s *Service) validateKnownResources(q common.ProjectQuota) error {
 	for key, v := range q {
 		r, ok := known[key]
 		if !ok {
-			return fmt.Errorf("unknown resource %q", key)
+			return invalid("Unbekannte Ressource %q.", key)
 		}
 		if r.Withdrawn && v != 0 {
-			return fmt.Errorf("%q is being withdrawn and can no longer be granted", key)
+			return invalid("%q wird zurückgezogen und lässt sich nicht mehr vergeben.", key)
 		}
 	}
 	return nil
@@ -275,7 +274,7 @@ func (s *Service) bindingBudget(ctx context.Context, n *model.Node) (*model.Node
 	if b := bindingInChain(chain); b != nil {
 		return b, nil
 	}
-	return nil, fmt.Errorf("budget %q inherits its limit, but no budget above it has one", nodeLabel(*n))
+	return nil, invalid("Das Budget %q übernimmt sein Limit, aber kein Budget darüber hat eines.", nodeLabel(*n))
 }
 
 // withDefaultAvailabilities gives a new project the availabilities whose default is 1 and that the budget it draws from holds, where the request does not name them — only in the areas the project asks something of (a cloud project gets no workspace server types). The project form presets them, but the start page, an auto-approve budget's preset and API clients send only quantities; so every way to a project gets them (e.g. the server types ws-profile-*), and an explicit 0 stays 0.
@@ -344,10 +343,10 @@ func (s *Service) validateChildBudgetLimit(parent *model.Node, childLimit common
 			continue
 		}
 		if childCap == common.UnlimitedQuota {
-			return fmt.Errorf("child limit for %q cannot be unlimited when parent limit is %d", id, parentCap)
+			return invalid("Das Limit für %q kann nicht unbegrenzt sein, wenn das Budget darüber %d hat.", id, parentCap)
 		}
 		if childCap > parentCap {
-			return fmt.Errorf("child limit for %q (%d) exceeds parent limit (%d)", id, childCap, parentCap)
+			return invalid("Das Limit für %q (%d) ist größer als das des Budgets darüber (%d).", id, childCap, parentCap)
 		}
 	}
 	return nil
@@ -371,12 +370,12 @@ func (s *Service) validateLeafAvailabilities(parent *model.Node, limit common.Pr
 			continue
 		}
 		if parent == nil {
-			return fmt.Errorf("%q cannot be granted without a budget", r.ID)
+			return invalid("%q lässt sich ohne Budget nicht vergeben.", r.ID)
 		}
 		if grantsAvailability(parent, r.ID) {
 			continue
 		}
-		return fmt.Errorf("%q is not available in budget %q — it has to be delegated to that budget first", r.ID, nodeLabel(*parent))
+		return invalid("%q ist im Budget %q nicht verfügbar; es muss diesem Budget erst freigegeben werden.", r.ID, nodeLabel(*parent))
 	}
 	return nil
 }
@@ -410,7 +409,7 @@ func (s *Service) checkBudgetLimit(ctx context.Context, n model.Node, chain []mo
 	}
 	inUse := subtreeUsage[n.ID].Total(s.countIDs())
 	if id, short := shortfall(inUse, limit, s.countIDs()); short {
-		return fmt.Errorf("new limit for %q (%d) is below current active usage (%d)", id, limit[id], inUse[id])
+		return invalid("Das neue Limit für %q (%d) liegt unter dem, was derzeit belegt ist (%d).", id, limit[id], inUse[id])
 	}
 	return nil
 }
@@ -451,14 +450,14 @@ func (s *Service) loadTarget(ctx context.Context, userTokens common.TokenList, c
 		return nil, nil, fmt.Errorf("load new parent: %w", err)
 	}
 	if target == nil {
-		return nil, nil, fmt.Errorf("new parent %w", common.ErrNotFound)
+		return nil, nil, refuse(common.ErrNotFound, "Das Ziel-Budget wurde nicht gefunden.")
 	}
 	if target.Kind != model.KindBudget || target.Status != model.StatusApproved {
-		return nil, nil, fmt.Errorf("the new parent must be an approved budget")
+		return nil, nil, invalid("Das Ziel muss ein genehmigtes Budget sein.")
 	}
 	// A wrong target is a wrong request, not a missing right.
 	if target.ID == model.UnassignedNodeID {
-		return nil, nil, fmt.Errorf("nodes cannot be moved into the unassigned collection")
+		return nil, nil, invalid("Nach „Nicht zugeordnet“ lässt sich nichts verschieben.")
 	}
 	chain, err := s.nodeChain(ctx, target.ID)
 	if err != nil {
@@ -467,11 +466,11 @@ func (s *Service) loadTarget(ctx context.Context, userTokens common.TokenList, c
 	if manages, err := s.managesParentChain(ctx, userTokens, current); err != nil {
 		return nil, nil, err
 	} else if !manages {
-		return nil, nil, common.ErrForbidden
+		return nil, nil, errNoPermission
 	}
 	// chain starts at the target, so this is managesNode on it.
 	if !managesInChain(common.NewTokenSet(userTokens), chain) {
-		return nil, nil, common.ErrForbidden
+		return nil, nil, errNoPermission
 	}
 	return target, chain, nil
 }

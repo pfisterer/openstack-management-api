@@ -16,7 +16,7 @@ import (
 // requester of the budget may read it. Returns (nil, nil) when not found.
 func (s *Service) GetNode(id string, userTokens common.TokenList) (*model.Node, error) {
 	if len(userTokens) == 0 {
-		return nil, common.ErrForbidden
+		return nil, errNoPermission
 	}
 	ctx, cancel := s.newCtx()
 	defer cancel()
@@ -40,7 +40,7 @@ func (s *Service) GetNode(id string, userTokens common.TokenList) (*model.Node, 
 		allowed = manages
 	}
 	if !allowed {
-		return nil, common.ErrForbidden
+		return nil, errNoPermission
 	}
 
 	withUsage, err := s.attachUsage(ctx, []model.Node{*node}, userTokens)
@@ -53,7 +53,7 @@ func (s *Service) GetNode(id string, userTokens common.TokenList) (*model.Node, 
 // ListMine returns the leaves the user answers for or works in: the ones they own, the ones whose admin scope names them or one of their groups, and the ones whose authorized users do (members, who may read them, see GetNode). Which of these the caller is, the client reads from owner, admin_scope and authorized_users of each node.
 func (s *Service) ListMine(userEmail string, userTokens common.TokenList, limit, offset int) (NodePage, error) {
 	if strings.TrimSpace(userEmail) == "" {
-		return NodePage{}, fmt.Errorf("missing user email")
+		return NodePage{}, invalid("Die E-Mail-Adresse der Person fehlt.")
 	}
 	limit, offset = normalizePagination(limit, offset)
 	ctx, cancel := s.newCtx()
@@ -113,7 +113,7 @@ func (s *Service) listPage(ctx context.Context, q nodestore.NodeQuery, limit, of
 // via ListChildren.
 func (s *Service) ListMyBudgets(userTokens common.TokenList, limit, offset int) (NodePage, error) {
 	if len(userTokens) == 0 {
-		return NodePage{}, fmt.Errorf("no user tokens found")
+		return NodePage{}, invalid("Für die Person sind keine Tokens bekannt.")
 	}
 	limit, offset = normalizePagination(limit, offset)
 	ctx, cancel := s.newCtx()
@@ -142,7 +142,7 @@ func (s *Service) ListMyBudgets(userTokens common.TokenList, limit, offset int) 
 // ListEligibleForMe returns the approved budgets the caller may submit requests to.
 func (s *Service) ListEligibleForMe(userTokens common.TokenList, limit, offset int) (NodePage, error) {
 	if len(userTokens) == 0 {
-		return NodePage{}, fmt.Errorf("no user tokens found")
+		return NodePage{}, invalid("Für die Person sind keine Tokens bekannt.")
 	}
 	limit, offset = normalizePagination(limit, offset)
 	ctx, cancel := s.newCtx()
@@ -160,10 +160,10 @@ func (s *Service) ListEligibleForMe(userTokens common.TokenList, limit, offset i
 // which budgets make sense as a promotion target for a specific owner.
 func (s *Service) ListEligibleForOwner(callerTokens common.TokenList, ownerTokens common.TokenList, limit, offset int) (NodePage, error) {
 	if !common.NewTokenSet(s.rootAdminTokens).ContainsAny(callerTokens) {
-		return NodePage{}, common.ErrForbidden
+		return NodePage{}, errNoPermission
 	}
 	if len(ownerTokens) == 0 {
-		return NodePage{}, fmt.Errorf("owner_tokens must not be empty")
+		return NodePage{}, invalid("owner_tokens darf nicht leer sein.")
 	}
 	return s.ListEligibleForMe(common.CanonicalTokens(ownerTokens), limit, offset)
 }
@@ -179,7 +179,7 @@ func (s *Service) ListEligibleForOwner(callerTokens common.TokenList, ownerToken
 // question — "is anything stuck anywhere below me?".
 func (s *Service) ListToManage(userTokens common.TokenList, includeSubtree bool, limit, offset int) (NodePage, error) {
 	if len(userTokens) == 0 {
-		return NodePage{}, fmt.Errorf("no user tokens found")
+		return NodePage{}, invalid("Für die Person sind keine Tokens bekannt.")
 	}
 	limit, offset = normalizePagination(limit, offset)
 	ctx, cancel := s.newCtx()
@@ -246,11 +246,11 @@ func (s *Service) ListToManage(userTokens common.TokenList, includeSubtree bool,
 // purpose, ID, owner, creator, the OpenStack project, and the tokens on it.
 func (s *Service) SearchNodes(userTokens common.TokenList, query string, limit, offset int) (NodePage, error) {
 	if len(userTokens) == 0 {
-		return NodePage{}, common.ErrForbidden
+		return NodePage{}, errNoPermission
 	}
 	needle := strings.ToLower(strings.TrimSpace(query))
 	if needle == "" {
-		return NodePage{}, fmt.Errorf("q must not be empty")
+		return NodePage{}, invalid("q darf nicht leer sein.")
 	}
 	limit, offset = normalizePagination(limit, offset)
 	ctx, cancel := s.newCtx()
@@ -346,7 +346,7 @@ func (s *Service) UsageScope(id string, userTokens common.TokenList) (*model.Nod
 		return nil, err
 	}
 	if node == nil {
-		return nil, fmt.Errorf("node %w", common.ErrNotFound)
+		return nil, errNodeNotFound
 	}
 	if node.Kind == model.KindBudget {
 		ctx, cancel := s.newCtx()
@@ -356,7 +356,7 @@ func (s *Service) UsageScope(id string, userTokens common.TokenList) (*model.Nod
 			return nil, err
 		}
 		if !manages {
-			return nil, common.ErrForbidden
+			return nil, errNoPermission
 		}
 	}
 	return node, nil

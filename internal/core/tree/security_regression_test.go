@@ -84,7 +84,7 @@ func TestOverflow_CatalogueMaximumBindsProjects(t *testing.T) {
 	_, err = svc.CreateNode(tree.CreateNodeRequest{
 		ParentID: budget.ID, Kind: model.KindProject, Name: "p", Reason: "r", Limit: common.ProjectQuota{"ws-gpus": 65},
 	}, rootActor(), "root@x", rootTokens)
-	if err == nil || !strings.Contains(err.Error(), "must not exceed 64") {
+	if err == nil || !strings.Contains(err.Error(), "darf höchstens 64 sein") {
 		t.Fatalf("a project above the catalogue's maximum: %v", err)
 	}
 }
@@ -99,7 +99,7 @@ func TestProjectsPerOwner_Capped(t *testing.T) {
 	_, err := f.svc.CreateNode(tree.CreateNodeRequest{
 		ParentID: f.budget.ID, Kind: model.KindProject, Name: "vm", Reason: "vm", Limit: cores(1),
 	}, model.UIActor("stud@x"), "stud@x", studTokens)
-	if !errors.Is(err, common.ErrForbidden) || !strings.Contains(err.Error(), "at most 3") {
+	if !errors.Is(err, common.ErrForbidden) || !strings.Contains(err.Error(), "höchstens 3") {
 		t.Fatalf("a fourth project was granted: %v", err)
 	}
 	if _, err := f.svc.CreateNode(tree.CreateNodeRequest{

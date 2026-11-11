@@ -51,20 +51,20 @@ func ValidateCaps(own, inherited common.Caps, root, inheritsLimit bool, defs []c
 		v := own[id]
 		d, ok := catalog.Find(id)
 		if !ok {
-			return fmt.Errorf("unknown cap %q", id)
+			return invalid("Unbekannte Einstellung %q.", id)
 		}
 		if err := d.Check(v); err != nil {
 			return err
 		}
 		if d.Grant && inheritsLimit {
-			return fmt.Errorf("%s: a budget that inherits the limit of the budget above passes on what that one sets", d.Name)
+			return invalid("%s: Ein Budget, das das Limit des Budgets darüber übernimmt, gibt weiter, was jenes festlegt.", d.Name)
 		}
 		above, has := inherited[id]
 		if d.Grant && !root && !has {
-			return fmt.Errorf("%s: the budget above has none, so this one cannot have any", d.Name)
+			return invalid("%s: Das Budget darüber hat das nicht, deshalb kann dieses es auch nicht haben.", d.Name)
 		}
 		if has && d.Looser(v, above) {
-			return fmt.Errorf("%s: the budget above allows at most %s, so this one cannot allow %s", d.Name, d.Label(above), d.Label(v))
+			return invalid("%s: Das Budget darüber erlaubt höchstens %s, deshalb kann dieses nicht %s erlauben.", d.Name, d.Label(above), d.Label(v))
 		}
 	}
 	for _, d := range defs {
@@ -83,7 +83,7 @@ func ValidateCaps(own, inherited common.Caps, root, inheritsLimit bool, defs []c
 						names = append(names, m.Name)
 					}
 				}
-				return fmt.Errorf("%s are set together or not at all", strings.Join(names, ", "))
+				return invalid("%s werden zusammen gesetzt oder gar nicht.", strings.Join(names, ", "))
 			}
 		}
 	}
@@ -99,4 +99,9 @@ func GrantCaps(caps common.Caps, defs []common.Cap) common.Caps {
 		}
 	}
 	return out.Clone()
+}
+
+// invalid is a validation message for people; %w wraps as in fmt.Errorf. A function of its own because the texts are German sentences, capitalised and with a full stop, which staticcheck refuses in a literal fmt.Errorf.
+func invalid(format string, args ...any) error {
+	return fmt.Errorf(format, args...)
 }

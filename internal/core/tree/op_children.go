@@ -128,20 +128,20 @@ func (f ChildFilter) Validate() error {
 	switch f.Kind {
 	case "", model.KindBudget, model.KindProject:
 	default:
-		return fmt.Errorf("kind must be %q or %q", model.KindBudget, model.KindProject)
+		return invalid("kind muss %q oder %q sein.", model.KindBudget, model.KindProject)
 	}
 	switch f.Sort {
 	case "", ChildSortName, ChildSortOwner, ChildSortStatus, ChildSortEnd, ChildSortCreated:
 	default:
 		if _, ok := numericSort(f.Sort); !ok {
-			return fmt.Errorf("unknown sort %q", f.Sort)
+			return invalid("Unbekannte Sortierung %q.", f.Sort)
 		}
 	}
 	if f.Group != "" {
 		switch f.GroupMode {
 		case "", GroupAccess, GroupOwner:
 		default:
-			return fmt.Errorf("group_mode must be %q or %q", GroupAccess, GroupOwner)
+			return invalid("group_mode muss %q oder %q sein.", GroupAccess, GroupOwner)
 		}
 	}
 	return nil
@@ -156,7 +156,7 @@ func (f ChildFilter) Validate() error {
 // and only the page shown is decorated.
 func (s *Service) ListChildren(parentID string, f ChildFilter, userTokens common.TokenList, limit, offset int) (NodePage, error) {
 	if len(userTokens) == 0 {
-		return NodePage{}, common.ErrForbidden
+		return NodePage{}, errNoPermission
 	}
 	if err := f.Validate(); err != nil {
 		return NodePage{}, err
@@ -170,12 +170,12 @@ func (s *Service) ListChildren(parentID string, f ChildFilter, userTokens common
 		return NodePage{}, fmt.Errorf("load parent node: %w", err)
 	}
 	if parent == nil {
-		return NodePage{}, fmt.Errorf("node %w", common.ErrNotFound)
+		return NodePage{}, errNodeNotFound
 	}
 	if manages, err := s.managesNode(ctx, userTokens, parent); err != nil {
 		return NodePage{}, err
 	} else if !manages {
-		return NodePage{}, common.ErrForbidden
+		return NodePage{}, errNoPermission
 	}
 
 	q := nodestore.NodeQuery{ParentIDs: []string{parentID}, Statuses: f.Statuses}
@@ -294,7 +294,7 @@ func grantsAccess(n model.Node, token string) bool {
 // for a person's tokens answers patterns and relations alike.
 func (s *Service) ownersHolding(ctx context.Context, owners map[string]bool, token string) (map[string]bool, error) {
 	if s.roles == nil {
-		return nil, fmt.Errorf("no role provider configured")
+		return nil, invalid("Kein Dienst für Rollen und Gruppen eingerichtet.")
 	}
 	type result struct {
 		email string

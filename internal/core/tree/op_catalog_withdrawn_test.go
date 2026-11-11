@@ -22,7 +22,7 @@ func TestWithdrawnAvailability_KnownButNotGrantable(t *testing.T) {
 		t.Errorf("a stored 0 must validate, got %v", err)
 	}
 	err := svc.validateKnownResources(common.ProjectQuota{"dhbw-ipv4": 1})
-	if err == nil || !strings.Contains(err.Error(), "withdrawn") {
+	if err == nil || !strings.Contains(err.Error(), "wird zurückgezogen") {
 		t.Errorf("granting a withdrawn availability: err = %v, want refused", err)
 	}
 	for _, n := range []model.Node{{ID: model.RootNodeID}, {ID: "b", Limit: common.ProjectQuota{"dhbw-ipv4": 1}}} {

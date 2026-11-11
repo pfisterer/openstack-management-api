@@ -12,6 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/pfisterer/cloud-self-service-golib/ginweb"
 	"github.com/pfisterer/cloud-self-service-golib/mcpserve"
+	"github.com/pfisterer/cloud-self-service-golib/page"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
@@ -222,22 +223,8 @@ func toMCPProjects(page tree.NodePage) []mcpProject {
 	return out
 }
 
-// mcpPageInput is the paging every listing tool takes. Zero means "the default",
-// so a model that omits it still gets a sensible answer.
-//
-// The pages are smaller than REST's (common.DefaultPageLimit, common.MaxPageLimit): a page lands in a model's context, where 50 projects with their limits are already a lot to read, and a model that wants more pages through.
-type mcpPageInput struct {
-	Limit  int `json:"limit,omitempty" jsonschema:"how many to return, default 50"`
-	Offset int `json:"offset,omitempty" jsonschema:"how many to skip, for paging"`
-}
-
-func (p mcpPageInput) resolve() (int, int) {
-	limit := p.Limit
-	if limit <= 0 || limit > 200 {
-		limit = 50
-	}
-	return limit, max(p.Offset, 0)
-}
+// mcpPageInput is the paging every listing tool takes (golib page.Input): zero means the default, so a model that omits it still gets a sensible answer. Its pages are smaller than REST's (page.MCPDefaultLimit, page.MCPMaxLimit): a page lands in a model's context, and a model that wants more pages through.
+type mcpPageInput = page.Input
 
 // mcpProjectList is what a listing tool answers with. Total travels along so a
 // model can tell "that is all of them" from "there is more behind this page".
@@ -389,18 +376,18 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 		Name:        "list_my_projects",
 		Description: "List the cloud projects the calling user owns, administers or is a member of, with their status and granted resources.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpPageInput) (*mcp.CallToolResult, mcpProjectList, error) {
-		limit, offset := in.resolve()
-		page, err := cfg.Service.ListMine(caller.userEmail, caller.tokens, limit, offset)
-		return listResult(log, page, err, "Projekte auflisten")
+		r := in.Request()
+		p, err := cfg.Service.ListMine(caller.userEmail, caller.tokens, r.Limit, r.Offset)
+		return listResult(log, p, err, "Projekte auflisten")
 	})
 
 	mcpserve.AddTool(s, caller, false, &mcp.Tool{
 		Name:        "list_my_budgets",
 		Description: "List the budgets the calling user manages. A budget is what projects are charged against.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpPageInput) (*mcp.CallToolResult, mcpProjectList, error) {
-		limit, offset := in.resolve()
-		page, err := cfg.Service.ListMyBudgets(caller.tokens, limit, offset)
-		return listResult(log, page, err, "Budgets auflisten")
+		r := in.Request()
+		p, err := cfg.Service.ListMyBudgets(caller.tokens, r.Limit, r.Offset)
+		return listResult(log, p, err, "Budgets auflisten")
 	})
 
 	mcpserve.AddTool(s, caller, false, &mcp.Tool{
@@ -418,9 +405,9 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 		Name:        "search_projects",
 		Description: "Search the projects and budgets visible to the calling user by name.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpSearchInput) (*mcp.CallToolResult, mcpProjectList, error) {
-		limit, offset := in.resolve()
-		page, err := cfg.Service.SearchNodes(caller.tokens, in.Query, limit, offset)
-		return listResult(log, page, err, "Suchen")
+		r := in.Request()
+		p, err := cfg.Service.SearchNodes(caller.tokens, in.Query, r.Limit, r.Offset)
+		return listResult(log, p, err, "Suchen")
 	})
 
 	mcpserve.AddTool(s, caller, false, &mcp.Tool{
@@ -428,9 +415,9 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 		Description: "List the budgets the calling user may request a project under. This is where a new " +
 			"project's budget_id comes from for anyone who does not manage a budget themselves.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpPageInput) (*mcp.CallToolResult, mcpProjectList, error) {
-		limit, offset := in.resolve()
-		page, err := cfg.Service.ListEligibleForMe(caller.tokens, limit, offset)
-		return listResult(log, page, err, "Budgets für Anfragen auflisten")
+		r := in.Request()
+		p, err := cfg.Service.ListEligibleForMe(caller.tokens, r.Limit, r.Offset)
+		return listResult(log, p, err, "Budgets für Anfragen auflisten")
 	})
 
 	mcpserve.AddTool(s, caller, false, &mcp.Tool{
@@ -438,18 +425,18 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 		Description: "List what waits for a decision by the calling user: new requests, proposed changes and " +
 			"imported projects under the budgets they manage. Decide with approve_request or reject_request.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpToDecideInput) (*mcp.CallToolResult, mcpProjectList, error) {
-		limit, offset := in.resolve()
-		page, err := cfg.Service.ListToManage(caller.tokens, in.IncludeSubtree, limit, offset)
-		return listResult(log, page, err, "Offene Entscheidungen auflisten")
+		r := in.Request()
+		p, err := cfg.Service.ListToManage(caller.tokens, in.IncludeSubtree, r.Limit, r.Offset)
+		return listResult(log, p, err, "Offene Entscheidungen auflisten")
 	})
 
 	mcpserve.AddTool(s, caller, false, &mcp.Tool{
 		Name:        "list_budget_contents",
 		Description: "List the projects and sub-budgets directly under a budget, to walk the tree one level at a time.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpBudgetContentsInput) (*mcp.CallToolResult, mcpProjectList, error) {
-		limit, offset := in.resolve()
-		page, err := cfg.Service.ListChildren(in.ID, tree.ChildFilter{}, caller.tokens, limit, offset)
-		return listResult(log, page, err, "Inhalt von %q auflisten", in.ID)
+		r := in.Request()
+		p, err := cfg.Service.ListChildren(in.ID, tree.ChildFilter{}, caller.tokens, r.Limit, r.Offset)
+		return listResult(log, p, err, "Inhalt von %q auflisten", in.ID)
 	})
 
 	registerProjectWriteTools(s, cfg, caller, log)

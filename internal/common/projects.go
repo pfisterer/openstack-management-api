@@ -3,6 +3,8 @@ package common
 import (
 	"fmt"
 	"slices"
+
+	"github.com/pfisterer/cloud-self-service-golib/calendar"
 )
 
 // Resource kinds. A kind decides how a value is read, validated and aggregated —
@@ -32,9 +34,8 @@ const (
 	KindWindow = "window"
 )
 
-// The windows a KindWindow resource may have: calendar windows in UTC, the
-// same the aiaas provider books in.
-var Windows = []string{"24h", "7d", "30d"}
+// Windows are the windows a KindWindow resource may have: the calendar windows of golib calendar, counted in calendar days in Europe/Berlin as the AI service books its usage. The tree offers no "total" on purpose (decided 10.11.2026, aiaas-management-api docs/refactoring-audit.md decision 7): it grants amounts per window, never one for a project's whole term.
+var Windows = calendar.NamesOf(calendar.Only(calendar.Window24h, calendar.Window7d, calendar.Window30d))
 
 // What a resource means in the usage books and in the charge of an archived
 // project — told to the tree by the system that carries it out, so the tree

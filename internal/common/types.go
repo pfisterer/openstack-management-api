@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/pfisterer/cloud-self-service-golib/authn"
+	"github.com/pfisterer/cloud-self-service-golib/page"
 )
 
 // Sentinel errors returned by service methods.
@@ -21,11 +22,10 @@ var (
 	ErrInternal = errors.New("internal error")
 )
 
-// DefaultPageLimit and MaxPageLimit are shared pagination bounds used by both
-// the webserver (parsePagination) and the service layer (normalizePagination).
+// DefaultPageLimit and MaxPageLimit are the page bounds of every list (golib page), used by the webserver (ginweb.PageRequest) and the service layer (normalizePagination).
 const (
-	DefaultPageLimit = 100
-	MaxPageLimit     = 500
+	DefaultPageLimit = page.DefaultLimit
+	MaxPageLimit     = page.MaxLimit
 )
 
 // Roles are the roles a member of a project can hold in the tree: "member" works in the project, "reader" only looks (decided 10.11.2026: the tree's own terms, docs/plan-caps-katalog.md; before, the field was named openstack_role). Each provider says what a role means there: OpenStack grants the Keystone role of the same name, the AI service gives a reader read access only. The list is the single source for both the /v1/config response (what the UI offers) and the validation of authorized_users.

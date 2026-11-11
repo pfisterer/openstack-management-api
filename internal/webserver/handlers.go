@@ -1,14 +1,10 @@
 package webserver
 
 import (
-	"fmt"
 	"net/http"
-	"strconv"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/cloud-self-service-golib/ginweb"
-	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"github.com/pfisterer/openstack-management-api/internal/identity"
@@ -31,46 +27,10 @@ func uiActor(auth identity.AuthContext) model.Actor {
 	return model.ActorFor(auth.UserEmail, auth.ActorEmail, "")
 }
 
-// pagination is the page a listing asks for (parsePagination). Bounds that do not parse answer 400 and ok is false.
+// pagination is the page a listing asks for (golib page: ?limit, default common.DefaultPageLimit, cut at common.MaxPageLimit, and ?offset). Bounds that do not parse answer 400 and ok is false.
 func pagination(c *gin.Context) (limit, offset int, ok bool) {
-	limit, offset, err := parsePagination(c)
-	if err != nil {
-		respondBadRequest(c, "Ungültige Angaben zum Blättern (limit, offset).")
-		return 0, 0, false
-	}
-	return limit, offset, true
-}
-
-// parsePagination reads ?limit (default common.DefaultPageLimit, capped at common.MaxPageLimit) and ?offset.
-func parsePagination(c *gin.Context) (int, int, error) {
-	limit := common.DefaultPageLimit
-	if raw := strings.TrimSpace(c.Query("limit")); raw != "" {
-		parsedLimit, err := strconv.Atoi(raw)
-		if err != nil {
-			return 0, 0, err
-		}
-		if parsedLimit <= 0 {
-			return 0, 0, fmt.Errorf("limit muss positiv sein")
-		}
-		if parsedLimit > common.MaxPageLimit {
-			parsedLimit = common.MaxPageLimit
-		}
-		limit = parsedLimit
-	}
-
-	offset := 0
-	if raw := strings.TrimSpace(c.Query("offset")); raw != "" {
-		parsedOffset, err := strconv.Atoi(raw)
-		if err != nil {
-			return 0, 0, err
-		}
-		if parsedOffset < 0 {
-			return 0, 0, fmt.Errorf("offset darf nicht negativ sein")
-		}
-		offset = parsedOffset
-	}
-
-	return limit, offset, nil
+	r, ok := ginweb.PageRequest(c)
+	return r.Limit, r.Offset, ok
 }
 
 // bodyReader reads the request body into req, or answers the request and reports false.

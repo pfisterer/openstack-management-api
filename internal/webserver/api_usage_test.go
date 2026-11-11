@@ -77,3 +77,13 @@ func TestUsage_AdminReport(t *testing.T) {
 		t.Error("a node's report carries a value")
 	}
 }
+
+// The period follows golib calendar, as the AI service's reports do: only to gives the 30 days ending there, and a period is at most 1098 days.
+func TestUsage_Period(t *testing.T) {
+	h := usageRouter(t, nil)
+	if r := report(t, h, "/v1/admin/usage?to=2026-06-30", userRoot); r.From != "2026-06-01" || r.To != "2026-06-30" {
+		t.Errorf("only to: %s..%s, want 2026-06-01..2026-06-30", r.From, r.To)
+	}
+	assertStatus(t, do(t, h, http.MethodGet, "/v1/admin/usage?from=2020-01-01&to=2026-01-01", userRoot, nil), http.StatusBadRequest)
+	assertStatus(t, do(t, h, http.MethodGet, "/v1/admin/usage?to=gestern", userRoot, nil), http.StatusBadRequest)
+}

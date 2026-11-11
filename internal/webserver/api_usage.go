@@ -2,11 +2,12 @@ package webserver
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pfisterer/cloud-self-service-golib/calendar"
+	"github.com/pfisterer/cloud-self-service-golib/ginweb"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/usage"
@@ -19,42 +20,22 @@ type UsageReader interface {
 	DaysUnder(ctx context.Context, budgetID string, from, to time.Time) ([]usage.Day, error)
 }
 
-// defaultUsageDays is the period a report covers when none is asked for.
-const defaultUsageDays = 30
+// usagePeriods is the rule of the usage reports (golib calendar, the same as the AI service's): by default the last 30 finished days in Europe/Berlin, only to = the 30 days ending there, at most three years (a few years of rows are still cheap to sum, an unbounded range is a way to make the server do that for everybody).
+var usagePeriods = calendar.Report(3 * 366)
 
-// maxUsageDays bounds a period: a few years of rows are still cheap to sum,
-// an unbounded range is a way to make the server do that for everybody.
-const maxUsageDays = 3 * 366
-
-// usagePeriod reads ?from=YYYY-MM-DD&to=YYYY-MM-DD, both days included. The
-// default is the last 30 finished days: today is not collected yet.
-func usagePeriod(c *gin.Context, now time.Time) (from, to time.Time, err error) {
-	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	to = today.AddDate(0, 0, -1)
-	if v := c.Query("to"); v != "" {
-		if to, err = time.Parse(time.DateOnly, v); err != nil {
-			return from, to, fmt.Errorf("to: erwartet JJJJ-MM-TT, erhalten %q", v)
-		}
+// usagePeriod reads ?from=YYYY-MM-DD&to=YYYY-MM-DD, both days included (usagePeriods), as the store's day labels: from at midnight UTC of its day and the end at midnight UTC of the day after to. A period the rule refuses is answered with 400 and ok is false.
+func usagePeriod(c *gin.Context) (from, to, end time.Time, ok bool) {
+	p, ok := ginweb.Period(c, usagePeriods, time.Now())
+	if !ok {
+		return time.Time{}, time.Time{}, time.Time{}, false
 	}
-	from = to.AddDate(0, 0, -(defaultUsageDays - 1))
-	if v := c.Query("from"); v != "" {
-		if from, err = time.Parse(time.DateOnly, v); err != nil {
-			return from, to, fmt.Errorf("from: erwartet JJJJ-MM-TT, erhalten %q", v)
-		}
-	}
-	if from.After(to) {
-		return from, to, fmt.Errorf("from (%s) liegt nach to (%s)", from.Format(time.DateOnly), to.Format(time.DateOnly))
-	}
-	if to.Sub(from) > maxUsageDays*24*time.Hour {
-		return from, to, fmt.Errorf("ein Zeitraum umfasst höchstens %d Tage", maxUsageDays)
-	}
-	return from, to, nil
+	return p.From.AsUTC(), p.To.AsUTC(), p.To.AddDays(1).AsUTC(), true
 }
 
 // getNodeUsage reports what a project, or everything below a budget, used.
 //
 //	@Summary		Get node usage
-//	@Description	What a project used over a period — or, for a budget, every project that was below it on the day, released ones included — from the daily rows the reconciler collects: per day, per project and in total, with utilisation (used ÷ reserved). A project's usage is visible to everyone who may see the project, a budget's to its managers and those above. Both days are included; the default is the last 30 finished days. No euro values here — those are in the root admins' report.
+//	@Description	What a project used over a period — or, for a budget, every project that was below it on the day, released ones included — from the daily rows the reconciler collects: per day, per project and in total, with utilisation (used ÷ reserved). A project's usage is visible to everyone who may see the project, a budget's to its managers and those above. Both days are included; the default is the last 30 finished days (calendar days in Europe/Berlin), only to gives the 30 days ending there, at most 1098 days. No euro values here — those are in the root admins' report.
 //	@Tags			usage
 //	@Produce		json
 //	@Security		Bearer
@@ -75,9 +56,8 @@ func getNodeUsage(cfg APIConfig) gin.HandlerFunc {
 		if !ok {
 			return
 		}
-		from, to, err := usagePeriod(c, time.Now().UTC())
-		if err != nil {
-			respondBadRequest(c, err.Error())
+		from, to, end, ok := usagePeriod(c)
+		if !ok {
 			return
 		}
 		node, err := cfg.Service.UsageScope(c.Param("id"), auth.EffectiveTokens)
@@ -87,7 +67,6 @@ func getNodeUsage(cfg APIConfig) gin.HandlerFunc {
 		}
 		var rows []usage.Day
 		if cfg.Usage != nil {
-			end := to.AddDate(0, 0, 1)
 			if node.Kind == model.KindBudget {
 				rows, err = cfg.Usage.DaysUnder(c.Request.Context(), node.ID, from, end)
 			} else {
@@ -123,7 +102,7 @@ func RegisterUsageAdminRoutes(v1 *gin.RouterGroup, cfg APIConfig, rootAdminToken
 // getUsageReport reports what every project used, for the root admins.
 //
 //	@Summary		Get usage of all projects
-//	@Description	The root admins' evaluation: every project's consumption over a period, with the budget path it had, so it can be summed by budget, faculty or location — released and deleted projects included. With list prices configured (API_USAGE_PRICES), each project and the total carry a euro value. Both days are included; the default is the last 30 finished days. Requires a root admin token.
+//	@Description	The root admins' evaluation: every project's consumption over a period, with the budget path it had, so it can be summed by budget, faculty or location — released and deleted projects included. With list prices configured (API_USAGE_PRICES), each project and the total carry a euro value. Both days are included; the default is the last 30 finished days (calendar days in Europe/Berlin), only to gives the 30 days ending there, at most 1098 days. Requires a root admin token.
 //	@Tags			usage
 //	@Produce		json
 //	@Security		Bearer
@@ -138,14 +117,14 @@ func RegisterUsageAdminRoutes(v1 *gin.RouterGroup, cfg APIConfig, rootAdminToken
 func getUsageReport(cfg APIConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		mapping := usage.MappingFrom(cfg.resources())
-		from, to, err := usagePeriod(c, time.Now().UTC())
-		if err != nil {
-			respondBadRequest(c, err.Error())
+		from, to, end, ok := usagePeriod(c)
+		if !ok {
 			return
 		}
 		var rows []usage.Day
 		if cfg.Usage != nil {
-			if rows, err = cfg.Usage.Days(c.Request.Context(), nil, from, to.AddDate(0, 0, 1)); err != nil {
+			var err error
+			if rows, err = cfg.Usage.Days(c.Request.Context(), nil, from, end); err != nil {
 				cfg.respondInternal(c, err)
 				return
 			}

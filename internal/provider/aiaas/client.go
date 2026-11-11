@@ -2,15 +2,15 @@
 package aiaas
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/pfisterer/cloud-self-service-golib/httpx"
 )
 
 // Provider is the AI service's name in the tree: a leaf's binding under it holds the project's slug there and what was used.
@@ -95,46 +95,32 @@ type Client struct {
 	http  *http.Client
 }
 
+// NewClient is a client with the time limit timeout per call, on golib's retrying transport: a name that does not resolve is tried again for any call, a connection that broke before the answer for a GET (three attempts, 1 s and 2 s apart, within timeout).
 func NewClient(baseURL, token string, timeout time.Duration) *Client {
-	return &Client{base: strings.TrimRight(baseURL, "/"), token: token, http: &http.Client{Timeout: timeout}}
+	return &Client{base: strings.TrimRight(baseURL, "/"), token: token, http: httpx.RetryingClient(timeout)}
 }
 
 // ErrNotFound is a project the AI service does not have.
 var ErrNotFound = fmt.Errorf("aiaas: project not found")
 
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
-	var body io.Reader
-	if in != nil {
-		raw, err := json.Marshal(in)
-		if err != nil {
-			return err
+	status, err := httpx.Do(ctx, c.http, httpx.Request{
+		Method: method,
+		URL:    c.base + path,
+		Header: http.Header{"Authorization": {"Bearer " + c.token}},
+		Body:   in,
+	}, out)
+	if se, ok := errors.AsType[*httpx.StatusError](err); ok {
+		if se.Status == http.StatusNotFound {
+			return ErrNotFound
 		}
-		body = bytes.NewReader(raw)
+		return fmt.Errorf("aiaas: %s %s: HTTP %d: %s", method, path, se.Status, strings.TrimSpace(se.Body))
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.base+path, body)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
-	if in != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
+	if err != nil && status == 0 {
+		// No answer: the call itself failed.
 		return fmt.Errorf("aiaas: %s %s: %w", method, path, err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		return ErrNotFound
-	}
-	if resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return fmt.Errorf("aiaas: %s %s: HTTP %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(msg)))
-	}
-	if out == nil {
-		return nil
-	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	return err // an answer that does not decode
 }
 
 // List is every project the tree has at the AI service.

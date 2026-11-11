@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pfisterer/cloud-self-service-golib/httpx"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/roleprovider/api"
 	"go.uber.org/zap"
@@ -26,7 +27,8 @@ type HttpRoleProvider struct {
 }
 
 func NewHttpRoleProvider(baseURL, apiToken string, timeoutSeconds int, log *zap.SugaredLogger) (*HttpRoleProvider, error) {
-	httpClient := &http.Client{Timeout: time.Duration(timeoutSeconds) * time.Second}
+	// golib's retrying transport: a name that does not resolve is tried again, and a GET whose connection broke before the answer (three attempts, 1 s and 2 s apart, within the timeout).
+	httpClient := httpx.RetryingClient(time.Duration(timeoutSeconds) * time.Second)
 
 	authEditor := func(ctx context.Context, req *http.Request) error {
 		req.Header.Set("Authorization", "Bearer "+apiToken)

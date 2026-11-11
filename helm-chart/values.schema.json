@@ -194,6 +194,10 @@
             "bind": {
               "type": "string"
             },
+            "metricsBind": {
+              "type": "string",
+              "pattern": "^(:[0-9]+)?$"
+            },
             "baseUrl": {
               "type": "string"
             },

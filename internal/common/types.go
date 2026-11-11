@@ -7,7 +7,7 @@ import (
 )
 
 // Sentinel errors returned by service methods.
-// Handlers map these to HTTP status codes via webserver.errorToStatus.
+// Handlers answer them through webserver.serviceErrors (golib apierr).
 var (
 	ErrForbidden = errors.New("forbidden")
 	ErrNotFound  = errors.New("not found")

@@ -86,8 +86,8 @@ github.com/oapi-codegen/runtime v1.7.0 h1:t7358VYPvNbWJ9gdAkIK/smVeHpBf6yp8VTsaZ
 github.com/oapi-codegen/runtime v1.7.0/go.mod h1:GwV7hC2hviaMzj+ITfHVRESK5J2W/GefVwIND/bMGvU=
 github.com/pelletier/go-toml/v2 v2.4.3 h1:GTRvJQutkOSftxIFD5xw9aepkYNuPWmVJpffdDPYVpY=
 github.com/pelletier/go-toml/v2 v2.4.3/go.mod h1:2gIqNv+qfxSVS7cM2xJQKtLSTLUE9V8t9Stt+h56mCY=
-github.com/pfisterer/cloud-self-service-golib v0.18.0 h1:CCr8Bexlg2KjHqA4zXOKcReMbsMF86U7FEzDjTBpnSY=
-github.com/pfisterer/cloud-self-service-golib v0.18.0/go.mod h1:H8l5gstq7M9gXFQxYRd9ngygOXIFaNlooEmgb3kbRSk=
+github.com/pfisterer/cloud-self-service-golib v0.19.0 h1:m0dZC+GpiXM7HDGjSKsMMuW4SVMDViX70rrwfF/TZuc=
+github.com/pfisterer/cloud-self-service-golib v0.19.0/go.mod h1:H8l5gstq7M9gXFQxYRd9ngygOXIFaNlooEmgb3kbRSk=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/pquerna/cachecontrol v0.2.0 h1:vBXSNuE5MYP9IJ5kjsdo8uq+w41jSPgvba2DEnkRx9k=
 github.com/pquerna/cachecontrol v0.2.0/go.mod h1:NrUG3Z7Rdu85UNR3vm7SOsl1nFIeSiQnrHV5K9mBcUI=

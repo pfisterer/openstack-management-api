@@ -70,7 +70,7 @@ func TestAPI_InternalErrorsAreNotShown(t *testing.T) {
 	h := newTestTreeOn(t, brokenNodeStore{Store: store, broken: "p_002"}, sugar, mockNodes(), testAccounting).router()
 	rr := do(t, h, http.MethodGet, "/v1/nodes/p_002", "", nil)
 	assertStatus(t, rr, http.StatusInternalServerError)
-	if strings.Contains(rr.Body.String(), "10.0.0.5") || !strings.Contains(rr.Body.String(), "internal error") {
+	if strings.Contains(rr.Body.String(), "10.0.0.5") || !strings.Contains(rr.Body.String(), `"code":"internal"`) {
 		t.Fatalf("the response shows the detail: %s", rr.Body.String())
 	}
 	// A validation message is still the caller's to read.
@@ -114,7 +114,7 @@ func tokenRouter(t *testing.T, viaToken bool) http.Handler {
 func TestTokens_NotFromATokenAndBounded(t *testing.T) {
 	rr := do(t, tokenRouter(t, true), http.MethodPost, "/v1/tokens", "", map[string]any{"description": "chain"})
 	assertStatus(t, rr, http.StatusForbidden)
-	if !strings.Contains(rr.Body.String(), "not with another API token") {
+	if !strings.Contains(rr.Body.String(), "nicht mit einem anderen API-Token") {
 		t.Errorf("the refusal should say why: %s", rr.Body.String())
 	}
 

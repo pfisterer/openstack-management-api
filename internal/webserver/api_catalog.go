@@ -1,10 +1,11 @@
 package webserver
 
 import (
-	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pfisterer/cloud-self-service-golib/apierr"
+	"github.com/pfisterer/cloud-self-service-golib/ginweb"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/catalog"
 	"go.uber.org/zap"
@@ -28,21 +29,14 @@ func RegisterCatalogAdminRoutes(v1 *gin.RouterGroup, cfg APIConfig, rootAdminTok
 
 // catalogError answers err with the status it stands for: ErrUnavailable with 503, what the catalogue names otherwise (invalid, and the not-found and conflict it shares with the tree) with its message as respondError answers it; anything else is the service's own failure, answered with a generic message and logged.
 func (cfg APIConfig) catalogError(c *gin.Context, err error) {
-	switch {
-	case errors.Is(err, catalog.ErrUnavailable):
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
-	case errors.Is(err, catalog.ErrInvalid), errors.Is(err, catalog.ErrNotFound), errors.Is(err, catalog.ErrConflict):
-		cfg.respondError(c, err)
-	default:
-		cfg.respondInternal(c, err)
-	}
+	cfg.respond(c, catalogErrors.Classify(err))
 }
 
 // catalogOp is the shape of a catalogue handler: 503 where there is nothing to manage, the caller (401 without one), the body as read says (400 where it refuses it), the step with the catalogue and the actor's email, its error through catalogError, and what it returns as JSON with status — no body for 204. done, where given, is told what was done: the log line.
 func catalogOp[In, Out any](cfg APIConfig, status int, read bodyReader[In], step func(c *gin.Context, admin *catalog.Admin, actor string, in In) (Out, error), done func(out Out, actor string)) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if cfg.CatalogAdmin == nil {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "the catalogue cannot be managed here"})
+			ginweb.AbortError(c, apierr.New(http.StatusServiceUnavailable, "catalog_unavailable", "Der Katalog lässt sich hier nicht verwalten."))
 			return
 		}
 		auth, ok := caller(c)

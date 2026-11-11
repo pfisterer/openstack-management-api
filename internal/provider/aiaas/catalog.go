@@ -13,7 +13,9 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"github.com/pfisterer/cloud-self-service-golib/loop"
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/metrics"
 )
 
 // GPU classes from the AI service (its GPU administration: a class is a pool and a tier, docs/bauplan.md 10.13 of aiaas-deployment). Each class becomes two resources of the tree: ws-gpus-<class> (GPUs at the same time) and ws-gpu-hours-<class> (GPU hours per 30 days). A new class appears in the tree without a configuration change; the root gets it unlimited and root admins grant it down like any quantity — to the budgets of whoever the pool is for. Classes are never removed here: projects hold their resources.
@@ -216,22 +218,16 @@ func (g *GPUCatalog) Refresh(ctx context.Context) (bool, error) {
 	return added, nil
 }
 
-// Run refreshes every interval until ctx ends.
+// Run refreshes right away and then every interval until ctx ends (golib's loop.Run: a panic in a refresh is logged, counted and the loop goes on).
 func (g *GPUCatalog) Run(ctx context.Context, interval time.Duration) {
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for {
+	loop.Run(ctx, loop.Schedule{Interval: interval}, func(ctx context.Context) error {
 		if added, err := g.Refresh(ctx); err != nil {
 			g.log.Warnw("aiaas: GPU classes not refreshed", "error", err)
 		} else if added {
 			g.log.Infow("aiaas: new GPU classes in the tree")
 		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-		}
-	}
+		return nil
+	}, metrics.Loop("aiaas_gpu_classes", g.log))
 }
 
 // Resources is the configured resources and the GPU classes' ones.

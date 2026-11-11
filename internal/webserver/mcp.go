@@ -2,8 +2,8 @@ package webserver
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 
 	"github.com/pfisterer/openstack-management-api/internal/identity"
@@ -391,7 +391,7 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpPageInput) (*mcp.CallToolResult, mcpProjectList, error) {
 		limit, offset := in.resolve()
 		page, err := cfg.Service.ListMine(caller.userEmail, caller.tokens, limit, offset)
-		return listResult(log, page, err, "list projects")
+		return listResult(log, page, err, "Projekte auflisten")
 	})
 
 	mcpserve.AddTool(s, caller, false, &mcp.Tool{
@@ -400,7 +400,7 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpPageInput) (*mcp.CallToolResult, mcpProjectList, error) {
 		limit, offset := in.resolve()
 		page, err := cfg.Service.ListMyBudgets(caller.tokens, limit, offset)
-		return listResult(log, page, err, "list budgets")
+		return listResult(log, page, err, "Budgets auflisten")
 	})
 
 	mcpserve.AddTool(s, caller, false, &mcp.Tool{
@@ -420,7 +420,7 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpSearchInput) (*mcp.CallToolResult, mcpProjectList, error) {
 		limit, offset := in.resolve()
 		page, err := cfg.Service.SearchNodes(caller.tokens, in.Query, limit, offset)
-		return listResult(log, page, err, "search")
+		return listResult(log, page, err, "Suchen")
 	})
 
 	mcpserve.AddTool(s, caller, false, &mcp.Tool{
@@ -430,7 +430,7 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpPageInput) (*mcp.CallToolResult, mcpProjectList, error) {
 		limit, offset := in.resolve()
 		page, err := cfg.Service.ListEligibleForMe(caller.tokens, limit, offset)
-		return listResult(log, page, err, "list requestable budgets")
+		return listResult(log, page, err, "Budgets für Anfragen auflisten")
 	})
 
 	mcpserve.AddTool(s, caller, false, &mcp.Tool{
@@ -440,7 +440,7 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpToDecideInput) (*mcp.CallToolResult, mcpProjectList, error) {
 		limit, offset := in.resolve()
 		page, err := cfg.Service.ListToManage(caller.tokens, in.IncludeSubtree, limit, offset)
-		return listResult(log, page, err, "list requests to decide")
+		return listResult(log, page, err, "Offene Entscheidungen auflisten")
 	})
 
 	mcpserve.AddTool(s, caller, false, &mcp.Tool{
@@ -449,7 +449,7 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpBudgetContentsInput) (*mcp.CallToolResult, mcpProjectList, error) {
 		limit, offset := in.resolve()
 		page, err := cfg.Service.ListChildren(in.ID, tree.ChildFilter{}, caller.tokens, limit, offset)
-		return listResult(log, page, err, "list contents of %q", in.ID)
+		return listResult(log, page, err, "Inhalt von %q auflisten", in.ID)
 	})
 
 	registerProjectWriteTools(s, cfg, caller, log)
@@ -484,7 +484,7 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 			"The returned status says which of the three happened.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpRequestInput) (*mcp.CallToolResult, mcpProject, error) {
 		if in.Reason == "" {
-			return nil, mcpProject{}, fmt.Errorf("reason must not be empty — a manager decides on it")
+			return nil, mcpProject{}, fmt.Errorf("reason darf nicht leer sein, über die Anfrage entscheidet eine verwaltende Person")
 		}
 		req := tree.CreateNodeRequest{
 			ParentID: in.BudgetID,
@@ -501,7 +501,7 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 		}
 		log.Infow("MCP create_project", "actor", caller.actorEmail, "budget_id", in.BudgetID)
 		node, err := cfg.Service.CreateNode(req, caller.serviceActor(), caller.userEmail, caller.tokens)
-		return nodeResult(log, node, err, "request project")
+		return nodeResult(log, node, err, "Projekt anfragen")
 	})
 
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
@@ -518,7 +518,7 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 		}
 		log.Infow("MCP request_project_change", "actor", caller.actorEmail, "node_id", in.ID)
 		node, err := cfg.Service.RequestChange(in.ID, req, caller.serviceActor(), caller.tokens)
-		return nodeResult(log, node, err, "request change on %q", in.ID)
+		return nodeResult(log, node, err, "Änderung an %q anfragen", in.ID)
 	})
 
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
@@ -534,7 +534,7 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 		}
 		log.Infow("MCP approve_request", "actor", caller.actorEmail, "node_id", in.ID)
 		node, err := cfg.Service.ApproveNode(in.ID, req, caller.serviceActor(), caller.tokens)
-		return nodeResult(log, node, err, "approve %q", in.ID)
+		return nodeResult(log, node, err, "%q genehmigen", in.ID)
 	})
 
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
@@ -548,7 +548,7 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 		}
 		log.Infow("MCP reject_request", "actor", caller.actorEmail, "node_id", in.ID)
 		node, err := cfg.Service.RejectNode(in.ID, req, caller.serviceActor(), caller.tokens)
-		return nodeResult(log, node, err, "reject %q", in.ID)
+		return nodeResult(log, node, err, "%q ablehnen", in.ID)
 	})
 
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
@@ -556,12 +556,12 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 		Description: "Change the name of a project or budget. Does not touch its resources, status or ownership.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpRenameInput) (*mcp.CallToolResult, mcpProject, error) {
 		if in.Name == "" {
-			return nil, mcpProject{}, fmt.Errorf("name must not be empty")
+			return nil, mcpProject{}, fmt.Errorf("name darf nicht leer sein")
 		}
 		log.Infow("MCP rename_project", "actor", caller.actorEmail, "node_id", in.ID)
 		node, err := cfg.Service.UpdateNode(in.ID, tree.UpdateNodeRequest{Name: &in.Name},
 			caller.serviceActor(), caller.tokens)
-		return nodeResult(log, node, err, "rename %q", in.ID)
+		return nodeResult(log, node, err, "%q umbenennen", in.ID)
 	})
 
 	// Projects only. The same field on a budget says who approves there, and
@@ -578,7 +578,7 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 			return nil, mcpProject{}, err
 		}
 		if current.Kind != model.KindProject {
-			return nil, mcpProject{}, fmt.Errorf("%q is a budget; who approves there is changed in the UI", in.ID)
+			return nil, mcpProject{}, fmt.Errorf("%q ist ein Budget; wer dort genehmigt, wird im Portal geändert", in.ID)
 		}
 		admins := common.TokenList(in.Admins)
 		if admins == nil {
@@ -587,7 +587,7 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 		log.Infow("MCP set_project_admins", "actor", caller.actorEmail, "node_id", in.ID)
 		node, err := cfg.Service.UpdateNode(in.ID, tree.UpdateNodeRequest{AdminScope: &admins},
 			caller.serviceActor(), caller.tokens)
-		return nodeResult(log, node, err, "set admins of %q", in.ID)
+		return nodeResult(log, node, err, "Verwaltung von %q setzen", in.ID)
 	})
 }
 
@@ -605,7 +605,7 @@ func registerAllocationTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log
 		node, err := cfg.Service.SetAllocation(in.ID, tree.AllocationRequest{
 			BudgetID: in.BudgetID, Limit: common.ProjectQuota(in.Limit), Reason: in.Reason,
 		}, caller.serviceActor(), caller.tokens)
-		return nodeResult(log, node, err, "set allocation of %q", in.ID)
+		return nodeResult(log, node, err, "Zuteilung von %q setzen", in.ID)
 	})
 }
 
@@ -625,7 +625,7 @@ func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log 
 			"together, and says who may approve and who may request there.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpCreateBudgetInput) (*mcp.CallToolResult, mcpProject, error) {
 		if in.Reason == "" {
-			return nil, mcpProject{}, fmt.Errorf("reason must not be empty")
+			return nil, mcpProject{}, fmt.Errorf("reason darf nicht leer sein")
 		}
 		req := tree.CreateNodeRequest{
 			ParentID:               in.ParentID,
@@ -649,7 +649,7 @@ func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log 
 		}
 		log.Infow("MCP create_budget", "actor", caller.actorEmail, "parent_id", in.ParentID)
 		node, err := cfg.Service.CreateNode(req, caller.serviceActor(), caller.userEmail, caller.tokens)
-		return nodeResult(log, node, err, "create budget")
+		return nodeResult(log, node, err, "Budget anlegen")
 	})
 
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
@@ -660,7 +660,7 @@ func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log 
 		log.Infow("MCP move_to_budget", "actor", caller.actorEmail, "node_id", in.ID, "new_parent", in.NewBudgetID)
 		node, err := cfg.Service.ReparentNode(in.ID, tree.ReparentNodeRequest{NewParentID: in.NewBudgetID},
 			caller.serviceActor(), caller.tokens)
-		return nodeResult(log, node, err, "move %q", in.ID)
+		return nodeResult(log, node, err, "%q verschieben", in.ID)
 	})
 
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
@@ -671,7 +671,7 @@ func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log 
 		log.Infow("MCP transfer_ownership", "actor", caller.actorEmail, "node_id", in.ID)
 		node, err := cfg.Service.TransferOwner(in.ID, tree.TransferOwnerRequest{NewOwner: in.NewOwner},
 			caller.serviceActor(), caller.tokens)
-		return nodeResult(log, node, err, "transfer %q", in.ID)
+		return nodeResult(log, node, err, "%q übergeben", in.ID)
 	})
 
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
@@ -680,7 +680,7 @@ func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log 
 			"self-service — into a budget, so it is managed and counted like the others.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpAdoptInput) (*mcp.CallToolResult, mcpProject, error) {
 		if in.Reason == "" {
-			return nil, mcpProject{}, fmt.Errorf("reason must not be empty")
+			return nil, mcpProject{}, fmt.Errorf("reason darf nicht leer sein")
 		}
 		req := tree.PromoteNodeRequest{
 			NewParentID: in.NewBudgetID,
@@ -690,7 +690,7 @@ func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log 
 		}
 		log.Infow("MCP adopt_imported_project", "actor", caller.actorEmail, "node_id", in.ID)
 		node, err := cfg.Service.PromoteNode(in.ID, req, caller.serviceActor(), caller.tokens)
-		return nodeResult(log, node, err, "adopt %q", in.ID)
+		return nodeResult(log, node, err, "%q übernehmen", in.ID)
 	})
 }
 
@@ -733,7 +733,7 @@ func registerDestructiveTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, lo
 		}
 		log.Infow("MCP release_project", "actor", caller.actorEmail, "node_id", in.ID, "delete", in.Delete)
 		node, err := cfg.Service.ReleaseNode(in.ID, tree.ReleaseNodeRequest{Delete: in.Delete}, caller.serviceActor(), caller.tokens)
-		return nodeResult(log, node, err, "release %q", in.ID)
+		return nodeResult(log, node, err, "%q freigeben", in.ID)
 	})
 
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
@@ -747,7 +747,7 @@ func registerDestructiveTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, lo
 		}
 		log.Infow("MCP delete_project", "actor", caller.actorEmail, "node_id", in.ID)
 		node, err := cfg.Service.RequestDeletion(in.ID, caller.serviceActor(), caller.tokens)
-		return nodeResult(log, node, err, "delete %q", in.ID)
+		return nodeResult(log, node, err, "%q löschen", in.ID)
 	})
 
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
@@ -761,7 +761,7 @@ func registerDestructiveTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, lo
 		}
 		log.Infow("MCP delete_budget", "actor", caller.actorEmail, "node_id", in.ID)
 		if err := cfg.Service.DeleteNode(in.ID, caller.serviceActor(), caller.tokens); err != nil {
-			return nil, mcpProject{}, mcpServiceError(log, err, "delete %q", in.ID)
+			return nil, mcpProject{}, mcpServiceError(log, err, "%q löschen", in.ID)
 		}
 		return nil, toMCPProject(*node), nil
 	})
@@ -771,10 +771,10 @@ func registerDestructiveTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, lo
 func mcpLookup(cfg APIConfig, caller mcpCaller, log *zap.SugaredLogger, id string) (*model.Node, error) {
 	node, err := cfg.Service.GetNode(id, caller.tokens)
 	if err != nil {
-		return nil, mcpServiceError(log, err, "look up %q", id)
+		return nil, mcpServiceError(log, err, "%q nachschlagen", id)
 	}
 	if node == nil {
-		return nil, fmt.Errorf("no project or budget with id %q, or it is not visible to you", id)
+		return nil, fmt.Errorf("kein Projekt und kein Budget mit der ID %q, oder es ist nicht sichtbar", id)
 	}
 	return node, nil
 }
@@ -795,13 +795,14 @@ func nodeResult(log *zap.SugaredLogger, node model.Node, err error, format strin
 	return nil, toMCPProject(node), nil
 }
 
-// mcpServiceError is what a tool reports of an error of the service: the operation's own message, or for a failure of the service itself (common.ErrInternal) a generic one, with the detail in the log.
+// mcpServiceError is what a tool reports of an error of the service, by serviceErrors as REST answers it: the operation's own message, or for a failure of the service itself (common.ErrInternal) the generic one, with the detail in the log; format and args name the operation, in German like the message.
 func mcpServiceError(log *zap.SugaredLogger, err error, format string, args ...any) error {
-	if errors.Is(err, common.ErrInternal) {
+	e := serviceErrors.Classify(err)
+	if e.Status >= http.StatusInternalServerError {
 		if log != nil {
 			log.Errorw("MCP tool failed", "error", err)
 		}
-		return fmt.Errorf(format+": %s", append(args, internalErrorMessage)...)
+		return fmt.Errorf(format+": %s", append(args, e.Msg)...)
 	}
 	return fmt.Errorf(format+": %w", append(args, err)...)
 }

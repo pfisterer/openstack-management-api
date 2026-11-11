@@ -95,7 +95,7 @@ func TestActAs_APITokensAreThePersons(t *testing.T) {
 	h := setupRouter(t)
 	rr := do(t, h, http.MethodPost, "/v1/tokens", userStudent, map[string]any{"description": "for the ticket"})
 	assertStatus(t, rr, http.StatusForbidden)
-	if !strings.Contains(rr.Body.String(), "acting on behalf") {
+	if !strings.Contains(rr.Body.String(), "Im Auftrag einer anderen Person") {
 		t.Errorf("the refusal should say why, got %s", rr.Body.String())
 	}
 

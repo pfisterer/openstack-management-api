@@ -9,6 +9,7 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/metrics"
 	"go.uber.org/zap"
 )
 
@@ -54,7 +55,7 @@ func (s *Syncer) Run(ctx context.Context) {
 		} else {
 			s.Log.Infow("aiaas: pass complete", "synced", res.Synced, "ended", res.Ended, "expired", res.Expired, "deleted", res.Deleted, "removed", res.Removed, "orphans", res.Orphans, "failed", res.Failed)
 		}
-	})
+	}, metrics.Loop("aiaas_sync", s.Log))
 }
 
 var statuses = []string{model.StatusApproved, model.StatusChangePending, model.StatusReleased, model.StatusArchived}

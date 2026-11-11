@@ -36,6 +36,7 @@ import (
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
+	"github.com/pfisterer/openstack-management-api/internal/metrics"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 	"go.uber.org/zap"
 )
@@ -256,7 +257,7 @@ func withDefaults(cfg Config) Config {
 // Start runs once right away, so the state is consistent from the first request, and then on every interval, trigger and change until ctx ends (tree.RunLoop). Call it in a goroutine from app.go.
 func (r *Reconciler) Start(ctx context.Context) {
 	r.log.Infow("Reconciler started", "interval", r.cfg.Interval, "dry_run", r.cfg.DryRun)
-	tree.RunLoop(ctx, r.cfg.Interval, r.nodes.Changes(), r.trigger, r.runOnce)
+	tree.RunLoop(ctx, r.cfg.Interval, r.nodes.Changes(), r.trigger, r.runOnce, metrics.Loop("reconciler", r.log))
 	r.log.Info("Reconciler stopped")
 }
 

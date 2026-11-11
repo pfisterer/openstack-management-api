@@ -34,8 +34,10 @@ type ReconcilerAPI interface {
 
 // SetupConfig defines required dependencies for constructing the HTTP router.
 type SetupConfig struct {
-	DevMode      bool
-	Log          *zap.SugaredLogger
+	DevMode bool
+	Log     *zap.SugaredLogger
+	// Probes serve /healthz and /readyz; nil = both without checks.
+	Probes       *ginweb.Health
 	StaticConfig StaticConfig
 	API          APIConfig
 	// Reconciler is optional; when nil the /v1/admin/reconcile endpoints are omitted.
@@ -161,7 +163,7 @@ type APIConfig struct {
 	Usage UsageReader
 	// UsagePrices put a euro value on the root admins' evaluation; nil for none.
 	UsagePrices *usage.Prices
-	// Log receives the detail of internal errors, which callers only see as "internal error". SetupGinWebserver fills it in.
+	// Log receives the detail of internal errors, which callers only see as "Interner Fehler." (code internal). SetupGinWebserver fills it in.
 	Log *zap.SugaredLogger
 }
 
@@ -189,6 +191,13 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 	gin.DefaultErrorWriter = ginLogWriter
 	router.Use(ginzap.RecoveryWithZap(cfg.Log.Desugar(), true))
 	router.Use(ginweb.LimitRequestBody(MaxRequestBodyBytes))
+
+	// The probes, without authentication: /healthz (alive) and /readyz (the checks of Probes).
+	probes := cfg.Probes
+	if probes == nil {
+		probes = &ginweb.Health{}
+	}
+	probes.Mount(router)
 
 	// Setup static file serving routes
 	staticGroup := router.Group("/")

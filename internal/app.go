@@ -13,10 +13,13 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 	"github.com/pfisterer/openstack-management-api/internal/identity"
+	"gorm.io/gorm"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pfisterer/cloud-self-service-golib/ginweb"
 	"github.com/pfisterer/cloud-self-service-golib/logging"
 	"github.com/pfisterer/cloud-self-service-golib/oidcauth"
+	"github.com/pfisterer/cloud-self-service-golib/retry"
 	"github.com/pfisterer/cloud-self-service-golib/token"
 	"github.com/pfisterer/cloud-self-service-golib/tokengorm"
 	"github.com/pfisterer/openstack-management-api/internal/common"
@@ -31,6 +34,9 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 	"go.uber.org/zap"
 )
+
+// startupWait is how long the service tries to reach the OIDC provider's discovery at startup before it gives up.
+const startupWait = 60 * time.Second
 
 // apiTokenPrefix is what tells this service's tokens apart from an OIDC bearer
 // token, and from another service's tokens. It matches the prefix the auth
@@ -112,12 +118,14 @@ func configureAuthMiddleware(cfg *WebServerConfig, tokenLookup identity.TokenLoo
 
 		// Create OIDC Auth Verifier. With OIDC_JWKS_URL configured this makes no
 		// network call, so a provider that is down cannot stop this service
-		// from starting (see the oidcauth package).
-		oidcAuthVerifier, err := identity.NewOIDCAuthVerifier(identity.OIDCVerifierConfig{
+		// from starting (see the oidcauth package). Without it the issuer is
+		// asked at once, and that is tried again for up to a minute: right
+		// after a pod starts the NetworkPolicies may not let it through yet.
+		oidcAuthVerifier, err := oidcauth.NewWithRetry(context.Background(), identity.OIDCVerifierConfig{
 			IssuerURL: cfg.OIDCIssuerURL,
 			ClientID:  cfg.OIDCClientID,
 			JWKSURL:   cfg.OIDCJWKSURL,
-		}, log)
+		}, log, retry.Policy{Total: startupWait})
 
 		if err != nil {
 			log.Fatalf("Failed to initialize OIDCAuthVerifier: %v", err)
@@ -344,9 +352,41 @@ func RunApplication() {
 		logger.Info("Reconciler disabled (set RECONCILER_ENABLED=true to enable)")
 	}
 
+	// The probes: /healthz (alive) and /readyz (the database answers; the identity provider's keys are reported but do not take the pod out, since API tokens work without it).
+	probes := &ginweb.Health{}
+	if db, ok := nodeStore.(interface{ DB() *gorm.DB }); ok {
+		probes.AddCheck("database", func(ctx context.Context) error {
+			sqlDB, err := db.DB().DB()
+			if err != nil {
+				return err
+			}
+			return sqlDB.PingContext(ctx)
+		})
+	}
+	if oidcVerifier != nil {
+		probes.AddDegraded("oidc_keys", func(context.Context) error {
+			if oidcVerifier.KeysUnavailable() {
+				return errors.New(oidcVerifier.LastKeyFetchError())
+			}
+			return nil
+		})
+	}
+
+	// Prometheus metrics (the reconciler's last run and counts, the loops' panics): a listener of its own, no ingress points at it.
+	if bind := config.WebServer.MetricsBind; bind != "" {
+		metricsServer := &http.Server{Addr: bind, Handler: webserver.MetricsRouter(reconcilerAPI, config.Reconciler.Enabled), ReadHeaderTimeout: 10 * time.Second}
+		logger.Infow("Metrics listening", "address", bind)
+		go func() {
+			if err := metricsServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				logger.Errorw("metrics listener failed", "address", bind, "error", err)
+			}
+		}()
+	}
+
 	router := webserver.SetupGinWebserver(webserver.SetupConfig{
 		DevMode: config.DevMode,
 		Log:     logger,
+		Probes:  probes,
 		StaticConfig: webserver.StaticConfig{
 			OIDCIssuerURL: config.WebServer.OIDCIssuerURL,
 			OIDCClientID:  config.WebServer.OIDCClientID,

@@ -120,6 +120,8 @@ The REST API is served under `/v1`, and the service publishes its own OpenAPI de
 
 - **`GET /swagger.json`** — the OpenAPI spec
 - **`GET /config.json`** — unauthenticated bootstrap data for a frontend: the running version and the OIDC settings
+- **`GET /healthz`** and **`GET /readyz`** — the probes, unauthenticated: alive while the process serves; ready while the database answers (503 with the failing checks under `failed`). The identity provider's keys are listed under `degraded` without making it 503, since API tokens work without the provider
+- **`GET /metrics`** on its own listener (`METRICS_BIND`, no ingress): the reconciler's last run (`osmgt_reconciler_last_run_timestamp_seconds`, `osmgt_reconciler_last_run_failed`, one gauge `osmgt_reconciler_last_run_<count>` per count of the status), whether it is on and connected, and the panics recovered in the background loops (`osmgt_loop_panics_total{loop}`)
 - A generated TypeScript client is published to npm as `@dhbw-cloud/os-mgt-client`.
   It used to be served from `/client` and loaded by the browser at startup; consumers
   now depend on a version at build time, so a missing operation is a build error there
@@ -128,6 +130,8 @@ The REST API is served under `/v1`, and the service publishes its own OpenAPI de
 Besides the tree itself (`/v1/nodes`), the spec covers API tokens (`/v1/tokens`), acting on behalf of a person (`/v1/act-as`), principal search for token fields (`/v1/principals/search`), the resource catalogue as a frontend sees it (`/v1/config`) and, for root admins, the availabilities of the catalogue (`/v1/admin/catalog`), the usage report (`/v1/admin/usage`) and the reconciler's status — including the warnings and errors of its recent runs — and a manual trigger (`/v1/admin/reconcile/status`, `/v1/admin/reconcile/trigger`).
 
 **MCP.** `/mcp` serves the [Model Context Protocol](https://modelcontextprotocol.io) (streamable HTTP), so an LLM client can work with projects and budgets on a person's behalf. It sits behind the same authentication as `/v1` — typically an API token — and contains no authorization of its own: every tool calls the same service method the REST handler calls, with that person's rights. A read-only token is not offered the tools that change anything, releasing a project or deleting a budget requires repeating its exact name (`confirm_name`), and every change is recorded in the node's history as coming through `mcp`.
+
+**Errors** are answered as `{"error": "<text for people, in German>", "code": "<stable reason>"}`; a client matches on `code` (`unauthenticated`, `auth_unavailable`, `forbidden`, `not_found`, `conflict`, `invalid`, `internal`, …), never on the text. A validation message of the tree is the `error` of a 400 as the operation wrote it.
 
 [self-service-ui](https://github.com/pfisterer/self-service-ui) renders the same
 spec in the browser under *Cloud Projects → API Documentation*, which is usually
@@ -145,6 +149,7 @@ matters when a sourced `openrc` is in the same shell.
 |---|---|---|
 | `API_MODE` | `production` | `development` enables verbose mode and permits dummy auth |
 | `API_BIND` | `:8083` | Listen address |
+| `METRICS_BIND` | `:8084` | Listen address of `GET /metrics` (Prometheus text format); `off` switches it off. Keep it out of the ingress |
 | `API_DUMMY_AUTH` | `false` | Dev-only: every request is signed in as `API_DEV_AUTH_USER`; the service **refuses to start** with it unless `API_MODE=development` |
 | `API_DEV_AUTH_USER` | `root.admin@uni.example` | Who dummy auth signs in; other people are reached with `X-Act-As` |
 | `CORS_ALLOWED_ORIGINS` | — | Comma-separated browser origins allowed to call `/v1` cross-origin; empty allows none (right when the UI reaches the API same-origin) |
@@ -155,7 +160,7 @@ matters when a sourced `openrc` is in the same shell.
 | `ROLE_PROVIDER_URL`, `ROLE_PROVIDER_API_TOKEN` | — | Required for `http` |
 | `ROOT_ADMIN_TOKENS` | — | Comma-separated `user:`/`group:` tokens that become root admins |
 | `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID` | — | Bearer-token verification; required at startup |
-| `OIDC_JWKS_URL` | — | The provider's key set (`…/protocol/openid-connect/certs` on Keycloak). Set it and startup asks the provider nothing; empty discovers it from the issuer, which needs the provider to be up right then |
+| `OIDC_JWKS_URL` | — | The provider's key set (`…/protocol/openid-connect/certs` on Keycloak). Set it and startup asks the provider nothing; empty discovers it from the issuer, which is tried again for up to a minute before the start fails |
 | `API_TOKEN_TTL_HOURS`, `API_TOKEN_ALLOW_NEVER_EXPIRES` | `24`, `false` | API token lifetime when a request names none (any other lifetime may be requested), and whether tokens without expiry may be issued |
 | `OPENSTACK_DASHBOARD_URL` | — | Public address of the OpenStack dashboard (Horizon); set, the UI links each project that exists in OpenStack to it |
 | `API_MAX_AUTHORIZED_USERS` | `32` | Cap on additional members per project that involves OpenStack (holds an OpenStack resource, also through an allocation or a waiting change, or has an OpenStack project) |

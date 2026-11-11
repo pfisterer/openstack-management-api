@@ -129,6 +129,8 @@ type WebServerConfig struct {
 	OIDCJWKSURL string `json:"oidc_jwks_url"`
 	// The bind string for the Gin web server (e.g., ":8082")
 	GinBindString string `json:"gin_bind_string" validate:"required"`
+	// MetricsBind is the listener of GET /metrics (METRICS_BIND, default ":8084"); empty = no metrics. Its own port, so the ingress, which points at the API's port, never reaches it.
+	MetricsBind string `json:"metrics_bind"`
 	// CORSAllowedOrigins lists the exact browser origins allowed to call this
 	// API cross-origin, e.g. "https://selfservice.dhbw.cloud". Empty (the
 	// default) allows none: in BFF mode the SPA reaches the API same-origin
@@ -280,6 +282,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			OIDCClientID:              envconf.String("OIDC_CLIENT_ID", ""),
 			OIDCJWKSURL:               envconf.String("OIDC_JWKS_URL", ""),
 			GinBindString:             envconf.String("API_BIND", ":8083"),
+			MetricsBind:               metricsBind(),
 			CORSAllowedOrigins:        envconf.StringSlice("CORS_ALLOWED_ORIGINS", []string{}),
 			APITokenTTLHours:          envconf.Int("API_TOKEN_TTL_HOURS", 24),
 			APITokenAllowNeverExpires: envconf.Bool("API_TOKEN_ALLOW_NEVER_EXPIRES", false),
@@ -532,4 +535,13 @@ func retirementConfig(config AppConfiguration) webserver.RetirementConfig {
 		out.AIaaSDeleteGraceDays = config.AIaaS.DeleteGraceDays
 	}
 	return out
+}
+
+// metricsBind is METRICS_BIND: ":8084" when unset, and empty (no metrics listener) when set to "off" or "none".
+func metricsBind() string {
+	v := envconf.String("METRICS_BIND", ":8084")
+	if v == "off" || v == "none" {
+		return ""
+	}
+	return v
 }

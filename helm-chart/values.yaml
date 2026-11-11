@@ -128,6 +128,8 @@ openstackManagementApi:
   #------------------------------------
   api:
     bind: ":8083"
+    # Listener of GET /metrics (the reconciler's last run and counts, the loops' panics); a port of its own, which the ingress does not reach. Empty = no metrics.
+    metricsBind: ":8084"
     baseUrl: "http://localhost:8083"
     # Lifetime of an API token when the request does not ask for one. A caller
     # may ask for any other lifetime up to tokenMaxTTLHours.

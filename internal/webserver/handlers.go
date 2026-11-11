@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pfisterer/cloud-self-service-golib/ginweb"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
@@ -19,7 +20,7 @@ import (
 func caller(c *gin.Context) (auth identity.AuthContext, ok bool) {
 	auth, err := identity.FromContext(c)
 	if err != nil {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
+		ginweb.AbortError(c, identity.ErrUnauthenticated)
 		return identity.AuthContext{}, false
 	}
 	return auth, true
@@ -34,7 +35,7 @@ func uiActor(auth identity.AuthContext) model.Actor {
 func pagination(c *gin.Context) (limit, offset int, ok bool) {
 	limit, offset, err := parsePagination(c)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid pagination parameters"})
+		respondBadRequest(c, "Ungültige Angaben zum Blättern (limit, offset).")
 		return 0, 0, false
 	}
 	return limit, offset, true
@@ -49,7 +50,7 @@ func parsePagination(c *gin.Context) (int, int, error) {
 			return 0, 0, err
 		}
 		if parsedLimit <= 0 {
-			return 0, 0, fmt.Errorf("limit must be positive")
+			return 0, 0, fmt.Errorf("limit muss positiv sein")
 		}
 		if parsedLimit > common.MaxPageLimit {
 			parsedLimit = common.MaxPageLimit
@@ -64,7 +65,7 @@ func parsePagination(c *gin.Context) (int, int, error) {
 			return 0, 0, err
 		}
 		if parsedOffset < 0 {
-			return 0, 0, fmt.Errorf("offset must be non-negative")
+			return 0, 0, fmt.Errorf("offset darf nicht negativ sein")
 		}
 		offset = parsedOffset
 	}
@@ -86,9 +87,9 @@ func jsonBody[Req any](message string) bodyReader[Req] {
 			return true
 		}
 		if message == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			respondBadRequest(c, "Der Inhalt der Anfrage lässt sich nicht lesen: "+err.Error())
 		} else {
-			c.JSON(http.StatusBadRequest, gin.H{"error": message})
+			respondBadRequest(c, message)
 		}
 		return false
 	}

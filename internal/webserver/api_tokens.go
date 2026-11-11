@@ -2,11 +2,14 @@ package webserver
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pfisterer/cloud-self-service-golib/apierr"
+	"github.com/pfisterer/cloud-self-service-golib/ginweb"
 	"github.com/pfisterer/cloud-self-service-golib/token"
 	"github.com/pfisterer/openstack-management-api/internal/identity"
 	"go.uber.org/zap"
@@ -107,7 +110,7 @@ func RegisterTokenRoutes(v1 *gin.RouterGroup, cfg TokenConfig, log *zap.SugaredL
 func tokenCaller(c *gin.Context) (auth identity.AuthContext, ok bool) {
 	auth, err := identity.FromContext(c)
 	if err != nil || auth.UserEmail == "" {
-		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
+		ginweb.AbortError(c, identity.ErrUnauthenticated)
 		return identity.AuthContext{}, false
 	}
 	return auth, true
@@ -133,7 +136,7 @@ func listTokens(cfg TokenConfig, log *zap.SugaredLogger) gin.HandlerFunc {
 		records, err := cfg.Service.List(c.Request.Context(), subject)
 		if err != nil {
 			log.Errorw("listing tokens failed", "subject", subject, "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retrieve tokens"})
+			ginweb.AbortError(c, errInternal)
 			return
 		}
 
@@ -168,18 +171,18 @@ func createToken(cfg TokenConfig, log *zap.SugaredLogger) gin.HandlerFunc {
 		subject := auth.UserEmail
 		// A token issued while acting on behalf would hand the admin a credential that IS the person, outliving the session and the act-as rule that allowed it; and the person would find a token they never made.
 		if auth.OnBehalf() {
-			c.JSON(http.StatusForbidden, gin.H{"error": "API tokens cannot be created while acting on behalf of someone else; the person has to create their own"})
+			ginweb.AbortError(c, apierr.New(http.StatusForbidden, "act_as_forbidden", "Im Auftrag einer anderen Person lassen sich keine API-Tokens erstellen; die Person muss ihr Token selbst erstellen."))
 			return
 		}
 		// A token that mints tokens would let a leaked one renew itself forever, past every expiry.
 		if auth.ViaAPIToken {
-			c.JSON(http.StatusForbidden, gin.H{"error": "API tokens can only be created after signing in, not with another API token"})
+			ginweb.AbortError(c, apierr.New(http.StatusForbidden, "token_needs_sign_in", "API-Tokens lassen sich nur nach einer Anmeldung erstellen, nicht mit einem anderen API-Token."))
 			return
 		}
 
 		var req CreateTokenRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+			respondBadRequest(c, "Ungültige Anfrage.")
 			return
 		}
 
@@ -187,7 +190,7 @@ func createToken(cfg TokenConfig, log *zap.SugaredLogger) gin.HandlerFunc {
 		if err != nil {
 			// Asked for a lifetime this deployment does not grant. The message
 			// names the limit; none of this is a server fault.
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			ginweb.AbortError(c, apierr.New(http.StatusBadRequest, "invalid_ttl", ttlMessage(cfg.TTL, err)))
 			return
 		}
 
@@ -199,12 +202,12 @@ func createToken(cfg TokenConfig, log *zap.SugaredLogger) gin.HandlerFunc {
 		// The description is the caller's text: too long is a 400, and it is
 		// never echoed into the log.
 		if errors.Is(err, token.ErrDescriptionTooLong) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			ginweb.AbortError(c, apierr.New(http.StatusBadRequest, "invalid_description", fmt.Sprintf("Die Beschreibung darf höchstens %d Zeichen lang sein.", token.MaxDescriptionLen)))
 			return
 		}
 		if err != nil {
 			log.Errorw("issuing a token failed", "subject", subject, "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create token"})
+			ginweb.AbortError(c, errInternal)
 			return
 		}
 
@@ -230,7 +233,7 @@ func deleteToken(cfg TokenConfig, log *zap.SugaredLogger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid token id"})
+			respondBadRequest(c, "Ungültige Token-ID.")
 			return
 		}
 
@@ -247,9 +250,23 @@ func deleteToken(cfg TokenConfig, log *zap.SugaredLogger) gin.HandlerFunc {
 			c.JSON(http.StatusNotFound, gin.H{"status": "not found"})
 		case err != nil:
 			log.Errorw("revoking a token failed", "subject", subject, "id", id, "error", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete token"})
+			ginweb.AbortError(c, errInternal)
 		default:
 			c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 		}
+	}
+}
+
+// ttlMessage is the answer to a lifetime this deployment does not grant (token.TTLPolicy.Resolve), naming the limit.
+func ttlMessage(p token.TTLPolicy, err error) string {
+	switch {
+	case errors.Is(err, token.ErrNeverExpiresNotAllowed):
+		return "API-Tokens ohne Ablaufdatum sind hier nicht erlaubt."
+	case errors.Is(err, token.ErrTTLTooLong) && p.Max > 0:
+		return fmt.Sprintf("Die Laufzeit darf höchstens %d Stunden betragen.", int(p.Max/time.Hour))
+	case errors.Is(err, token.ErrTTLTooLong):
+		return "Die gewünschte Laufzeit ist zu lang."
+	default:
+		return "Ungültige Laufzeit."
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pfisterer/cloud-self-service-golib/loop"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
@@ -104,28 +105,16 @@ func BudgetChain(budgets map[string]model.Node, leaf model.Node) []model.Node {
 // DefaultSyncInterval is how often a provider passes over the tree when it is not told otherwise.
 const DefaultSyncInterval = 5 * time.Minute
 
-// RunLoop runs pass once right away and then on every tick of interval (DefaultSyncInterval when not positive), on every receive from changes (Changes) and on every receive from trigger, until ctx ends. A change announced before the first run is drained: that run covers it. A nil channel never receives.
-func RunLoop(ctx context.Context, interval time.Duration, changes, trigger <-chan struct{}, pass func(context.Context)) {
+// RunLoop runs pass once right away and then on every tick of interval (DefaultSyncInterval when not positive), on every receive from changes (Changes) and on every receive from trigger, until ctx ends. A change announced before the first run is drained: that run covers it. A nil channel never receives. It runs on golib's loop.Run: a panic in a pass is recovered, logged with its stack and handed to opts.OnPanic, and the loop goes on (opts names the loop and its log).
+func RunLoop(ctx context.Context, interval time.Duration, changes, trigger <-chan struct{}, pass func(context.Context), opts loop.Options) {
 	if interval <= 0 {
 		interval = DefaultSyncInterval
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	select {
-	case <-changes:
-	default:
-	}
-	pass(ctx)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		case <-changes:
-		case <-trigger:
-		}
+	opts.DrainBeforeFirst = true
+	loop.Run(ctx, loop.Schedule{Interval: interval, Nudges: []<-chan struct{}{changes, trigger}}, func(ctx context.Context) error {
 		pass(ctx)
-	}
+		return nil
+	}, opts)
 }
 
 // RecordExternalID records the project created for a leaf, whatever the leaf's

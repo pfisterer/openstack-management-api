@@ -33,20 +33,20 @@ func usagePeriod(c *gin.Context, now time.Time) (from, to time.Time, err error) 
 	to = today.AddDate(0, 0, -1)
 	if v := c.Query("to"); v != "" {
 		if to, err = time.Parse(time.DateOnly, v); err != nil {
-			return from, to, fmt.Errorf("to: want YYYY-MM-DD, got %q", v)
+			return from, to, fmt.Errorf("to: erwartet JJJJ-MM-TT, erhalten %q", v)
 		}
 	}
 	from = to.AddDate(0, 0, -(defaultUsageDays - 1))
 	if v := c.Query("from"); v != "" {
 		if from, err = time.Parse(time.DateOnly, v); err != nil {
-			return from, to, fmt.Errorf("from: want YYYY-MM-DD, got %q", v)
+			return from, to, fmt.Errorf("from: erwartet JJJJ-MM-TT, erhalten %q", v)
 		}
 	}
 	if from.After(to) {
-		return from, to, fmt.Errorf("from (%s) lies after to (%s)", from.Format(time.DateOnly), to.Format(time.DateOnly))
+		return from, to, fmt.Errorf("from (%s) liegt nach to (%s)", from.Format(time.DateOnly), to.Format(time.DateOnly))
 	}
 	if to.Sub(from) > maxUsageDays*24*time.Hour {
-		return from, to, fmt.Errorf("a period covers at most %d days", maxUsageDays)
+		return from, to, fmt.Errorf("ein Zeitraum umfasst höchstens %d Tage", maxUsageDays)
 	}
 	return from, to, nil
 }
@@ -77,7 +77,7 @@ func getNodeUsage(cfg APIConfig) gin.HandlerFunc {
 		}
 		from, to, err := usagePeriod(c, time.Now().UTC())
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			respondBadRequest(c, err.Error())
 			return
 		}
 		node, err := cfg.Service.UsageScope(c.Param("id"), auth.EffectiveTokens)
@@ -140,7 +140,7 @@ func getUsageReport(cfg APIConfig) gin.HandlerFunc {
 		mapping := usage.MappingFrom(cfg.resources())
 		from, to, err := usagePeriod(c, time.Now().UTC())
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			respondBadRequest(c, err.Error())
 			return
 		}
 		var rows []usage.Day

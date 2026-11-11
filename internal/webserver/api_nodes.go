@@ -126,7 +126,7 @@ func listNodesToManage(cfg APIConfig) gin.HandlerFunc {
 	return listPage(cfg, func(c *gin.Context, auth identity.AuthContext, limit, offset int) (tree.NodePage, error) {
 		scope := c.Query("scope")
 		if scope != "" && scope != "direct" && scope != "subtree" {
-			return tree.NodePage{}, errors.New(`scope must be "direct" or "subtree"`)
+			return tree.NodePage{}, errors.New(`scope muss "direct" oder "subtree" sein`)
 		}
 		return cfg.Service.ListToManage(auth.EffectiveTokens, scope == "subtree", limit, offset)
 	})
@@ -190,7 +190,7 @@ func listEligibleBudgetsForOwner(cfg APIConfig) gin.HandlerFunc {
 	return listPage(cfg, func(c *gin.Context, auth identity.AuthContext, limit, offset int) (tree.NodePage, error) {
 		ownerTokens := c.QueryArray("owner_token")
 		if len(ownerTokens) == 0 {
-			return tree.NodePage{}, errors.New("at least one owner_token query parameter is required")
+			return tree.NodePage{}, errors.New("mindestens ein Parameter owner_token ist nötig")
 		}
 		return cfg.Service.ListEligibleForOwner(auth.EffectiveTokens, common.TokenList(ownerTokens), limit, offset)
 	})
@@ -215,7 +215,7 @@ func searchNodes(cfg APIConfig) gin.HandlerFunc {
 	return listPage(cfg, func(c *gin.Context, auth identity.AuthContext, limit, offset int) (tree.NodePage, error) {
 		query := strings.TrimSpace(c.Query("q"))
 		if query == "" {
-			return tree.NodePage{}, errors.New("q must not be empty")
+			return tree.NodePage{}, errors.New("q darf nicht leer sein")
 		}
 		return cfg.Service.SearchNodes(auth.EffectiveTokens, query, limit, offset)
 	})

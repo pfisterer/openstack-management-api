@@ -44,7 +44,24 @@ spec:
           image: {{ .Values.openstackManagementApi.image }}:{{ .Values.openstackManagementApi.version | default .Chart.AppVersion }}
           imagePullPolicy: {{ .Values.openstackManagementApi.imagePullPolicy | default "Always" }}
           ports:
-            - containerPort: 8083
+            - name: http
+              containerPort: 8083
+            {{- if .Values.openstackManagementApi.api.metricsBind }}
+            # GET /metrics (Prometheus text format), its own port: the ingress points at 8083 only.
+            - name: metrics
+              containerPort: {{ .Values.openstackManagementApi.api.metricsBind | trimPrefix ":" | int }}
+            {{- end }}
+          # /healthz: the process serves; /readyz: the database answers (the identity provider is reported, not required). The API listens only once startup is done (OIDC discovery is tried for up to a minute), so the startup probe gives it 150 s before liveness counts.
+          startupProbe:
+            httpGet: {path: /healthz, port: 8083}
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: {path: /readyz, port: 8083}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /healthz, port: 8083}
+            periodSeconds: 30
           # Hardening: non-root, no privilege escalation, no capabilities,
           # read-only rootfs, default seccomp. The image sets USER 65532.
           securityContext:
@@ -143,6 +160,8 @@ spec:
             # ── Web Server / API ─────────────────────────────────────────────
             - name: API_BIND
               value: {{ .Values.openstackManagementApi.api.bind | quote }}
+            - name: METRICS_BIND
+              value: {{ .Values.openstackManagementApi.api.metricsBind | default "off" | quote }}
             - name: API_BASE_URL
               value: {{ .Values.openstackManagementApi.api.baseUrl | quote }}
             - name: API_TOKEN_TTL_HOURS
@@ -315,9 +334,17 @@ spec:
   selector:
     {{- $selectors | nindent 4 }}
   ports:
-    - protocol: TCP
+    - name: http
+      protocol: TCP
       port: 8083
       targetPort: 8083
+    {{- if .Values.openstackManagementApi.api.metricsBind }}
+    # Prometheus metrics of the reconciler, for a scrape from inside the cluster (no ingress, no token).
+    - name: metrics
+      protocol: TCP
+      port: {{ .Values.openstackManagementApi.api.metricsBind | trimPrefix ":" | int }}
+      targetPort: metrics
+    {{- end }}
 
 {{- if .Values.ingress.enabled }}
 ---

@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -8,8 +9,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/cloud-self-service-golib/authn"
+	"github.com/pfisterer/cloud-self-service-golib/credential"
 	"github.com/pfisterer/cloud-self-service-golib/ginweb"
 	"github.com/pfisterer/cloud-self-service-golib/oidcauth"
+	"github.com/pfisterer/cloud-self-service-golib/token"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"go.uber.org/zap"
 )
@@ -56,7 +59,7 @@ func EffectiveAuthMiddleware(svc Effective, mayActAs common.TokenList, log *zap.
 	return func(c *gin.Context) {
 		actorEmail, originalTokens, err := ResolveOriginalAuthContext(c)
 		if err != nil {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unable to resolve user context"})
+			ginweb.AbortError(c, ErrUnauthenticated)
 			return
 		}
 		// Canonical spelling on the way in, so a role provider that hands back
@@ -66,23 +69,19 @@ func EffectiveAuthMiddleware(svc Effective, mayActAs common.TokenList, log *zap.
 
 		if header := c.GetHeader(authn.ActAsHeader); header != "" {
 			if viaAPIToken(c) {
-				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": authn.ErrActAsNeedsSignIn.Error()})
+				ginweb.AbortError(c, ErrActAsNeedsSignIn)
 				return
 			}
 			target, err := authn.ActAs(header, actorEmail, len(allowed) > 0 && allowed.ContainsAny(originalTokens))
 			if err != nil {
-				status := http.StatusForbidden
-				if errors.Is(err, authn.ErrActAsInvalid) {
-					status = http.StatusBadRequest
-				}
-				c.AbortWithStatusJSON(status, gin.H{"error": err.Error()})
+				ginweb.AbortError(c, ActAsError(err))
 				return
 			}
 			if target != actorEmail {
 				tokens, err := svc.TokensFor(target)
 				if err != nil {
 					log.Warnw("acting on behalf: cannot resolve the person's tokens", "actor", actorEmail, "as", target, "error", err)
-					c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "the directory cannot be reached to resolve the person acted for"})
+					ginweb.AbortError(c, ErrDirectoryUnavailable)
 					return
 				}
 				auth.UserEmail = target
@@ -158,6 +157,7 @@ func ResolveOriginalAuthContext(c *gin.Context) (string, common.TokenList, error
 	return userEmail, tokens, nil
 }
 
+// CombinedAuthMiddleware authenticates a request: which case its credential is (none, an API token os_mgt_…, an ID token, rejected, the provider away) is decided by golib's credential.Resolve, the same in every service of the platform; the answers here are this service's. An API token is resolved to its subject by tokenLookup, an ID token verified by oidcVerifier; then userTokenResolver resolves the caller's groups.
 func CombinedAuthMiddleware(oidcVerifier *oidcauth.Verifier, tokenLookup TokenLookupFunc, userTokenResolver UserTokenResolverFunc, log *zap.SugaredLogger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx := c.Request.Context()
@@ -169,101 +169,84 @@ func CombinedAuthMiddleware(oidcVerifier *oidcauth.Verifier, tokenLookup TokenLo
 			return
 		}
 
-		// Get the Authorization header
-		authHeader := c.GetHeader("Authorization")
+		if userTokenResolver == nil {
+			log.Error("User token resolver function is not configured")
+			ginweb.AbortError(c, ErrInternal)
+			return
+		}
 
-		tokenString, ok := authn.CutBearerPrefix(authHeader)
-		if !ok {
+		authHeader := c.GetHeader("Authorization")
+		var tokens credential.Tokens
+		if tokenLookup != nil {
+			tokens = lookupTokens(tokenLookup)
+		} else if raw, ok := authn.CutBearerPrefix(authHeader); ok && strings.HasPrefix(raw, apiTokenPrefix) {
+			log.Error("API token lookup function is not configured")
+			ginweb.AbortError(c, ErrInternal)
+			return
+		}
+		var verifier credential.Verifier
+		if oidcVerifier != nil {
+			verifier = oidcVerifier
+		}
+
+		p, err := credential.Resolve(ctx, authHeader, tokens, verifier)
+		switch {
+		case err == nil:
+		case errors.Is(err, credential.ErrMissing):
 			// The header value itself is never logged: a client sending a valid
 			// token under an unexpected scheme would write its credential into
 			// the log. The scheme alone is what makes this diagnosable.
 			log.Warnf("Missing or invalid Authorization header (scheme %q)", authn.Scheme(authHeader))
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing or invalid Authorization Bearer header"})
+			ginweb.AbortError(c, ErrUnauthenticated)
+			return
+		case errors.Is(err, token.ErrNotFound):
+			log.Warn("Invalid API token, returning unauthorized")
+			ginweb.AbortError(c, ErrAPITokenRejected)
+			return
+		case errors.Is(err, credential.ErrKeysUnavailable):
+			// A token nobody can judge right now is not a rejected token.
+			// 401 would tell the browser to drop its session and sign in
+			// again — impossible while the provider is away, so the user
+			// would loop through a login that cannot finish and read it as
+			// our fault.
+			log.Warnw("cannot verify tokens: the identity provider is unreachable", "error", err)
+			ginweb.AbortError(c, ErrSignInUnavailable)
+			return
+		case errors.Is(err, credential.ErrRejected):
+			log.Warnf("Failed to verify bearer token: %v", err)
+			ginweb.AbortError(c, ErrSignInRejected)
+			return
+		case errors.Is(err, credential.ErrNoVerifier):
+			log.Error("OIDC verifier is not configured")
+			ginweb.AbortError(c, ErrInternal)
+			return
+		default:
+			log.Warnf("storage error: %v", err)
+			ginweb.AbortError(c, ErrInternal)
 			return
 		}
 
-		if userTokenResolver == nil {
-			log.Error("User token resolver function is not configured")
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-			return
-		}
-
-		var claims *common.UserClaims
-
-		// Check if token is an API key
-		if strings.HasPrefix(tokenString, apiTokenPrefix) {
-			if tokenLookup == nil {
-				log.Error("API token lookup function is not configured")
-				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-				return
-			}
-
-			// Look up the token in storage
-			token, err := tokenLookup(ctx, tokenString)
-			if err != nil {
-				log.Warnf("storage error: %v", err)
-				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-				return
-			}
-
-			// Check if a token was found
-			if !token.Found {
-				log.Warn("Invalid API token, got nil token, returning unauthorized")
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
-				return
-			}
-
-			// Recorded here, enforced by the route group: what counts as a write
-			// is a property of the OPERATION, and only the REST routes can read
-			// that off the HTTP method (see RejectWritesForReadOnlyTokens).
-			ginweb.SetReadOnly(c, token.ReadOnly)
+		// Recorded here, enforced by the route group: what counts as a write
+		// is a property of the OPERATION, and only the REST routes can read
+		// that off the HTTP method (see RejectWritesForReadOnlyTokens). An
+		// interactive login carries no read-only flag; a token does.
+		ginweb.SetReadOnly(c, p.ReadOnly)
+		if p.ViaAPIToken() {
 			MarkViaAPIToken(c)
-
-			// Email, not PreferredUsername. Claims.Identity prefers the e-mail
-			// and the role provider resolves groups by it, so a token filled
-			// into the wrong claim authenticates cleanly and then belongs to no
-			// group — which reads as a permissions problem and is an identity
-			// one. Tokens are issued under the actor's e-mail (see
-			// api_tokens.go), so this puts back exactly what was put in.
-			claims = &common.UserClaims{
-				Email: token.Subject,
-			}
-		} else {
-			if oidcVerifier == nil {
-				log.Error("OIDC verifier is not configured")
-				c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-				return
-			}
-
-			// common.UserClaims is authn.Claims, which is what the verifier
-			// returns — no conversion needed.
-			verifiedClaims, err := oidcVerifier.Verify(ctx, tokenString)
-			if err != nil {
-				// A token nobody can judge right now is not a rejected token.
-				// 401 would tell the browser to drop its session and sign in
-				// again — impossible while the provider is away, so the user
-				// would loop through a login that cannot finish and read it as
-				// our fault.
-				if errors.Is(err, oidcauth.ErrKeysUnavailable) {
-					log.Warnw("cannot verify tokens: the identity provider is unreachable", "error", err)
-					c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{
-						"error": "sign-in is temporarily unavailable: the identity provider cannot be reached",
-					})
-					return
-				}
-				log.Warnf("Failed to verify bearer token: %v", err)
-				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
-				return
-			}
-			claims = verifiedClaims
-			// An interactive login carries no read-only flag; a token does.
-			ginweb.SetReadOnly(c, false)
 		}
+		// For an API token the claims hold its subject as Email, not
+		// PreferredUsername. Claims.Identity prefers the e-mail and the role
+		// provider resolves groups by it, so a token filled into the wrong
+		// claim authenticates cleanly and then belongs to no group — which
+		// reads as a permissions problem and is an identity one. Tokens are
+		// issued under the actor's e-mail (see api_tokens.go), so this puts
+		// back exactly what was put in.
+		claims := p.Claims
 
 		resolvedTokens, err := userTokenResolver(ctx, claims)
 		if err != nil {
 			log.Warnf("failed to resolve user tokens: %v", err)
-			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			ginweb.AbortError(c, ErrInternal)
 			return
 		}
 
@@ -271,6 +254,22 @@ func CombinedAuthMiddleware(oidcVerifier *oidcauth.Verifier, tokenLookup TokenLo
 		c.Set(userTokensKey, resolvedTokens)
 		c.Next()
 	}
+}
+
+// lookupTokens is a TokenLookupFunc as golib's credential.Tokens: a credential with the prefix os_mgt_ is this service's API token.
+type lookupTokens TokenLookupFunc
+
+func (lookupTokens) Owns(secret string) bool { return strings.HasPrefix(secret, apiTokenPrefix) }
+
+func (f lookupTokens) Lookup(ctx context.Context, secret string) (*token.Record, error) {
+	res, err := f(ctx, secret)
+	if err != nil {
+		return nil, err
+	}
+	if !res.Found {
+		return nil, token.ErrNotFound
+	}
+	return &token.Record{Subject: res.Subject, ReadOnly: res.ReadOnly}, nil
 }
 
 // MarkViaAPIToken records that the request authenticated with an API token, which the API holds against acting on behalf of somebody and issuing further tokens.

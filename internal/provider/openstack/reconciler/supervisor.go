@@ -3,10 +3,10 @@ package reconciler
 import (
 	"cmp"
 	"context"
-	"math/rand"
 	"sync/atomic"
 	"time"
 
+	"github.com/pfisterer/cloud-self-service-golib/retry"
 	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/catalog"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
 	"go.uber.org/zap"
@@ -75,10 +75,11 @@ func (s *Supervisor) GrantedProjects(g osclient.Grant) ([]string, error) {
 
 // backoff bounds for the connection retry. The floor is short because the usual
 // case is a cloud that is briefly away; the ceiling keeps a long outage from
-// hammering it, and the jitter keeps several pods from retrying in lockstep.
+// hammering it, and the jitter (±10%) keeps several pods from retrying in lockstep.
 const (
 	reconnectMinDelay = 15 * time.Second
 	reconnectMaxDelay = 5 * time.Minute
+	reconnectJitter   = 0.1
 )
 
 // connectAndStart dials OpenStack until it works, then builds the reconciler and
@@ -101,41 +102,34 @@ func (s *Supervisor) ConnectAndStart(ctx context.Context, build func() (*Reconci
 // Kept separate from starting the reconciler so the retry behaviour can be
 // tested without a running reconciler behind it.
 func (s *Supervisor) connectWithRetry(ctx context.Context, build func() (*Reconciler, error), log *zap.SugaredLogger) *Reconciler {
-	minDelay := cmp.Or(s.minDelay, reconnectMinDelay)
-	maxDelay := cmp.Or(s.maxDelay, reconnectMaxDelay)
-
-	delay := minDelay
-	for attempt := 1; ; attempt++ {
-		rec, err := build()
-		if err == nil {
-			s.inner.Store(rec)
-			if attempt > 1 {
-				log.Infow("OpenStack reachable — starting reconciler", "attempts", attempt)
-			}
-			return rec
-		}
-
+	var rec *Reconciler
+	attempts := 0
+	err := retry.Do(ctx, retry.Policy{
+		Total:   -1, // until it works or ctx ends
+		Initial: cmp.Or(s.minDelay, reconnectMinDelay),
+		Max:     cmp.Or(s.maxDelay, reconnectMaxDelay),
+		Jitter:  reconnectJitter,
 		// Every attempt is logged: a reconciler that is not running is worth
 		// being loud about, and the interval is already capped.
-		log.Warnw("OpenStack not reachable — retrying, reconciler not running yet",
-			"attempt", attempt, "retry_in", delay.String(), zap.Error(err))
-
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-time.After(jitter(delay)):
+		OnRetry: func(attempt int, err error, wait time.Duration) {
+			log.Warnw("OpenStack not reachable — retrying, reconciler not running yet",
+				"attempt", attempt, "retry_in", wait.String(), zap.Error(err))
+		},
+	}, func(context.Context) error {
+		attempts++
+		r, err := build()
+		if err != nil {
+			return err
 		}
-		if delay < maxDelay {
-			delay *= 2
-			if delay > maxDelay {
-				delay = maxDelay
-			}
-		}
+		rec = r
+		return nil
+	})
+	if err != nil {
+		return nil // ctx ended first
 	}
-}
-
-// jitter spreads retries by ±10% so restarts do not synchronise on the cloud.
-func jitter(d time.Duration) time.Duration {
-	spread := float64(d) * 0.1
-	return d + time.Duration((rand.Float64()*2-1)*spread)
+	s.inner.Store(rec)
+	if attempts > 1 {
+		log.Infow("OpenStack reachable — starting reconciler", "attempts", attempts)
+	}
+	return rec
 }

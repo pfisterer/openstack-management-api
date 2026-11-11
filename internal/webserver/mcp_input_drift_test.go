@@ -1,9 +1,9 @@
 package webserver
 
 import (
-	"reflect"
-	"strings"
 	"testing"
+
+	"github.com/pfisterer/cloud-self-service-golib/mcpserve/mcptest"
 
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 )
@@ -20,22 +20,13 @@ import (
 // with a reason written down. A new field matches none of the three and turns
 // this red, which is the point — not to force it into the tool, but to force
 // somebody to decide.
-type toolInputContract struct {
-	tool   string
-	domain any
-	input  any
-	// renamed maps a domain field to the tool's name for it, where the tool can
-	// be clearer than the storage layer.
-	renamed map[string]string
-	// omitted lists what the tool deliberately does not offer, and why.
-	omitted map[string]string
-}
-
-var toolInputContracts = []toolInputContract{
+//
+// Renamed maps a domain field to the tool's name for it, where the tool can be clearer than the storage layer; Omitted lists what the tool deliberately does not offer, and why.
+var toolInputContracts = []mcptest.Input{
 	{
-		tool: "create_project", domain: tree.CreateNodeRequest{}, input: mcpRequestInput{},
-		renamed: map[string]string{"parent_id": "budget_id", "admin_scope": "admins"},
-		omitted: map[string]string{
+		Tool: "create_project", Domain: tree.CreateNodeRequest{}, Input: mcpRequestInput{},
+		Renamed: map[string]string{"parent_id": "budget_id", "admin_scope": "admins"},
+		Omitted: map[string]string{
 			"kind":                               "the tool sets it; offering it would let a model create a budget through the project tool",
 			"authorized_users":                   "participants are managed in the UI, where the person can see who they are adding",
 			"eligible_requesters":                "budget-only",
@@ -49,9 +40,9 @@ var toolInputContracts = []toolInputContract{
 		},
 	},
 	{
-		tool: "create_budget", domain: tree.CreateNodeRequest{}, input: mcpCreateBudgetInput{},
-		renamed: map[string]string{"auto_approve": "auto_approve_limit"},
-		omitted: map[string]string{
+		Tool: "create_budget", Domain: tree.CreateNodeRequest{}, Input: mcpCreateBudgetInput{},
+		Renamed: map[string]string{"auto_approve": "auto_approve_limit"},
+		Omitted: map[string]string{
 			"kind":                               "the tool sets it",
 			"termination_date":                   "budgets are not given an end date through this tool",
 			"authorized_users":                   "leaf-only",
@@ -60,36 +51,36 @@ var toolInputContracts = []toolInputContract{
 		},
 	},
 	{
-		tool: "request_project_change", domain: tree.ChangeNodeRequest{}, input: mcpChangeInput{},
-		omitted: map[string]string{
+		Tool: "request_project_change", Domain: tree.ChangeNodeRequest{}, Input: mcpChangeInput{},
+		Omitted: map[string]string{
 			"termination_date": "changing the end date is not offered yet",
 			"authorized_users": "participants are managed in the UI",
 		},
 	},
 	{
-		tool: "approve_request", domain: tree.ApproveNodeRequest{}, input: mcpApproveInput{},
+		Tool: "approve_request", Domain: tree.ApproveNodeRequest{}, Input: mcpApproveInput{},
 	},
 	{
-		tool: "reject_request", domain: tree.RejectNodeRequest{}, input: mcpRejectInput{},
+		Tool: "reject_request", Domain: tree.RejectNodeRequest{}, Input: mcpRejectInput{},
 	},
 	{
-		tool: "move_to_budget", domain: tree.ReparentNodeRequest{}, input: mcpMoveInput{},
-		renamed: map[string]string{"new_parent_id": "new_budget_id"},
+		Tool: "move_to_budget", Domain: tree.ReparentNodeRequest{}, Input: mcpMoveInput{},
+		Renamed: map[string]string{"new_parent_id": "new_budget_id"},
 	},
 	{
-		tool: "transfer_ownership", domain: tree.TransferOwnerRequest{}, input: mcpTransferInput{},
+		Tool: "transfer_ownership", Domain: tree.TransferOwnerRequest{}, Input: mcpTransferInput{},
 	},
 	{
-		tool: "adopt_imported_project", domain: tree.PromoteNodeRequest{}, input: mcpAdoptInput{},
-		renamed: map[string]string{"new_parent_id": "new_budget_id"},
-		omitted: map[string]string{
+		Tool: "adopt_imported_project", Domain: tree.PromoteNodeRequest{}, Input: mcpAdoptInput{},
+		Renamed: map[string]string{"new_parent_id": "new_budget_id"},
+		Omitted: map[string]string{
 			"termination_date": "not offered yet",
 			"authorized_users": "participants are managed in the UI",
 		},
 	},
 	{
-		tool: "rename_project", domain: tree.UpdateNodeRequest{}, input: mcpRenameInput{},
-		omitted: map[string]string{
+		Tool: "rename_project", Domain: tree.UpdateNodeRequest{}, Input: mcpRenameInput{},
+		Omitted: map[string]string{
 			"admin_scope":                        "set_project_admins offers it for projects; who may approve on a budget is not changed by an agent",
 			"eligible_requesters":                "changing who may request is not done by an agent",
 			"auto_approve":                       "granting automatic approval is not done by an agent",
@@ -104,15 +95,15 @@ var toolInputContracts = []toolInputContract{
 		},
 	},
 	{
-		tool: "release_project", domain: tree.ReleaseNodeRequest{}, input: mcpReleaseInput{},
+		Tool: "release_project", Domain: tree.ReleaseNodeRequest{}, Input: mcpReleaseInput{},
 	},
 	{
-		tool: "set_project_allocation", domain: tree.AllocationRequest{}, input: mcpAllocationInput{},
+		Tool: "set_project_allocation", Domain: tree.AllocationRequest{}, Input: mcpAllocationInput{},
 	},
 	{
-		tool: "set_project_admins", domain: tree.UpdateNodeRequest{}, input: mcpSetAdminsInput{},
-		renamed: map[string]string{"admin_scope": "admins"},
-		omitted: map[string]string{
+		Tool: "set_project_admins", Domain: tree.UpdateNodeRequest{}, Input: mcpSetAdminsInput{},
+		Renamed: map[string]string{"admin_scope": "admins"},
+		Omitted: map[string]string{
 			"name":                               "rename_project",
 			"eligible_requesters":                "budget-only",
 			"auto_approve":                       "budget-only",
@@ -128,64 +119,6 @@ var toolInputContracts = []toolInputContract{
 	},
 }
 
-// jsonFields returns the json names of a struct's exported fields, skipping the
-// ones json itself skips.
-func jsonFields(v any) map[string]bool {
-	out := map[string]bool{}
-	t := reflect.TypeOf(v)
-	for i := range t.NumField() {
-		f := t.Field(i)
-		if f.Anonymous {
-			// Embedded structs contribute their own fields, which is how
-			// mcpSearchInput gets limit/offset.
-			for name := range jsonFields(reflect.New(f.Type).Elem().Interface()) {
-				out[name] = true
-			}
-			continue
-		}
-		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
-		if name == "" || name == "-" {
-			continue
-		}
-		out[name] = true
-	}
-	return out
-}
-
 func TestMCPToolInputsCoverTheirRequestTypes(t *testing.T) {
-	for _, c := range toolInputContracts {
-		t.Run(c.tool, func(t *testing.T) {
-			domain := jsonFields(c.domain)
-			input := jsonFields(c.input)
-
-			for field := range domain {
-				switch {
-				case c.omitted[field] != "":
-					// Deliberately not offered, reason recorded above.
-				case c.renamed[field] != "":
-					if !input[c.renamed[field]] {
-						t.Errorf("%q is mapped to %q, but the tool input has no such field",
-							field, c.renamed[field])
-					}
-				case !input[field]:
-					t.Errorf("%s.%s reaches no tool input.\n"+
-						"Add it to %s, map it under renamed, or write down under omitted why an agent must not set it.",
-						reflect.TypeOf(c.domain).Name(), field, reflect.TypeOf(c.input).Name())
-				}
-			}
-
-			// A stale entry is its own kind of drift: it claims a decision about
-			// a field that no longer exists.
-			for field := range c.omitted {
-				if !domain[field] {
-					t.Errorf("omitted lists %q, which %s no longer has", field, reflect.TypeOf(c.domain).Name())
-				}
-			}
-			for field := range c.renamed {
-				if !domain[field] {
-					t.Errorf("renamed lists %q, which %s no longer has", field, reflect.TypeOf(c.domain).Name())
-				}
-			}
-		})
-	}
+	mcptest.CheckInputs(t, toolInputContracts)
 }

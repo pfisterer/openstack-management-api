@@ -52,17 +52,20 @@ func TestRedactedConfigShowsNoPartOfASecret(t *testing.T) {
 	if got, want := r.Storage.ConnectionString, "host=db user=osmgt password=set dbname=osmgt sslmode=require"; got != want {
 		t.Fatalf("dsn = %q, want %q", got, want)
 	}
-	if redactedConfig(AppConfiguration{}).Openstack.Password != "empty" {
-		t.Fatal("an unset secret must read as empty")
+	if redactedConfig(AppConfiguration{}).Openstack.Password != "" {
+		t.Fatal("an unset secret must read as unset")
 	}
 	for _, dsn := range []string{
 		"postgres://osmgt:pa55word@db:5432/osmgt?sslmode=require",
 		"postgres://osmgt@db/osmgt?password=pa55word",
+		"postgres://osmgt@db/osmgt?Password=pa55word",
 		"host=db password=pa55word",
+		"host=db PASSWORD = 'pa55 word'",
 	} {
-		got := redactConnString(dsn)
-		if strings.Contains(got, "pa55") || !strings.Contains(got, "db") {
-			t.Errorf("redactConnString(%q) = %q", dsn, got)
+		c.Storage.ConnectionString = dsn
+		got := redactedConfig(c).Storage.ConnectionString
+		if strings.Contains(got, "pa55") || strings.Contains(got, "word'") || !strings.Contains(got, "db") {
+			t.Errorf("redacted DSN %q = %q", dsn, got)
 		}
 	}
 }

@@ -35,7 +35,7 @@ func (r *Reconciler) createOpenstackProjectForLeaf(ctx context.Context, leaf mod
 
 	// Retry the quota set a few times — four attempts six seconds apart: Nova/Cinder may not have propagated the new Keystone project yet and return 503 for a few seconds after creation.
 	// If all attempts fail we do NOT delete the orphan — instead we return the project info so the reconciler stores the OSProjectID. On the next tick the project already exists and quota sync goes through syncQuota, which will keep retrying every interval until Nova is healthy again. Deleting and recreating on every failure loops forever.
-	quotaErr := retry.Do(ctx, retry.Policy{Total: 30 * time.Second, Initial: 6 * time.Second, Max: 6 * time.Second,
+	quotaErr := retry.Do(ctx, retry.Policy{Attempts: 4, Total: 30 * time.Second, Initial: 6 * time.Second, Max: 6 * time.Second,
 		OnRetry: func(attempt int, err error, wait time.Duration) {
 			r.log.Warnw("Quota set attempt failed", "project_id", project.ID, "attempt", attempt, "retry_in", wait.String(), "error", err)
 		}}, func(context.Context) error { return r.osClient.UpdateProjectQuotas(project.ID, fullQuota) })

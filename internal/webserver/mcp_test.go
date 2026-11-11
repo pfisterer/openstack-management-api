@@ -8,11 +8,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/identity"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/pfisterer/cloud-self-service-golib/mcpserve/mcptest"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
@@ -53,51 +53,6 @@ func mcpTestServerWithService(t *testing.T) (*httptest.Server, *tree.Service) {
 	return srv, tr.svc
 }
 
-// bearerTransport puts the API token on every request, the way an MCP client
-// configured with one does.
-type bearerTransport struct {
-	secret string
-	base   http.RoundTripper
-}
-
-func (b bearerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	clone := r.Clone(r.Context())
-	clone.Header.Set("Authorization", "Bearer "+b.secret)
-	return b.base.RoundTrip(clone)
-}
-
-func mcpSession(t *testing.T, srv *httptest.Server, secret string) *mcp.ClientSession {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	t.Cleanup(cancel)
-
-	transport := &mcp.StreamableClientTransport{
-		Endpoint:   srv.URL + "/mcp",
-		HTTPClient: &http.Client{Transport: bearerTransport{secret: secret, base: http.DefaultTransport}},
-	}
-	session, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil).
-		Connect(ctx, transport, nil)
-	if err != nil {
-		t.Fatalf("connect to /mcp with %s: %v", secret, err)
-	}
-	t.Cleanup(func() { _ = session.Close() })
-	return session
-}
-
-func toolNames(t *testing.T, session *mcp.ClientSession) []string {
-	t.Helper()
-	res, err := session.ListTools(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("list tools: %v", err)
-	}
-	names := make([]string, 0, len(res.Tools))
-	for _, tool := range res.Tools {
-		names = append(names, tool.Name)
-	}
-	slices.Sort(names)
-	return names
-}
-
 // mcpReadTools are the tools that change nothing, and so the only ones a
 // read-only token is offered.
 var mcpReadTools = []string{
@@ -108,9 +63,9 @@ var mcpReadTools = []string{
 // The whole reason the read-only rule moved off the HTTP method: every MCP call
 // is a POST, so under the old code a read-only token could not even list tools.
 func TestMCP_ReadOnlyTokenCanRead(t *testing.T) {
-	session := mcpSession(t, mcpTestServer(t), readOnlySecret)
+	session := mcptest.Dial(t, mcpTestServer(t).URL+"/mcp", readOnlySecret)
 
-	names := toolNames(t, session)
+	names := mcptest.ToolNames(t, session)
 	for _, want := range mcpReadTools {
 		if !slices.Contains(names, want) {
 			t.Errorf("read tool %q missing from %v", want, names)
@@ -131,17 +86,17 @@ func TestMCP_ReadOnlyTokenCanRead(t *testing.T) {
 // A mutating tool is left out rather than offered and refused: a model picks
 // from what it is shown, and one that always fails invites retries.
 func TestMCP_ReadOnlyTokenIsNotOfferedMutatingTools(t *testing.T) {
-	session := mcpSession(t, mcpTestServer(t), readOnlySecret)
+	session := mcptest.Dial(t, mcpTestServer(t).URL+"/mcp", readOnlySecret)
 
-	if names := toolNames(t, session); slices.Contains(names, "rename_project") {
+	if names := mcptest.ToolNames(t, session); slices.Contains(names, "rename_project") {
 		t.Errorf("rename_project must not be offered to a read-only token, got %v", names)
 	}
 }
 
 func TestMCP_WriteTokenIsOfferedMutatingTools(t *testing.T) {
-	session := mcpSession(t, mcpTestServer(t), writeSecret)
+	session := mcptest.Dial(t, mcpTestServer(t).URL+"/mcp", writeSecret)
 
-	names := toolNames(t, session)
+	names := mcptest.ToolNames(t, session)
 	for _, want := range []string{
 		"create_project", "request_project_change", "approve_request", "reject_request", "rename_project",
 		"create_budget", "move_to_budget", "transfer_ownership", "adopt_imported_project", "set_project_admins",
@@ -155,8 +110,8 @@ func TestMCP_WriteTokenIsOfferedMutatingTools(t *testing.T) {
 // The read-only token must lose ALL of them, not just the one that was easy to
 // remember when the list was short.
 func TestMCP_ReadOnlyTokenLosesEveryWriteTool(t *testing.T) {
-	readOnly := toolNames(t, mcpSession(t, mcpTestServer(t), readOnlySecret))
-	write := toolNames(t, mcpSession(t, mcpTestServer(t), writeSecret))
+	readOnly := mcptest.ToolNames(t, mcptest.Dial(t, mcpTestServer(t).URL+"/mcp", readOnlySecret))
+	write := mcptest.ToolNames(t, mcptest.Dial(t, mcpTestServer(t).URL+"/mcp", writeSecret))
 
 	for _, name := range write {
 		if !slices.Contains(readOnly, name) {
@@ -174,8 +129,8 @@ func TestMCP_ReadOnlyTokenLosesEveryWriteTool(t *testing.T) {
 
 // Destructive tools exist, but a read-only token must never see them.
 func TestMCP_DestructiveToolsNeedAWriteToken(t *testing.T) {
-	write := toolNames(t, mcpSession(t, mcpTestServer(t), writeSecret))
-	readOnly := toolNames(t, mcpSession(t, mcpTestServer(t), readOnlySecret))
+	write := mcptest.ToolNames(t, mcptest.Dial(t, mcpTestServer(t).URL+"/mcp", writeSecret))
+	readOnly := mcptest.ToolNames(t, mcptest.Dial(t, mcpTestServer(t).URL+"/mcp", readOnlySecret))
 
 	for _, name := range []string{"release_project", "delete_budget"} {
 		if !slices.Contains(write, name) {
@@ -196,26 +151,16 @@ func TestMCP_DestructiveToolsNeedAWriteToken(t *testing.T) {
 // refused it: the service would reject this particular delete anyway, and a test
 // that accepted any error would pass even with the check removed.
 func TestMCP_DestructiveToolsRefuseAMismatchedName(t *testing.T) {
-	session := mcpSession(t, mcpTestServer(t), writeSecret)
+	session := mcptest.Dial(t, mcpTestServer(t).URL+"/mcp", writeSecret)
 	id, name := firstBudget(t, session)
 
-	res := callTool(t, session, "delete_budget", map[string]any{"id": id, "confirm_name": name + " (wrong)"})
+	res := mcptest.Call(t, session, "delete_budget", map[string]any{"id": id, "confirm_name": name + " (wrong)"})
 	if !res.IsError {
 		t.Fatalf("a mismatched confirm_name deleted %q anyway", id)
 	}
-	if msg := mustText(t, res); !strings.Contains(msg, "confirm_name") {
+	if msg := mcptest.Text(res); !strings.Contains(msg, "confirm_name") {
 		t.Errorf("refused for the wrong reason: %s", msg)
 	}
-}
-
-// callTool calls a tool and returns what it answered. A failure to call fails the test; what the tool reports (IsError) is the test's to look at.
-func callTool(t *testing.T, session *mcp.ClientSession, name string, args map[string]any) *mcp.CallToolResult {
-	t.Helper()
-	res, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: name, Arguments: args})
-	if err != nil {
-		t.Fatalf("%s: %v", name, err)
-	}
-	return res
 }
 
 // decodeResult decodes a tool's structured answer into v.
@@ -229,9 +174,9 @@ func decodeResult(t *testing.T, res *mcp.CallToolResult, v any) {
 // firstBudget is the first budget the test identity manages, as list_my_budgets answers it; the fixture cannot exercise a budget tool without one.
 func firstBudget(t *testing.T, session *mcp.ClientSession) (id, name string) {
 	t.Helper()
-	res := callTool(t, session, "list_my_budgets", map[string]any{})
+	res := mcptest.Call(t, session, "list_my_budgets", map[string]any{})
 	if res.IsError {
-		t.Fatalf("list budgets: %s", mustText(t, res))
+		t.Fatalf("list budgets: %s", mcptest.Text(res))
 	}
 	var list struct {
 		Projects []struct {
@@ -248,18 +193,6 @@ func firstBudget(t *testing.T, session *mcp.ClientSession) (id, name string) {
 		t.Errorf("kind = %q, want budget", list.Projects[0].Kind)
 	}
 	return list.Projects[0].ID, list.Projects[0].Name
-}
-
-// mustText returns the text a failing tool call reported.
-func mustText(t *testing.T, res *mcp.CallToolResult) string {
-	t.Helper()
-	var b strings.Builder
-	for _, c := range res.Content {
-		if tc, ok := c.(*mcp.TextContent); ok {
-			b.WriteString(tc.Text)
-		}
-	}
-	return b.String()
 }
 
 func mustJSON(t *testing.T, v any) []byte {
@@ -291,7 +224,7 @@ func TestMCP_RequiresAuthentication(t *testing.T) {
 // that taught this: admin_scope was optional in the schema and mandatory in the
 // service, so the first real call failed.
 func TestMCP_ToolsDeclareTheirRequiredArguments(t *testing.T) {
-	session := mcpSession(t, mcpTestServer(t), writeSecret)
+	session := mcptest.Dial(t, mcpTestServer(t).URL+"/mcp", writeSecret)
 	res, err := session.ListTools(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("list tools: %v", err)
@@ -353,10 +286,10 @@ func TestMCP_ToolsDeclareTheirRequiredArguments(t *testing.T) {
 // could get wrong.
 func TestMCP_ChangesAreRecordedAsComingFromAnAgent(t *testing.T) {
 	srv, svc := mcpTestServerWithService(t)
-	session := mcpSession(t, srv, writeSecret)
+	session := mcptest.Dial(t, srv.URL+"/mcp", writeSecret)
 	budgetID, _ := firstBudget(t, session)
 
-	res := callTool(t, session, "create_project", map[string]any{
+	res := mcptest.Call(t, session, "create_project", map[string]any{
 		"budget_id": budgetID,
 		"name":      "provenance-probe",
 		"reason":    "checking that the history says where this came from",
@@ -392,18 +325,18 @@ func TestMCP_ChangesAreRecordedAsComingFromAnAgent(t *testing.T) {
 // budget id has to be refused by the tool — and the new list has to arrive on a
 // project, in canonical spelling.
 func TestMCP_SetProjectAdmins(t *testing.T) {
-	session := mcpSession(t, mcpTestServer(t), writeSecret)
+	session := mcptest.Dial(t, mcpTestServer(t).URL+"/mcp", writeSecret)
 	budgetID, _ := firstBudget(t, session)
-	if res := callTool(t, session, "set_project_admins", map[string]any{"id": budgetID, "admins": []string{"user:x@y"}}); !res.IsError {
+	if res := mcptest.Call(t, session, "set_project_admins", map[string]any{"id": budgetID, "admins": []string{"user:x@y"}}); !res.IsError {
 		t.Fatal("set_project_admins changed who approves on a budget")
 	}
 
-	created := callTool(t, session, "create_project", map[string]any{
+	created := mcptest.Call(t, session, "create_project", map[string]any{
 		"budget_id": budgetID, "name": "Shared lab", "reason": "a lab run by two", "limit": map[string]int{"cores": 1},
 		"admins": []string{"user:Co@Uni.example"},
 	})
 	if created.IsError {
-		t.Fatalf("create: %s", mustText(t, created))
+		t.Fatalf("create: %s", mcptest.Text(created))
 	}
 	var project struct {
 		ID     string   `json:"id"`
@@ -415,9 +348,9 @@ func TestMCP_SetProjectAdmins(t *testing.T) {
 		t.Errorf("created project: shared %v, admins %v", project.Shared, project.Admins)
 	}
 
-	cleared := callTool(t, session, "set_project_admins", map[string]any{"id": project.ID, "admins": []string{}})
+	cleared := mcptest.Call(t, session, "set_project_admins", map[string]any{"id": project.ID, "admins": []string{}})
 	if cleared.IsError {
-		t.Fatalf("clear admins: %s", mustText(t, cleared))
+		t.Fatalf("clear admins: %s", mcptest.Text(cleared))
 	}
 	// A fresh value: the empty fields are omitted, so decoding into the old
 	// one would keep what was there.

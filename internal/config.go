@@ -4,10 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
-	"net/url"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/reconciler"
@@ -16,6 +14,7 @@ import (
 	"github.com/go-playground/validator/v10"
 	"github.com/joho/godotenv"
 	"github.com/pfisterer/cloud-self-service-golib/envconf"
+	"github.com/pfisterer/cloud-self-service-golib/redact"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/usage"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
@@ -255,33 +254,33 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			AddMockData:      envconf.Bool("DB_ADD_MOCK_DATA", false),
 		},
 		Openstack: osclient.Config{
-			AuthURL:                     getEnvString("OPENSTACK_AUTH_URL", "OS_AUTH_URL", ""),
-			ApplicationCredentialID:     getEnvString("OPENSTACK_APPLICATION_CREDENTIAL_ID", "OS_APPLICATION_CREDENTIAL_ID", ""),
-			ApplicationCredentialSecret: getEnvString("OPENSTACK_APPLICATION_CREDENTIAL_SECRET", "OS_APPLICATION_CREDENTIAL_SECRET", ""),
-			Username:                    getEnvString("OPENSTACK_USERNAME", "OS_USERNAME", ""),
-			Password:                    getEnvString("OPENSTACK_PASSWORD", "OS_PASSWORD", ""),
-			UserDomainName:              getEnvString("OPENSTACK_USER_DOMAIN_NAME", "OS_USER_DOMAIN_NAME", "Default"),
+			AuthURL:                     envconf.String("OPENSTACK_AUTH_URL", envconf.String("OS_AUTH_URL", "")),
+			ApplicationCredentialID:     envconf.String("OPENSTACK_APPLICATION_CREDENTIAL_ID", envconf.String("OS_APPLICATION_CREDENTIAL_ID", "")),
+			ApplicationCredentialSecret: envconf.String("OPENSTACK_APPLICATION_CREDENTIAL_SECRET", envconf.String("OS_APPLICATION_CREDENTIAL_SECRET", "")),
+			Username:                    envconf.String("OPENSTACK_USERNAME", envconf.String("OS_USERNAME", "")),
+			Password:                    envconf.String("OPENSTACK_PASSWORD", envconf.String("OS_PASSWORD", "")),
+			UserDomainName:              envconf.String("OPENSTACK_USER_DOMAIN_NAME", envconf.String("OS_USER_DOMAIN_NAME", "Default")),
 			// openrc spells the system scope OS_SYSTEM_SCOPE=all.
-			SystemScope:           strings.EqualFold(getEnvString("OPENSTACK_SYSTEM_SCOPE", "OS_SYSTEM_SCOPE", ""), "all"),
-			DomainName:            getEnvString("OPENSTACK_DOMAIN_NAME", "OS_DOMAIN_NAME", ""),
-			ProjectName:           getEnvString("OPENSTACK_PROJECT_NAME", "OS_PROJECT_NAME", ""),
-			ProjectDomainName:     getEnvString("OPENSTACK_PROJECT_DOMAIN_NAME", "OS_PROJECT_DOMAIN_NAME", ""),
-			ProjectID:             getEnvString("OPENSTACK_PROJECT_ID", "OS_PROJECT_ID", ""),
-			Region:                getEnvString("OPENSTACK_REGION", "OS_REGION_NAME", "microstack"),
-			Insecure:              getEnvBool("OPENSTACK_INSECURE", "OS_INSECURE", false),
+			SystemScope:           strings.EqualFold(envconf.String("OPENSTACK_SYSTEM_SCOPE", envconf.String("OS_SYSTEM_SCOPE", "")), "all"),
+			DomainName:            envconf.String("OPENSTACK_DOMAIN_NAME", envconf.String("OS_DOMAIN_NAME", "")),
+			ProjectName:           envconf.String("OPENSTACK_PROJECT_NAME", envconf.String("OS_PROJECT_NAME", "")),
+			ProjectDomainName:     envconf.String("OPENSTACK_PROJECT_DOMAIN_NAME", envconf.String("OS_PROJECT_DOMAIN_NAME", "")),
+			ProjectID:             envconf.String("OPENSTACK_PROJECT_ID", envconf.String("OS_PROJECT_ID", "")),
+			Region:                envconf.String("OPENSTACK_REGION", envconf.String("OS_REGION_NAME", "microstack")),
+			Insecure:              envconf.Bool("OPENSTACK_INSECURE", envconf.Bool("OS_INSECURE", false)),
 			FederatedProvisioning: envconf.Bool("OPENSTACK_FEDERATED_PROVISIONING", false),
 			FederatedIdPID:        envconf.String("OPENSTACK_FEDERATED_IDP_ID", "keycloak"),
 			FederatedProtocolID:   envconf.String("OPENSTACK_FEDERATED_PROTOCOL_ID", "openid"),
 			FederatedDomainID:     envconf.String("OPENSTACK_FEDERATED_DOMAIN_ID", "default"),
 		},
 		WebServer: WebServerConfig{
-			DummyAuth:                 getEnvBool("API_DUMMY_AUTH", "API_DUMMY_AUTH", false),
+			DummyAuth:                 envconf.Bool("API_DUMMY_AUTH", false),
 			DevAuthUser:               os.Getenv("API_DEV_AUTH_USER"),
 			OIDCIssuerURL:             envconf.String("OIDC_ISSUER_URL", ""),
 			OIDCClientID:              envconf.String("OIDC_CLIENT_ID", ""),
 			OIDCJWKSURL:               envconf.String("OIDC_JWKS_URL", ""),
 			GinBindString:             envconf.String("API_BIND", ":8083"),
-			CORSAllowedOrigins:        parseCSVEnv(envconf.String("CORS_ALLOWED_ORIGINS", "")),
+			CORSAllowedOrigins:        envconf.StringSlice("CORS_ALLOWED_ORIGINS", []string{}),
 			APITokenTTLHours:          envconf.Int("API_TOKEN_TTL_HOURS", 24),
 			APITokenAllowNeverExpires: envconf.Bool("API_TOKEN_ALLOW_NEVER_EXPIRES", false),
 			APITokenMaxTTLHours:       envconf.Int("API_TOKEN_MAX_TTL_HOURS", 365*24),
@@ -317,8 +316,8 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			URL:      envconf.String("ROLE_PROVIDER_URL", ""),
 			APIToken: envconf.String("ROLE_PROVIDER_API_TOKEN", ""),
 		},
-		DevMode:            getEnvString("API_MODE", "API_MODE", "production") == "development",
-		RootAdminTokens:    parseCSVEnv(envconf.String("ROOT_ADMIN_TOKENS", "")),
+		DevMode:            envconf.String("API_MODE", "production") == "development",
+		RootAdminTokens:    envconf.StringSlice("ROOT_ADMIN_TOKENS", []string{}),
 		ProjectDefinitions: resourceCatalogue,
 		ProviderResources:  providerResources,
 		AIaaS: AIaaSConfig{
@@ -441,64 +440,14 @@ func loadProviderResources(openstack []common.Resource) ([]common.Resource, erro
 	return out, nil
 }
 
-// redactedConfig is the configuration as it may be logged: every secret replaced by whether it is set. Not even a prefix and a length — redact.Secret shows the first four characters, which on a short database password is a good part of it.
+// redactedConfig is the configuration as it may be logged: every secret replaced by whether it is set (redact.Secret: "set", or "" when unset), nothing of the value itself; the DSN keeps host, user and database so a broken connection can still be told from the log.
 func redactedConfig(appConfig AppConfiguration) AppConfiguration {
-	appConfig.Openstack.ApplicationCredentialSecret = secretState(appConfig.Openstack.ApplicationCredentialSecret)
-	appConfig.Openstack.Password = secretState(appConfig.Openstack.Password)
-	appConfig.RoleProvider.APIToken = secretState(appConfig.RoleProvider.APIToken)
-	appConfig.AIaaS.Token = secretState(appConfig.AIaaS.Token)
-	appConfig.Storage.ConnectionString = redactConnString(appConfig.Storage.ConnectionString)
+	appConfig.Openstack.ApplicationCredentialSecret = redact.Secret(appConfig.Openstack.ApplicationCredentialSecret)
+	appConfig.Openstack.Password = redact.Secret(appConfig.Openstack.Password)
+	appConfig.RoleProvider.APIToken = redact.Secret(appConfig.RoleProvider.APIToken)
+	appConfig.AIaaS.Token = redact.Secret(appConfig.AIaaS.Token)
+	appConfig.Storage.ConnectionString = redact.ConnString(appConfig.Storage.ConnectionString)
 	return appConfig
-}
-
-// secretState says whether a secret is set, and nothing else about it.
-func secretState(s string) string {
-	if s == "" {
-		return "empty"
-	}
-	return "set"
-}
-
-// redactConnString keeps host, user and database of a DSN, so a broken connection can still be told from the log, and replaces the password by secretState — in the key/value form ("host=db password=…") as in the URL form ("postgres://user:…@db/name"). A URL that does not parse is replaced as a whole, since there is no telling where its password is.
-func redactConnString(dsn string) string {
-	if dsn == "" {
-		return ""
-	}
-	if strings.Contains(dsn, "://") {
-		u, err := url.Parse(dsn)
-		if err != nil {
-			return "unparseable connection string (" + secretState(dsn) + ")"
-		}
-		if _, has := u.User.Password(); has {
-			u.User = url.UserPassword(u.User.Username(), "set")
-		}
-		q := u.Query()
-		for k := range q {
-			if strings.EqualFold(k, "password") {
-				q.Set(k, "set")
-			}
-		}
-		u.RawQuery = q.Encode()
-		return u.String()
-	}
-	// A quoted value ('a b') runs over several fields; all of them go.
-	var out []string
-	fields := strings.Fields(dsn)
-	for i := 0; i < len(fields); i++ {
-		k, v, ok := strings.Cut(fields[i], "=")
-		if !ok || !strings.EqualFold(strings.TrimSpace(k), "password") {
-			out = append(out, fields[i])
-			continue
-		}
-		if strings.HasPrefix(v, "'") {
-			for !(len(v) > 1 && strings.HasSuffix(v, "'") && !strings.HasSuffix(v, `\'`)) && i+1 < len(fields) {
-				i++
-				v += " " + fields[i]
-			}
-		}
-		out = append(out, k+"="+secretState(v))
-	}
-	return strings.Join(out, " ")
 }
 
 func logAppConfig(appConfig AppConfiguration, log *zap.SugaredLogger) {
@@ -523,32 +472,6 @@ func logAppConfig(appConfig AppConfiguration, log *zap.SugaredLogger) {
 	log.Infof("app.LogAppConfig: Application configuration: %s", appConfigJson)
 }
 
-func getEnvString(primaryKey, secondaryKey, defaultValue string) string {
-	if value := os.Getenv(primaryKey); value != "" {
-		return value
-	}
-	if value := os.Getenv(secondaryKey); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
-func getEnvBool(primaryKey, secondaryKey string, defaultValue bool) bool {
-	if value := os.Getenv(primaryKey); value != "" {
-		parsed, err := strconv.ParseBool(value)
-		if err == nil {
-			return parsed
-		}
-	}
-	if value := os.Getenv(secondaryKey); value != "" {
-		parsed, err := strconv.ParseBool(value)
-		if err == nil {
-			return parsed
-		}
-	}
-	return defaultValue
-}
-
 func validateConfig(config AppConfiguration) error {
 	v := validator.New(validator.WithRequiredStructEnabled())
 	if err := v.Struct(config); err != nil {
@@ -566,21 +489,6 @@ func formatValidationErrors(errs validator.ValidationErrors) string {
 		fmt.Fprintf(&message, "\n - field '%s' failed on '%s' (value: '%v')", e.Namespace(), e.Tag(), e.Value())
 	}
 	return message.String()
-}
-
-func parseCSVEnv(raw string) []string {
-	if strings.TrimSpace(raw) == "" {
-		return []string{}
-	}
-	parts := strings.Split(raw, ",")
-	out := make([]string, 0, len(parts))
-	for _, part := range parts {
-		value := strings.TrimSpace(part)
-		if value != "" {
-			out = append(out, value)
-		}
-	}
-	return out
 }
 
 // Role provider types (ROLE_PROVIDER).

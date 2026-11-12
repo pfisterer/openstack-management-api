@@ -57,9 +57,9 @@ func (s *Service) autoApprovable(ctx context.Context, budget *model.Node, owner 
 // autoApproveReason is the history note of a grant made by budget's policy.
 func autoApproveReason(budget *model.Node) string {
 	if budget.AutoApprove.IsPool() {
-		return "Auto-approved (the budget has room)"
+		return "Automatisch genehmigt (im Budget ist Platz)"
 	}
-	return "Auto-approved (within per-requester limit)"
+	return "Automatisch genehmigt (innerhalb der Grenze pro Person)"
 }
 
 // autoApprovedEntry records an approval nobody had to give.

@@ -124,7 +124,7 @@ func (s *Service) normalizeAuthorizedUsers(ctx context.Context, users []common.A
 // to be picked out of the results.
 func (s *Service) groupTokenExists(ctx context.Context, token string) (bool, error) {
 	if s.roles == nil {
-		return false, fmt.Errorf("no role provider configured")
+		return false, fmt.Errorf("%w: no role provider configured", common.ErrInternal)
 	}
 	token, relation := roles.SplitGroupToken(token)
 	if relation != roles.RelationMember {

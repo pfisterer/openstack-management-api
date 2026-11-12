@@ -695,15 +695,20 @@ func registerTreeAdminTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log 
 // failure: a model that resolved "delete the old one" to the wrong id. Echoing
 // the name means it had to read the thing first, and it puts the name in front
 // of the person whose client is asking them to approve the call.
+// mcpRefusal is a refusal for people, as the tree's invalid: a function of its own because the text is a German sentence, capitalised and with a full stop, which staticcheck refuses in a literal fmt.Errorf.
+func mcpRefusal(format string, args ...any) error {
+	return fmt.Errorf(format, args...)
+}
+
 func registerDestructiveTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *zap.SugaredLogger) {
-	// confirmName fails unless the caller echoed the node's current name back.
+	// confirmName fails unless the caller echoed the node's current name back. The check of golib's mcpserve.ConfirmEcho, with the refusal in German like this service's other messages (ConfirmEcho's text is English and shared with dynamic-zones-api).
 	confirmName := func(id, confirm string) (*model.Node, error) {
 		node, err := mcpLookup(cfg, caller, log, id)
 		if err != nil {
 			return nil, err
 		}
-		if err := mcpserve.ConfirmEcho("confirm_name", confirm, node.Name, fmt.Sprintf("%q", id)); err != nil {
-			return nil, err
+		if confirm != node.Name {
+			return nil, mcpRefusal("confirm_name %q stimmt nicht: %q heißt %q. Erst lesen, dann den aktuellen Namen zurückgeben.", confirm, id, node.Name)
 		}
 		return node, nil
 	}

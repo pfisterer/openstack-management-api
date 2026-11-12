@@ -181,7 +181,7 @@ func (r *Reconciler) upsertImported(
 		ParentID:        &parent,
 		Status:          model.StatusImported,
 		Name:            osProject.Name,
-		Reason:          fmt.Sprintf("OpenStack project: %s (%s)", osProject.Name, osProject.ID),
+		Reason:          fmt.Sprintf("OpenStack-Projekt: %s (%s)", osProject.Name, osProject.ID),
 		Limit:           osLimit,
 		AuthorizedUsers: authorizedUsers,
 		History:         []model.HistoryEntry{},

@@ -113,13 +113,13 @@ func TestCaps_UnboundedAndChoice(t *testing.T) {
 		t.Errorf("any bound below no bound: %v", err)
 	}
 	below := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: sub.ID, Kind: model.KindBudget, Limit: cores(1)})
-	if _, err := update(f, below.ID, set("gpu-max", 0)); err == nil || !strings.Contains(err.Error(), "höchstens 48 h, deshalb kann dieses nicht no bound erlauben") {
+	if _, err := update(f, below.ID, set("gpu-max", 0)); err == nil || !strings.Contains(err.Error(), "erlaubt höchstens 48 h, nicht ohne Obergrenze.") {
 		t.Errorf("no bound below a bound should be refused, got %v", err)
 	}
 	if _, err := update(f, below.ID, set("gpu-max", 49)); err == nil {
 		t.Error("a longer bound below a bound should be refused")
 	}
-	if _, err := update(f, sub.ID, set("prio", 1)); err == nil || !strings.Contains(err.Error(), "höchstens preemptible, deshalb kann dieses nicht guaranteed erlauben") {
+	if _, err := update(f, sub.ID, set("prio", 1)); err == nil || !strings.Contains(err.Error(), "erlaubt höchstens preemptible, nicht guaranteed.") {
 		t.Errorf("a looser choice below should be refused, got %v", err)
 	}
 	if _, err := update(f, sub.ID, set("prio", 2)); err == nil {

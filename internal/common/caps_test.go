@@ -39,3 +39,28 @@ func TestValidateCapDefs_Default(t *testing.T) {
 		t.Error("a default past the choices should be refused")
 	}
 }
+
+// The refusals of Check and the labels in messages are German, like the tree's validation messages; a choice keeps its value, which is what the provider is told.
+func TestCheckAndLabel_German(t *testing.T) {
+	hours := Cap{ID: "h", Name: "GPU: Obergrenze", Provider: "p", Unit: "h", Min: 1, Max: 720, Unbounded: true}
+	runs := Cap{ID: "r", Name: "Laufzeit", Provider: "p", Unit: "h", Min: 1, Max: 24}
+	prio := Cap{ID: "c", Name: "Priorität", Provider: "p", Choices: []string{"preemptible", "guaranteed"}}
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{hours.Check(800), "GPU: Obergrenze: Erlaubt sind 1 bis 720 h oder 0 für keine Obergrenze."},
+		{runs.Check(0), "Laufzeit: Erlaubt sind 1 bis 24 h."},
+		{prio.Check(2), "Priorität: 2 ist keiner der Werte 0 bis 1 (preemptible, guaranteed)."},
+	} {
+		if tc.err == nil || tc.err.Error() != tc.want {
+			t.Errorf("got %v, want %q", tc.err, tc.want)
+		}
+	}
+	if got := hours.Label(0); got != "ohne Obergrenze" {
+		t.Errorf("Label(0) under Unbounded = %q", got)
+	}
+	if got := prio.Label(1); got != "guaranteed" {
+		t.Errorf("a choice's label = %q, want its value", got)
+	}
+}

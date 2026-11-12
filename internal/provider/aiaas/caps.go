@@ -42,18 +42,18 @@ const (
 	defaultJobHours      = 4
 )
 
-// Caps are the caps the AI service declares.
+// Caps are the caps the AI service declares. Name and Message are German: the tree's validation messages name a cap by Name, and the UI shows both where it has no translation of its own. Group and Choices stay as they are: they are keys, the UI translates a group by its name (groupSlug in util-caps.js) and a choice by its value, and a choice is what the AI service is told (BatchPriorityFor).
 var Caps = []common.Cap{
-	{ID: CapReleaseCPUIdleOpen, Name: "CPU: idle time with an open tab", Group: groupReleaseCPU, Unit: "min", Min: 1, Max: maxIdleMinutes, Message: "minutes without activity while a tab of the workspace is open"},
-	{ID: CapReleaseCPUIdleClosed, Name: "CPU: idle time without a tab", Group: groupReleaseCPU, Unit: "min", Min: 1, Max: maxIdleMinutes, Message: "minutes without activity once no tab is open any more"},
-	{ID: CapReleaseCPUMaxHours, Name: "CPU: upper bound", Group: groupReleaseCPU, Unit: "h", Min: 1, Max: maxReleaseHours, Message: "hours after its start a workspace ends at the latest"},
-	{ID: CapReleaseGPUIdleOpen, Name: "GPU: idle time with an open tab", Group: groupReleaseGPU, Unit: "min", Min: 1, Max: maxIdleMinutes, Message: "minutes without activity while a tab of the workspace is open"},
-	{ID: CapReleaseGPUIdleClosed, Name: "GPU: idle time without a tab", Group: groupReleaseGPU, Unit: "min", Min: 1, Max: maxIdleMinutes, Message: "minutes without activity once no tab is open any more"},
-	{ID: CapReleaseGPUMaxHours, Name: "GPU: upper bound", Group: groupReleaseGPU, Unit: "h", Min: 1, Max: maxReleaseHours, Unbounded: true, Message: "hours after its start a GPU workspace or kernel ends at the latest; 0 = none (only for projects with GPUs of their own)"},
-	{ID: CapWorkspaceScratchGB, Name: "Local storage per workspace", Group: groupWorkspaces, Unit: "GB", Min: 1, Max: maxScratchGB, Message: "what a workspace or GPU kernel may write outside its home"},
-	{ID: CapBatchPriority, Name: "Batch priority", Group: groupBatchJobs, Choices: []string{batchPreemptible, batchGuaranteed}, Message: "whether batch jobs may be preempted"},
-	{ID: CapBatchJobsPerPerson, Name: "Batch jobs per person", Group: groupBatchJobs, Min: 1, Max: maxJobsPerPerson, Grant: true, Together: togetherBatchJobs, Default: new(defaultJobsPerPerson), Message: "batch jobs a person may have running and waiting at the same time"},
-	{ID: CapBatchMaxHours, Name: "Batch job run time", Group: groupBatchJobs, Unit: "h", Min: 1, Max: maxJobHours, Grant: true, Together: togetherBatchJobs, Default: new(defaultJobHours), Message: "how long one batch job may run at the latest"},
+	{ID: CapReleaseCPUIdleOpen, Name: "CPU: Leerlauf mit offenem Tab", Group: groupReleaseCPU, Unit: "min", Min: 1, Max: maxIdleMinutes, Message: "Minuten ohne Aktivität, solange ein Tab des Workspace offen ist"},
+	{ID: CapReleaseCPUIdleClosed, Name: "CPU: Leerlauf ohne Tab", Group: groupReleaseCPU, Unit: "min", Min: 1, Max: maxIdleMinutes, Message: "Minuten ohne Aktivität, sobald kein Tab mehr offen ist"},
+	{ID: CapReleaseCPUMaxHours, Name: "CPU: Obergrenze", Group: groupReleaseCPU, Unit: "h", Min: 1, Max: maxReleaseHours, Message: "Stunden nach dem Start, nach denen ein Workspace spätestens endet"},
+	{ID: CapReleaseGPUIdleOpen, Name: "GPU: Leerlauf mit offenem Tab", Group: groupReleaseGPU, Unit: "min", Min: 1, Max: maxIdleMinutes, Message: "Minuten ohne Aktivität, solange ein Tab des Workspace offen ist"},
+	{ID: CapReleaseGPUIdleClosed, Name: "GPU: Leerlauf ohne Tab", Group: groupReleaseGPU, Unit: "min", Min: 1, Max: maxIdleMinutes, Message: "Minuten ohne Aktivität, sobald kein Tab mehr offen ist"},
+	{ID: CapReleaseGPUMaxHours, Name: "GPU: Obergrenze", Group: groupReleaseGPU, Unit: "h", Min: 1, Max: maxReleaseHours, Unbounded: true, Message: "Stunden nach dem Start, nach denen ein GPU-Workspace oder GPU-Kernel spätestens endet; 0 = keine (nur für Projekte mit eigenen GPUs)"},
+	{ID: CapWorkspaceScratchGB, Name: "Lokaler Speicher je Workspace", Group: groupWorkspaces, Unit: "GB", Min: 1, Max: maxScratchGB, Message: "Was ein Workspace oder GPU-Kernel außerhalb des Homes schreiben darf"},
+	{ID: CapBatchPriority, Name: "Priorität der Batch-Jobs", Group: groupBatchJobs, Choices: []string{batchPreemptible, batchGuaranteed}, Message: "Ob Batch-Jobs verdrängt werden dürfen"},
+	{ID: CapBatchJobsPerPerson, Name: "Batch-Jobs je Person", Group: groupBatchJobs, Min: 1, Max: maxJobsPerPerson, Grant: true, Together: togetherBatchJobs, Default: new(defaultJobsPerPerson), Message: "Batch-Jobs, die eine Person gleichzeitig wartend und laufend haben darf"},
+	{ID: CapBatchMaxHours, Name: "Laufzeit eines Batch-Jobs", Group: groupBatchJobs, Unit: "h", Min: 1, Max: maxJobHours, Grant: true, Together: togetherBatchJobs, Default: new(defaultJobHours), Message: "Wie lange ein Batch-Job höchstens läuft"},
 }
 
 func init() {

@@ -234,11 +234,11 @@ func shortenEnd(n *model.Node, end string, actor model.Actor, reason string) err
 // endsWithReason is the history note on a node whose end date followed the
 // budget it draws from.
 func endsWithReason(budget model.Node) string {
-	return fmt.Sprintf("Ends with budget %q", nodeLabel(budget))
+	return fmt.Sprintf("Endet mit dem Budget %q", nodeLabel(budget))
 }
 
 // termReason is the history note on a node shortened to the maximum project
 // term of a budget above it.
 func termReason(budget model.Node, days int) string {
-	return fmt.Sprintf("Projects in budget %q run at most %d days at a time", nodeLabel(budget), days)
+	return fmt.Sprintf("Projekte im Budget %q laufen höchstens %d Tage am Stück", nodeLabel(budget), days)
 }

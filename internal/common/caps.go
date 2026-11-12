@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 )
 
 // A cap is an upper bound a budget sets for everything below it, declared by the provider that carries it out (decided 10.11.2026, docs/plan-caps-katalog.md): the release times, the local storage per workspace, the batch priority and the batch jobs of the AI service, and whatever a provider brings next. Unlike a resource it is no quantity: nothing is summed or handed down in parts. It holds for every project below the budget, a budget below may only tighten it, and what applies is the strictest value along the chain of budgets. The tree knows only this rule; what a cap means is the provider's business.
@@ -66,32 +67,37 @@ func (d Cap) Stricter(a, b int) int {
 	return a
 }
 
-// Check refuses a value outside what the cap allows.
+// Check refuses a value outside what the cap allows, with a message for people (German, like the tree's validation messages).
 func (d Cap) Check(v int) error {
 	switch {
 	case len(d.Choices) > 0:
 		if v < 0 || v >= len(d.Choices) {
-			return fmt.Errorf("%s: %d is none of the choices %v", d.Name, v, d.Choices)
+			return invalid("%s: %d ist keiner der Werte 0 bis %d (%s).", d.Name, v, len(d.Choices)-1, strings.Join(d.Choices, ", "))
 		}
 	case d.Unbounded && v == 0:
 	case v < d.Min || v > d.Max:
 		if d.Unbounded {
-			return fmt.Errorf("%s: must be between %d and %d%s, or 0 for no bound", d.Name, d.Min, d.Max, d.unitSuffix())
+			return invalid("%s: Erlaubt sind %d bis %d%s oder 0 für keine Obergrenze.", d.Name, d.Min, d.Max, d.unitSuffix())
 		}
-		return fmt.Errorf("%s: must be between %d and %d%s", d.Name, d.Min, d.Max, d.unitSuffix())
+		return invalid("%s: Erlaubt sind %d bis %d%s.", d.Name, d.Min, d.Max, d.unitSuffix())
 	}
 	return nil
 }
 
-// Label is a value as a message names it.
+// Label is a value as a message names it: the choice (its id, which is also what the provider is told), "ohne Obergrenze" for 0 under Unbounded, or the number with its unit.
 func (d Cap) Label(v int) string {
 	switch {
 	case len(d.Choices) > 0 && v >= 0 && v < len(d.Choices):
 		return d.Choices[v]
 	case d.Unbounded && v == 0:
-		return "no bound"
+		return "ohne Obergrenze"
 	}
 	return fmt.Sprintf("%d%s", v, d.unitSuffix())
+}
+
+// invalid is a validation message for people, as in package model and tree: a function of its own because the texts are German sentences, capitalised and with a full stop, which staticcheck refuses in a literal fmt.Errorf.
+func invalid(format string, args ...any) error {
+	return fmt.Errorf(format, args...)
 }
 
 func (d Cap) unitSuffix() string {

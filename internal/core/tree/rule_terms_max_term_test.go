@@ -139,7 +139,7 @@ func TestMaxTerm_LoweringCascades(t *testing.T) {
 		if endOf(n) != inDays(90) {
 			t.Errorf("%s should be shortened to the term, got %s", n.Name, endOf(n))
 		}
-		if last := n.History[len(n.History)-1]; last.Event != "end_shortened" || last.Reason == nil || !strings.Contains(*last.Reason, "90 days") {
+		if last := n.History[len(n.History)-1]; last.Event != "end_shortened" || last.Reason == nil || !strings.Contains(*last.Reason, "höchstens 90 Tage") {
 			t.Errorf("%s should say in its history why it ends earlier, got %+v", n.Name, last)
 		}
 	}

@@ -158,7 +158,7 @@ func TestMCP_DestructiveToolsRefuseAMismatchedName(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("a mismatched confirm_name deleted %q anyway", id)
 	}
-	if msg := mcptest.Text(res); !strings.Contains(msg, "confirm_name") {
+	if msg := mcptest.Text(res); !strings.Contains(msg, "confirm_name") || !strings.Contains(msg, "stimmt nicht") {
 		t.Errorf("refused for the wrong reason: %s", msg)
 	}
 }

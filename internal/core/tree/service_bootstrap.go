@@ -181,7 +181,7 @@ func (s *Service) ensureBootstrapNodes(ctx context.Context) error {
 			ParentID: &parent,
 			Status:   model.StatusApproved,
 			Name:     "Unassigned OpenStack Imports",
-			Reason:   "Collection point for OpenStack projects discovered by the reconciler. Limit 0: nothing can be approved here — promote imports into a real budget.",
+			Reason:   "Sammelstelle für OpenStack-Projekte, die der Abgleich gefunden hat. Limit 0: Hier lässt sich nichts genehmigen — Importe in ein richtiges Budget übernehmen.",
 			Limit:    zeroLimit,
 			// No own admin scope needed: root admins manage it via the ancestor rule.
 			CreatedBy: "System",

@@ -219,7 +219,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		node.Status = model.StatusApproved
 		approvedEntry := model.NewHistoryEntry("approved", actor, model.StatusApproved)
 		approvedEntry.StatusFrom = new(model.StatusPending)
-		approvedEntry.Reason = new("Created directly by a manager")
+		approvedEntry.Reason = new("Direkt angelegt von einer Person, die das Budget verwaltet")
 		node.History = append(node.History, approvedEntry)
 
 	case req.Kind == model.KindProject && parent.AutoApprove != nil:
@@ -505,7 +505,7 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 	}
 	if inherits && !current.InheritsLimit {
 		historyEntry.LimitFrom = &current.Limit
-		historyEntry.Reason = new("Inherits the limit of the budget above")
+		historyEntry.Reason = new("Übernimmt das Limit des Budgets darüber")
 		updated.Limit = common.ProjectQuota{}
 		// Its Grant caps are those above now, like its limit. A copy: updated shares the map with current.
 		next := maps.Clone(updated.Caps)
@@ -803,7 +803,7 @@ func (s *Service) leafChangeDecision(ctx context.Context, current, parent *model
 	if viaPolicy {
 		return true, autoApproveReason(parent), false, nil
 	}
-	return true, "Applied directly (gives resources back, ends sooner or changes members only)", false, nil
+	return true, "Direkt übernommen (gibt Ressourcen zurück, endet früher oder ändert nur Mitglieder)", false, nil
 }
 
 // ApproveNode approves a pending node or the pending changes of a change_pending

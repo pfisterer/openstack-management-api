@@ -64,7 +64,7 @@ func ValidateCaps(own, inherited common.Caps, root, inheritsLimit bool, defs []c
 			return invalid("%s: Das Budget darüber hat das nicht, deshalb kann dieses es auch nicht haben.", d.Name)
 		}
 		if has && d.Looser(v, above) {
-			return invalid("%s: Das Budget darüber erlaubt höchstens %s, deshalb kann dieses nicht %s erlauben.", d.Name, d.Label(above), d.Label(v))
+			return invalid("%s: Das Budget darüber erlaubt höchstens %s, nicht %s.", d.Name, d.Label(above), d.Label(v))
 		}
 	}
 	for _, d := range defs {

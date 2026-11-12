@@ -224,7 +224,7 @@ type AppConfiguration struct {
 }
 
 // loadAppConfiguration loads configuration from an optional .env file and environment variables.
-// Priority order (low to high): .env < environment variables.
+// Priority order (low to high): environment variables < .env (godotenv.Overload, see below).
 func loadAppConfiguration() (AppConfiguration, error) {
 	// Load .env if present. Overload (not Load) is used so .env values take precedence over
 	// any OS-level environment variables with the same name. This prevents the shell's

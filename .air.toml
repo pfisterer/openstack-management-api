@@ -4,10 +4,10 @@ tmp_dir = "tmp"
 
 [build]
   args_bin = []
-  bin = "./tmp/build/dynamic-zones"
-  cmd = "go build -o ./tmp/build/dynamic-zones ./cmd/main.go"
+  bin = "./tmp/build/openstack-management-api"
+  cmd = "go build -o ./tmp/build/openstack-management-api ./cmd/main.go"
   delay = 1000
-  exclude_dir = ["assets", "build", "vendor", "testdata", "node_modules"]
+  exclude_dir = ["assets", "build", "tmp", "vendor", "testdata", "node_modules", "helm-chart", "docs", "internal/generated_docs"]
   exclude_file = []
   exclude_regex = ["_test.go"]
   exclude_unchanged = false

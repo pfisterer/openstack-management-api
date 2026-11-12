@@ -34,7 +34,7 @@ Self-service backend for **delegated OpenStack resource management**. Organizati
 ```
 
 - **Clients** use the published OpenAPI description. The browser UI depends on the generated TypeScript client as an npm package at build time; the service no longer serves a client at runtime (§10).
-- **role-provider-service** answers "which `group:` tokens does this person hold?", lists group members and searches groups and users. A built-in mock replaces it for local work (`ROLE_PROVIDER=mock`, the default).
+- **role-provider-service** answers "which `group:` tokens does this person hold?", lists group members and searches groups and users. A built-in mock replaces it for local work (`ROLE_PROVIDER=mock`, accepted only with `API_MODE=development`); `ROLE_PROVIDER` has no default.
 - **OpenStack** is only touched by the reconciler, and only when `RECONCILER_ENABLED=true`. No API request waits on OpenStack; the API only reports whether provisioning is running (`provisioningEnabled` in `/v1/config`).
 
 ---
@@ -206,8 +206,8 @@ internal/
                              lookup, acting on behalf (X-Act-As), principal search
   webserver/                 Gin router: /v1 node, token, act-as, principal-search,
                              catalogue and reconciler-admin handlers, /mcp, static
-  roleprovider/              roles.Provider over HTTP (api/: Go client generated from
-                             role-provider-service's spec)
+  roleprovider/              roles.Provider over HTTP, on the Go client module
+                             github.com/pfisterer/role-provider-service/client
   provider/openstack/        carries the tree out in OpenStack
     catalog/                 availabilities at runtime (§3)
     reconciler/              two-way sync (§8), one file per concern; Supervisor (retries
@@ -246,9 +246,9 @@ For OIDC and API tokens the caller's tokens come from `RoleProvider.GetUserToken
 `roles.Provider` ([internal/core/roles](internal/core/roles)) has five methods: `GetUserTokens`, `SearchGroups`, `SearchUsers` (by address only, never by name), `GetGroupUsers` and `ListRelations`. Two implementations:
 
 - **`mock`** ([internal/dev](internal/dev)) — derived from the seed identities; no external dependency. Logged as a warning because it hands out fake group memberships.
-- **`http`** — calls role-provider-service with a bearer token (`ROLE_PROVIDER_URL`, `ROLE_PROVIDER_API_TOKEN`) through a client generated from that service's released OpenAPI spec (§10). If the token lookup fails, the caller gets only their own `user:` token — they lose group rights for that request rather than the request failing. Search errors are returned as errors: principal search then degrades to what it could still find, while the `authorized_users` group check fails closed.
+- **`http`** — calls role-provider-service with a bearer token (`ROLE_PROVIDER_URL`, `ROLE_PROVIDER_API_TOKEN`) through that service's Go client module `github.com/pfisterer/role-provider-service/client` (§10). If the token lookup fails, the caller gets only their own `user:` token — they lose group rights for that request rather than the request failing. Search errors are returned as errors: principal search then degrades to what it could still find, while the `authorized_users` group check fails closed.
 
-Any other `ROLE_PROVIDER` value stops the service at startup rather than silently falling back to the mock.
+`ROLE_PROVIDER` has no default: an unset or unknown value, or `mock` outside `API_MODE=development`, stops the service at startup rather than silently running on the mock's fake group memberships.
 
 **Relations.** The role provider can say what someone is in a group, not only that they are in it: a user who is `dozent` in `wwi23seb` resolves to `group:wwi23seb#dozent` *and* `group:wwi23seb`. Every relation implies membership, so a rule on the plain group token keeps meaning everyone in the group, and tokens are still compared as plain strings. `common.SplitGroupToken` separates the relation where it matters: `GetGroupUsers` passes it as the `relation` parameter (a `#` has no place in a URL path), and the `authorized_users` check requires both the group to exist and the relation to be one `ListRelations` returns — still failing closed. The mock provider mirrors the role-provider mock course (`wwi23seb` with a `dozent` and a `studierende`).
 
@@ -435,13 +435,13 @@ The **Go client for role-provider-service** is not generated here: it is the mod
 - **`webserver/api_scenario_test.go` is the acceptance oracle:** it builds a multi-level tree through the real HTTP API as five different mock identities (including a budget request), drives the full lifecycle and asserts the usage rollup on every level. Regressions in authorization or capacity almost always surface here.
 - Unit and focused tests sit next to the code. In `tree/`: service operations, availabilities, charged quotas, released accounting, actor/channel, ancestor ids, authorized-user validation, the legacy table drop. In `reconciler/`: grants, in-use measurement, released leaves, tag recovery, scope parent, project names, prefixed tags, desired members. In `openstack/client/`: federated pre-seeding and conflicts, the project-scope split. In `webserver/`: node handlers, acting on behalf (including eligibility for an unknown person), CORS, the config endpoint, read-only tokens, MCP and the MCP input drift check. In `internal/` (package `app`): catalogue loading and validation, the built-in catalogue's measurement flags, the supervisor's retry loop.
 - Test helpers ([testhelpers_test.go](internal/webserver/testhelpers_test.go)): `setupRouter`, `setupRouterSeeded`, `routerFromStore` (memory store, dummy auth, chosen accounting), `do`, `mustDecode`, `decodePage`.
-- CI (`Checks`) runs `make bundle`, `go vet`, `make test` and the role-provider spec/client checks. The image build deliberately runs no tests (`make image`).
+- CI (`Checks`) runs `make bundle`, `go vet`, `make test` and govulncheck; the role-provider client is checked against its spec in role-provider-service, where it is generated. The image build deliberately runs no tests (`make image`).
 
 ---
 
 ## 12. Development and deployment
 
-**Locally**, the defaults need nothing external: in-memory store, mock role provider, reconciler off. `make dev` runs the server with live reload under `API_MODE=development`; add `API_DUMMY_AUTH=true` and `DB_ADD_MOCK_DATA=true` for a populated tree, signed in as the seed's root admin; other people via `X-Act-As`. Configuration is environment-only (see the README table and [config.go](internal/config.go)); a `.env` in the working directory **overrides** already-set variables, which also decides what a local test run sees.
+**Locally**, the defaults need nothing external: in-memory store, reconciler off. `ROLE_PROVIDER` has to be set, `ROLE_PROVIDER=mock` needs no role-provider-service. `make dev` runs the server with live reload under `API_MODE=development`; add `ROLE_PROVIDER=mock`, `API_DUMMY_AUTH=true` and `DB_ADD_MOCK_DATA=true` for a populated tree, signed in as the seed's root admin; other people via `X-Act-As`. Configuration is environment-only (see the README table and [config.go](internal/config.go)); a `.env` in the working directory **overrides** already-set variables, which also decides what a local test run sees.
 
 **Deployment** is a Helm chart in `helm-chart/` (with `values.schema.json`), published as an OCI artifact and normally composed with the other services by the umbrella chart described in the README. It runs one replica, which the in-process `approvalMu` relies on. Postgres is expected in production; the tree needs only its `nodes` and `identities` tables plus the token table. A cautious reconciler rollout starts with `RECONCILER_DRY_RUN=true`.
 

@@ -10,7 +10,7 @@ import (
 
 	"github.com/pfisterer/cloud-self-service-golib/httpx"
 	"github.com/pfisterer/openstack-management-api/internal/common"
-	"github.com/pfisterer/openstack-management-api/internal/roleprovider/api"
+	roleclient "github.com/pfisterer/role-provider-service/client"
 	"go.uber.org/zap"
 )
 

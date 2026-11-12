@@ -17,42 +17,9 @@ DOCKER_REPO ?= ghcr.io/pfisterer/$(PROJECT_NAME)
 DOCKER_TAG ?= $(shell cat VERSION)
 DOCKER_PLATFORMS ?= linux/amd64,linux/arm64
 
-RP_API_DIR        := ./internal/roleprovider/api
-# The role-provider-service release whose API this client is generated from.
-# Keep it in step with the version the umbrella chart pins next to this service
-# — those two being one number is what makes a mismatch visible.
-#
-# Only stable releases carry the swagger.json asset: a "-test.N" push creates no
-# GitHub release, and that omission is deliberate over there — it is what keeps
-# production from resolving a prerelease.
-#
-# So while an API change is still in flight on a prerelease, override the URL
-# rather than the version. role-provider-service serves its own spec at
-# /swagger.json ahead of the bearer middleware, so any running instance is a
-# valid source, and curl reads file:// as happily as https://:
-#
-#   make generate-role-provider-client \
-#     RP_SWAGGER_URL=https://role-provider.staging.dhbw.cloud/swagger.json
-#
-#   make generate-role-provider-client \
-#     RP_SWAGGER_URL=file://$$PWD/../role-provider-service/internal/generated_docs/swagger.json
-#
-# That is the old sibling-checkout behaviour, minus the part where it was the
-# silent default. The committed value below stays a released version, so what
-# lands on main is always reproducible from something published — and since the
-# generated client is committed, an override made mid-flight shows up in the
-# diff instead of hiding in someone's working copy.
-RP_VERSION        ?= v0.7.0
-# The generator, pinned. Its version is written into client.gen.go's header, so
-# an unpinned `@latest` makes the committed file depend on when someone last ran
-# the target — and the CI check below would then fail on an upstream release
-# rather than on anything in this repository.
-RP_CODEGEN_VERSION ?= v2.6.0
-RP_SWAGGER_URL    ?= https://github.com/pfisterer/role-provider-service/releases/download/$(RP_VERSION)/swagger.json
-
 .DEFAULT_GOAL := all
 
-.PHONY: publish all image build clean doc convert client bundle npm-package npm-pack npm-publish check swag run help install-npm docker docker-login docker-build multi-arch-build dev helm-update test generate-role-provider-client print-rp-swagger-url bump version-check
+.PHONY: publish all image build clean doc convert client bundle npm-package npm-pack npm-publish check swag run help install-npm docker docker-login docker-build multi-arch-build dev helm-update test bump version-check
 
 all: test bundle build
 
@@ -115,47 +82,6 @@ bundle: generate-swagger-json
 		'var Version string' \
 		> $(EMBED_FILE)
 	@echo "✅ Embedded docs written to $(EMBED_FILE)"
-
-# Where CI reads the URL from, so the pin lives in exactly one place. A copy of
-# it in the workflow would be a second thing to move when RP_VERSION changes,
-# and the check would keep passing against the old one.
-print-rp-swagger-url:
-	@echo "$(RP_SWAGGER_URL)"
-
-# Generate Go client from the role-provider-service OpenAPI description.
-#
-# The spec comes from a released version of that service, not from a checkout
-# next to this one. The old filesystem path meant the client could be generated
-# from whatever happened to be on the developer's disk — and when the path was
-# missing, the target printed a warning and carried on with the committed copy,
-# which is how a client stays silently out of date. A failed download now stops
-# the target.
-generate-role-provider-client: install-npm
-	@echo "🔁 Fetching swagger.json from role-provider-service $(RP_VERSION)..."
-	@# Into a temporary file first: writing straight to the destination would
-	@# leave a truncated or half-downloaded spec behind on failure, and the
-	@# committed one is the only copy there is.
-	@curl -fsSL "$(RP_SWAGGER_URL)" -o "$(RP_API_DIR)/swagger.json.tmp" || { \
-		rm -f "$(RP_API_DIR)/swagger.json.tmp"; \
-		echo "❌ $(RP_SWAGGER_URL) is not available."; \
-		echo "   Releases made before role-provider-service started attaching the"; \
-		echo "   spec carry no such asset. Either point RP_VERSION at a newer"; \
-		echo "   release, or attach it to this one once, from that repository:"; \
-		echo "     make generate-docs && gh release upload $(RP_VERSION) internal/generated_docs/swagger.json"; \
-		exit 1; \
-	}
-	@mv "$(RP_API_DIR)/swagger.json.tmp" "$(RP_API_DIR)/swagger.json"
-	@echo "🔁 Converting role-provider-service swagger.json → OpenAPI 3..."
-	@npx swagger2openapi $(RP_API_DIR)/swagger.json \
-		--outfile $(RP_API_DIR)/openapi3.json \
-		--yaml=false --patch --warnOnly
-	@echo "📦 Generating Go client ($(RP_CODEGEN_VERSION))..."
-	@# `go run pkg@version` rather than installing on PATH: a machine that
-	@# already has some oapi-codegen would otherwise generate with THAT one,
-	@# silently, because the install was guarded by `command -v`.
-	@go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@$(RP_CODEGEN_VERSION) \
-		-config $(RP_API_DIR)/oapi-codegen.yaml $(RP_API_DIR)/openapi3.json
-	@echo "✅ Go client generated in $(RP_API_DIR)/client.gen.go"
 
 # ── npm client package ──────────────────────────────────────────────────────
 # Builds the generated client as a publishable npm package. This is the same
@@ -336,7 +262,6 @@ help:
 	@echo "  client                  → Generate TypeScript client"
 	@echo "  bundle                  → Bundle client into JS"
 	@echo "              → Bundle web UI dependencies"
-	@echo "  generate-role-provider-client      → Regenerate Go client from role-provider-service swagger.json"
 	@echo "  docker-build            → Build Docker image"
 	@echo "  docker-run              → Run Docker container"
 	@echo "  docker-multi-arch-build → Build and push multi-architecture Docker image (requires buildx & Docker login)"

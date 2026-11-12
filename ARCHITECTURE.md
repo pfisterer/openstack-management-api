@@ -426,7 +426,7 @@ swag annotations ─▶ swagger.json (OpenAPI 2) ─▶ embedded (generated_docs
 
 `make bundle` generates `swagger.json` and the embed file (plus `VERSION`); a fresh clone does not compile without it. The TypeScript client is no longer embedded or served: it is published as an npm package (`@dhbw-cloud/os-mgt-client`, prereleases on the `next` dist-tag) so consumers depend on a version at build time and a missing operation is a build error there rather than a silent no-op in a browser with a stale cached client.
 
-The **Go client for role-provider-service** (`internal/roleprovider/api`) is generated with a pinned `oapi-codegen` from the `swagger.json` attached to the role-provider-service release named by `RP_VERSION` in the Makefile, not from a sibling checkout; `RP_SWAGGER_URL` can point at an unreleased spec while an API change is in flight. The spec and the generated client are committed, and CI checks both against the pinned release.
+The **Go client for role-provider-service** is not generated here: it is the module `github.com/pfisterer/role-provider-service/client` (package `roleclient`), which that service generates from its own spec and publishes under tags `client/vX.Y.Z`; go.mod pins the tag. When the role-provider API changes, that repository tags a new client version and this one bumps it with `go get github.com/pfisterer/role-provider-service/client@vX.Y.Z`. `internal/roleprovider` wraps it with golib's retrying HTTP client.
 
 ---
 

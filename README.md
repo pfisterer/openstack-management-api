@@ -210,7 +210,6 @@ In development, `API_DUMMY_AUTH=true` signs every request in as `API_DEV_AUTH_US
 - `make bundle` — regenerate `swagger.json` and the embedded docs the server compiles in; a fresh clone does not build without it.
 - `make dev` — live-reload server, needs [air](https://github.com/air-verse/air).
 - `make npm-package` / `make npm-publish` — build and publish the TypeScript client `@dhbw-cloud/os-mgt-client` (a prerelease goes to the `next` dist-tag). Publishing is a manual step, not part of CI.
-- `make generate-role-provider-client` — regenerate the Go client for role-provider-service from the spec attached to the release `RP_VERSION` names.
 - `make bump V=x.y.z` — set `VERSION` and the chart's `version`/`appVersion` together.
 
 **Releasing from this machine.** Waiting for CI is optional: `make bump V=x.y.z`, commit as `release x.y.z`, then `make publish`. It runs the tests (`make test`), builds the image for linux/amd64 (the build stage runs on the building machine and cross-compiles, so an arm64 Mac builds at native speed), pushes the image and the chart to GHCR and only then pushes the commits — well under a minute. CI then finds the version published and only verifies that it builds; Git tags and GitHub releases of stable versions are still made by CI. `make publish` refuses uncommitted changes and a version that is already published, so a registry version is always exactly one commit. It needs `docker login ghcr.io` and `helm registry login ghcr.io` with a token that may write packages.

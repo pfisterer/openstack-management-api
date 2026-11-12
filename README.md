@@ -2,64 +2,39 @@
 
 ## Why
 
-An OpenStack cloud can be handed out in exactly two unsatisfying ways. Either a
-central team creates every project by hand — then it is the bottleneck, and the
-answer to "who has what, paid from whose share?" lives in tickets. Or everyone
-gets admin rights — then nothing is bounded, and the first over-provisioned
-project is discovered when the cloud is full.
+An OpenStack cloud can be handed out in exactly two unsatisfying ways. Either a central team creates every project by hand — then it is the bottleneck, and the answer to "who has what, paid from whose share?" lives in tickets. Or everyone gets admin rights — then nothing is bounded, and the first over-provisioned project is discovered when the cloud is full.
 
-A fixed default quota does not resolve it either. Whatever size it has, it fits
-almost nobody: too small for a course with two dozen students, far too generous for
-a demo that runs for an afternoon. Every request that leaves the default behind —
-which is most of them — becomes a ticket again, and the wait comes back with it.
+A fixed default quota does not resolve it either. Whatever size it has, it fits almost nobody: too small for a course with two dozen students, far too generous for a demo that runs for an afternoon. Every request that leaves the default behind — which is most of them — becomes a ticket again, and the wait comes back with it.
 
-What is missing between the two is *delegated capacity*: a department gets a share
-it can pass on, a lecturer can hand part of theirs to a course, and a student can
-ask their lecturer instead of the data centre. Each step should be a decision by
-someone who actually owns the resources — and who can judge whether the request is
-reasonable, which an administrator reading a ticket usually cannot — recorded where
-the next person can see it, and ending in a real OpenStack project without anyone
-clicking it together.
+What is missing between the two is *delegated capacity*: a department gets a share it can pass on, a lecturer can hand part of theirs to a course, and a student can ask their lecturer instead of the data centre. Each step should be a decision by someone who actually owns the resources — and who can judge whether the request is reasonable, which an administrator reading a ticket usually cannot — recorded where the next person can see it, and ending in a real OpenStack project without anyone clicking it together.
 
 Some requests should not need a decision at all. A budget can approve requests on its own — as a pool, bounded only by the budget itself, or with a cap per requester — so allocations are granted the moment they are asked for and only what exceeds that reaches a human. That is what keeps delegation from turning into a queue one level further down.
 
-This service is that middle layer. It owns the budget tree, the request and
-approval cycle, and the reconciliation into OpenStack.
+This service is that middle layer. It owns the budget tree, the request and approval cycle, and the reconciliation into OpenStack.
 
-It is an API and usable on its own — everything below is reachable over HTTP, and
-it ships a generated TypeScript client. If you would rather not build a frontend,
-[**self-service-ui**](https://github.com/pfisterer/self-service-ui) is one: a web
-interface covering the whole flow (requesting, approving, delegating, releasing,
-plus the DNS half of the platform). Its README has screenshots of what that looks
-like.
+It is an API and usable on its own — everything below is reachable over HTTP, and it ships a generated TypeScript client. If you would rather not build a frontend, [**self-service-ui**](https://github.com/pfisterer/self-service-ui) is one: a web interface covering the whole flow (requesting, approving, delegating, releasing, plus the DNS half of the platform). Its README has screenshots of what that looks like.
 
 ## What it does
 
 The whole domain is **one tree of nodes** (`internal/core/tree`):
 
-- **Budget** — an inner node: a delegated pool of capacity. Its `admin_scope` tokens manage it (approve or reject children, edit it, delegate further); its `eligible_requesters` tokens may request child nodes under it. Delegation *is* creating a sub-budget with someone else in `admin_scope` — there is no separate concept for it. A budget may carry `auto_approve`: without a `per_requester_limit` it grants whatever it has room for (a pool), with one only up to that per-person cap. A pool grants sub-budget requests too, any the budget's limit allows; a budget with a per-person cap takes none (`allow_sub_budget_requests` must be `false`), its managers still create sub-budgets directly. It covers later changes to a project as well, and `allow_requests_beyond_auto_approve: false` turns it into a hard limit: what it does not cover is refused instead of waiting for a manager. `auto_approve_extensions: false` leaves later end dates to a manager while new projects are still granted automatically. A project can also draw from a budget further up — a GPU or a network for one student project, more cores than its own budget gives — without the budgets in between holding it: an *allocation*, granted by that budget's managers and charged only to it and above. A budget may also set `max_project_term_days`: a project below it then ends at most that many days after the day it is requested or extended, never past a budget's end; lowering it shortens the projects below. A budget with `inherits_limit: true` only structures the tree — a campus grouping its faculties — and passes on the limit of the budget above instead of having one of its own; it follows when that limit changes, and everything else about it (managers, requesters, auto-approve, terms) is its own. Only managers above it switch it on.
-- **Project** — a leaf: a concrete allocation with exactly one `owner`.
-  Lifecycle `pending → approved → released → archived`, plus `change_pending` while a change
-  is proposed (rejecting a change returns the node to `approved`). Budgets go
-  through the same cycle up to `approved`. A released or archived project can be deleted
-  for good on request, where the deployment allows it; its record then disappears.
+- **Budget** — an inner node: a delegated pool of capacity. Its `admin_scope` tokens manage it (approve or reject children, edit it, delegate further); its `eligible_requesters` tokens may request child nodes under it. Delegation *is* creating a sub-budget with someone else in `admin_scope` — there is no separate concept for it. A budget may carry `auto_approve`: without a `per_requester_limit` it grants whatever it has room for (a pool), with one only up to that per-person cap. A pool grants sub-budget requests too, any the budget's limit allows; a budget with a per-person cap takes none (`allow_sub_budget_requests` must be `false`), its managers still create sub-budgets directly. It covers later changes to a project as well, and `allow_requests_beyond_auto_approve: false` turns it into a hard limit: what it does not cover is refused instead of waiting for a manager. `auto_approve_extensions: false` leaves later end dates to a manager while new projects are still granted automatically. A project can also draw from a budget further up — a GPU or a network for one student project, more cores than its own budget gives — without the budgets in between holding it: an *allocation*, granted by that budget's managers and charged only to it and above. A budget may also set `max_project_term_days`: a project below it then ends at most that many days after the day it is requested or extended (at the end of that day in Europe/Berlin), never past a budget's end; lowering it shortens the projects below. A budget with `inherits_limit: true` only structures the tree — a campus grouping its faculties — and passes on the limit of the budget above instead of having one of its own; it follows when that limit changes, and everything else about it (managers, requesters, auto-approve, terms) is its own. Only managers above it switch it on.
+- **Project** — a leaf: a concrete allocation with exactly one `owner`. Lifecycle `pending → approved → released → archived`, plus `change_pending` while a change is proposed (rejecting a change returns the node to `approved`). Budgets go through the same cycle up to `approved`. A released or archived project can be deleted for good on request, where the deployment allows it; its record then disappears.
 - **Resource catalogue** — what a node's limit is made of. A resource is either a quantity (`kind: count`, the default: cores, RAM, storage — sums across children and is capped by the parent) or an *availability* (`kind: bool`: a network, an image, a GPU flavour — granted or not, passed down rather than divided). An availability carries a `grant` naming what it means in OpenStack by ID: a shared network (Neutron RBAC), an image membership (Glance) or flavour access (Nova). The target has to be prepared for it: an image with visibility `shared` owned by the scope parent project (Glance takes members only there, and only from the owner), a flavour that is not public (Nova keeps an access list only for private ones). Quantities are deployment configuration (`RESOURCE_DEFINITIONS`), which replaces the built-in set (cores, RAM, storage and the static network and volume quotas) rather than extending it; an invalid entry stops the service at startup instead of producing a resource that governs nothing. Availabilities are managed by root admins in the portal (`/v1/admin/catalog`): configured ones seed the database once, after that it is the only source. Adding one checks the target in OpenStack and gives it to the root; removing one goes through *withdraw* (set to 0 on every node and revoked by the reconciler, undoable) and *remove* (only once nothing holds it and OpenStack grants it to no managed project). A quantity new to the configuration is added to the root, so it can be delegated; an availability cannot be withdrawn from a single budget while a node below still holds it. Each node reports the resources in scope at it (`available_resources`), so a budget granted two of forty shows two.
+- **Caps** — upper bounds a budget sets for every project below it, declared by the provider that carries them out; today they are the AI service's: release times of CPU and GPU workspaces, local storage per workspace, the priority of batch jobs, and batch jobs per person with their run time. Unlike a resource a cap is not summed or divided: a budget below may only tighten it, and the strictest value along the chain applies. `/v1/config` lists them with their names and hints in the caller's language.
 - **Usage rollup** — approved and `change_pending` leaves consume capacity, aggregated live over every subtree; availabilities never sum. By default a released leaf with an OpenStack project stays charged until that project is archived or gone (`API_CHARGE_RELEASED`; one without frees its budget at once), an archived one costs the volume storage it still holds if `API_CHARGE_ARCHIVED` is on, and a leaf is charged the larger of its limit and what OpenStack reports it uses (`API_CHARGE_OS_IN_USE`), so shrinking a project after filling it frees nothing on paper. Approving anything checks capacity along the whole ancestor chain, not just the direct parent.
 - **Attributes** — managers attach free-form groups of key/value pairs to a budget or project, such as a cost centre (`PUT /v1/nodes/{id}/attributes`): on a budget its managers and those above, on a project the managers of its budgets, not its owner. The platform does not interpret them. A node inherits each group whole from the nearest node at or above it that sets it — never keys of one group from two levels — and a group set to empty stops that inheritance below it. Only those who look after a node see them (its managers and those above, on a project also its owner and admins), each group with the node it comes from.
-- **Usage history** — with the reconciler running, each finished day's consumption per project is recorded from Nova's accounting (server, core and RAM hours, plus a daily sample of volume storage and public IPv4 addresses), with a snapshot of the project's name, owner, budget path and attributes on that day; the rows outlive the project. A report covers a project, or everything below a budget for its managers (`/v1/nodes/{id}/usage`), with utilisation against what was reserved; root admins get every project, with a euro value if `API_USAGE_PRICES` is set (`/v1/admin/usage`). A project whose attributes changed within the period appears once per set, and a project's members see its usage without them.
-- **Listings** — a budget's children can be filtered and sorted, also by resources: `reserved:<resource>`, `used:<resource>` (what OpenStack measured) and `servers`; unlimited sorts above every amount, a project not measured yet below every measured one. Every node carries the path of budgets down to its parent (`parent_path`) and every allocation the path down to the budget it draws from (`budget_path`), so two budgets of the same name can be told apart.
-- **Authorization walks the parent chain** — deciding on a node requires a token
-  in an *ancestor's* `admin_scope`, so nobody approves their own request. Root
-  admins are simply the `admin_scope` of the `root` node, synchronised from
-  `ROOT_ADMIN_TOKENS` at startup.
+- **Usage history** — with the reconciler running, the consumption of each finished day (a calendar day in Europe/Berlin, as in the AI service) per project is recorded from Nova's accounting (server, core and RAM hours, plus a daily sample of volume storage and public IPv4 addresses), with a snapshot of the project's name, owner, budget path and attributes on that day; the rows outlive the project. A report covers a project, or everything below a budget for its managers (`/v1/nodes/{id}/usage`), with utilisation against what was reserved; root admins get every project, with a euro value if `API_USAGE_PRICES` is set (`/v1/admin/usage`). A report covers the last 30 finished days unless it names a period (`from`, `to`), at most 1098 days. A project whose attributes changed within the period appears once per set, and a project's members see its usage without them.
+- **Listings** — a budget's children can be filtered and sorted, also by resources: `reserved:<resource>`, `used:<resource>` (what OpenStack measured) and `servers`; unlimited sorts above every amount, a project not measured yet below every measured one. Every node carries the path of budgets down to its parent (`parent_path`) and every allocation the path down to the budget it draws from (`budget_path`), so two budgets of the same name can be told apart. Every list is paged with `limit` and `offset` (default 100, at most 500) and answered as `{items, total, limit, offset}`, `total` counting the matches before the page.
+- **Authorization walks the parent chain** — deciding on a node requires a token in an *ancestor's* `admin_scope`, so nobody approves their own request. Root admins are simply the `admin_scope` of the `root` node, synchronised from `ROOT_ADMIN_TOKENS` at startup.
 - **Acting on behalf** — a root admin may act on behalf of another person (`X-Act-As` header, e.g. for a ticket), seeing and doing what that person would; the history records the admin beside the person.
-- **Role provider** — pluggable source of a caller's group tokens and of group search: `mock` (built-in test identities, no external dependency) or `http` (the external [role-provider-service](https://github.com/pfisterer/role-provider-service)).
+- **Role provider** — pluggable source of a caller's group tokens and of group search: `http` (the external [role-provider-service](https://github.com/pfisterer/role-provider-service), called through its Go client module `github.com/pfisterer/role-provider-service/client`) or `mock` (built-in test identities, no external dependency, development only). `ROLE_PROVIDER` has no default: the service refuses to start without it, and with `mock` outside `API_MODE=development`.
+- **The AI service as a second provider** — with `AIAAS_URL` set, the projects that hold resources of the AI service (aiaas-management-api: workspaces, LLM tokens, GPUs; declared in `PROVIDER_RESOURCES`) are carried out there by a sync loop, as the reconciler does for OpenStack, and every GPU class the AI service has becomes two resources of the tree (`ws-gpus-<class>`, `ws-gpu-hours-<class>`), adopted by the root without a configuration change.
 - **History** — every node keeps a history of its lifecycle events, recording who made a change and through which channel (`ui` for the web UI and REST API, `mcp` for an agent acting with a person's token).
 
 Editing follows the same idea. A project leaf accepts two direct edits — a rename and its list of project admins, the people who administer it together with the owner — because neither is an allocation. Everything else goes through a change request, which for a *pending* node is amended in place: that is how a manager trims an over-sized request instead of rejecting it. On an active project a change that gives resources back, ends sooner or only changes members takes effect at once, and so does growth or an extension the budget's auto-approve covers; the rest waits for a manager.
 
-➡️ **Architecture:** [`ARCHITECTURE.md`](ARCHITECTURE.md) — domain model,
-authorization rules, API surface, storage, reconciler, SDK pipeline.
+➡️ **Architecture:** [`ARCHITECTURE.md`](ARCHITECTURE.md) — domain model, authorization rules, API surface, storage, reconciler, SDK pipeline.
 
 ## The reconciler
 
@@ -78,41 +53,38 @@ It marks what it owns with Keystone tags, and those tags are the contract with a
 | `pending-deletion:<date>` | when a leaf is released | scheduled deletion day (grace period) |
 | `contact:<email>` | when the owner changes, and on release | who to ask — the owner, on every managed project, so an expiring one has someone to write to |
 
-Tag writes happen only when a value actually changed — this loop runs every
-interval for every leaf, and an unconditional update would be one Keystone write
-per project per tick for a value that changes twice in a project's lifetime.
+Tag writes happen only when a value actually changed — this loop runs every interval for every leaf, and an unconditional update would be one Keystone write per project per tick for a value that changes twice in a project's lifetime.
 
 **Credentials and scopes.** The reconciler authenticates either with an application credential or as a service user with a password; configure exactly one (with both complete, the application credential wins). An application credential is always scoped to a single project, which on a cloud enforcing the modern RBAC scope defaults is not enough to create projects or assign roles across them. A service user can ask for a domain-scoped token instead, and a user that is admin on one domain can do everything the reconciler needs inside that domain and nothing outside it. Those clouds then split the work in two: Keystone wants the domain scope for creating projects, while Nova, Neutron and Cinder accept quota and grant calls only from a project-scoped token. A domain-scoped client therefore builds a second, project-scoped token against the scope parent — the one project that outlives every managed one — and routes compute, network and block-storage calls through it. For every other auth method nothing changes.
 
-**Pre-seeding federated users.** A role can only be assigned to an account that
-exists, and Keystone creates a federated account on the user's first login. So
-the reconciler pre-creates one, carrying the federation link
-`(idp_id, protocol_id, unique_id)` — and that link, not the user ID, is what a
-login resolves by. Two facts about this are easy to get wrong and were verified
-against a live cloud:
+**Pre-seeding federated users.** A role can only be assigned to an account that exists, and Keystone creates a federated account on the user's first login. So the reconciler pre-creates one, carrying the federation link `(idp_id, protocol_id, unique_id)` — and that link, not the user ID, is what a login resolves by. Two facts about this are easy to get wrong and were verified against a live cloud:
 
-- Keystone assigns the ID itself on `POST /v3/users` and **ignores** one supplied
-  in the request, so a pre-created account can never carry the ID that a
-  login-created shadow user would have. That difference is not an error.
-- Keystone's user **list** omits federated attributes; only a single-user **GET**
-  returns them. Judging an account's link on a list payload declares every
-  pre-created account link-less.
+- Keystone assigns the ID itself on `POST /v3/users` and **ignores** one supplied in the request, so a pre-created account can never carry the ID that a login-created shadow user would have. That difference is not an error.
+- Keystone's user **list** omits federated attributes; only a single-user **GET** returns them. Judging an account's link on a list payload declares every pre-created account link-less.
 
-If a login nevertheless creates its own shadow account, the next pass notices,
-moves the role there and removes the stand-in. Accounts the platform did not
-create are never touched or reused; those are reported as pre-seeding conflicts
-in the reconciler status instead of resolved by guessing.
+If a login nevertheless creates its own shadow account, the next pass notices, moves the role there and removes the stand-in. Accounts the platform did not create are never touched or reused; those are reported as pre-seeding conflicts in the reconciler status instead of resolved by guessing.
 
 ## Quick start
 
 ```bash
-make dev            # live-reload dev server on :8083 (API_MODE=development)
+make dev            # live-reload dev server on :8083 (API_MODE=development), needs air
 make test           # go test -cover -coverpkg=./... ./...
 make all            # tests + embedded docs + binary
 docker build -t openstack-management-api .
 ```
 
-The in-memory store and the mock role provider are the defaults, so a local run needs no database and no role-provider-service. `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID` and `OPENSTACK_AUTH_URL` are validated at startup even when nothing uses them. To work without an identity provider, add `API_DUMMY_AUTH=true` (and `DB_ADD_MOCK_DATA=true` for a populated tree); then any well-formed values for those three will do.
+The in-memory store is the default, so a local run needs no database. `ROLE_PROVIDER` has no default; `ROLE_PROVIDER=mock` needs no role-provider-service but is accepted only with `API_MODE=development`. `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID` and `OPENSTACK_AUTH_URL` are validated at startup even when nothing uses them. To work without an identity provider, add `API_DUMMY_AUTH=true` (and `DB_ADD_MOCK_DATA=true` for a populated tree); then any well-formed values for those three will do. A minimal local run:
+
+```bash
+API_MODE=development API_DUMMY_AUTH=true DB_TYPE=memory DB_ADD_MOCK_DATA=true \
+ROLE_PROVIDER=mock ROOT_ADMIN_TOKENS=group:root_uni METRICS_BIND=:9083 \
+OIDC_ISSUER_URL=https://sso.invalid/realms/dev OIDC_CLIENT_ID=dev \
+OPENSTACK_AUTH_URL=https://keystone.invalid/v3 make dev
+```
+
+**Ports.** The API listens on `:8083` (`API_BIND`) and `GET /metrics` on `:8084` (`METRICS_BIND`) by default — the port the self-service-ui dev server uses. Next to the UI, move the metrics elsewhere (`METRICS_BIND=:9083`, as above) or switch them off (`METRICS_BIND=off`); otherwise one of the two fails to bind. The development script that runs the whole platform locally starts this service on `:8083` with `API_MODE=development API_DUMMY_AUTH=true DB_TYPE=memory ROLE_PROVIDER=mock ROOT_ADMIN_TOKENS=group:root_uni METRICS_BIND=:9083`, plus `AIAAS_URL`, `AIAAS_TREE_TOKEN`, `AIAAS_INTERVAL_SECONDS` and `PROVIDER_RESOURCES` when aiaas-management-api runs beside it (on `:8086`). To develop against the real role-provider-service instead of the mock, set `ROLE_PROVIDER=http ROLE_PROVIDER_URL=http://localhost:8085` (and `ROLE_PROVIDER_API_TOKEN`).
+
+A `.env` in the working directory overrides all of these, also variables set on the command line (see *Configuration*).
 
 ## API
 
@@ -122,54 +94,51 @@ The REST API is served under `/v1`, and the service publishes its own OpenAPI de
 - **`GET /config.json`** — unauthenticated bootstrap data for a frontend: the running version and the OIDC settings
 - **`GET /healthz`** and **`GET /readyz`** — the probes, unauthenticated: alive while the process serves; ready while the database answers (503 with the failing checks under `failed`). The identity provider's keys are listed under `degraded` without making it 503, since API tokens work without the provider
 - **`GET /metrics`** on its own listener (`METRICS_BIND`, no ingress): the reconciler's last run (`osmgt_reconciler_last_run_timestamp_seconds`, `osmgt_reconciler_last_run_failed`, one gauge `osmgt_reconciler_last_run_<count>` per count of the status), whether it is on and connected, and the panics recovered in the background loops (`osmgt_loop_panics_total{loop}`)
-- A generated TypeScript client is published to npm as `@dhbw-cloud/os-mgt-client`.
-  It used to be served from `/client` and loaded by the browser at startup; consumers
-  now depend on a version at build time, so a missing operation is a build error there
-  instead of a silent no-op in the browser.
+- A generated TypeScript client is published to npm as `@dhbw-cloud/os-mgt-client`. It used to be served from `/client` and loaded by the browser at startup; consumers now depend on a version at build time, so a missing operation is a build error there instead of a silent no-op in the browser.
 
 Besides the tree itself (`/v1/nodes`), the spec covers API tokens (`/v1/tokens`), acting on behalf of a person (`/v1/act-as`), principal search for token fields (`/v1/principals/search`), the resource catalogue as a frontend sees it (`/v1/config`) and, for root admins, the availabilities of the catalogue (`/v1/admin/catalog`), the usage report (`/v1/admin/usage`) and the reconciler's status — including the warnings and errors of its recent runs — and a manual trigger (`/v1/admin/reconcile/status`, `/v1/admin/reconcile/trigger`).
 
-**MCP.** `/mcp` serves the [Model Context Protocol](https://modelcontextprotocol.io) (streamable HTTP), so an LLM client can work with projects and budgets on a person's behalf. It sits behind the same authentication as `/v1` — typically an API token — and contains no authorization of its own: every tool calls the same service method the REST handler calls, with that person's rights. A read-only token is not offered the tools that change anything, releasing a project or deleting a budget requires repeating its exact name (`confirm_name`), and every change is recorded in the node's history as coming through `mcp`.
+**MCP.** `/mcp` serves the [Model Context Protocol](https://modelcontextprotocol.io) (streamable HTTP), so an LLM client can work with projects and budgets on a person's behalf. It sits behind the same authentication as `/v1` — typically an API token — and contains no authorization of its own: every tool calls the same service method the REST handler calls, with that person's rights. Its 21 tools cover reading (`list_my_projects`, `list_my_budgets`, `get_project`, `search_projects`, `list_requestable_budgets`, `list_requests_to_decide`, `list_budget_contents`), requesting and deciding (`create_project`, `request_project_change`, `approve_request`, `reject_request`), editing projects (`rename_project`, `set_project_admins`, `set_project_allocation`, `transfer_ownership`, `adopt_imported_project`, `release_project`, `delete_project`) and budgets (`create_budget`, `move_to_budget`, `delete_budget`); the listing tools page with `limit` and `offset` like REST, but in smaller pages (default 50, at most 200), since a page lands in a model's context. A read-only token is not offered the tools that change anything, releasing or deleting a project and deleting a budget require repeating its exact name (`confirm_name`), and every change is recorded in the node's history as coming through `mcp`.
 
 **Errors** are answered as `{"error": "<text for people>", "code": "<stable reason>"}`; a client matches on `code` (`unauthenticated`, `auth_unavailable`, `forbidden`, `not_found`, `conflict`, `invalid`, `internal`, …), never on the text. A validation message of the tree is the `error` of a 400 as the operation wrote it. The text is German, or English for `Accept-Language: en` (golib `msg`: the tag with the highest q that names `de` or `en`, German when the header is missing or names neither); the same holds for the errors of the MCP tools and for the names and hints of the caps in `/v1/config`. Texts the server stores (the notes it writes into a node's history, the purpose of imported projects) stay as they were written, in German.
 
-[self-service-ui](https://github.com/pfisterer/self-service-ui) renders the same
-spec in the browser under *Cloud Projects → API Documentation*, which is usually
-the quickest way to look something up and try it out. For the reasoning behind the
-endpoints — the domain model, the authorization rules, the storage layout — see
-[`ARCHITECTURE.md`](ARCHITECTURE.md).
+[self-service-ui](https://github.com/pfisterer/self-service-ui) renders the same spec in the browser under *Cloud Projects → API Documentation*, which is usually the quickest way to look something up and try it out. For the reasoning behind the endpoints — the domain model, the authorization rules, the storage layout — see [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## Configuration
 
-Everything is environment variables; a `.env` in the working directory is loaded
-automatically and **overrides already-set variables** (`godotenv.Overload`), which
-matters when a sourced `openrc` is in the same shell.
+Everything is environment variables; a `.env` in the working directory is loaded automatically and **overrides already-set variables** (`godotenv.Overload`), which matters when a sourced `openrc` is in the same shell.
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `API_MODE` | `production` | `development` enables verbose mode and permits dummy auth |
 | `API_BIND` | `:8083` | Listen address |
-| `METRICS_BIND` | `:8084` | Listen address of `GET /metrics` (Prometheus text format); `off` switches it off. Keep it out of the ingress |
+| `METRICS_BIND` | `:8084` | Listen address of `GET /metrics` (Prometheus text format); `off` or `none` switches it off. Keep it out of the ingress. `:8084` is also the self-service-ui dev server's port: next to it, use another (see *Quick start*) |
 | `API_DUMMY_AUTH` | `false` | Dev-only: every request is signed in as `API_DEV_AUTH_USER`; the service **refuses to start** with it unless `API_MODE=development` |
 | `API_DEV_AUTH_USER` | `root.admin@uni.example` | Who dummy auth signs in; other people are reached with `X-Act-As` |
 | `CORS_ALLOWED_ORIGINS` | — | Comma-separated browser origins allowed to call `/v1` cross-origin; empty allows none (right when the UI reaches the API same-origin) |
 | `DB_TYPE` | `memory` | `memory` \| `postgres` |
 | `DB_CONNECTION_STRING` | local `postgres` DSN | DSN for `postgres` |
 | `DB_ADD_MOCK_DATA` | `false` | Seed the mock budget tree (only into an empty store) |
-| `ROLE_PROVIDER` | `mock` | `mock` \| `http` |
+| `ROLE_PROVIDER` | — (required) | `http` \| `mock`; `mock` only with `API_MODE=development`, the service refuses to start otherwise |
 | `ROLE_PROVIDER_URL`, `ROLE_PROVIDER_API_TOKEN` | — | Required for `http` |
 | `ROOT_ADMIN_TOKENS` | — | Comma-separated `user:`/`group:` tokens that become root admins |
 | `OIDC_ISSUER_URL`, `OIDC_CLIENT_ID` | — | Bearer-token verification; required at startup |
 | `OIDC_JWKS_URL` | — | The provider's key set (`…/protocol/openid-connect/certs` on Keycloak). Set it and startup asks the provider nothing; empty discovers it from the issuer, which is tried again for up to a minute before the start fails |
-| `API_TOKEN_TTL_HOURS`, `API_TOKEN_ALLOW_NEVER_EXPIRES` | `24`, `false` | API token lifetime when a request names none (any other lifetime may be requested), and whether tokens without expiry may be issued |
+| `API_TOKEN_TTL_HOURS`, `API_TOKEN_ALLOW_NEVER_EXPIRES` | `24`, `false` | API token lifetime when a request names none, and whether tokens without expiry may be issued |
+| `API_TOKEN_MAX_TTL_HOURS` | `8760` | Longest lifetime a request may ask for (a year); 0 or less is no bound |
 | `OPENSTACK_DASHBOARD_URL` | — | Public address of the OpenStack dashboard (Horizon); set, the UI links each project that exists in OpenStack to it |
 | `API_MAX_AUTHORIZED_USERS` | `32` | Cap on additional members per project that involves OpenStack (holds an OpenStack resource, also through an allocation or a waiting change, or has an OpenStack project) |
 | `API_MAX_AUTHORIZED_USERS_OTHER` | `200` | Cap on additional members per project without anything in OpenStack (workspaces, LLM); their members cost no Keystone work |
+| `API_MAX_PROJECTS_PER_OWNER` | `10` | Live projects (pending, active, released) one person may request under one budget; 0 or less is no cap |
 | `API_CHARGE_OS_IN_USE` | `true` | Charge a leaf the larger of its limit and its measured OpenStack usage |
 | `API_CHARGE_RELEASED` | `true` | Keep a released leaf with an OpenStack project charged until that project is archived or gone |
 | `API_CHARGE_ARCHIVED` | `false` | Charge an archived leaf the volume storage it still holds; the usage history records it either way |
 | `API_USAGE_PRICES` | _(empty)_ | Public-cloud list prices in euro for the root admins' usage evaluation, as JSON: `{"vcpu_hour": 0.02, "ram_gb_hour": 0.003, "storage_gb_day": 0.003}`; empty shows no value |
 | `RESOURCE_DEFINITIONS` | built-in set | The resource catalogue as a JSON array; replaces the built-in set, an invalid entry stops startup |
+| `PROVIDER_RESOURCES` | _(empty)_ | The resources of other providers as a JSON object of provider name to resources, e.g. `{"aiaas": [...]}`; each needs an `area`, OpenStack's belong in `RESOURCE_DEFINITIONS`. An invalid entry stops startup |
+| `AIAAS_URL`, `AIAAS_TREE_TOKEN` | — | The AI service (aiaas-management-api) as a second provider; empty leaves it off, a URL without a token stops startup |
+| `AIAAS_INTERVAL_SECONDS`, `AIAAS_CLASS_INTERVAL_SECONDS` | `300`, `30` | How often the AI service's projects are synced, and how often its GPU classes are fetched |
+| `AIAAS_DELETE_GRACE_DAYS` | `14` | Days a project's workspaces and their files outlive its end or release before they are deleted; 0 = never |
 | `SERVICE_TIMEOUT_SECONDS` | `30` | Timeout for calls to the role provider and for service requests |
 | `RECONCILER_ENABLED` | `false` | Turn the OpenStack loop on |
 | `RECONCILER_INTERVAL_SECONDS` | `300` | How often it runs on its own; every change made through the API starts a run right away |
@@ -214,7 +183,7 @@ In development, `API_DUMMY_AUTH=true` signs every request in as `API_DEV_AUTH_US
 
 **Releasing from this machine.** Waiting for CI is optional: `make bump V=x.y.z`, commit as `release x.y.z`, then `make publish`. It runs the tests (`make test`), builds the image for linux/amd64 (the build stage runs on the building machine and cross-compiles, so an arm64 Mac builds at native speed), pushes the image and the chart to GHCR and only then pushes the commits — well under a minute. CI then finds the version published and only verifies that it builds; Git tags and GitHub releases of stable versions are still made by CI. `make publish` refuses uncommitted changes and a version that is already published, so a registry version is always exactly one commit. It needs `docker login ghcr.io` and `helm registry login ghcr.io` with a token that may write packages.
 
-GitHub Actions runs two workflows. **Checks** runs `make bundle`, `go vet` and `make test`, and verifies that the committed role-provider spec and generated client match the pinned release. **Docker Image CI** builds a `linux/amd64` image and pushes it to `ghcr.io/pfisterer/openstack-management-api`. Tests deliberately do not run inside the image build — the emulated arm64 build OOM-killed the in-image test run — so the image build uses `make image`. An image or chart version that is already published is never overwritten, a stable `VERSION` (`X.Y.Z`) additionally gets a Git tag and a GitHub release with notes from the commit subjects, and a prerelease (`X.Y.Z-test.N`) gets neither.
+GitHub Actions runs two workflows. **Checks** runs `make bundle`, `go vet`, `make test` and `govulncheck`. **Docker Image CI** builds a `linux/amd64` image and pushes it to `ghcr.io/pfisterer/openstack-management-api`. Tests deliberately do not run inside the image build — the emulated arm64 build OOM-killed the in-image test run — so the image build uses `make image`. An image or chart version that is already published is never overwritten, a stable `VERSION` (`X.Y.Z`) additionally gets a Git tag and a GitHub release with notes from the commit subjects, and a prerelease (`X.Y.Z-test.N`) gets neither.
 
 ## Deployment
 

@@ -82,3 +82,26 @@ func TestRecordUsage(t *testing.T) {
 		t.Error("a failed count was reported")
 	}
 }
+
+// The night after the switch day the reconciler asks Nova from midnight UTC, where the last UTC row ended, to midnight in Berlin; the day after is a whole Berlin day.
+func TestRecordUsage_SwitchDay(t *testing.T) {
+	d1 := usage.BerlinSince
+	d2 := d1.AddDate(0, 0, 1)
+	books := &fakeBooks{days: []time.Time{d1, d2}, sampled: d2, recorded: map[time.Time]usage.DayReport{}}
+	meter := &fakeMeter{ipv4: map[string]int{}}
+	r := &Reconciler{log: zap.NewNop().Sugar()}
+	r.SetUsage(books, meter)
+
+	if n, err := r.recordUsage(context.Background()); err != nil || n != 2 {
+		t.Fatalf("recorded %d, %v", n, err)
+	}
+	want := [][2]time.Time{
+		{time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC), time.Date(2026, 11, 12, 23, 0, 0, 0, time.UTC)},
+		{time.Date(2026, 11, 12, 23, 0, 0, 0, time.UTC), time.Date(2026, 11, 13, 23, 0, 0, 0, time.UTC)},
+	}
+	for i, w := range want {
+		if s, e := meter.asked[i][0], meter.asked[i][1]; !s.Equal(w[0]) || !e.Equal(w[1]) {
+			t.Errorf("day %d measured %v – %v, want %v – %v", i, s, e, w[0], w[1])
+		}
+	}
+}

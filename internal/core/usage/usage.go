@@ -94,10 +94,19 @@ type Store interface {
 // DayOf is the day t falls on in Europe/Berlin, as stored: midnight UTC of that date (day.Date.AsUTC), the form of the date column. Before the first release after 0.8.81 it was the UTC date of t, so between midnight in Berlin and midnight UTC (one hour in winter, two in summer) a moment now counts for the next day.
 func DayOf(t time.Time) time.Time { return day.Of(t).AsUTC() }
 
+// BerlinSince is the first day counted in Europe/Berlin in production: 0.8.82 went live on 12.11.2026 around 11:00 in Berlin, after the old release had stored 11.11.2026 as a UTC day (up to midnight UTC). Earlier days in project_usage_daily are UTC days.
+var BerlinSince = time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC)
+
 // Bounds is the stretch of time a stored day covers: from midnight to midnight in Europe/Berlin, 23 hours on the day the clocks go forward and 25 on the day they go back. stored is a day as stored (DayOf).
+//
+// The switch day (BerlinSince) starts where the last UTC day ended, at midnight UTC instead of midnight in Berlin, so the hour between them is not counted in both rows; it covers 23 hours. A stored row does not know the span it was measured over, so the seam is a fixed date rather than read from the row before; a fresh installation backfilling across that date leaves that hour out instead (ARCHITECTURE.md §8.4a, Days).
 func Bounds(stored time.Time) (start, end time.Time) {
 	d := day.FromUTC(stored)
-	return d.Start(), d.End()
+	start, end = d.Start(), d.End()
+	if d.AsUTC().Equal(BerlinSince) {
+		start = BerlinSince
+	}
+	return start, end
 }
 
 // label is a day as stored, normalised to midnight UTC of its date. It reads the date of a label, not the day of an instant: a label is already a date and must not move to the next day in Berlin.

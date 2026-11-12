@@ -52,6 +52,30 @@ func TestBounds_Berlin(t *testing.T) {
 	}
 }
 
+// The switch day starts where the last UTC day (11.11.2026, up to midnight UTC) ended, so the hour before midnight UTC is not counted twice; it ends at midnight in Berlin like every later day, and the days around it are untouched.
+func TestBounds_SwitchDay(t *testing.T) {
+	for _, tc := range []struct {
+		day        time.Time
+		start, end string
+	}{
+		{utcDate(2026, 11, 12), "2026-11-12T00:00:00Z", "2026-11-12T23:00:00Z"},
+		{utcDate(2026, 11, 13), "2026-11-12T23:00:00Z", "2026-11-13T23:00:00Z"},
+		{utcDate(2026, 11, 14), "2026-11-13T23:00:00Z", "2026-11-14T23:00:00Z"},
+		{utcDate(2026, 11, 11), "2026-11-10T23:00:00Z", "2026-11-11T23:00:00Z"},
+		{utcDate(2027, 11, 12), "2027-11-11T23:00:00Z", "2027-11-12T23:00:00Z"},
+	} {
+		start, end := Bounds(tc.day)
+		if s, e := start.UTC().Format(time.RFC3339), end.UTC().Format(time.RFC3339); s != tc.start || e != tc.end {
+			t.Errorf("Bounds(%s) = %s – %s, want %s – %s", tc.day.Format(time.DateOnly), s, e, tc.start, tc.end)
+		}
+	}
+	// Adjacent: the last UTC row ends at midnight UTC of 12.11., where the switch day starts.
+	lastUTCEnd := utcDate(2026, 11, 11).AddDate(0, 0, 1)
+	if start, _ := Bounds(BerlinSince); !start.Equal(lastUTCEnd) {
+		t.Errorf("the switch day starts at %v, the last UTC day ended at %v", start, lastUTCEnd)
+	}
+}
+
 // Right after midnight in Berlin, while it is still the day before in UTC, the day that just ended is finished and recorded, and it is the sampled one; in summer as in winter.
 func TestDaysToRecord_BerlinMidnight(t *testing.T) {
 	for _, now := range []time.Time{

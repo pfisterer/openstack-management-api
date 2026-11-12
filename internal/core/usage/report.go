@@ -184,7 +184,7 @@ func (t Totals) value(p *Prices) *float64 {
 // BuildReport sums rows over [from, to]. Prices are only passed for the root
 // admins' evaluation; nil leaves every value out.
 func BuildReport(rows []Day, from, to time.Time, m Mapping, prices *Prices) Report {
-	r := Report{From: dayOf(from).Format(time.DateOnly), To: dayOf(to).Format(time.DateOnly), Days: []DayTotals{}, Projects: []ProjectTotals{}}
+	r := Report{From: label(from).Format(time.DateOnly), To: label(to).Format(time.DateOnly), Days: []DayTotals{}, Projects: []ProjectTotals{}}
 	if prices.Valid() {
 		r.Prices = prices
 	}

@@ -29,7 +29,7 @@ func (r *Reconciler) SetUsage(books UsageBooks, meter UsageMeter) {
 }
 
 // recordUsage measures each day the books are missing and reports it, oldest
-// first. Returns how many days it recorded. A failed count of addresses leaves
+// first. A day runs from midnight to midnight in Europe/Berlin (usage.Bounds), as the books count it. Returns how many days it recorded. A failed count of addresses leaves
 // the day without them rather than failing it.
 func (r *Reconciler) recordUsage(ctx context.Context) (int, error) {
 	days, err := r.usageBooks.DaysToRecord(ctx)
@@ -37,7 +37,7 @@ func (r *Reconciler) recordUsage(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	for i, day := range days {
-		measured, err := r.usageMeter.DayUsage(day, day.AddDate(0, 0, 1))
+		measured, err := r.usageMeter.DayUsage(usage.Bounds(day))
 		if err != nil {
 			return i, err
 		}

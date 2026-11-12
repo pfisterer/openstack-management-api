@@ -34,14 +34,14 @@ func (f *fakeBooks) RecordDay(_ context.Context, day time.Time, r usage.DayRepor
 }
 
 type fakeMeter struct {
-	asked   []time.Time
+	asked   [][2]time.Time
 	ipv4    map[string]int
 	ipv4Err error
 	ipv4N   int
 }
 
-func (f *fakeMeter) DayUsage(start, _ time.Time) (map[string]usage.Measured, error) {
-	f.asked = append(f.asked, start)
+func (f *fakeMeter) DayUsage(start, end time.Time) (map[string]usage.Measured, error) {
+	f.asked = append(f.asked, [2]time.Time{start, end})
 	return map[string]usage.Measured{"os-1": {VCPUHours: 1}}, nil
 }
 
@@ -50,7 +50,7 @@ func (f *fakeMeter) PublicIPv4() (map[string]int, error) {
 	return f.ipv4, f.ipv4Err
 }
 
-// Every missing day is measured once and reported; addresses are counted only
+// Every missing day is measured once, from midnight to midnight in Europe/Berlin, and reported; addresses are counted only
 // for the sampled day, and a failed count reports none instead of failing.
 func TestRecordUsage(t *testing.T) {
 	d1 := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
@@ -64,7 +64,10 @@ func TestRecordUsage(t *testing.T) {
 		t.Fatalf("recorded %d, %v", n, err)
 	}
 	if len(meter.asked) != 2 || meter.ipv4N != 1 {
-		t.Errorf("asked %v, addresses counted %d times", meter.asked, meter.ipv4N)
+		t.Fatalf("asked %v, addresses counted %d times", meter.asked, meter.ipv4N)
+	}
+	if s, e := meter.asked[0][0], meter.asked[0][1]; !s.Equal(time.Date(2026, 10, 2, 22, 0, 0, 0, time.UTC)) || !e.Equal(time.Date(2026, 10, 3, 22, 0, 0, 0, time.UTC)) {
+		t.Errorf("3 October measured %v – %v, want midnight to midnight in Berlin (summer time)", s, e)
 	}
 	if books.recorded[d1].PublicIPv4 != nil || books.recorded[d2].PublicIPv4["os-1"] != 2 || books.recorded[d1].Usage["os-1"].VCPUHours != 1 {
 		t.Errorf("reports: %+v", books.recorded)

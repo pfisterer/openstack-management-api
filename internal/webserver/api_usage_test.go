@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
-	"time"
 
+	"github.com/pfisterer/cloud-self-service-golib/day"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/usage"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
@@ -17,8 +17,7 @@ import (
 func usageRouter(t *testing.T, prices *usage.Prices) http.Handler {
 	t.Helper()
 	tr := newTestTree(t, mockNodes(), testAccounting)
-	now := time.Now().UTC()
-	yesterday := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -1)
+	yesterday := day.Today().AddDays(-1).AsUTC() // the last day of the default period, in Berlin
 	rows := usage.NewMemoryStore()
 	_ = rows.ReplaceDay(context.Background(), yesterday, []usage.Day{
 		{NodeID: "p_001", VCPUHours: 10, BudgetPath: []usage.PathEntry{{ID: "b_cs_faculty"}, {ID: "b_dept_cs"}, {ID: model.RootNodeID}}},

@@ -63,7 +63,7 @@ func NewPostgresStore(db *gorm.DB) (*PostgresStore, error) {
 }
 
 func (s *PostgresStore) ReplaceDay(ctx context.Context, day time.Time, rows []Day) error {
-	day = dayOf(day)
+	day = label(day)
 	recs := make([]dbDay, 0, len(rows))
 	for _, r := range rows {
 		path, err := json.Marshal(r.BudgetPath)
@@ -110,11 +110,11 @@ func (s *PostgresStore) LastDay(ctx context.Context) (time.Time, bool, error) {
 	if !last.Valid {
 		return time.Time{}, false, nil
 	}
-	return dayOf(last.Time), true, nil
+	return label(last.Time), true, nil
 }
 
 func (s *PostgresStore) Days(ctx context.Context, nodeIDs []string, from, to time.Time) ([]Day, error) {
-	q := s.db.WithContext(ctx).Where("day >= ? AND day < ?", dayOf(from), dayOf(to))
+	q := s.db.WithContext(ctx).Where("day >= ? AND day < ?", label(from), label(to))
 	if len(nodeIDs) > 0 {
 		q = q.Where("node_id IN ?", nodeIDs)
 	}
@@ -127,7 +127,7 @@ func (s *PostgresStore) DaysUnder(ctx context.Context, budgetID string, from, to
 	if err != nil {
 		return nil, err
 	}
-	q := s.db.WithContext(ctx).Where("day >= ? AND day < ?", dayOf(from), dayOf(to)).
+	q := s.db.WithContext(ctx).Where("day >= ? AND day < ?", label(from), label(to)).
 		Where("budget_path @> ?::jsonb", string(needle))
 	return s.find(q)
 }
@@ -140,7 +140,7 @@ func (s *PostgresStore) find(q *gorm.DB) ([]Day, error) {
 	out := make([]Day, 0, len(recs))
 	for _, r := range recs {
 		d := Day{
-			Day: dayOf(r.Day), NodeID: r.NodeID, ExternalID: r.ExternalID, ProjectName: r.ProjectName,
+			Day: label(r.Day), NodeID: r.NodeID, ExternalID: r.ExternalID, ProjectName: r.ProjectName,
 			Owner: r.Owner, Status: r.Status, BudgetID: r.BudgetID, People: r.People, Groups: r.Groups,
 			ServerHours: r.ServerHours, VCPUHours: r.VCPUHours, RAMGBHours: r.RAMGBHours,
 			DiskGBHours: r.DiskGBHours, StorageGB: r.StorageGB, PublicIPv4: r.PublicIPv4,
@@ -169,7 +169,7 @@ func NewMemoryStore() *MemoryStore { return &MemoryStore{days: map[time.Time][]D
 func (s *MemoryStore) ReplaceDay(_ context.Context, day time.Time, rows []Day) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	day = dayOf(day)
+	day = label(day)
 	out := make([]Day, len(rows))
 	for i, r := range rows {
 		r.Day = day
@@ -208,7 +208,7 @@ func (s *MemoryStore) DaysUnder(_ context.Context, budgetID string, from, to tim
 func (s *MemoryStore) filter(from, to time.Time, keep func(Day) bool) []Day {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	from, to = dayOf(from), dayOf(to)
+	from, to = label(from), label(to)
 	var out []Day
 	for d, rows := range s.days {
 		if d.Before(from) || !d.Before(to) {

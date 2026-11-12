@@ -14,6 +14,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/pfisterer/cloud-self-service-golib/day"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
 )
@@ -24,10 +25,12 @@ type PathEntry struct {
 	Name string `json:"name"`
 }
 
-// Day is one project's consumption on one UTC day, with what was true of the
+// Day is one project's consumption on one calendar day, with what was true of the
 // project that day.
+//
+// The day is a day in Europe/Berlin (DayOf), decided on 12.11.2026 like the AI service (aiaas-management-api, docs/architektur.md "Tage der Nutzung"); rows written before the first release after 0.8.81 carry UTC days and stay so, without migration (ARCHITECTURE.md §8.4a).
 type Day struct {
-	Day    time.Time // UTC midnight
+	Day    time.Time // the day's label: midnight UTC of its date, the form of the date column
 	NodeID string
 
 	// Snapshot. For days collected after the fact (Backfilled) these are the
@@ -88,8 +91,14 @@ type Store interface {
 	DaysUnder(ctx context.Context, budgetID string, from, to time.Time) ([]Day, error)
 }
 
-// dayOf truncates a time to its UTC day.
-func dayOf(t time.Time) time.Time {
-	t = t.UTC()
-	return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+// DayOf is the day t falls on in Europe/Berlin, as stored: midnight UTC of that date (day.Date.AsUTC), the form of the date column. Before the first release after 0.8.81 it was the UTC date of t, so between midnight in Berlin and midnight UTC (one hour in winter, two in summer) a moment now counts for the next day.
+func DayOf(t time.Time) time.Time { return day.Of(t).AsUTC() }
+
+// Bounds is the stretch of time a stored day covers: from midnight to midnight in Europe/Berlin, 23 hours on the day the clocks go forward and 25 on the day they go back. stored is a day as stored (DayOf).
+func Bounds(stored time.Time) (start, end time.Time) {
+	d := day.FromUTC(stored)
+	return d.Start(), d.End()
 }
+
+// label is a day as stored, normalised to midnight UTC of its date. It reads the date of a label, not the day of an instant: a label is already a date and must not move to the next day in Berlin.
+func label(t time.Time) time.Time { return day.FromUTC(t).AsUTC() }

@@ -37,7 +37,7 @@ type Nodes interface {
 	ListNodes(ctx context.Context, q nodestore.NodeQuery, limit, offset int) ([]model.Node, error)
 }
 
-// Books writes one row per project and finished UTC day, from what the
+// Books writes one row per project and finished calendar day in Europe/Berlin (DayOf), from what the
 // executing system reports. That system asks on every pass which days are
 // missing (DaysToRecord), and there are none once yesterday is stored, so a pod
 // that was down for a while catches up by itself.
@@ -65,10 +65,10 @@ func NewBooks(store Store, nodes Nodes, catalog []common.Resource, provider stri
 		BackfillDays: 365, MaxDaysPerRun: 31, now: time.Now}
 }
 
-// DaysToRecord are the finished UTC days not stored yet, oldest first and at
+// DaysToRecord are the finished days in Europe/Berlin not stored yet, as stored (DayOf), oldest first and at
 // most MaxDaysPerRun of them; the first time reaching BackfillDays back.
 func (c *Books) DaysToRecord(ctx context.Context) ([]time.Time, error) {
-	today := dayOf(c.now())
+	today := DayOf(c.now())
 	last, ok, err := c.store.LastDay(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("last usage day: %w", err)
@@ -88,13 +88,13 @@ func (c *Books) DaysToRecord(ctx context.Context) ([]time.Time, error) {
 // now — storage, public addresses: only for yesterday is now what it was on
 // the day. Older days are backfilled without them.
 func (c *Books) Sampled(day time.Time) bool {
-	return !dayOf(day).Before(dayOf(c.now()).AddDate(0, 0, -1))
+	return !label(day).Before(DayOf(c.now()).AddDate(0, 0, -1))
 }
 
-// RecordDay stores the rows of one UTC day from what was reported for it,
+// RecordDay stores the rows of one day (a label as DaysToRecord gives it) from what was reported for it,
 // replacing what it held.
 func (c *Books) RecordDay(ctx context.Context, day time.Time, report DayReport) error {
-	day = dayOf(day)
+	day = label(day)
 	byProject := report.Usage
 
 	all, err := c.nodes.ListNodes(ctx, nodestore.NodeQuery{}, 0, 0)

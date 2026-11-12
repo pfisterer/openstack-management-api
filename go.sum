@@ -86,8 +86,8 @@ github.com/oapi-codegen/runtime v1.7.0 h1:t7358VYPvNbWJ9gdAkIK/smVeHpBf6yp8VTsaZ
 github.com/oapi-codegen/runtime v1.7.0/go.mod h1:GwV7hC2hviaMzj+ITfHVRESK5J2W/GefVwIND/bMGvU=
 github.com/pelletier/go-toml/v2 v2.4.3 h1:GTRvJQutkOSftxIFD5xw9aepkYNuPWmVJpffdDPYVpY=
 github.com/pelletier/go-toml/v2 v2.4.3/go.mod h1:2gIqNv+qfxSVS7cM2xJQKtLSTLUE9V8t9Stt+h56mCY=
-github.com/pfisterer/cloud-self-service-golib v0.20.0 h1:zeB0hVPINdVW+nSf48bVbOIFyni45nSrlAqPMBQ6D8o=
-github.com/pfisterer/cloud-self-service-golib v0.20.0/go.mod h1:H8l5gstq7M9gXFQxYRd9ngygOXIFaNlooEmgb3kbRSk=
+github.com/pfisterer/cloud-self-service-golib v0.21.0 h1:JQGd/yb0a3O/izO33QRRjHLKTw4twc2WiKdH0jiOApM=
+github.com/pfisterer/cloud-self-service-golib v0.21.0/go.mod h1:H8l5gstq7M9gXFQxYRd9ngygOXIFaNlooEmgb3kbRSk=
 github.com/pfisterer/role-provider-service/client v0.1.0 h1:EKeY8h25cwjro7Hyo+qsBePujFWNTIxlMOWtGYLn2aM=
 github.com/pfisterer/role-provider-service/client v0.1.0/go.mod h1:THgfhUBzpWmNTq1ZbN/35taOkm0HgevSYXCntHkAtyY=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=

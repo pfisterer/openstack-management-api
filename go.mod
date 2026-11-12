@@ -13,7 +13,7 @@ require (
 	github.com/gophercloud/gophercloud v1.14.1
 	github.com/joho/godotenv v1.5.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
-	github.com/pfisterer/cloud-self-service-golib v0.20.0
+	github.com/pfisterer/cloud-self-service-golib v0.21.0
 	github.com/pfisterer/role-provider-service/client v0.1.0
 	go.uber.org/zap v1.28.0
 	gorm.io/driver/postgres v1.6.2
@@ -69,5 +69,3 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/go-jose/go-jose.v2 v2.6.3 // indirect
 )
-
-replace github.com/pfisterer/cloud-self-service-golib => ../cloud-self-service-golib

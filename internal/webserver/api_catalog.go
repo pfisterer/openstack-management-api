@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/cloud-self-service-golib/apierr"
 	"github.com/pfisterer/cloud-self-service-golib/ginweb"
+	"github.com/pfisterer/cloud-self-service-golib/msg"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/catalog"
 	"go.uber.org/zap"
@@ -36,7 +37,7 @@ func (cfg APIConfig) catalogError(c *gin.Context, err error) {
 func catalogOp[In, Out any](cfg APIConfig, status int, read bodyReader[In], step func(c *gin.Context, admin *catalog.Admin, actor string, in In) (Out, error), done func(out Out, actor string)) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if cfg.CatalogAdmin == nil {
-			ginweb.AbortError(c, apierr.New(http.StatusServiceUnavailable, "catalog_unavailable", "Der Katalog lässt sich hier nicht verwalten."))
+			ginweb.AbortError(c, apierr.New(http.StatusServiceUnavailable, "catalog_unavailable", msg.T("Der Katalog lässt sich hier nicht verwalten.", "The catalogue cannot be managed here.")))
 			return
 		}
 		auth, ok := caller(c)
@@ -96,7 +97,7 @@ func listCatalog(cfg APIConfig) gin.HandlerFunc {
 //	@ID				addCatalogEntry
 //	@Router			/v1/admin/catalog [post]
 func addCatalogEntry(cfg APIConfig, log *zap.SugaredLogger) gin.HandlerFunc {
-	return catalogOp(cfg, http.StatusCreated, jsonBody[catalog.NewEntry](""), func(c *gin.Context, admin *catalog.Admin, actor string, in catalog.NewEntry) (catalog.Entry, error) {
+	return catalogOp(cfg, http.StatusCreated, jsonBody[catalog.NewEntry](msg.Text{}), func(c *gin.Context, admin *catalog.Admin, actor string, in catalog.NewEntry) (catalog.Entry, error) {
 		return admin.Add(c.Request.Context(), in, actor)
 	}, func(e catalog.Entry, actor string) {
 		log.Infow("Availability added", "resource", e.ID, "grant_type", e.Grant.Type, "target", e.Grant.Target, "actor", actor)
@@ -136,7 +137,7 @@ func getCatalogEntry(cfg APIConfig) gin.HandlerFunc {
 //	@ID				updateCatalogEntry
 //	@Router			/v1/admin/catalog/{id} [put]
 func updateCatalogEntry(cfg APIConfig) gin.HandlerFunc {
-	return catalogOp(cfg, http.StatusOK, jsonBody[catalog.NewEntry](""), func(c *gin.Context, admin *catalog.Admin, actor string, in catalog.NewEntry) (catalog.Entry, error) {
+	return catalogOp(cfg, http.StatusOK, jsonBody[catalog.NewEntry](msg.Text{}), func(c *gin.Context, admin *catalog.Admin, actor string, in catalog.NewEntry) (catalog.Entry, error) {
 		return admin.Update(c.Request.Context(), c.Param("id"), in, actor)
 	}, nil)
 }

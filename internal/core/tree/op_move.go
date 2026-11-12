@@ -26,10 +26,10 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor model.A
 		return model.Node{}, err
 	}
 	if current.ID == model.RootNodeID || current.ID == model.UnassignedNodeID {
-		return model.Node{}, refuse(common.ErrForbidden, "Die Struktur-Knoten (Wurzel und Nicht zugeordnet) lassen sich nicht verschieben.")
+		return model.Node{}, refuse(common.ErrForbidden, "Die Struktur-Knoten (Wurzel und Nicht zugeordnet) lassen sich nicht verschieben.", "The structural nodes (root and Unassigned) cannot be moved.")
 	}
 	if current.ParentID != nil && *current.ParentID == req.NewParentID {
-		return model.Node{}, refuse(common.ErrConflict, "Liegt bereits unter diesem Budget.")
+		return model.Node{}, refuse(common.ErrConflict, "Liegt bereits unter diesem Budget.", "Already under this budget.")
 	}
 
 	newParent, newParentChain, err := s.loadTarget(ctx, userTokens, current, req.NewParentID)
@@ -39,7 +39,7 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor model.A
 	// Cycle guard: the new parent must not lie inside the node's own subtree.
 	for _, ancestor := range newParentChain {
 		if ancestor.ID == current.ID {
-			return model.Node{}, invalid("Ein Budget lässt sich nicht unter sich selbst verschieben.")
+			return model.Node{}, invalid("Ein Budget lässt sich nicht unter sich selbst verschieben.", "A budget cannot be moved under itself.")
 		}
 	}
 
@@ -159,7 +159,7 @@ func (s *Service) checkInheritingMove(ctx context.Context, moved model.Node, new
 				continue
 			}
 			if err := s.checkBudgetLimit(ctx, child, next.chain, child.Limit, false); err != nil {
-				return invalid("Das Budget %q darunter passt dort nicht hinein: %w", nodeLabel(child), err)
+				return invalid("Das Budget %q darunter passt dort nicht hinein: %w", "The budget %q below does not fit there: %w", nodeLabel(child), err)
 			}
 		}
 	}
@@ -181,7 +181,7 @@ func (s *Service) TransferOwner(id string, req TransferOwnerRequest, actor model
 		return model.Node{}, err
 	}
 	if !current.IsLeaf() {
-		return model.Node{}, invalid("Nur Projekte haben eine verantwortliche Person.")
+		return model.Node{}, invalid("Nur Projekte haben eine verantwortliche Person.", "Only projects have a responsible person.")
 	}
 
 	if manages, err := s.managesParentChain(ctx, userTokens, current); err != nil {
@@ -199,13 +199,13 @@ func (s *Service) TransferOwner(id string, req TransferOwnerRequest, actor model
 	var updated model.Node
 	if _, err := s.store.UpdateNode(ctx, id, func(n *model.Node) error {
 		if n.Status == model.StatusImported || model.IsTerminalStatus(n.Status) {
-			return refuse(common.ErrConflict, "Im Status %q lässt sich nichts mehr ändern.", n.Status)
+			return refuse(common.ErrConflict, "Im Status %q lässt sich nichts mehr ändern.", "Nothing can be changed in status %q.", n.Status)
 		}
 		if derefParent(n.ParentID) != derefParent(current.ParentID) {
-			return refuse(common.ErrConflict, "Das Projekt wurde inzwischen verschoben. Bitte neu laden.")
+			return refuse(common.ErrConflict, "Das Projekt wurde inzwischen verschoben. Bitte neu laden.", "The project has been moved in the meantime. Please reload.")
 		}
 		if newOwner == n.Owner {
-			return refuse(common.ErrConflict, "%s ist bereits verantwortlich.", newOwner)
+			return refuse(common.ErrConflict, "%s ist bereits verantwortlich.", "%s is already responsible.", newOwner)
 		}
 		historyEntry := model.NewHistoryEntry("owner_transferred", actor, n.Status)
 		historyEntry.OwnerFrom = new(n.Owner)
@@ -252,7 +252,7 @@ func (s *Service) PromoteNode(id string, req PromoteNodeRequest, actor model.Act
 		return model.Node{}, err
 	}
 	if current.Status != model.StatusImported {
-		return model.Node{}, refuse(common.ErrForbidden, "Nur importierte Projekte lassen sich übernehmen.")
+		return model.Node{}, refuse(common.ErrForbidden, "Nur importierte Projekte lassen sich übernehmen.", "Only imported projects can be adopted.")
 	}
 
 	newParent, newParentChain, err := s.loadTarget(ctx, userTokens, current, req.NewParentID)

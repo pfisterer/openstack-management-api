@@ -23,7 +23,7 @@ func (s *Service) RemoveExternalGroup(id, groupID string, actor model.Actor, use
 		return model.Node{}, err
 	}
 	if !current.IsLeaf() {
-		return model.Node{}, invalid("Externe Gruppen gibt es nur an Projekten.")
+		return model.Node{}, invalid("Externe Gruppen gibt es nur an Projekten.", "Only projects have external groups.")
 	}
 	if !isOwner(userTokens, current) {
 		if manages, err := s.managesNode(ctx, userTokens, current); err != nil {
@@ -41,7 +41,7 @@ func (s *Service) RemoveExternalGroup(id, groupID string, actor model.Actor, use
 		}
 	}
 	if provider == "" {
-		return model.Node{}, refuse(common.ErrNotFound, "Die externe Gruppe wurde nicht gefunden.")
+		return model.Node{}, refuse(common.ErrNotFound, "Die externe Gruppe wurde nicht gefunden.", "The external group was not found.")
 	}
 	if name == "" {
 		name = groupID
@@ -66,7 +66,7 @@ func (s *Service) RemoveExternalGroup(id, groupID string, actor model.Actor, use
 		return model.Node{}, fmt.Errorf("persist node: %w", err)
 	}
 	if !found {
-		return model.Node{}, common.ErrNotFound
+		return model.Node{}, errNodeNotFound
 	}
 	named, err := s.attachParentNames(ctx, []model.Node{updated}, userTokens)
 	if err != nil {

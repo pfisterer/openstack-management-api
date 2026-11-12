@@ -1,11 +1,11 @@
 package webserver
 
 import (
-	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pfisterer/cloud-self-service-golib/msg"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
@@ -31,7 +31,7 @@ func getNode(cfg APIConfig) gin.HandlerFunc {
 	return respond(cfg, http.StatusOK, func(c *gin.Context, auth identity.AuthContext) (*model.Node, error) {
 		node, err := cfg.Service.GetNode(c.Param("id"), auth.EffectiveTokens)
 		if err == nil && node == nil {
-			return nil, common.ErrNotFound
+			return nil, msg.Wrap(common.ErrNotFound, msg.T("Budget oder Projekt nicht gefunden.", "Budget or project not found."))
 		}
 		return node, err
 	})
@@ -126,7 +126,7 @@ func listNodesToManage(cfg APIConfig) gin.HandlerFunc {
 	return listPage(cfg, func(c *gin.Context, auth identity.AuthContext, limit, offset int) (tree.NodePage, error) {
 		scope := c.Query("scope")
 		if scope != "" && scope != "direct" && scope != "subtree" {
-			return tree.NodePage{}, errors.New(`scope muss "direct" oder "subtree" sein`)
+			return tree.NodePage{}, msg.Errorf(`scope muss "direct" oder "subtree" sein`, `scope must be "direct" or "subtree"`)
 		}
 		return cfg.Service.ListToManage(auth.EffectiveTokens, scope == "subtree", limit, offset)
 	})
@@ -190,7 +190,7 @@ func listEligibleBudgetsForOwner(cfg APIConfig) gin.HandlerFunc {
 	return listPage(cfg, func(c *gin.Context, auth identity.AuthContext, limit, offset int) (tree.NodePage, error) {
 		ownerTokens := c.QueryArray("owner_token")
 		if len(ownerTokens) == 0 {
-			return tree.NodePage{}, errors.New("mindestens ein Parameter owner_token ist nötig")
+			return tree.NodePage{}, msg.Errorf("mindestens ein Parameter owner_token ist nötig", "at least one parameter owner_token is needed")
 		}
 		return cfg.Service.ListEligibleForOwner(auth.EffectiveTokens, common.TokenList(ownerTokens), limit, offset)
 	})
@@ -215,7 +215,7 @@ func searchNodes(cfg APIConfig) gin.HandlerFunc {
 	return listPage(cfg, func(c *gin.Context, auth identity.AuthContext, limit, offset int) (tree.NodePage, error) {
 		query := strings.TrimSpace(c.Query("q"))
 		if query == "" {
-			return tree.NodePage{}, errors.New("q darf nicht leer sein")
+			return tree.NodePage{}, msg.Errorf("q darf nicht leer sein", "q must not be empty")
 		}
 		return cfg.Service.SearchNodes(auth.EffectiveTokens, query, limit, offset)
 	})
@@ -312,7 +312,7 @@ func requestNodeChange(cfg APIConfig) gin.HandlerFunc {
 //	@ID				approveNode
 //	@Router			/v1/nodes/{id}/approve [post]
 func approveNode(cfg APIConfig) gin.HandlerFunc {
-	read := jsonBody[tree.ApproveNodeRequest]("expected_revision is required: the revision of the request as it was shown")
+	read := jsonBody[tree.ApproveNodeRequest](msg.T("expected_revision ist erforderlich: der Stand der Anfrage, wie sie angezeigt wurde.", "expected_revision is required: the revision of the request as it was shown."))
 	return handle(cfg, http.StatusOK, read, func(c *gin.Context, req tree.ApproveNodeRequest, auth identity.AuthContext) (model.Node, error) {
 		return cfg.Service.ApproveNode(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
 	})

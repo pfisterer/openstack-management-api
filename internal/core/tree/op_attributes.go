@@ -29,26 +29,26 @@ var attributeNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
 // export can carry them as they are.
 func validateAttributes(a model.Attributes) error {
 	if len(a) > maxAttributeGroups {
-		return invalid("Höchstens %d Merkmalsgruppen.", maxAttributeGroups)
+		return invalid("Höchstens %d Merkmalsgruppen.", "At most %d attribute groups.", maxAttributeGroups)
 	}
 	for group, values := range a {
 		if !attributeNamePattern.MatchString(group) {
-			return invalid("Merkmalsgruppe %q: nur Kleinbuchstaben, Ziffern, '-' und '_'.", group)
+			return invalid("Merkmalsgruppe %q: nur Kleinbuchstaben, Ziffern, '-' und '_'.", "Attribute group %q: only lowercase letters, digits, '-' and '_'.", group)
 		}
 		if len(values) > maxAttributeKeys {
-			return invalid("Merkmalsgruppe %q: höchstens %d Merkmale.", group, maxAttributeKeys)
+			return invalid("Merkmalsgruppe %q: höchstens %d Merkmale.", "Attribute group %q: at most %d attributes.", group, maxAttributeKeys)
 		}
 		for key, v := range values {
 			if !attributeNamePattern.MatchString(key) {
-				return invalid("Merkmal %q in %q: nur Kleinbuchstaben, Ziffern, '-' und '_'.", key, group)
+				return invalid("Merkmal %q in %q: nur Kleinbuchstaben, Ziffern, '-' und '_'.", "Attribute %q in %q: only lowercase letters, digits, '-' and '_'.", key, group)
 			}
 			if len(v) > maxAttributeValueLen {
-				return invalid("Merkmal %q in %q: höchstens %d Zeichen.", key, group, maxAttributeValueLen)
+				return invalid("Merkmal %q in %q: höchstens %d Zeichen.", "Attribute %q in %q: at most %d characters.", key, group, maxAttributeValueLen)
 			}
 		}
 	}
 	if b, _ := json.Marshal(a); len(b) > maxAttributesJSONSize {
-		return invalid("Die Merkmale sind größer als %d Bytes.", maxAttributesJSONSize)
+		return invalid("Die Merkmale sind größer als %d Bytes.", "The attributes are larger than %d bytes.", maxAttributesJSONSize)
 	}
 	return nil
 }
@@ -139,7 +139,7 @@ func (s *Service) SetAttributes(id string, req SetAttributesRequest, actor model
 		return model.Node{}, fmt.Errorf("persist node: %w", err)
 	}
 	if !found {
-		return model.Node{}, common.ErrNotFound
+		return model.Node{}, errNodeNotFound
 	}
 	named, err := s.attachParentNames(ctx, []model.Node{updated}, userTokens)
 	if err != nil {

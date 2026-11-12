@@ -2,7 +2,6 @@ package webserver
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -10,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/cloud-self-service-golib/apierr"
 	"github.com/pfisterer/cloud-self-service-golib/ginweb"
+	"github.com/pfisterer/cloud-self-service-golib/msg"
 	"github.com/pfisterer/cloud-self-service-golib/token"
 	"github.com/pfisterer/openstack-management-api/internal/identity"
 	"go.uber.org/zap"
@@ -171,18 +171,18 @@ func createToken(cfg TokenConfig, log *zap.SugaredLogger) gin.HandlerFunc {
 		subject := auth.UserEmail
 		// A token issued while acting on behalf would hand the admin a credential that IS the person, outliving the session and the act-as rule that allowed it; and the person would find a token they never made.
 		if auth.OnBehalf() {
-			ginweb.AbortError(c, apierr.New(http.StatusForbidden, "act_as_forbidden", "Im Auftrag einer anderen Person lassen sich keine API-Tokens erstellen; die Person muss ihr Token selbst erstellen."))
+			ginweb.AbortError(c, apierr.New(http.StatusForbidden, "act_as_forbidden", msg.T("Im Auftrag einer anderen Person lassen sich keine API-Tokens erstellen; die Person muss ihr Token selbst erstellen.", "API tokens cannot be created on behalf of another person; the person has to create their token themselves.")))
 			return
 		}
 		// A token that mints tokens would let a leaked one renew itself forever, past every expiry.
 		if auth.ViaAPIToken {
-			ginweb.AbortError(c, apierr.New(http.StatusForbidden, "token_needs_sign_in", "API-Tokens lassen sich nur nach einer Anmeldung erstellen, nicht mit einem anderen API-Token."))
+			ginweb.AbortError(c, apierr.New(http.StatusForbidden, "token_needs_sign_in", msg.T("API-Tokens lassen sich nur nach einer Anmeldung erstellen, nicht mit einem anderen API-Token.", "API tokens can only be created after signing in, not with another API token.")))
 			return
 		}
 
 		var req CreateTokenRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
-			respondBadRequest(c, "Ungültige Anfrage.")
+			respondBadRequest(c, msg.T("Ungültige Anfrage.", "Invalid request."))
 			return
 		}
 
@@ -202,7 +202,7 @@ func createToken(cfg TokenConfig, log *zap.SugaredLogger) gin.HandlerFunc {
 		// The description is the caller's text: too long is a 400, and it is
 		// never echoed into the log.
 		if errors.Is(err, token.ErrDescriptionTooLong) {
-			ginweb.AbortError(c, apierr.New(http.StatusBadRequest, "invalid_description", fmt.Sprintf("Die Beschreibung darf höchstens %d Zeichen lang sein.", token.MaxDescriptionLen)))
+			ginweb.AbortError(c, apierr.New(http.StatusBadRequest, "invalid_description", msg.F("Die Beschreibung darf höchstens %d Zeichen lang sein.", "The description may be at most %d characters long.", token.MaxDescriptionLen)))
 			return
 		}
 		if err != nil {
@@ -233,7 +233,7 @@ func deleteToken(cfg TokenConfig, log *zap.SugaredLogger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id, err := strconv.ParseUint(c.Param("id"), 10, 64)
 		if err != nil {
-			respondBadRequest(c, "Ungültige Token-ID.")
+			respondBadRequest(c, msg.T("Ungültige Token-ID.", "Invalid token ID."))
 			return
 		}
 
@@ -258,15 +258,15 @@ func deleteToken(cfg TokenConfig, log *zap.SugaredLogger) gin.HandlerFunc {
 }
 
 // ttlMessage is the answer to a lifetime this deployment does not grant (token.TTLPolicy.Resolve), naming the limit.
-func ttlMessage(p token.TTLPolicy, err error) string {
+func ttlMessage(p token.TTLPolicy, err error) msg.Text {
 	switch {
 	case errors.Is(err, token.ErrNeverExpiresNotAllowed):
-		return "API-Tokens ohne Ablaufdatum sind hier nicht erlaubt."
+		return msg.T("API-Tokens ohne Ablaufdatum sind hier nicht erlaubt.", "API tokens without an expiry date are not allowed here.")
 	case errors.Is(err, token.ErrTTLTooLong) && p.Max > 0:
-		return fmt.Sprintf("Die Laufzeit darf höchstens %d Stunden betragen.", int(p.Max/time.Hour))
+		return msg.F("Die Laufzeit darf höchstens %d Stunden betragen.", "The lifetime may be at most %d hours.", int(p.Max/time.Hour))
 	case errors.Is(err, token.ErrTTLTooLong):
-		return "Die gewünschte Laufzeit ist zu lang."
+		return msg.T("Die gewünschte Laufzeit ist zu lang.", "The requested lifetime is too long.")
 	default:
-		return "Ungültige Laufzeit."
+		return msg.T("Ungültige Laufzeit.", "Invalid lifetime.")
 	}
 }

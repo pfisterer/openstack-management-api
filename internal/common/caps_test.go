@@ -3,12 +3,14 @@ package common
 import (
 	"strings"
 	"testing"
+
+	"github.com/pfisterer/cloud-self-service-golib/msg"
 )
 
 // A cap's default is what the UI pre-fills when the cap is switched on, so it must be a value the cap allows.
 func TestValidateCapDefs_Default(t *testing.T) {
 	base := func(def *int) Cap {
-		return Cap{ID: "jobs", Name: "Jobs", Provider: "p", Min: 1, Max: 10, Default: def}
+		return Cap{ID: "jobs", Name: msg.Raw("Jobs"), Provider: "p", Min: 1, Max: 10, Default: def}
 	}
 	for _, v := range []int{1, 5, 10} {
 		if err := ValidateCapDefs([]Cap{base(new(v))}); err != nil {
@@ -30,7 +32,7 @@ func TestValidateCapDefs_Default(t *testing.T) {
 		t.Errorf("0 is a valid default of an unbounded cap: %v", err)
 	}
 
-	choice := Cap{ID: "prio", Name: "Prio", Provider: "p", Choices: []string{"low", "high"}, Default: new(1)}
+	choice := Cap{ID: "prio", Name: msg.Raw("Prio"), Provider: "p", Choices: []string{"low", "high"}, Default: new(1)}
 	if err := ValidateCapDefs([]Cap{choice}); err != nil {
 		t.Errorf("a choice's index should pass as default: %v", err)
 	}
@@ -42,9 +44,9 @@ func TestValidateCapDefs_Default(t *testing.T) {
 
 // The refusals of Check and the labels in messages are German, like the tree's validation messages; a choice keeps its value, which is what the provider is told.
 func TestCheckAndLabel_German(t *testing.T) {
-	hours := Cap{ID: "h", Name: "GPU: Obergrenze", Provider: "p", Unit: "h", Min: 1, Max: 720, Unbounded: true}
-	runs := Cap{ID: "r", Name: "Laufzeit", Provider: "p", Unit: "h", Min: 1, Max: 24}
-	prio := Cap{ID: "c", Name: "Priorität", Provider: "p", Choices: []string{"preemptible", "guaranteed"}}
+	hours := Cap{ID: "h", Name: msg.Raw("GPU: Obergrenze"), Provider: "p", Unit: "h", Min: 1, Max: 720, Unbounded: true}
+	runs := Cap{ID: "r", Name: msg.Raw("Laufzeit"), Provider: "p", Unit: "h", Min: 1, Max: 24}
+	prio := Cap{ID: "c", Name: msg.Raw("Priorität"), Provider: "p", Choices: []string{"preemptible", "guaranteed"}}
 	for _, tc := range []struct {
 		err  error
 		want string
@@ -57,10 +59,10 @@ func TestCheckAndLabel_German(t *testing.T) {
 			t.Errorf("got %v, want %q", tc.err, tc.want)
 		}
 	}
-	if got := hours.Label(0); got != "ohne Obergrenze" {
+	if got := hours.Label(0); got.In(msg.DE) != "ohne Obergrenze" || got.In(msg.EN) != "no upper bound" {
 		t.Errorf("Label(0) under Unbounded = %q", got)
 	}
-	if got := prio.Label(1); got != "guaranteed" {
+	if got := prio.Label(1); got.String() != "guaranteed" {
 		t.Errorf("a choice's label = %q, want its value", got)
 	}
 }

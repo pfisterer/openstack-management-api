@@ -32,7 +32,7 @@ func normalizeOwnerToken(raw string) (string, error) {
 	v := strings.TrimSpace(raw)
 	v = strings.TrimPrefix(v, "user:")
 	if v == "" || strings.Contains(v, ":") {
-		return "", invalid("Die verantwortliche Person muss als E-Mail-Adresse oder als user:-Token angegeben werden.")
+		return "", invalid("Die verantwortliche Person muss als E-Mail-Adresse oder als user:-Token angegeben werden.", "The responsible person must be given as an e-mail address or as a user: token.")
 	}
 	return "user:" + strings.ToLower(v), nil
 }
@@ -70,12 +70,12 @@ func (s *Service) normalizeAuthorizedUsers(ctx context.Context, users []common.A
 	for i, user := range users {
 		token := common.CanonicalToken(user.Token)
 		if token == "" {
-			return nil, invalid("Mitglieder: Eintrag %d hat kein Token.", i)
+			return nil, invalid("Mitglieder: Eintrag %d hat kein Token.", "Members: entry %d has no token.", i)
 		}
 
 		role := strings.ToLower(strings.TrimSpace(user.Role))
 		if !slices.Contains(common.Roles, role) {
-			return nil, invalid("Mitglieder: Eintrag %d hat die Rolle %q, erlaubt sind %v.", i, user.Role, common.Roles)
+			return nil, invalid("Mitglieder: Eintrag %d hat die Rolle %q, erlaubt sind %v.", "Members: entry %d has the role %q, allowed are %v.", i, user.Role, common.Roles)
 		}
 
 		switch {
@@ -83,7 +83,7 @@ func (s *Service) normalizeAuthorizedUsers(ctx context.Context, users []common.A
 			email := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(token, common.UserPrefix)))
 			// A plain address only: ParseAddress also accepts `Name <a@b>` and `a@b (comment)`, which would be stored and later resolved as a different person than the one displayed.
 			if addr, err := mail.ParseAddress(email); err != nil || addr.Address != email {
-				return nil, invalid("Mitglieder: Eintrag %d ist keine gültige E-Mail-Adresse.", i)
+				return nil, invalid("Mitglieder: Eintrag %d ist keine gültige E-Mail-Adresse.", "Members: entry %d is not a valid e-mail address.", i)
 			}
 			token = common.UserPrefix + email
 
@@ -101,16 +101,16 @@ func (s *Service) normalizeAuthorizedUsers(ctx context.Context, users []common.A
 					return nil, fmt.Errorf("cannot verify group %q right now: %w: %w", token, common.ErrInternal, err)
 				}
 				if !exists {
-					return nil, invalid("Mitglieder: Eintrag %d nennt die unbekannte Gruppe %q.", i, token)
+					return nil, invalid("Mitglieder: Eintrag %d nennt die unbekannte Gruppe %q.", "Members: entry %d names the unknown group %q.", i, token)
 				}
 				if requireGroupMembership && !manager && !kept[token] && !caller.Contains(token) {
-					return nil, refuse(common.ErrForbidden, "Mitglieder: Eintrag %d: Die Gruppe %q dürfen nur ihre eigenen Mitglieder hinzufügen.", i, token)
+					return nil, refuse(common.ErrForbidden, "Mitglieder: Eintrag %d: Die Gruppe %q dürfen nur ihre eigenen Mitglieder hinzufügen.", "Members: entry %d: only its own members may add the group %q.", i, token)
 				}
 				seenGroups[token] = true
 			}
 
 		default:
-			return nil, invalid("Mitglieder: Eintrag %d muss ein %s- oder %s-Token sein.", i, common.UserPrefix, common.GroupPrefix)
+			return nil, invalid("Mitglieder: Eintrag %d muss ein %s- oder %s-Token sein.", "Members: entry %d must be a %s or %s token.", i, common.UserPrefix, common.GroupPrefix)
 		}
 
 		out = append(out, common.AuthorizedUser{Token: token, Role: role})
@@ -224,9 +224,9 @@ func checkMemberCount(n int, c memberCeiling) error {
 		return nil
 	}
 	if c.provider != "" {
-		return invalid("Ein Projekt mit Ressourcen von %[2]s hat höchstens %[1]d Mitglieder, angegeben sind %[3]d. Für einen ganzen Kurs oder eine Abteilung eignet sich ein Gruppen-Token.", c.max, c.provider, n)
+		return invalid("Ein Projekt mit Ressourcen von %[2]s hat höchstens %[1]d Mitglieder, angegeben sind %[3]d. Für einen ganzen Kurs oder eine Abteilung eignet sich ein Gruppen-Token.", "A project with resources of %[2]s has at most %[1]d members, %[3]d are given. For a whole course or department, use a group token.", c.max, c.provider, n)
 	}
-	return invalid("Ein Projekt hat höchstens %d Mitglieder, angegeben sind %d. Für einen ganzen Kurs oder eine Abteilung eignet sich ein Gruppen-Token.", c.max, n)
+	return invalid("Ein Projekt hat höchstens %d Mitglieder, angegeben sind %d. Für einen ganzen Kurs oder eine Abteilung eignet sich ein Gruppen-Token.", "A project has at most %d members, %d are given. For a whole course or department, use a group token.", c.max, n)
 }
 
 // checkMemberCeilingFalls refuses a change that lowers the ceiling on the members of a project (from was, to next) below the members it already lists.

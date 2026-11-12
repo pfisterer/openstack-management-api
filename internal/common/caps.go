@@ -5,23 +5,26 @@ import (
 	"maps"
 	"slices"
 	"strings"
+
+	"github.com/pfisterer/cloud-self-service-golib/msg"
 )
 
 // A cap is an upper bound a budget sets for everything below it, declared by the provider that carries it out (decided 10.11.2026, docs/plan-caps-katalog.md): the release times, the local storage per workspace, the batch priority and the batch jobs of the AI service, and whatever a provider brings next. Unlike a resource it is no quantity: nothing is summed or handed down in parts. It holds for every project below the budget, a budget below may only tighten it, and what applies is the strictest value along the chain of budgets. The tree knows only this rule; what a cap means is the provider's business.
 //
 // Values are integers, and the smaller one is always the stricter: a choice is stored as its index into Choices, which run from the strictest to the loosest; under Unbounded, 0 means no bound and is the loosest of all.
 
-// Cap is one cap as a provider declares it, and as /v1/config hands it to the UI.
+// Cap is one cap as a provider declares it. /v1/config hands it to the UI as a CapView, its name and message in the caller's language.
 type Cap struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Provider string `json:"provider"`
+	ID string `json:"id"`
+	// Name and Message are for people, in German and English; the tree's validation messages name a cap by Name.
+	Name     msg.Text `json:"-"`
+	Message  msg.Text `json:"-"`
+	Provider string   `json:"provider"`
 	// Area is the concern the cap serves (common.Areas), where the UI shows it.
 	Area string `json:"area,omitempty"`
 	// Group is the heading the UI shows the cap under.
-	Group   string `json:"group,omitempty"`
-	Unit    string `json:"unit,omitempty"`
-	Message string `json:"message,omitempty"`
+	Group string `json:"group,omitempty"`
+	Unit  string `json:"unit,omitempty"`
 	// Min and Max bound a value that is set (except 0 under Unbounded); ignored for a choice.
 	Min int `json:"min"`
 	Max int `json:"max"`
@@ -35,6 +38,18 @@ type Cap struct {
 	Together string `json:"together,omitempty"`
 	// Default is the value the UI pre-fills when someone switches the cap on (a Grant cap, before the budgets above tighten it); it passes Check. Absent, the UI starts from what the budgets above allow, else from Min.
 	Default *int `json:"default,omitempty"`
+}
+
+// CapView is a cap as /v1/config hands it to the UI: its name and message in one language, the rest as declared. In the API documentation it keeps the name common.Cap, so the generated clients do not change.
+type CapView struct {
+	Cap
+	Name    string `json:"name"`
+	Message string `json:"message,omitempty"`
+} //@name common.Cap
+
+// In is d as the UI is handed it in l.
+func (d Cap) In(l msg.Lang) CapView {
+	return CapView{Cap: d, Name: d.Name.In(l), Message: d.Message.In(l)}
 }
 
 // Caps are the values of caps by id: a budget's own, or what applies below a chain of budgets.
@@ -67,37 +82,37 @@ func (d Cap) Stricter(a, b int) int {
 	return a
 }
 
-// Check refuses a value outside what the cap allows, with a message for people (German, like the tree's validation messages).
+// Check refuses a value outside what the cap allows, with a message for people in German and English, like the tree's validation messages.
 func (d Cap) Check(v int) error {
 	switch {
 	case len(d.Choices) > 0:
 		if v < 0 || v >= len(d.Choices) {
-			return invalid("%s: %d ist keiner der Werte 0 bis %d (%s).", d.Name, v, len(d.Choices)-1, strings.Join(d.Choices, ", "))
+			return invalid("%s: %d ist keiner der Werte 0 bis %d (%s).", "%s: %d is not one of the values 0 to %d (%s).", d.Name, v, len(d.Choices)-1, strings.Join(d.Choices, ", "))
 		}
 	case d.Unbounded && v == 0:
 	case v < d.Min || v > d.Max:
 		if d.Unbounded {
-			return invalid("%s: Erlaubt sind %d bis %d%s oder 0 für keine Obergrenze.", d.Name, d.Min, d.Max, d.unitSuffix())
+			return invalid("%s: Erlaubt sind %d bis %d%s oder 0 für keine Obergrenze.", "%s: allowed are %d to %d%s, or 0 for no upper bound.", d.Name, d.Min, d.Max, d.unitSuffix())
 		}
-		return invalid("%s: Erlaubt sind %d bis %d%s.", d.Name, d.Min, d.Max, d.unitSuffix())
+		return invalid("%s: Erlaubt sind %d bis %d%s.", "%s: allowed are %d to %d%s.", d.Name, d.Min, d.Max, d.unitSuffix())
 	}
 	return nil
 }
 
-// Label is a value as a message names it: the choice (its id, which is also what the provider is told), "ohne Obergrenze" for 0 under Unbounded, or the number with its unit.
-func (d Cap) Label(v int) string {
+// Label is a value as a message names it: the choice (its id, which is also what the provider is told), "ohne Obergrenze" / "no upper bound" for 0 under Unbounded, or the number with its unit.
+func (d Cap) Label(v int) msg.Text {
 	switch {
 	case len(d.Choices) > 0 && v >= 0 && v < len(d.Choices):
-		return d.Choices[v]
+		return msg.Raw(d.Choices[v])
 	case d.Unbounded && v == 0:
-		return "ohne Obergrenze"
+		return msg.T("ohne Obergrenze", "no upper bound")
 	}
-	return fmt.Sprintf("%d%s", v, d.unitSuffix())
+	return msg.Raw(fmt.Sprintf("%d%s", v, d.unitSuffix()))
 }
 
-// invalid is a validation message for people, as in package model and tree: a function of its own because the texts are German sentences, capitalised and with a full stop, which staticcheck refuses in a literal fmt.Errorf.
-func invalid(format string, args ...any) error {
-	return fmt.Errorf(format, args...)
+// invalid is a validation message for people in German and English, as in package model and tree: a function of its own because the texts are sentences, capitalised and with a full stop, which staticcheck refuses in a literal fmt.Errorf.
+func invalid(de, en string, args ...any) error {
+	return msg.Errorf(de, en, args...)
 }
 
 func (d Cap) unitSuffix() string {
@@ -112,8 +127,11 @@ func ValidateCapDefs(defs []Cap) error {
 	seen := map[string]bool{}
 	together := map[string]Cap{}
 	for _, d := range defs {
-		if d.ID == "" || d.Name == "" || d.Provider == "" {
-			return fmt.Errorf("cap %q: id, name and provider are required", d.ID)
+		if d.ID == "" || !d.Name.Complete() || d.Provider == "" {
+			return fmt.Errorf("cap %q: id, name (German and English) and provider are required", d.ID)
+		}
+		if !d.Message.IsZero() && !d.Message.Complete() {
+			return fmt.Errorf("cap %q: a message needs German and English", d.ID)
 		}
 		if d.Area != "" && !slices.Contains(Areas, d.Area) {
 			return fmt.Errorf("cap %q: area %q is not one of %v", d.ID, d.Area, Areas)

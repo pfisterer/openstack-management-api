@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pfisterer/cloud-self-service-golib/msg"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
@@ -13,12 +14,12 @@ import (
 // Caps (common.Cap, 10.11.2026) are the providers' upper bounds a budget sets for the projects below it. The tree knows only their kinds, so these tests use a catalogue of their own: a plain number, one that may be unbounded, a choice, and a pair that is a Grant and set together. They took over from the tests of the four former settings of the AI service (release times, local storage, batch priority, batch jobs).
 
 var testCaps = []common.Cap{
-	{ID: "scratch", Name: "Scratch", Provider: "p", Unit: "GB", Min: 1, Max: 200},
-	{ID: "cpu-max", Name: "CPU upper bound", Provider: "p", Unit: "h", Min: 1, Max: 720},
-	{ID: "gpu-max", Name: "GPU upper bound", Provider: "p", Unit: "h", Min: 1, Max: 720, Unbounded: true},
-	{ID: "prio", Name: "Priority", Provider: "p", Choices: []string{"preemptible", "guaranteed"}},
-	{ID: "jobs", Name: "Jobs", Provider: "p", Min: 1, Max: 1000, Grant: true, Together: "batch"},
-	{ID: "hours", Name: "Job hours", Provider: "p", Unit: "h", Min: 1, Max: 24, Grant: true, Together: "batch"},
+	{ID: "scratch", Name: msg.Raw("Scratch"), Provider: "p", Unit: "GB", Min: 1, Max: 200},
+	{ID: "cpu-max", Name: msg.Raw("CPU upper bound"), Provider: "p", Unit: "h", Min: 1, Max: 720},
+	{ID: "gpu-max", Name: msg.Raw("GPU upper bound"), Provider: "p", Unit: "h", Min: 1, Max: 720, Unbounded: true},
+	{ID: "prio", Name: msg.Raw("Priority"), Provider: "p", Choices: []string{"preemptible", "guaranteed"}},
+	{ID: "jobs", Name: msg.Raw("Jobs"), Provider: "p", Min: 1, Max: 1000, Grant: true, Together: "batch"},
+	{ID: "hours", Name: msg.Raw("Job hours"), Provider: "p", Unit: "h", Min: 1, Max: 24, Grant: true, Together: "batch"},
 }
 
 func newCapsFixture(t *testing.T) changeFixture {

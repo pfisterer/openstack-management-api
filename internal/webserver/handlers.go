@@ -5,6 +5,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/cloud-self-service-golib/ginweb"
+	"github.com/pfisterer/cloud-self-service-golib/msg"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"github.com/pfisterer/openstack-management-api/internal/identity"
@@ -39,15 +40,15 @@ type bodyReader[Req any] func(c *gin.Context, req *Req) bool
 // noBody reads nothing: the handler takes no body.
 func noBody[Req any](*gin.Context, *Req) bool { return true }
 
-// jsonBody binds the body to req; one that does not bind is a 400 with the decoder's message, or with message where the handler has a better one.
-func jsonBody[Req any](message string) bodyReader[Req] {
+// jsonBody binds the body to req; one that does not bind is a 400 with the decoder's message, or with message where the handler has a better one (zero: none).
+func jsonBody[Req any](message msg.Text) bodyReader[Req] {
 	return func(c *gin.Context, req *Req) bool {
 		err := c.ShouldBindJSON(req)
 		if err == nil {
 			return true
 		}
-		if message == "" {
-			respondBadRequest(c, "Der Inhalt der Anfrage lässt sich nicht lesen: "+err.Error())
+		if message.IsZero() {
+			respondBadRequest(c, msg.F("Der Inhalt der Anfrage lässt sich nicht lesen: %s", "The body of the request cannot be read: %s", err.Error()))
 		} else {
 			respondBadRequest(c, message)
 		}
@@ -57,7 +58,7 @@ func jsonBody[Req any](message string) bodyReader[Req] {
 
 // optionalJSONBody is jsonBody where the body may be left out: none is the zero Req.
 func optionalJSONBody[Req any](c *gin.Context, req *Req) bool {
-	return c.Request.ContentLength == 0 || jsonBody[Req]("")(c, req)
+	return c.Request.ContentLength == 0 || jsonBody[Req](msg.Text{})(c, req)
 }
 
 // lenientJSONBody binds what binds; a body that does not is the zero Req. For an action whose body is a reason it can do without.
@@ -97,7 +98,7 @@ func respond[Out any](cfg APIConfig, status int, call func(c *gin.Context, auth 
 
 // writeNode is handle for a handler that writes a node from a JSON body and answers with the node.
 func writeNode[Req any](cfg APIConfig, status int, call func(c *gin.Context, req Req, auth identity.AuthContext) (model.Node, error)) gin.HandlerFunc {
-	return handle(cfg, status, jsonBody[Req](""), call)
+	return handle(cfg, status, jsonBody[Req](msg.Text{}), call)
 }
 
 // listPage is the shape of a listing handler: the page bounds (400 where they do not parse), the caller (401 without one), the service call — an error of the request's own, say a filter that does not validate, is a 400 with its message, as respondError answers it — and the page as JSON.

@@ -13,6 +13,7 @@ import (
 	"github.com/pfisterer/cloud-self-service-golib/authn"
 	"github.com/pfisterer/cloud-self-service-golib/ginweb"
 	"github.com/pfisterer/cloud-self-service-golib/logging"
+	"github.com/pfisterer/cloud-self-service-golib/msg"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"github.com/pfisterer/openstack-management-api/internal/core/usage"
@@ -58,8 +59,8 @@ type ConfigResponse struct {
 	Resources []uiResource `json:"resources"`
 	// Roles are the roles a member of a project can hold (common.Roles), the list the API validates authorized_users against.
 	Roles []string `json:"roles"`
-	// Caps are the caps a budget can set for the projects below it (common.Cap), declared by the providers.
-	Caps []common.Cap `json:"caps"`
+	// Caps are the caps a budget can set for the projects below it (common.Cap), declared by the providers, their name and message in the caller's language (Accept-Language).
+	Caps []common.CapView `json:"caps"`
 	// ProvisioningEnabled reports whether the reconciler is running. Only then
 	// does an approved project eventually get an OpenStack project — without it
 	// the UI would show every project as "waiting for OpenStack" forever.
@@ -190,6 +191,8 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 	gin.DefaultWriter = ginLogWriter
 	gin.DefaultErrorWriter = ginLogWriter
 	router.Use(ginzap.RecoveryWithZap(cfg.Log.Desugar(), true))
+	// The language of the answers' texts for people (Accept-Language: de or en, German by default), for REST and MCP alike, before anything can answer.
+	router.Use(ginweb.Language())
 	router.Use(ginweb.LimitRequestBody(MaxRequestBodyBytes))
 
 	// The probes, without authentication: /healthz (alive) and /readyz (the checks of Probes).
@@ -370,6 +373,15 @@ func uiResourceFrom(r common.Resource) uiResource {
 	}
 }
 
+// capsIn are caps as /v1/config hands them out, in l.
+func capsIn(caps []common.Cap, l msg.Lang) []common.CapView {
+	out := make([]common.CapView, 0, len(caps))
+	for _, d := range caps {
+		out = append(out, d.In(l))
+	}
+	return out
+}
+
 // getConfig returns the system-wide resource configuration.
 //
 //	@Summary		Get resource configuration
@@ -395,7 +407,7 @@ func getConfig(cfg APIConfig) gin.HandlerFunc {
 		config := ConfigResponse{
 			Resources:             resources,
 			Roles:                 common.Roles,
-			Caps:                  append([]common.Cap{}, cfg.Caps...),
+			Caps:                  capsIn(cfg.Caps, ginweb.Lang(c)),
 			ProvisioningEnabled:   cfg.ProvisioningEnabled != nil && cfg.ProvisioningEnabled(),
 			Providers:             append([]string{}, cfg.Providers...),
 			OpenstackDashboardURL: cfg.OpenstackDashboardURL,

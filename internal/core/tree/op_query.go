@@ -53,7 +53,7 @@ func (s *Service) GetNode(id string, userTokens common.TokenList) (*model.Node, 
 // ListMine returns the leaves the user answers for or works in: the ones they own, the ones whose admin scope names them or one of their groups, and the ones whose authorized users do (members, who may read them, see GetNode). Which of these the caller is, the client reads from owner, admin_scope and authorized_users of each node.
 func (s *Service) ListMine(userEmail string, userTokens common.TokenList, limit, offset int) (NodePage, error) {
 	if strings.TrimSpace(userEmail) == "" {
-		return NodePage{}, invalid("Die E-Mail-Adresse der Person fehlt.")
+		return NodePage{}, invalid("Die E-Mail-Adresse der Person fehlt.", "The e-mail address of the person is missing.")
 	}
 	limit, offset = normalizePagination(limit, offset)
 	ctx, cancel := s.newCtx()
@@ -113,7 +113,7 @@ func (s *Service) listPage(ctx context.Context, q nodestore.NodeQuery, limit, of
 // via ListChildren.
 func (s *Service) ListMyBudgets(userTokens common.TokenList, limit, offset int) (NodePage, error) {
 	if len(userTokens) == 0 {
-		return NodePage{}, invalid("Für die Person sind keine Tokens bekannt.")
+		return NodePage{}, invalid("Für die Person sind keine Tokens bekannt.", "No tokens are known for the person.")
 	}
 	limit, offset = normalizePagination(limit, offset)
 	ctx, cancel := s.newCtx()
@@ -142,7 +142,7 @@ func (s *Service) ListMyBudgets(userTokens common.TokenList, limit, offset int) 
 // ListEligibleForMe returns the approved budgets the caller may submit requests to.
 func (s *Service) ListEligibleForMe(userTokens common.TokenList, limit, offset int) (NodePage, error) {
 	if len(userTokens) == 0 {
-		return NodePage{}, invalid("Für die Person sind keine Tokens bekannt.")
+		return NodePage{}, invalid("Für die Person sind keine Tokens bekannt.", "No tokens are known for the person.")
 	}
 	limit, offset = normalizePagination(limit, offset)
 	ctx, cancel := s.newCtx()
@@ -163,7 +163,7 @@ func (s *Service) ListEligibleForOwner(callerTokens common.TokenList, ownerToken
 		return NodePage{}, errNoPermission
 	}
 	if len(ownerTokens) == 0 {
-		return NodePage{}, invalid("owner_tokens darf nicht leer sein.")
+		return NodePage{}, invalid("owner_tokens darf nicht leer sein.", "owner_tokens must not be empty.")
 	}
 	return s.ListEligibleForMe(common.CanonicalTokens(ownerTokens), limit, offset)
 }
@@ -179,7 +179,7 @@ func (s *Service) ListEligibleForOwner(callerTokens common.TokenList, ownerToken
 // question — "is anything stuck anywhere below me?".
 func (s *Service) ListToManage(userTokens common.TokenList, includeSubtree bool, limit, offset int) (NodePage, error) {
 	if len(userTokens) == 0 {
-		return NodePage{}, invalid("Für die Person sind keine Tokens bekannt.")
+		return NodePage{}, invalid("Für die Person sind keine Tokens bekannt.", "No tokens are known for the person.")
 	}
 	limit, offset = normalizePagination(limit, offset)
 	ctx, cancel := s.newCtx()
@@ -250,7 +250,7 @@ func (s *Service) SearchNodes(userTokens common.TokenList, query string, limit, 
 	}
 	needle := strings.ToLower(strings.TrimSpace(query))
 	if needle == "" {
-		return NodePage{}, invalid("q darf nicht leer sein.")
+		return NodePage{}, invalid("q darf nicht leer sein.", "q must not be empty.")
 	}
 	limit, offset = normalizePagination(limit, offset)
 	ctx, cancel := s.newCtx()

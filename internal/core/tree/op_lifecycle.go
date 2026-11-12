@@ -37,7 +37,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 	// it the purpose had to stand in — a whole sentence truncated to Keystone's
 	// name length.
 	if strings.TrimSpace(req.Name) == "" {
-		return model.Node{}, invalid("Ein Name ist erforderlich.")
+		return model.Node{}, invalid("Ein Name ist erforderlich.", "A name is required.")
 	}
 	if err := validateName(strings.TrimSpace(req.Name)); err != nil {
 		return model.Node{}, err
@@ -51,7 +51,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 			return model.Node{}, err
 		}
 		if name := req.budgetSetting(); name != "" {
-			return model.Node{}, invalid("%s ist eine Einstellung von Budgets.", name)
+			return model.Node{}, invalid("%s ist eine Einstellung von Budgets.", "%s is a setting of budgets.", name)
 		}
 	case model.KindBudget:
 		// A budget without an admin scope is invisible in the UI: "My Budgets"
@@ -60,7 +60,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		// the nearest ancestor manager instead. The structural "unassigned" node
 		// is the deliberate exception and is created by Bootstrap, not here.
 		if len(req.AdminScope) == 0 {
-			return model.Node{}, invalid("Ein Budget braucht mindestens einen Eintrag unter „Verwaltet von“ (admin_scope).")
+			return model.Node{}, invalid("Ein Budget braucht mindestens einen Eintrag unter „Verwaltet von“ (admin_scope).", "A budget needs at least one entry under “Managed by” (admin_scope).")
 		}
 		if err := s.validateBudgetLimit(req.Limit); err != nil {
 			return model.Node{}, err
@@ -72,7 +72,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 			return model.Node{}, err
 		}
 	default:
-		return model.Node{}, invalid("Unbekannte Art %q.", req.Kind)
+		return model.Node{}, invalid("Unbekannte Art %q.", "Unknown kind %q.", req.Kind)
 	}
 
 	// Validated before the approval lock: checking the group tokens talks to the
@@ -98,13 +98,13 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		return model.Node{}, fmt.Errorf("load parent node: %w", err)
 	}
 	if parent == nil {
-		return model.Node{}, refuse(common.ErrNotFound, "Das übergeordnete Budget wurde nicht gefunden.")
+		return model.Node{}, refuse(common.ErrNotFound, "Das übergeordnete Budget wurde nicht gefunden.", "The parent budget was not found.")
 	}
 	if parent.Kind != model.KindBudget {
-		return model.Node{}, invalid("Darüber muss ein Budget stehen.")
+		return model.Node{}, invalid("Darüber muss ein Budget stehen.", "There must be a budget above.")
 	}
 	if parent.Status != model.StatusApproved {
-		return model.Node{}, refuse(common.ErrConflict, "Unter einem Budget im Status %q lässt sich nichts anlegen.", parent.Status)
+		return model.Node{}, refuse(common.ErrConflict, "Unter einem Budget im Status %q lässt sich nichts anlegen.", "Nothing can be created under a budget in status %q.", parent.Status)
 	}
 
 	// The parent and the budgets above it: who manages the parent, and what bounds the new node.
@@ -131,13 +131,13 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 	// projects from its students, not a sub-budget tree underneath. Managers are
 	// exempt — they own the structure and create sub-budgets directly.
 	if req.Kind == model.KindBudget && !isManager && !parent.SubBudgetRequestsAllowed() {
-		return model.Node{}, refuse(common.ErrForbidden, "Dieses Budget nimmt keine Teilbudget-Anfragen an. Stattdessen lässt sich ein Projekt anfragen.")
+		return model.Node{}, refuse(common.ErrForbidden, "Dieses Budget nimmt keine Teilbudget-Anfragen an. Stattdessen lässt sich ein Projekt anfragen.", "This budget does not accept sub-budget requests. A project can be requested instead.")
 	}
 	// Passing on the parent's limit hands out all of it, so only those who
 	// could give that limit directly may.
 	if req.InheritsLimit {
 		if !isManager {
-			return model.Node{}, refuse(common.ErrForbidden, "Ein Budget, das das Limit des Budgets darüber übernimmt, legen nur Verwaltende an.")
+			return model.Node{}, refuse(common.ErrForbidden, "Ein Budget, das das Limit des Budgets darüber übernimmt, legen nur Verwaltende an.", "Only managers create a budget that inherits the limit of the budget above.")
 		}
 		req.Limit = common.ProjectQuota{}
 	}
@@ -304,7 +304,7 @@ func (s *Service) checkProjectsPerOwner(ctx context.Context, budget *model.Node,
 		return fmt.Errorf("count projects of the requester: %w", err)
 	}
 	if n >= s.maxProjectsPerOwner {
-		return refuse(common.ErrForbidden, "Im Budget %[2]q bestehen bereits %[1]d eigene Projekte, erlaubt sind höchstens %[3]d. Ein nicht mehr benötigtes löschen oder die Verwaltenden des Budgets fragen.", n, nodeLabel(*budget), s.maxProjectsPerOwner)
+		return refuse(common.ErrForbidden, "Im Budget %[2]q bestehen bereits %[1]d eigene Projekte, erlaubt sind höchstens %[3]d. Ein nicht mehr benötigtes löschen oder die Verwaltenden des Budgets fragen.", "The budget %[2]q already holds %[1]d of your own projects, at most %[3]d are allowed. Delete one you no longer need or ask the managers of the budget.", n, nodeLabel(*budget), s.maxProjectsPerOwner)
 	}
 	return nil
 }
@@ -346,7 +346,7 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 		return model.Node{}, err
 	}
 	if current.Kind != model.KindBudget && !req.leafDirectEdit() {
-		return model.Node{}, invalid("An einem Projekt lassen sich nur Name und Admins direkt ändern; alles andere über eine Änderungsanfrage.")
+		return model.Node{}, invalid("An einem Projekt lassen sich nur Name und Admins direkt ändern; alles andere über eine Änderungsanfrage.", "Only the name and the admins of a project can be changed directly; everything else through a change request.")
 	}
 
 	// Which fields need whom is listed once, in updateFieldClass.
@@ -354,7 +354,7 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 	wantsCapacityEdit := req.capacityEdit()
 	// An edit that sends nothing needs nobody's rights and would only add an empty history entry: refused, so no edit passes without a check (found 10.11.2026).
 	if !wantsPolicyEdit && !wantsCapacityEdit {
-		return model.Node{}, invalid("Nichts zu ändern: Die Anfrage setzt kein Feld.")
+		return model.Node{}, invalid("Nichts zu ändern: Die Anfrage setzt kein Feld.", "Nothing to change: the request sets no field.")
 	}
 
 	// The budgets above: they decide who may make the edit and bound what it sets.
@@ -380,13 +380,13 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 	// The root node's admin scope is owned by the configuration (synced on every
 	// startup); an API edit would silently revert on the next deployment.
 	if current.ID == model.RootNodeID && req.AdminScope != nil {
-		return model.Node{}, refuse(common.ErrForbidden, "Wer das oberste Budget verwaltet, steht in ROOT_ADMIN_TOKENS.")
+		return model.Node{}, refuse(common.ErrForbidden, "Wer das oberste Budget verwaltet, steht in ROOT_ADMIN_TOKENS.", "Who manages the top budget is set in ROOT_ADMIN_TOKENS.")
 	}
 
 	updated := *current
 	if req.Name != nil {
 		if strings.TrimSpace(*req.Name) == "" {
-			return model.Node{}, invalid("Ein Name ist erforderlich.")
+			return model.Node{}, invalid("Ein Name ist erforderlich.", "A name is required.")
 		}
 		if err := validateName(strings.TrimSpace(*req.Name)); err != nil {
 			return model.Node{}, err
@@ -397,7 +397,7 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 	if req.Reason != nil {
 		purpose := strings.TrimSpace(*req.Reason)
 		if purpose == "" {
-			return model.Node{}, invalid("Ein Zweck ist erforderlich.")
+			return model.Node{}, invalid("Ein Zweck ist erforderlich.", "A purpose is required.")
 		}
 		if err := validateReason(purpose); err != nil {
 			return model.Node{}, err
@@ -434,7 +434,7 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 	}
 	if req.ClearMaxProjectTermDays {
 		if bound := model.ResolveMaxProjectTermDays(chain); bound != nil {
-			return model.Node{}, invalid("Im Budget darüber laufen Projekte höchstens %d Tage, deshalb braucht dieses auch diese Grenze.", *bound)
+			return model.Node{}, invalid("Im Budget darüber laufen Projekte höchstens %d Tage, deshalb braucht dieses auch diese Grenze.", "In the budget above, projects run at most %d days, so this one needs that limit too.", *bound)
 		}
 		updated.MaxProjectTermDays = nil
 	} else if req.MaxProjectTermDays != nil {
@@ -462,7 +462,7 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 	}
 	if req.ClearTerminationDate || req.TerminationDate != nil {
 		if bound := chainEnd(chain); req.ClearTerminationDate && bound != nil {
-			return model.Node{}, invalid("Das Budget darüber endet am %s, deshalb braucht dieses auch ein Enddatum.", dateOnly(*bound))
+			return model.Node{}, invalid("Das Budget darüber endet am %s, deshalb braucht dieses auch ein Enddatum.", "The budget above ends on %s, so this one needs an end date too.", dateOnly(*bound))
 		}
 		if req.TerminationDate != nil {
 			if _, err := s.fitNodeEnd(current.Kind, req.TerminationDate, chain); err != nil {
@@ -496,12 +496,12 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 		inherits = *req.InheritsLimit
 	}
 	if inherits && req.Limit != nil {
-		return model.Node{}, invalid("Dieses Budget übernimmt das Limit des Budgets darüber. Für ein eigenes Limit das Übernehmen ausschalten.")
+		return model.Node{}, invalid("Dieses Budget übernimmt das Limit des Budgets darüber. Für ein eigenes Limit das Übernehmen ausschalten.", "This budget inherits the limit of the budget above. Switch inheriting off for a limit of its own.")
 	}
 	// Only for an edit of the limit or of inheriting it: an edit of access or
 	// policy alone has nothing to inherit, and must not fail on it.
 	if inherits && wantsCapacityEdit && binding == nil {
-		return model.Node{}, invalid("Das oberste Budget hat nichts darüber, dessen Limit es übernehmen könnte.")
+		return model.Node{}, invalid("Das oberste Budget hat nichts darüber, dessen Limit es übernehmen könnte.", "The top budget has nothing above it whose limit it could inherit.")
 	}
 	if inherits && !current.InheritsLimit {
 		historyEntry.LimitFrom = &current.Limit
@@ -614,7 +614,7 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor model.Ac
 	}
 
 	if req.Limit != nil && current.InheritsLimit {
-		return model.Node{}, invalid("Dieses Budget übernimmt das Limit des Budgets darüber.")
+		return model.Node{}, invalid("Dieses Budget übernimmt das Limit des Budgets darüber.", "This budget inherits the limit of the budget above.")
 	}
 	// What is asked for is checked as far as asking goes; room for it is
 	// the decision's business (leafChangeDecision, or a manager).
@@ -649,7 +649,7 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor model.Ac
 	var normalizedAuthorizedUsers *[]common.AuthorizedUser
 	if req.AuthorizedUsers != nil {
 		if !current.IsLeaf() {
-			return model.Node{}, invalid("Mitglieder gibt es nur an Projekten.")
+			return model.Node{}, invalid("Mitglieder gibt es nur an Projekten.", "Only projects have members.")
 		}
 		manager := managesInChain(caller, chain)
 		keep := [][]common.AuthorizedUser{current.AuthorizedUsers}
@@ -703,7 +703,7 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor model.Ac
 	}
 	pending.AuthorizedUsers = normalizedAuthorizedUsers
 	if pending.Limit == nil && pending.TerminationDate == nil && pending.AuthorizedUsers == nil {
-		return model.Node{}, invalid("Die Änderungsanfrage enthält keine Änderung.")
+		return model.Node{}, invalid("Die Änderungsanfrage enthält keine Änderung.", "The change request contains no change.")
 	}
 
 	historyEntry := model.NewHistoryEntry("change_requested", actor, model.StatusChangePending)
@@ -763,7 +763,7 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor model.Ac
 
 // errBeyondAutoApprove refuses a request that a budget with a hard
 // auto-approve limit would otherwise queue for a manager.
-var errBeyondAutoApprove = refuse(common.ErrForbidden, "Das ist mehr, als das Budget automatisch genehmigt, und darüber hinaus nimmt es keine Anfragen an. Etwas zurückgeben oder die Verwaltenden bitten, den eigenen Anteil zu erhöhen.")
+var errBeyondAutoApprove = refuse(common.ErrForbidden, "Das ist mehr, als das Budget automatisch genehmigt, und darüber hinaus nimmt es keine Anfragen an. Etwas zurückgeben oder die Verwaltenden bitten, den eigenen Anteil zu erhöhen.", "That is more than the budget approves automatically, and beyond that it accepts no requests. Give something back or ask the managers to raise your share.")
 
 // leafChangeDecision decides whether a proposed change to an active leaf takes
 // effect without a manager, and why. Every part of the change has to qualify —
@@ -822,7 +822,7 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor model.Act
 		return model.Node{}, err
 	}
 	if current.Status != model.StatusPending && current.Status != model.StatusChangePending {
-		return model.Node{}, refuse(common.ErrConflict, "Im Status %q lässt sich nichts genehmigen.", current.Status)
+		return model.Node{}, refuse(common.ErrConflict, "Im Status %q lässt sich nichts genehmigen.", "Nothing can be approved in status %q.", current.Status)
 	}
 
 	ancestors, err := s.parentChainNodes(ctx, current)
@@ -895,7 +895,7 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor model.Act
 	var updated model.Node
 	if _, err := s.store.UpdateNode(ctx, id, func(n *model.Node) error {
 		if n.Status != current.Status {
-			return refuse(common.ErrConflict, "Im Status %q lässt sich nichts genehmigen.", n.Status)
+			return refuse(common.ErrConflict, "Im Status %q lässt sich nichts genehmigen.", "Nothing can be approved in status %q.", n.Status)
 		}
 		if err := checkRevision(n, req.ExpectedRevision); err != nil {
 			return err
@@ -925,10 +925,10 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor model.Act
 // checkRevision refuses to decide on a node whose revision is not the one the caller saw, and a decision that does not say which one that was.
 func checkRevision(n *model.Node, expected *int) error {
 	if expected == nil {
-		return invalid("expected_revision ist erforderlich: der Stand der Anfrage, wie sie angezeigt wurde.")
+		return invalid("expected_revision ist erforderlich: der Stand der Anfrage, wie sie angezeigt wurde.", "expected_revision is required: the revision of the request as it was shown.")
 	}
 	if got := n.CurrentRevision(); got != *expected {
-		return refuse(common.ErrConflict, "Die Anfrage hat sich seit der Anzeige geändert (Stand %d, jetzt %d). Bitte neu laden und noch einmal entscheiden.", *expected, got)
+		return refuse(common.ErrConflict, "Die Anfrage hat sich seit der Anzeige geändert (Stand %d, jetzt %d). Bitte neu laden und noch einmal entscheiden.", "The request has changed since it was shown (revision %d, now %d). Please reload and decide again.", *expected, got)
 	}
 	return nil
 }
@@ -955,7 +955,7 @@ func (s *Service) RejectNode(id string, req RejectNodeRequest, actor model.Actor
 		return model.Node{}, err
 	}
 	if current.Status != model.StatusPending && current.Status != model.StatusChangePending {
-		return model.Node{}, refuse(common.ErrConflict, "Im Status %q lässt sich nichts ablehnen.", current.Status)
+		return model.Node{}, refuse(common.ErrConflict, "Im Status %q lässt sich nichts ablehnen.", "Nothing can be rejected in status %q.", current.Status)
 	}
 
 	if manages, err := s.managesParentChain(ctx, userTokens, current); err != nil {
@@ -967,7 +967,7 @@ func (s *Service) RejectNode(id string, req RejectNodeRequest, actor model.Actor
 	var updated model.Node
 	if _, err := s.store.UpdateNode(ctx, id, func(n *model.Node) error {
 		if n.Status != current.Status || derefParent(n.ParentID) != derefParent(current.ParentID) {
-			return refuse(common.ErrConflict, "Inzwischen geändert (Status %q). Bitte neu laden.", n.Status)
+			return refuse(common.ErrConflict, "Inzwischen geändert (Status %q). Bitte neu laden.", "Changed in the meantime (status %q). Please reload.", n.Status)
 		}
 		var historyEntry model.HistoryEntry
 		if n.Status == model.StatusPending {

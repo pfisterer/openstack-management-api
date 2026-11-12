@@ -128,20 +128,20 @@ func (f ChildFilter) Validate() error {
 	switch f.Kind {
 	case "", model.KindBudget, model.KindProject:
 	default:
-		return invalid("kind muss %q oder %q sein.", model.KindBudget, model.KindProject)
+		return invalid("kind muss %q oder %q sein.", "kind must be %q or %q.", model.KindBudget, model.KindProject)
 	}
 	switch f.Sort {
 	case "", ChildSortName, ChildSortOwner, ChildSortStatus, ChildSortEnd, ChildSortCreated:
 	default:
 		if _, ok := numericSort(f.Sort); !ok {
-			return invalid("Unbekannte Sortierung %q.", f.Sort)
+			return invalid("Unbekannte Sortierung %q.", "Unknown sort order %q.", f.Sort)
 		}
 	}
 	if f.Group != "" {
 		switch f.GroupMode {
 		case "", GroupAccess, GroupOwner:
 		default:
-			return invalid("group_mode muss %q oder %q sein.", GroupAccess, GroupOwner)
+			return invalid("group_mode muss %q oder %q sein.", "group_mode must be %q or %q.", GroupAccess, GroupOwner)
 		}
 	}
 	return nil
@@ -294,7 +294,7 @@ func grantsAccess(n model.Node, token string) bool {
 // for a person's tokens answers patterns and relations alike.
 func (s *Service) ownersHolding(ctx context.Context, owners map[string]bool, token string) (map[string]bool, error) {
 	if s.roles == nil {
-		return nil, invalid("Kein Dienst für Rollen und Gruppen eingerichtet.")
+		return nil, invalid("Kein Dienst für Rollen und Gruppen eingerichtet.", "No service for roles and groups is set up.")
 	}
 	type result struct {
 		email string

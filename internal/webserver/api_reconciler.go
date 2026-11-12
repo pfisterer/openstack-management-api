@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/cloud-self-service-golib/apierr"
 	"github.com/pfisterer/cloud-self-service-golib/ginweb"
+	"github.com/pfisterer/cloud-self-service-golib/msg"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/identity"
 	"go.uber.org/zap"
@@ -47,7 +48,7 @@ func requireRootAdmin(rootAdminTokens common.TokenList, log *zap.SugaredLogger) 
 			return
 		}
 		log.Warnw("Reconciler admin: access denied (not a root admin)", "effective_tokens", auth.EffectiveTokens, "actor", auth.ActorEmail)
-		ginweb.AbortError(c, apierr.New(http.StatusForbidden, "forbidden", "Nur für Root-Admins."))
+		ginweb.AbortError(c, apierr.New(http.StatusForbidden, "forbidden", msg.T("Nur für Root-Admins.", "For root admins only.")))
 	}
 }
 
@@ -56,9 +57,9 @@ func reconcilerAvailable(rec ReconcilerAPI) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		switch {
 		case rec == nil:
-			ginweb.AbortError(c, apierr.New(http.StatusServiceUnavailable, "reconciler_disabled", "Der Abgleich mit OpenStack ist ausgeschaltet."))
+			ginweb.AbortError(c, apierr.New(http.StatusServiceUnavailable, "reconciler_disabled", msg.T("Der Abgleich mit OpenStack ist ausgeschaltet.", "The reconciliation with OpenStack is switched off.")))
 		case !rec.Ready():
-			ginweb.AbortError(c, apierr.New(http.StatusServiceUnavailable, "reconciler_connecting", "Der Abgleich mit OpenStack ist eingeschaltet, die Verbindung zu OpenStack steht aber noch nicht."))
+			ginweb.AbortError(c, apierr.New(http.StatusServiceUnavailable, "reconciler_connecting", msg.T("Der Abgleich mit OpenStack ist eingeschaltet, die Verbindung zu OpenStack steht aber noch nicht.", "The reconciliation with OpenStack is switched on, but the connection to OpenStack is not up yet.")))
 		default:
 			c.Next()
 		}

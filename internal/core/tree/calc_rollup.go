@@ -349,7 +349,7 @@ func quotaAddChecked(a, b common.ProjectQuota, resourceIDs []string) (common.Pro
 	for _, resourceID := range resourceIDs {
 		sum, ok := addInts(a[resourceID], b[resourceID])
 		if !ok {
-			return nil, invalid("%q: %d + %d liegt außerhalb des erlaubten Bereichs.", resourceID, a[resourceID], b[resourceID])
+			return nil, invalid("%q: %d + %d liegt außerhalb des erlaubten Bereichs.", "%q: %d + %d is outside the allowed range.", resourceID, a[resourceID], b[resourceID])
 		}
 		out[resourceID] = sum
 	}

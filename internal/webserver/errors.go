@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/cloud-self-service-golib/apierr"
 	"github.com/pfisterer/cloud-self-service-golib/ginweb"
+	"github.com/pfisterer/cloud-self-service-golib/msg"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/identity"
 	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/catalog"
@@ -20,20 +21,31 @@ var errInternal = identity.ErrInternal
 var serviceErrors = apierr.Classifier{
 	Rules: []apierr.Rule{
 		apierr.Is(common.ErrInternal, http.StatusInternalServerError, errInternal.Code, errInternal.Msg),
-		apierr.IsWithText(common.ErrForbidden, http.StatusForbidden, "forbidden"),
-		apierr.IsWithText(common.ErrNotFound, http.StatusNotFound, "not_found"),
+		withOwnText(common.ErrForbidden, http.StatusForbidden, "forbidden", msg.T("Keine Berechtigung.", "Not allowed.")),
+		withOwnText(common.ErrNotFound, http.StatusNotFound, "not_found", msg.T("Nicht gefunden.", "Not found.")),
 		// 409, not 400: the request was fine, the client's view of the node was
 		// stale. A client can tell the two apart and reload instead of asking
 		// the user to correct an input that was never wrong.
-		apierr.IsWithText(common.ErrConflict, http.StatusConflict, "conflict"),
+		withOwnText(common.ErrConflict, http.StatusConflict, "conflict", msg.T("Inzwischen geändert. Bitte neu laden.", "Changed in the meantime. Please reload.")),
 	},
-	Fallback: func(err error) *apierr.Error { return apierr.New(http.StatusBadRequest, "invalid", err.Error()) },
+	Fallback: apierr.Fallback(http.StatusBadRequest, "invalid"),
+}
+
+// withOwnText answers errors that are target with status and code and their own text (apierr.IsWithText: German and English where the error carries both), and the sentinel itself, which carries only its English word for the log ("not found"), with bare.
+func withOwnText(target error, status int, code string, bare msg.Text) apierr.Rule {
+	own := apierr.IsWithText(target, status, code)
+	return func(err error) *apierr.Error {
+		if err.Error() == target.Error() {
+			return apierr.Is(target, status, code, bare)(err)
+		}
+		return own(err)
+	}
 }
 
 // catalogErrors is how the catalogue's administration answers: ErrUnavailable with 503, what the catalogue names (invalid, and the not-found and conflict it shares with the tree) with its message as serviceErrors answers it; anything else is the service's own failure.
 var catalogErrors = apierr.Classifier{
 	Rules: append([]apierr.Rule{
-		apierr.Is(catalog.ErrUnavailable, http.StatusServiceUnavailable, "openstack_unavailable", "OpenStack ist noch nicht verbunden."),
+		apierr.Is(catalog.ErrUnavailable, http.StatusServiceUnavailable, "openstack_unavailable", msg.T("OpenStack ist noch nicht verbunden.", "OpenStack is not connected yet.")),
 		apierr.IsWithText(catalog.ErrInvalid, http.StatusBadRequest, "invalid"),
 	}, serviceErrors.Rules...),
 }
@@ -57,8 +69,8 @@ func (cfg APIConfig) respond(c *gin.Context, e *apierr.Error) {
 }
 
 // respondBadRequest answers 400 with a message of this service.
-func respondBadRequest(c *gin.Context, msg string) {
-	ginweb.AbortError(c, apierr.New(http.StatusBadRequest, "invalid", msg))
+func respondBadRequest(c *gin.Context, text msg.Text) {
+	ginweb.AbortError(c, apierr.New(http.StatusBadRequest, "invalid", text))
 }
 
 func (cfg APIConfig) logInternal(c *gin.Context, err error) {

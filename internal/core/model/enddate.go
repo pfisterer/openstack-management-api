@@ -19,7 +19,7 @@ func EndDay(s string) (day.Date, error) {
 	}
 	d, err := day.Parse(v)
 	if err != nil {
-		return day.Date{}, invalid("termination_date %q ist weder ein Tag (2006-01-02) noch ein Zeitpunkt nach RFC 3339.", s)
+		return day.Date{}, invalid("termination_date %q ist weder ein Tag (2006-01-02) noch ein Zeitpunkt nach RFC 3339.", "termination_date %q is neither a day (2006-01-02) nor an RFC 3339 timestamp.", s)
 	}
 	return d, nil
 }

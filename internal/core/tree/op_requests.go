@@ -190,7 +190,7 @@ func (r *UpdateNodeRequest) UnmarshalJSON(b []byte) error {
 	}
 	for _, f := range nullableUpdateFields {
 		if _, ok := raw[f.formerFlag]; ok {
-			return invalid("%s gibt es nicht mehr: Zum Entfernen \"%s\": null senden.", f.formerFlag, f.field)
+			return invalid("%s gibt es nicht mehr: Zum Entfernen \"%s\": null senden.", "%s no longer exists: to remove it, send \"%s\": null.", f.formerFlag, f.field)
 		}
 	}
 	*r = UpdateNodeRequest(p)

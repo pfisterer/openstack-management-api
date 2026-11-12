@@ -236,10 +236,10 @@ func (s *Service) loadLive(ctx context.Context, id string) (*model.Node, error) 
 		return nil, err
 	}
 	if n.Status == model.StatusImported {
-		return nil, refuse(common.ErrForbidden, "Ein importiertes Projekt ändert sich nur durch Übernehmen.")
+		return nil, refuse(common.ErrForbidden, "Ein importiertes Projekt ändert sich nur durch Übernehmen.", "An imported project changes only by adopting it.")
 	}
 	if model.IsTerminalStatus(n.Status) {
-		return nil, refuse(common.ErrConflict, "Im Status %q lässt sich nichts mehr ändern.", n.Status)
+		return nil, refuse(common.ErrConflict, "Im Status %q lässt sich nichts mehr ändern.", "Nothing can be changed in status %q.", n.Status)
 	}
 	return n, nil
 }

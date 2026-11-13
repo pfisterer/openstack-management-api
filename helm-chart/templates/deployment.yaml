@@ -41,7 +41,7 @@ spec:
           # version is passed at all, so "new chart, old image" cannot occur.
           # An explicit value still wins — that is how argocd-image-updater
           # keeps driving the standalone releases.
-          image: {{ .Values.openstackManagementApi.image }}:{{ .Values.openstackManagementApi.version | default .Chart.AppVersion }}
+          image: {{ .Values.openstackManagementApi.image }}:{{ .Values.openstackManagementApi.version | default .Chart.AppVersion }}{{ with .Values.openstackManagementApi.digest }}@{{ . }}{{ end }}
           imagePullPolicy: {{ .Values.openstackManagementApi.imagePullPolicy | default "Always" }}
           ports:
             - name: http

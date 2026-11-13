@@ -12,6 +12,8 @@ openstackManagementApi:
   imagePullPolicy: Always
   # Empty -> the chart\'s appVersion is used (see the deployment template).
   version: ""
+  # Optional image digest, e.g. digest: "sha256:<64 hex>": the image is then pulled as <image>:<version>@<digest>, so a re-pushed tag cannot change what runs. Left unset on purpose (not even ""), so the checksum/values annotation and thus the pods stay as they are.
+  # digest: ""
   hostname: "os-mgt-api.example.com"
   replicas: 1
 

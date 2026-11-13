@@ -54,6 +54,11 @@
           "type": "string",
           "description": "Image tag. Empty falls back to the chart appVersion, which is how a pinned chart version pins the image."
         },
+        "digest": {
+          "type": "string",
+          "pattern": "^(sha256:[a-f0-9]{64})?$",
+          "description": "Optional image digest (sha256:<64 hex>). Set, the image reference becomes <image>:<tag>@<digest> and the container runtime pulls exactly that content; empty keeps the plain tag."
+        },
         "hostname": {
           "type": "string",
           "minLength": 1

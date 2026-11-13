@@ -29,6 +29,8 @@ type TenantUsage struct {
 // response by the number of servers, and the totals are what is stored.
 func (c *OpenStackClient) TenantUsages(start, end time.Time) ([]TenantUsage, error) {
 	var out []TenantUsage
+	// Nova reads the bounds as UTC, and gophercloud writes them without a zone (RFC3339MilliNoZ), in whatever location they carry: a day's bounds in Europe/Berlin would go out as Berlin wall time and be read an hour (two in summer) late, and an end still in the future is cut to now, so the day's last hour went missing. Hence UTC here.
+	start, end = start.UTC(), end.UTC()
 	err := usage.AllTenants(c.computeSvc(), usage.AllTenantsOpts{Start: &start, End: &end}).
 		EachPage(func(page pagination.Page) (bool, error) {
 			tenants, err := usage.ExtractAllTenants(page)

@@ -569,8 +569,12 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 // RequestChange proposes modifications to a node. On a pending node the request
 // is amended in place (it is not yet approved). On an approved or change_pending
 // leaf a change that needs nobody's decision (see leafChangeDecision) is applied
-// at once; any other proposal is stored as pending changes and the node
-// transitions to (or stays in) change_pending until the parent chain decides.
+// at once, and so is any change by a manager of a budget above the leaf — the
+// people who would approve it — after the capacity checks of an approval, whose
+// refusal it returns instead of filing a request. Any other proposal is stored
+// as pending changes and the node transitions to (or stays in) change_pending
+// until the parent chain decides. A change applied at once replaces a proposal
+// still waiting on the node, as a new proposal would.
 func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor model.Actor, userTokens common.TokenList) (model.Node, error) {
 	var err error
 	if req.TerminationDate, err = normalizeEnd(req.TerminationDate); err != nil {
@@ -722,18 +726,28 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor model.Ac
 
 	updated.History = append(slices.Clone(current.History), historyEntry)
 
-	direct, reason, beyondPolicy := false, "", false
+	direct, byManager, reason, beyondPolicy := false, false, "", false
 	if current.IsLeaf() {
 		if direct, reason, beyondPolicy, err = s.leafChangeDecision(ctx, current, parent, pending); err != nil {
 			return model.Node{}, err
 		}
 	}
-	if beyondPolicy && !parent.RequestsBeyondAutoApproveAllowed() {
-		// A manager of the budget may still propose — and then approve — it;
-		// the hard limit is for the people who request from it.
-		if !managesInChain(caller, chain) {
-			return model.Node{}, errBeyondAutoApprove
+	// Whoever manages a budget above the project may approve the change (the right ApproveNode asks for), so asking them would only make them decide on their own proposal.
+	decides := current.IsLeaf() && managesInChain(caller, chain)
+	if beyondPolicy && !parent.RequestsBeyondAutoApproveAllowed() && !decides {
+		// The hard limit is for the people who request from the budget; its managers decide anyway.
+		return model.Node{}, errBeyondAutoApprove
+	}
+	if !direct && decides {
+		// Applied at once, with the checks an approval runs: the limit in force is charged already and is replaced, and what does not fit is refused with the budget that is short instead of being filed as a request.
+		limit := current.Limit
+		if pending.Limit != nil {
+			limit = *pending.Limit
 		}
+		if err := s.checkLeafLimit(ctx, *current, chain, limit, current.Limit, true); err != nil {
+			return model.Node{}, err
+		}
+		direct, byManager, reason = true, true, "Direkt übernommen von einer Person, die das Budget verwaltet"
 	}
 	if direct {
 		// Applied as proposed — this also replaces an earlier proposal still
@@ -749,7 +763,15 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor model.Ac
 		}
 		updated.Pending = nil
 		updated.Status = model.StatusApproved
-		updated.History = append(updated.History, autoApprovedEntry(actor, model.StatusChangePending, reason))
+		if byManager {
+			// Recorded as the caller's own approval, like a project a manager creates directly.
+			entry := model.NewHistoryEntry("approved", actor, model.StatusApproved)
+			entry.StatusFrom = new(model.StatusChangePending)
+			entry.Reason = new(reason)
+			updated.History = append(updated.History, entry)
+		} else {
+			updated.History = append(updated.History, autoApprovedEntry(actor, model.StatusChangePending, reason))
+		}
 	} else {
 		updated.Pending = pending
 		updated.Status = model.StatusChangePending

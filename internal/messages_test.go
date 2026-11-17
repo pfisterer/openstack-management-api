@@ -32,6 +32,7 @@ var storedGerman = []string{
 	"Direkt angelegt von einer Person, die das Budget verwaltet",
 	"Übernimmt das Limit des Budgets darüber",
 	"Direkt übernommen (gibt Ressourcen zurück, endet früher oder ändert nur Mitglieder)",
+	"Direkt übernommen von einer Person, die das Budget verwaltet",
 	"Automatisch genehmigt (im Budget ist Platz)",
 	"Automatisch genehmigt (innerhalb der Grenze pro Person)",
 	"Endet mit dem Budget %q",

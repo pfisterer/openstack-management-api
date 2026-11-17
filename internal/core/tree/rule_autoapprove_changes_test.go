@@ -3,6 +3,7 @@ package tree_test
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
@@ -235,9 +236,13 @@ func TestHardLimit_Changes(t *testing.T) {
 	if n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(6))}); n.Status != model.StatusApproved {
 		t.Fatalf("a shrink should still apply at once, got %q", n.Status)
 	}
-	n, err := f.svc.RequestChange(p.ID, tree.ChangeNodeRequest{Limit: quota(cores(11))}, model.UIActor("root@x"), common.TokenList{"user:root@x", "group:root"})
-	if err != nil || n.Status != model.StatusChangePending {
-		t.Fatalf("a manager may still propose beyond the policy, got %v / %q", err, n.Status)
+	// A manager is not held to the policy: their change applies at once where it fits, and what does not fit is refused for lack of room, not as beyond the policy.
+	if _, err := f.svc.RequestChange(p.ID, tree.ChangeNodeRequest{Limit: quota(cores(11))}, model.UIActor("root@x"), common.TokenList{"user:root@x", "group:root"}); err == nil || errors.Is(err, common.ErrForbidden) || !strings.Contains(err.Error(), "reicht nicht aus") {
+		t.Fatalf("a manager's change beyond the budget should be refused for lack of room, got %v", err)
+	}
+	n, err := f.svc.RequestChange(p.ID, tree.ChangeNodeRequest{Limit: quota(cores(10))}, model.UIActor("root@x"), common.TokenList{"user:root@x", "group:root"})
+	if err != nil || n.Status != model.StatusApproved || n.Limit["cores"] != 10 {
+		t.Fatalf("a manager's change that fits should apply at once, got %v / %q / %v", err, n.Status, n.Limit)
 	}
 }
 

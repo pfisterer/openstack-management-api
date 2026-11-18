@@ -6,9 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
-
-	"github.com/pfisterer/cloud-self-service-golib/retry"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
@@ -57,15 +54,8 @@ type PostgresStore struct {
 func (s *PostgresStore) DB() *gorm.DB { return s.db }
 
 func NewPostgresStore(dsn string, log *zap.SugaredLogger) (*PostgresStore, error) {
-	// Wait up to a minute for Postgres: since the NetworkPolicies a new pod is let through only a moment after it starts, so the first attempt can be refused although nothing is wrong.
-	var db *gorm.DB
-	err := retry.Do(context.Background(), retry.Policy{Total: time.Minute, OnRetry: func(attempt int, err error, wait time.Duration) {
-		log.Infow("postgres not reachable yet, trying again", "attempt", attempt, "in", wait.String(), "error", err)
-	}}, func(context.Context) error {
-		var err error
-		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
-		return err
-	})
+	// Wait up to a minute for Postgres: since the NetworkPolicies a new pod is let through only a moment after it starts, so the first attempts can be refused although nothing is wrong. Each refused attempt is a warning; wrong credentials or a missing database end it at once (openDBWithRetry).
+	db, err := openDBWithRetry(context.Background(), dbStartupPolicy, log, postgres.Open(dsn), nil)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: connect: %w", err)
 	}

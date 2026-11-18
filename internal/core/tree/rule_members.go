@@ -37,7 +37,7 @@ func normalizeOwnerToken(raw string) (string, error) {
 	return "user:" + strings.ToLower(v), nil
 }
 
-// requireGroupMembership switches the rule that only a group's members (or the managers above) may add the group. Off since 10.11.2026, decided: the role provider knows no lecturers of the Dualis courses (dualis-* groups carry only #studierende), so no lecturer could add the students of their course; until it does, anybody may add any existing group. Switch it on again (and drop this note) once Dualis delivers the lecturers, see __TODOS.md in dhbw-deployment (g1).
+// requireGroupMembership switches the rule that only a group's members (or the managers above) may add the group. Off since 10.11.2026, decided: the role provider knows no lecturers of the Dualis courses (dualis-* groups carry only #studierende), so no lecturer could add the students of their course; until it does, anybody may add any existing group. Switch it on again (and drop this note) once Dualis delivers the lecturers, see __TODOS.md in dhbw-deployment (group_add_rule, formerly g1).
 var requireGroupMembership = false
 
 // normalizeAuthorizedUsers validates and normalizes authorization entries.

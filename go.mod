@@ -13,7 +13,7 @@ require (
 	github.com/gophercloud/gophercloud v1.14.1
 	github.com/joho/godotenv v1.5.1
 	github.com/modelcontextprotocol/go-sdk v1.8.0
-	github.com/pfisterer/cloud-self-service-golib v0.21.0
+	github.com/pfisterer/cloud-self-service-golib v0.23.0
 	github.com/pfisterer/role-provider-service/client v0.1.0
 	go.uber.org/zap v1.28.0
 	gorm.io/driver/postgres v1.6.2
@@ -26,9 +26,10 @@ require (
 	github.com/bytedance/sonic v1.15.3 // indirect
 	github.com/bytedance/sonic/loader v0.5.2 // indirect
 	github.com/cloudwego/base64x v0.1.7 // indirect
-	github.com/coreos/go-oidc v2.5.0+incompatible // indirect
+	github.com/coreos/go-oidc/v3 v3.21.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.15 // indirect
 	github.com/gin-contrib/sse v1.1.1 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
@@ -48,7 +49,6 @@ require (
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/oapi-codegen/runtime v1.7.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.4.3 // indirect
-	github.com/pquerna/cachecontrol v0.2.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/quic-go/quic-go v0.62.0 // indirect
 	github.com/segmentio/asm v1.2.1 // indirect
@@ -67,5 +67,4 @@ require (
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
-	gopkg.in/go-jose/go-jose.v2 v2.6.3 // indirect
 )

@@ -25,3 +25,22 @@ func TestWindowResources(t *testing.T) {
 		t.Error("a resource without a provider belongs to all, one with a provider only to it")
 	}
 }
+
+// Model names on an availability are checked loosely: present, without spaces, and only where something reads them.
+func TestValidateResourceModels(t *testing.T) {
+	ok := Resource{ID: "llm-model-flash", Kind: KindBool, Models: []string{"qwen3.8-flash-next-iq3_s", "qwen3.6:35b-a3b", "Qwen/Qwen3.6-27B"}}
+	if err := ValidateResources([]Resource{ok}); err != nil {
+		t.Errorf("valid models refused: %v", err)
+	}
+	for name, r := range map[string]Resource{
+		"empty name":  {ID: "x", Kind: KindBool, Models: []string{""}},
+		"space":       {ID: "x", Kind: KindBool, Models: []string{"qwen 3"}},
+		"tab":         {ID: "x", Kind: KindBool, Models: []string{"qwen\t3"}},
+		"on a count":  {ID: "x", Models: []string{"qwen3"}},
+		"on a window": {ID: "x", Kind: KindWindow, Window: "30d", Models: []string{"qwen3"}},
+	} {
+		if err := ValidateResources([]Resource{r}); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

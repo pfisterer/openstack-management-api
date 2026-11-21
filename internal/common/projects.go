@@ -3,6 +3,8 @@ package common
 import (
 	"fmt"
 	"slices"
+	"strings"
+	"unicode"
 
 	"github.com/pfisterer/cloud-self-service-golib/calendar"
 )
@@ -85,6 +87,9 @@ type Resource struct {
 
 	// GPUClass is set on the two resources of a GPU class of the AI service: its pool and tier, so the UI can arrange them by pool.
 	GPUClass *GPUClassInfo `json:"gpu_class,omitempty"`
+
+	// Models are the real model names an availability of the AI service grants (llm-model-<id>), for names the id pattern cannot carry (dots, underscores, colons). Empty means the id's suffix is the name, as before the field existed. Only on availabilities.
+	Models []string `json:"models,omitempty"`
 
 	// ShowOnUI controls whether this resource is returned to the frontend via
 	// /v1/config. Set to true for user-configurable resources; leave false for
@@ -223,6 +228,16 @@ func ValidateResources(defs []Resource) error {
 			}
 		default:
 			return fmt.Errorf("resource %q: unknown kind %q", d.ID, d.Kind)
+		}
+
+		// Checked loosely: what a model is called is the AI service's business, but an empty name or one with spaces is always a typo, and a model list on a quantity would be read by nothing.
+		if len(d.Models) > 0 && d.Kind != KindBool {
+			return fmt.Errorf("resource %q: only kind %q has models", d.ID, KindBool)
+		}
+		for _, m := range d.Models {
+			if m == "" || strings.ContainsFunc(m, unicode.IsSpace) {
+				return fmt.Errorf("resource %q: model name %q is empty or contains spaces", d.ID, m)
+			}
 		}
 	}
 

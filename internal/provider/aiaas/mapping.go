@@ -91,7 +91,7 @@ func ProjectFor(n model.Node, resources []common.Resource) Project {
 		switch {
 		case r.IsBool() && strings.HasPrefix(r.ID, prefixLLMModel) && len(r.ID) > len(prefixLLMModel):
 			if v == 1 {
-				p.LLMModels = append(p.LLMModels, strings.TrimPrefix(r.ID, prefixLLMModel))
+				p.LLMModels = append(p.LLMModels, modelNames(r)...)
 			}
 		case r.IsBool() && strings.HasPrefix(r.ID, prefixProfile) && len(r.ID) > len(prefixProfile):
 			if v == 1 && p.Profiles != nil {
@@ -121,7 +121,30 @@ func ProjectFor(n model.Node, resources []common.Resource) Project {
 			p.GPUsByClass[strings.TrimPrefix(r.ID, prefixGPUs)] = v
 		}
 	}
+	// Two availabilities may name the same model (the long-context one also brings the Mac variant): the AI service gets each name once, in the order first granted.
+	p.LLMModels = dedupe(p.LLMModels)
 	return p
+}
+
+// modelNames are the model names an availability llm-model-<id> grants: its models when the catalogue names them, otherwise the id's suffix, which is what every availability meant before real model names (dots, underscores) needed a field of their own.
+func modelNames(r common.Resource) []string {
+	if len(r.Models) > 0 {
+		return r.Models
+	}
+	return []string{strings.TrimPrefix(r.ID, prefixLLMModel)}
+}
+
+// dedupe keeps the first occurrence of each name.
+func dedupe(names []string) []string {
+	seen := make(map[string]bool, len(names))
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if !seen[n] {
+			seen[n] = true
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 // membersOf: the owner and the leaf's admins manage the project at the AI service, everybody the leaf authorizes uses it with the token's role: reader only reads the project's shared folder, member writes it too (the same role as in OpenStack).

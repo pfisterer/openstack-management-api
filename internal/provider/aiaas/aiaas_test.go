@@ -26,6 +26,8 @@ var catalog = []common.Resource{
 	{ID: "ws-storage-gb", Provider: Provider, Area: common.AreaWorkspaces},
 	{ID: "llm-model-code", Provider: Provider, Area: common.AreaLLM, Kind: common.KindBool},
 	{ID: "llm-model-all-proxy-models", Provider: Provider, Area: common.AreaLLM, Kind: common.KindBool},
+	{ID: "llm-model-flash-next", Provider: Provider, Area: common.AreaLLM, Kind: common.KindBool, Models: []string{"qwen3.8-flash-next-gyro-gyro-s"}},
+	{ID: "llm-model-flash-next-long-context", Provider: Provider, Area: common.AreaLLM, Kind: common.KindBool, Models: []string{"qwen3.8-flash-next-iq3_s", "qwen3.8-flash-next-gyro-gyro-s"}},
 }
 
 func TestProjectFor(t *testing.T) {
@@ -137,6 +139,27 @@ func TestProjectForLLMLimits(t *testing.T) {
 	}
 	if p := ProjectFor(model.Node{ID: "p_2", Limit: common.ProjectQuota{"llm-mtokens": 5}}, catalog); p.LLMRPM != 0 || p.LLMTPM != 0 || len(p.LLMModels) != 0 {
 		t.Errorf("unset limits should stay 0 / empty: %+v", p)
+	}
+}
+
+// An availability with models sends those real names instead of its id's suffix; one without keeps sending the suffix. A name two availabilities grant is sent once.
+func TestProjectForModelNames(t *testing.T) {
+	cases := []struct {
+		name  string
+		limit common.ProjectQuota
+		want  []string
+	}{
+		{"suffix without models", common.ProjectQuota{"llm-model-code": 1, "llm-model-all-proxy-models": 1}, []string{"code", "all-proxy-models"}},
+		{"models instead of the suffix", common.ProjectQuota{"llm-model-flash-next": 1}, []string{"qwen3.8-flash-next-gyro-gyro-s"}},
+		{"several models", common.ProjectQuota{"llm-model-flash-next-long-context": 1}, []string{"qwen3.8-flash-next-iq3_s", "qwen3.8-flash-next-gyro-gyro-s"}},
+		{"deduplicated", common.ProjectQuota{"llm-model-flash-next": 1, "llm-model-flash-next-long-context": 1, "llm-model-code": 1}, []string{"code", "qwen3.8-flash-next-gyro-gyro-s", "qwen3.8-flash-next-iq3_s"}},
+		{"not granted", common.ProjectQuota{"llm-model-flash-next": 0, "llm-mtokens": 5}, []string{}},
+	}
+	for _, c := range cases {
+		got := ProjectFor(model.Node{ID: "p_1", Limit: c.limit}, catalog).LLMModels
+		if got == nil || !slices.Equal(got, c.want) {
+			t.Errorf("%s: models = %#v, want %#v", c.name, got, c.want)
+		}
 	}
 }
 

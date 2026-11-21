@@ -200,6 +200,7 @@ openstackManagementApi:
     # (kind window with window 24h, 7d or 30d) or availabilities (kind bool),
     # which the provider interprets — the AI service reads llm-model-<group>
     # as an extra model group. Empty: OpenStack only.
+    # An llm-model-<id> may list the real model names it grants in models (e.g. models: [qwen3.8-flash-next-iq3_s]), for names the id cannot carry; without it the id's suffix is sent.
     #
     #   providerResources:
     #     aiaas:

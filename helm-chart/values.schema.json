@@ -294,7 +294,8 @@
                     "min": { "type": "integer" },
                     "max": { "type": "integer" },
                     "show_on_ui": { "type": "boolean" },
-                    "static": { "type": "boolean" }
+                    "static": { "type": "boolean" },
+                    "models": { "type": "array", "items": { "type": "string", "minLength": 1, "pattern": "^\\S+$" }, "description": "Real model names an availability llm-model-<id> of the AI service grants instead of the id's suffix." }
                   },
                   "additionalProperties": false
                 }

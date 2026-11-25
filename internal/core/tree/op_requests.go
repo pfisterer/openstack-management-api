@@ -123,6 +123,8 @@ type ChangeNodeRequest struct {
 	TerminationDate *string                  `json:"termination_date"`
 	AuthorizedUsers *[]common.AuthorizedUser `json:"authorized_users"`
 	Reason          *string                  `json:"reason"`
+	// projectWide marks a change of an allocation's end that is part of a change of the project's end (changeProjectEnd): it moves the project, it does not leave the allocation behind.
+	projectWide bool
 }
 
 // ApproveNodeRequest approves a pending or change_pending node. ModifiedLimit

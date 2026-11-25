@@ -26,6 +26,9 @@ func migrateAllocationLeaves(db *gorm.DB, log *zap.SugaredLogger, dryRun bool) (
 			if err := reviseAllocationLeaves(tx, log, &rep); err != nil {
 				return err
 			}
+			if err := repriceLLMTokens(tx, log, &rep); err != nil {
+				return err
+			}
 			if dryRun {
 				return errDryRun
 			}
@@ -67,6 +70,9 @@ func migrateAllocationLeaves(db *gorm.DB, log *zap.SugaredLogger, dryRun bool) (
 			return err
 		}
 		if err := reviseAllocationLeaves(tx, log, &rep); err != nil {
+			return err
+		}
+		if err := repriceLLMTokens(tx, log, &rep); err != nil {
 			return err
 		}
 		if dryRun {

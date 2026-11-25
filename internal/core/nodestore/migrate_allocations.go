@@ -23,16 +23,18 @@ func MigratedAllocationID(projectID, budgetID string) string {
 
 // AllocationMigrationReport says what the migration to allocation leaves did or, in a dry run, would do.
 type AllocationMigrationReport struct {
-	Projects            int      `json:"projects"`
-	ProjectsAfter       int      `json:"projects_after"`
-	Allocations         int      `json:"allocations"`
-	ExtraAllocations    int      `json:"extra_allocations"`
-	PendingChanges      int      `json:"pending_changes"`
-	Imported            int      `json:"imported"`
-	DroppedMemberChange int      `json:"dropped_member_changes"`
-	Revised             int      `json:"revised,omitempty"`
-	ExpiryMarksRemoved  int      `json:"expiry_marks_removed,omitempty"`
-	Mismatches          []string `json:"mismatches,omitempty"`
+	Projects            int `json:"projects"`
+	ProjectsAfter       int `json:"projects_after"`
+	Allocations         int `json:"allocations"`
+	ExtraAllocations    int `json:"extra_allocations"`
+	PendingChanges      int `json:"pending_changes"`
+	Imported            int `json:"imported"`
+	DroppedMemberChange int `json:"dropped_member_changes"`
+	Revised             int `json:"revised,omitempty"`
+	ExpiryMarksRemoved  int `json:"expiry_marks_removed,omitempty"`
+	// Tokens is the one-time conversion of LLM token amounts to the real price (RepriceLLMTokens), when it ran.
+	Tokens     *TokenRepricingReport `json:"llm_tokens,omitempty"`
+	Mismatches []string              `json:"mismatches,omitempty"`
 }
 
 // MigrateToAllocations turns every project leaf of the former model (a project hanging under its budget, with its own limit and optional extra allocations from budgets above) into a project object with the same id and one allocation leaf per paying budget. It returns the nodes to write and a report; nodes that need no change are not returned. A store already migrated returns nothing to write.

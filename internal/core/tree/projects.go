@@ -15,6 +15,23 @@ import (
 //
 // A project is a node of its own outside the tree; what it holds comes from its allocations, each a leaf directly under the one budget that pays for it and subject to that budget's rules alone: auto-approve, a person's share (counted per budget), the term, its managers. The project's Limit is the sum of the allocations that pay, cached on the project so that the providers, the usage books and every reader of a project keep reading one node (refreshProject keeps it right). Its owner manages the whole project; the managers of a budget see the project in their table and change, approve or withdraw their own allocation only.
 
+// endsEarlier reports whether next ends before current (no end counting as the latest).
+func endsEarlier(current, next *string) bool {
+	if next == nil {
+		return false
+	}
+	return current == nil || (!model.SameEnd(current, next) && model.EndsNoLater(*next, current))
+}
+
+// hasOtherPayer reports whether a project has another allocation that pays and carries its end (not ends_alone) besides except.
+func (s *Service) hasOtherPayer(ctx context.Context, projectID, except string) bool {
+	allocs, err := s.allocationsOf(ctx, projectID)
+	if err != nil {
+		return false
+	}
+	return slices.ContainsFunc(allocs[projectID], func(a model.Node) bool { return a.ID != except && isPaying(a) && !a.EndsAlone })
+}
+
 // liveAllocationStatuses are the allocation states that still mean something for the project: asked for, or paying.
 var liveAllocationStatuses = []string{model.StatusPending, model.StatusApproved, model.StatusChangePending}
 

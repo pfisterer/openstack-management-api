@@ -141,8 +141,8 @@ func dateOnly(ts string) string { return model.EndLabel(ts) }
 // current stored state (the reconciler writes too) and says why in its history.
 // Returns how many nodes it changed. Callers hold approvalMu.
 func (s *Service) shortenSubtreeEnds(ctx context.Context, parentIDs []string, end string, actor model.Actor, reason string) (int, error) {
-	return s.mutateLiveSubtree(ctx, parentIDs, "end date", func(model.Node) func(*model.Node) error {
-		return func(n *model.Node) error { return shortenEnd(n, end, actor, reason) }
+	return s.mutateLiveSubtree(ctx, parentIDs, "end date", func(child model.Node) func(*model.Node) error {
+		return s.shortenAllocationOrNode(ctx, child, end, actor, reason)
 	})
 }
 
@@ -157,8 +157,22 @@ func (s *Service) shortenSubtreeTerms(ctx context.Context, parentIDs []string, d
 		if child.Kind == model.KindBudget {
 			return func(n *model.Node) error { return shortenTerm(n, days, actor, reason) }
 		}
-		return func(n *model.Node) error { return shortenEnd(n, end, actor, reason) }
+		return s.shortenAllocationOrNode(ctx, child, end, actor, reason)
 	})
+}
+
+// shortenAllocationOrNode is shortenEnd for a node below a budget whose end or term moved earlier. An allocation of a project that other allocations pay for ends alone at the earlier date (EndsAlone), and the project keeps running without it (decided 25.11.2026); the project's last payer moves the project's end as before.
+func (s *Service) shortenAllocationOrNode(ctx context.Context, child model.Node, end string, actor model.Actor, reason string) func(*model.Node) error {
+	alone := child.Kind == model.KindAllocation && isPaying(child) && s.hasOtherPayer(ctx, child.ProjectID, child.ID)
+	return func(n *model.Node) error {
+		if err := shortenEnd(n, end, actor, reason); err != nil {
+			return err
+		}
+		if alone {
+			n.EndsAlone = true
+		}
+		return nil
+	}
 }
 
 // mutateLiveSubtree walks the subtree below parentIDs level by level and changes every live node in it: mutate says, for a node as listed, what to do to its current stored state (nodestore.ErrSkipUpdate where nothing changes). Imports and retired or rejected nodes are skipped, and so is what lies below them. what names the change in errors. Returns how many nodes it changed. Callers hold approvalMu.

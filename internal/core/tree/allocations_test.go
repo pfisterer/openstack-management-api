@@ -581,3 +581,35 @@ func TestNotify_ApprovalWaitingAndDecided(t *testing.T) {
 		t.Errorf("approval.decided = %+v", d)
 	}
 }
+
+// A budget's managers move their allocation's end earlier: only that allocation ends then, the project runs on smaller until its own end; the project's last payer still moves the project's end.
+func TestEnd_ShorteningOneAllocationLeavesItAlone(t *testing.T) {
+	f := newSplitFixture(t)
+	p, err := f.svc.CreateNode(tree.CreateNodeRequest{Kind: model.KindProject, Name: "Short", Reason: "t", TerminationDate: ptr("2027-03-31"), Allocations: []tree.AllocationSpec{
+		{BudgetID: f.base.ID, Limit: cores(2)}, {BudgetID: f.course.ID, Limit: cores(4)},
+	}}, model.UIActor("stud@x"), "stud@x", studT)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := f.allocations(t, p.ID)[f.course.ID]
+	if _, err := f.svc.RequestChange(c.ID, tree.ChangeNodeRequest{TerminationDate: ptr("2026-12-31")}, model.UIActor("course@x"), courseMgr); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.node(t, c.ID); !got.EndsAlone || endOf(got) != "2026-12-31" {
+		t.Errorf("the course's allocation ends alone: %v %s", got.EndsAlone, endOf(got))
+	}
+	if got := f.node(t, p.ID); endOf(got) != "2027-03-31" || got.Limit["cores"] != 6 {
+		t.Errorf("the project keeps its end and, until then, both: %s %v", endOf(got), got.Limit)
+	}
+	// The last payer moves the project's end.
+	b := f.allocations(t, p.ID)[f.base.ID]
+	if _, err := f.svc.RequestChange(b.ID, tree.ChangeNodeRequest{TerminationDate: ptr("2027-01-31")}, model.UIActor("base@x"), baseMgr); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.node(t, b.ID); got.EndsAlone {
+		t.Error("the last payer does not end alone")
+	}
+	if got := f.node(t, p.ID); endOf(got) != "2027-01-31" {
+		t.Errorf("the project ends with its last payer: %s", endOf(got))
+	}
+}

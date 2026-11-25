@@ -711,6 +711,10 @@ func (s *Service) requestChangeLocked(ctx context.Context, current *model.Node, 
 		}
 		updated.Pending = nil
 		updated.Status = model.StatusApproved
+		// An allocation's end moved earlier on its own — by its budget's managers, or given back early — ends that allocation alone; the project keeps running without it until its end (decided 25.11.2026). Only the project's last payer moves the project's end.
+		if project != nil && !req.projectWide && endsEarlier(current.TerminationDate, updated.TerminationDate) && s.hasOtherPayer(ctx, project.ID, current.ID) {
+			updated.EndsAlone = true
+		}
 		if byManager {
 			// Recorded as the caller's own approval, like a project a manager creates directly.
 			entry := model.NewHistoryEntry("approved", actor, model.StatusApproved)

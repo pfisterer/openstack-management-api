@@ -519,7 +519,7 @@ func (s *Service) changeProjectEnd(ctx context.Context, project *model.Node, liv
 	}
 	for _, a := range live {
 		alloc := a
-		sub := ChangeNodeRequest{TerminationDate: req.TerminationDate, Reason: req.Reason}
+		sub := ChangeNodeRequest{TerminationDate: req.TerminationDate, Reason: req.Reason, projectWide: true}
 		if _, err := s.requestChangeLocked(ctx, &alloc, sub, actor, userTokens); err != nil {
 			return model.Node{}, err
 		}
@@ -575,6 +575,7 @@ func (s *Service) requestProjectChange(ctx context.Context, current *model.Node,
 		case 0:
 		case 1:
 			// The one that carries the end, not one the project goes on without.
+			req.projectWide = true
 			return s.requestChangeLocked(ctx, &live[0], req, actor, userTokens)
 		default:
 			return s.changeProjectEnd(ctx, current, live, req, actor, userTokens)

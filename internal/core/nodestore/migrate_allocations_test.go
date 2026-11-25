@@ -120,3 +120,37 @@ func TestReviseAllocationLeaves(t *testing.T) {
 		t.Errorf("allocations = %+v / %+v", byID["a1"], byID["a2"])
 	}
 }
+
+// Token amounts become real tokens at five times the price: × 0.2, unlimited and zero stay, nothing granted becomes nothing, and a project's amount is the sum of its converted allocations.
+func TestRepriceLLMTokens(t *testing.T) {
+	if RepricedTokens(500) != 100 || RepricedTokens(-1) != -1 || RepricedTokens(0) != 0 || RepricedTokens(2) != 1 || RepricedTokens(7) != 1 || RepricedTokens(8) != 2 {
+		t.Fatal("RepricedTokens")
+	}
+	nodes := []model.Node{
+		{ID: "b", Kind: model.KindBudget, Limit: common.ProjectQuota{"llm-mtokens": 1000, "cores": 4}, AutoApprove: &model.AutoApprove{PerRequesterLimit: common.ProjectQuota{"llm-mtokens": 5}}},
+		{ID: "root", Kind: model.KindBudget, Limit: common.ProjectQuota{"llm-mtokens": -1}},
+		{ID: "p", Kind: model.KindProject, Status: model.StatusApproved, Limit: common.ProjectQuota{"llm-mtokens": 5}},
+		{ID: "a1", Kind: model.KindAllocation, ProjectID: "p", ParentID: new("b"), Status: model.StatusApproved, Limit: common.ProjectQuota{"llm-mtokens": 3}, Pending: &model.PendingChanges{Limit: &common.ProjectQuota{"llm-mtokens": 50}}},
+		{ID: "a2", Kind: model.KindAllocation, ProjectID: "p", ParentID: new("b"), Status: model.StatusApproved, Limit: common.ProjectQuota{"llm-mtokens": 2}},
+	}
+	out, rep := RepriceLLMTokens(nodes)
+	byID := map[string]model.Node{}
+	for _, n := range out {
+		byID[n.ID] = n
+	}
+	if b := byID["b"]; b.Limit["llm-mtokens"] != 200 || b.Limit["cores"] != 4 || b.AutoApprove.PerRequesterLimit["llm-mtokens"] != 1 {
+		t.Errorf("budget = %v %v", b.Limit, b.AutoApprove.PerRequesterLimit)
+	}
+	if _, ok := byID["root"]; ok {
+		t.Error("unlimited is not touched")
+	}
+	if a := byID["a1"]; a.Limit["llm-mtokens"] != 1 || (*a.Pending.Limit)["llm-mtokens"] != 10 {
+		t.Errorf("allocation = %v %v", a.Limit, *a.Pending.Limit)
+	}
+	if p := byID["p"]; p.Limit["llm-mtokens"] != 2 {
+		t.Errorf("project = %v, want the sum of its allocations (1 + 1)", p.Limit)
+	}
+	if rep.Inexact == 0 {
+		t.Error("rounding is reported")
+	}
+}

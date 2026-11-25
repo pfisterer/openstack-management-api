@@ -566,7 +566,8 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 		Description: "Propose new resource amounts for one allocation of a project (the id of the allocation, or of a project " +
 			"that has only one), or a new end for the project (its id): the project ends at the earliest end of its allocations, so a " +
 			"later end is asked of every paying budget and holds once all agree; one that does not can be left behind with end_allocation " +
-			"and at_end. Giving resources back, or growing within what the allocation's budget approves automatically, takes effect at " +
+			"and at_end. An earlier end on one allocation (its id) ends only that allocation then, and the project runs on smaller until its own end — " +
+			"unless it is the project's last paying allocation, which moves the project's end. Giving resources back, or growing within what the allocation's budget approves automatically, takes effect at " +
 			"once (status approved), and so does any change by someone who manages that budget, if it fits; otherwise it waits (status " +
 			"change_pending). To get more from another budget, use add_project_allocation.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpChangeInput) (*mcp.CallToolResult, mcpProject, error) {

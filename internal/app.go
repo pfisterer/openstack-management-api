@@ -422,8 +422,11 @@ func RunApplication() {
 	if assistantClient.Enabled() {
 		assistantAPI = &webserver.AssistantConfig{
 			Agent: &assistant.Agent{
-				Model:     assistant.NewOpenAIClient(assistantClient, 0),
+				// An answer is a few sentences: 600 tokens bound what one question can cost and keep the assistant from writing essays.
+				Model:     assistant.NewOpenAIClient(assistantClient, 600),
 				ModelName: config.Assistant.LLMModel,
+				// The scope check for answers without any tool call needs one word; 64 tokens leave room for a model that thinks first.
+				Classifier: assistant.NewOpenAIClient(assistantClient, 64),
 				Limits: assistant.Limits{
 					MaxSteps:     config.Assistant.MaxSteps,
 					MaxToolCalls: config.Assistant.MaxToolCalls,

@@ -102,6 +102,8 @@ type Answer struct {
 	Stopped string `json:"stopped,omitempty" enums:"steps,tool_calls,tokens,time"`
 	Model   string `json:"model"`
 	Usage   Usage  `json:"usage"`
+	// OffTopic is true when the question was outside the portal and Answer is the fixed refusal (scope.go).
+	OffTopic bool `json:"off_topic,omitempty"`
 	// Stage is the assistant's stage: read_only (nothing can be changed through it).
 	Stage string `json:"stage"`
 }
@@ -113,6 +115,8 @@ type Agent struct {
 	Limits    Limits
 	// Now is the clock of the prompt's date; nil is time.Now.
 	Now func() time.Time
+	// Classifier, when set, is asked whether a question answered without any tool call is about the portal at all (scope.go); nil skips that check (the prompt's own rule still applies).
+	Classifier ChatModel
 }
 
 var (
@@ -173,6 +177,22 @@ func (a *Agent) Ask(ctx context.Context, q Question, box Toolbox, lang msg.Lang)
 		out.Usage.CompletionTokens += reply.CompletionTokens
 		if len(reply.ToolCalls) == 0 || offer == nil {
 			out.Answer = reply.Content
+			if isOffTopicAnswer(out.Answer) {
+				out.Answer = Refusal.In(lang)
+				out.OffTopic = true
+				return out, nil
+			}
+			if len(out.ToolCalls) == 0 && a.Classifier != nil {
+				other, u := classifiedOther(ctx, a.Classifier, question)
+				out.Usage.Steps += u.Steps
+				out.Usage.PromptTokens += u.PromptTokens
+				out.Usage.CompletionTokens += u.CompletionTokens
+				if other {
+					out.Answer = Refusal.In(lang)
+					out.OffTopic = true
+					return out, nil
+				}
+			}
 			if out.Answer == "" {
 				out.Answer = msg.T("Darauf habe ich keine Antwort gefunden.", "I found no answer to that.").In(lang)
 			}

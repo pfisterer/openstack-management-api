@@ -25,7 +25,9 @@ type evalCase struct {
 	Any            []string `json:"any"`
 	Never          []string `json:"never"`
 	AnswerContains string   `json:"answer_contains"`
-	Stage2         *struct {
+	// OffTopic: the question is outside the portal and must get the fixed refusal (Answer.OffTopic); false: it must not.
+	OffTopic bool `json:"off_topic"`
+	Stage2   *struct {
 		Action string `json:"action"`
 		Dialog string `json:"dialog"`
 	} `json:"stage2"`
@@ -104,7 +106,8 @@ func TestEvalAgainstModel(t *testing.T) {
 	}
 	model := os.Getenv("ASSISTANT_EVAL_MODEL")
 	s := loadEval(t)
-	agent := &Agent{Model: NewOpenAIClient(ClientConfig{URL: url, APIKey: key, Model: model, TimeoutSeconds: 120}, 0), Now: func() time.Time { return time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC) }}
+	cc := ClientConfig{URL: url, APIKey: key, Model: model, TimeoutSeconds: 120}
+	agent := &Agent{Model: NewOpenAIClient(cc, 600), Classifier: NewOpenAIClient(cc, 64), Now: func() time.Time { return time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC) }}
 	good := 0
 	for _, c := range s.Cases {
 		box := &fixtureBox{fixtures: s.Fixtures}
@@ -133,6 +136,9 @@ func TestEvalAgainstModel(t *testing.T) {
 			}
 		}
 		if c.AnswerContains != "" && !strings.Contains(ans.Answer, c.AnswerContains) {
+			ok = false
+		}
+		if ans.OffTopic != c.OffTopic {
 			ok = false
 		}
 		if ok {

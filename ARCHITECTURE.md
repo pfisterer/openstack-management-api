@@ -467,6 +467,8 @@ The **Go client for role-provider-service** is not generated here: it is the mod
 
 **Deployment** is a Helm chart in `helm-chart/` (with `values.schema.json`), published as an OCI artifact and normally composed with the other services by the umbrella chart described in the README. It runs one replica, which the in-process `approvalMu` relies on. Postgres is expected in production; the tree needs only its `nodes` and `identities` tables plus the token table. A cautious reconciler rollout starts with `RECONCILER_DRY_RUN=true`.
 
+**Rollouts without a gap** (also one that only changes configuration): the chart rolls with `maxUnavailable: 0, maxSurge: 1` (the new pod first, the old one only once the new one is ready on `/readyz`), the old pod waits 5 s in `preStop` until it is out of the Service's endpoints, and the server then drains on SIGTERM (`serveUntil`: no new connections, requests in flight answered for up to 20 s, `terminationGracePeriodSeconds: 30`). Before, SIGTERM ended the process at once and a request in flight or routed to the old pod reached the portal as the proxy's 502. During the overlap two pods run for a short while, as they always did under the default strategy: the process-level `approvalMu` and the reconciler are then briefly twice there.
+
 ---
 
 ## 13. Known gaps and follow-ups

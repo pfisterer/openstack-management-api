@@ -3,6 +3,8 @@ package webserver
 import (
 	"net/http"
 
+	"github.com/pfisterer/openstack-management-api/internal/features"
+
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
 	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 	"github.com/pfisterer/openstack-management-api/internal/identity"
@@ -74,6 +76,8 @@ type ConfigResponse struct {
 	OpenstackDashboardURL string `json:"openstackDashboardUrl,omitempty"`
 	// Retirement says what releasing a project leads to in this deployment.
 	Retirement RetirementConfig `json:"retirement"`
+	// Features says which feature gates (package features) are open to the caller: every gate this version knows and every configured one, true when the caller may see it. The UI hides a feature whose gate is false; the API behind it does not check gates.
+	Features map[string]bool `json:"features"`
 }
 
 // RetirementConfig is what happens to a released project here: whether it is
@@ -165,6 +169,8 @@ type APIConfig struct {
 	UsagePrices *usage.Prices
 	// Estimate is the resource estimator (api_estimate.go); nil answers its routes with 503.
 	Estimate *EstimateConfig
+	// Features are the feature gates (package features): /v1/config says per caller which are open, and the UI hides what is closed. UI-only, the API behind a feature stays open.
+	Features features.Gates
 	// Log receives the detail of internal errors, which callers only see as "Interner Fehler." (code internal). SetupGinWebserver fills it in.
 	Log *zap.SugaredLogger
 }
@@ -392,7 +398,7 @@ func capsIn(caps []common.Cap, l msg.Lang) []common.CapView {
 // getConfig returns the system-wide resource configuration.
 //
 //	@Summary		Get resource configuration
-//	@Description	Retrieves system-wide configuration including resource types and OpenStack roles.
+//	@Description	Retrieves system-wide configuration including resource types and OpenStack roles, and which feature gates are open to the caller (features; UI-only, the API behind a gated feature stays open).
 //	@Tags			config
 //	@Produce		json
 //	@Security		Bearer
@@ -401,6 +407,10 @@ func capsIn(caps []common.Cap, l msg.Lang) []common.CapView {
 //	@Router			/v1/config [get]
 func getConfig(cfg APIConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		auth, ok := caller(c)
+		if !ok {
+			return
+		}
 		all := cfg.resources()
 		resources := make([]uiResource, 0, len(all))
 		for _, r := range all {
@@ -419,6 +429,7 @@ func getConfig(cfg APIConfig) gin.HandlerFunc {
 			Providers:             append([]string{}, cfg.Providers...),
 			OpenstackDashboardURL: cfg.OpenstackDashboardURL,
 			Retirement:            cfg.Retirement,
+			Features:              cfg.Features.For(auth.EffectiveTokens),
 		}
 		c.JSON(http.StatusOK, config)
 	}

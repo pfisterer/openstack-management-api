@@ -142,6 +142,7 @@ Everything is environment variables; a `.env` in the working directory is loaded
 | `AIAAS_DELETE_GRACE_DAYS` | `14` | Days a project's workspaces and their files outlive its end or release before they are deleted; 0 = never |
 | `ESTIMATE_PROFILES_FILE` | _(built in)_ | A file replacing the estimator's profiles (same form as `internal/estimate/profiles.json`); an invalid one stops startup |
 | `ESTIMATE_LLM_URL`, `ESTIMATE_LLM_API_KEY` | — | OpenAI-compatible base URL (the platform's LiteLLM, ending in `/v1`) and key for reading free-text descriptions; without both the description answers 503 and the rest of the estimator works |
+| `FEATURE_GATES` | — | Feature gates, JSON: gate name → tokens it is open to, e.g. `{"estimator": ["group:leiter-zwr"]}`; a gate not named or with `"*"` is open to everyone, `[]` closes it. UI-only: `GET /v1/config` answers `features` per caller, the API behind a gated feature stays open (ARCHITECTURE §7.3) |
 | `ESTIMATE_LLM_MODEL`, `ESTIMATE_LLM_TIMEOUT_SECONDS` | `chat-large`, `60` | The model that reads descriptions, and how long it may take |
 | `SERVICE_TIMEOUT_SECONDS` | `30` | Timeout for calls to the role provider and for service requests |
 | `RECONCILER_ENABLED` | `false` | Turn the OpenStack loop on |

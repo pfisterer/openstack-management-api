@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/pfisterer/openstack-management-api/internal/features"
+
 	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/reconciler"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 
@@ -227,6 +229,8 @@ type AppConfiguration struct {
 	Expiry ExpiryConfig `json:"expiry"`
 	// Estimate is the resource estimator (package estimate): its profiles and the model that reads descriptions.
 	Estimate EstimateConfig `json:"estimate"`
+	// FeatureGates (FEATURE_GATES, JSON) show a new feature of the portal to a small group first (package features); unset, every feature is open to everyone.
+	FeatureGates features.Gates `json:"feature_gates,omitempty"`
 	// MigrateDryRun (MIGRATE_DRY_RUN) runs the migration to allocation leaves on the database without committing, prints its report and exits — for a trial run against a copy of a database.
 	MigrateDryRun bool `json:"migrate_dry_run"`
 }
@@ -394,6 +398,12 @@ func loadAppConfiguration() (AppConfiguration, error) {
 		}
 		cfg.UsagePrices = &prices
 	}
+
+	gates, err := features.Parse(envconf.String("FEATURE_GATES", ""))
+	if err != nil {
+		return AppConfiguration{}, err
+	}
+	cfg.FeatureGates = gates
 
 	if err := validateConfig(cfg); err != nil {
 		return AppConfiguration{}, err

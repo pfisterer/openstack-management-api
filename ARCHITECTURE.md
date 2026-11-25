@@ -341,6 +341,12 @@ Errors from the service are sentinel-wrapped and mapped centrally in [errors.go]
 - **Budget check.** With `budget_id`, the proposed limit goes through `PlanSplit` restricted to that budget: what it grants on its own, what would wait for its managers, what it would not take. A refusal there (no right to request, a value beyond a maximum) is reported in the answer, not raised.
 - **Free text.** With `ESTIMATE_LLM_URL` and `ESTIMATE_LLM_API_KEY`, a chat model (default `chat-large` through the platform's LiteLLM) reads a description and returns only the estimator's input, as JSON by a schema that lists the allowed flavours; the answer is read leniently (a fenced block, numbers as text, a decimal comma) and checked strictly: an invalid part or a flavour outside the list is dropped and named in `corrections`, and only an answer with nothing usable is refused. The numbers are always computed by the estimator. Without the configuration the route answers 503 and everything else works.
 
+### 7.3 Feature gates
+
+A new feature of the portal can be shown to a small group first — on production, before everyone sees it. `FEATURE_GATES` (Helm `openstackManagementApi.featureGates`, set per environment in the dhbw-deployment inventory) maps a gate's name to the tokens it is open to: `{"estimator": ["group:leiter-zwr"], "assistant": ["group:leiter-zwr"]}`. A gate that is not named, or whose list contains `"*"`, is open to everyone; an empty list closes it for everybody. `GET /v1/config` answers per caller with `features: {"estimator": true, "assistant": false, …}`, compared against the caller's effective tokens (person and groups from the role provider, so acting on behalf of someone shows their gates). The UI hides what is closed. Gates hide, they do not protect: the API behind a gated feature (REST and MCP) stays open to whoever may use it otherwise, and gates are deliberately not a place for access rules.
+
+To add a gate: add its name to `features.Known` (so `/v1/config` answers for it, open, where no environment configures it), read `config.features.<name>` in the UI (self-service-ui `web/projects/use-features.js`, `useFeature(name)`), and name it in the inventories of the environments that should restrict it. Remove the gate (name, UI check, inventory entries) once the feature is open to everyone everywhere.
+
 ---
 
 ## 8. Reconciler (two-way OpenStack sync)

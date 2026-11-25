@@ -470,6 +470,7 @@ func RunApplication() {
 			Usage:                 usageStore,
 			UsagePrices:           config.UsagePrices,
 			Estimate:              estimateAPI,
+			Features:              config.FeatureGates,
 		},
 		Tokens: webserver.TokenConfig{
 			Service: apiTokens,

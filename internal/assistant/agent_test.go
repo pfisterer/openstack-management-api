@@ -222,6 +222,10 @@ func TestNormalizeReply(t *testing.T) {
 	if len(r.ToolCalls) != 1 || r.ToolCalls[0].Function.Name != "get_project" || r.ToolCalls[0].Function.Arguments != `{"id": "p1"}` || r.Content != "" {
 		t.Errorf("%+v", r)
 	}
+	r = normalizeReply(Reply{Content: "Ich sehe nach.\n<tool_call>\n<function=list_budget_contents>\n<parameter=id>\nb_inf\n</parameter>\n<parameter=limit>\n20\n</parameter>\n</function>\n</tool_call>"})
+	if len(r.ToolCalls) != 1 || r.ToolCalls[0].Function.Name != "list_budget_contents" || r.ToolCalls[0].Function.Arguments != `{"id":"b_inf","limit":20}` || r.Content != "Ich sehe nach." {
+		t.Errorf("xml form: %+v", r)
+	}
 	r = normalizeReply(Reply{Content: "<think>a</think> Antwort "})
 	if r.Content != "Antwort" || len(r.ToolCalls) != 0 {
 		t.Errorf("%+v", r)

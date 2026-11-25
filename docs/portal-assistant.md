@@ -14,7 +14,7 @@ Eine Stufe, in der der Assistent selbst ausführt, gibt es nicht, auch nicht fü
 ## Entschieden (Dennis, 25.11.2026)
 
 1. Keine Stufe 3: Änderungen nur als vorausgefüllter Dialog, nie vom Assistenten ausgeführt. Kein `/v1/assistant/execute`, kein signierter Vorschlag.
-2. Werkzeugergebnisse gehen nicht an die Macs der Flotte: eigener LiteLLM-Alias `assistant` nur mit GPU-Mitgliedern (der RTX-Lückenfüller mit `Qwen/Qwen3.6-35B-A3B-FP8`), vorbereitet in aiaas-deployment, noch nicht ausgerollt. Voreinstellung von `ASSISTANT_LLM_MODEL` ist `assistant`.
+2. Eigener LiteLLM-Alias `assistant` (überarbeitet 25.11.2026): Mitglieder von GPU-Sites, also den eigenen Inferenz-Repliken (RTX-Lückenfüller mit `Qwen/Qwen3.6-35B-A3B-FP8`) und GPU-Sites an Partnerstandorten (z. B. ZWR-KI-VLLM-LARGE), mit `order` 1; die Strata-Macs als Überlauf mit `order` 2 (wie in `chat-large` und `code`: ist die GPU voll, antwortet sie wegen `max_parallel_requests` aus `--max-num-seqs` sofort mit 429, und LiteLLM gibt an die Strata-Macs weiter); nie die gewöhnlichen Ollama-Macs der Flotte. In aiaas-deployment über `modelAliases.assistant.sites: [gpu, strata]` (Discovery: `siteKind`, `aliasTakesSite`, `aliasesFor`), vorbereitet, noch nicht ausgerollt. Voreinstellung von `ASSISTANT_LLM_MODEL` ist `assistant`.
 3. Grenzen wie vorgeschlagen: 30 Fragen je Person und Stunde, 4 gleichzeitig, 60.000 Tokens je Frage; Budget des LiteLLM-Keys des Assistenten etwa 20 je 30 Tage.
 4. Read-only-API-Tokens dürfen `POST /v1/assistant/ask` nutzen (umgesetzt: `readOnlyPOSTs` in `webserver.go`).
 5. Act-As für Root-Admins bleibt; Fragen zählen beim Admin (so umgesetzt).
@@ -119,7 +119,7 @@ Fremde Inhalte erreichen das Modell über Werkzeugergebnisse: Projektnamen, Begr
 - **Kein Abfluss über die Antwort**: Das Portal zeigt die Antwort als reinen Text (kein Markdown-Rendering von Bildern oder Links, keine automatisch geladenen URLs). Der Prompt verbietet Links, die nicht aus den Daten stammen. Die einzigen Daten im Kontext sind ohnehin die, die die Person sehen darf; ein Abfluss an Dritte bräuchte einen Kanal nach außen, den es nur über gerenderte Links gäbe.
 - **Verlauf vom Client**: `history` nimmt nur `user`/`assistant`-Text, begrenzt auf 6 Einträge; System- oder Werkzeugrollen werden verworfen. Wer seinen eigenen Verlauf manipuliert, schadet nur sich selbst; Rechte ändern sich dadurch nicht.
 - **Verwaltende mit vielen Rechten**: Bei ihnen ist der Schaden einer falsch verstandenen oder untergeschobenen Aktion am größten. Entscheidungen werden je Antrag als Dialog vorbereitet, nie gesammelt; ausgeführt wird ohnehin nur durch die Person.
-- **Kein Weg zu den Macs der Flotte**: Der Alias `assistant` hat nur GPU-Mitglieder; Werkzeugergebnisse verlassen den KI-Cluster nicht.
+- **Kein Weg zu den gewöhnlichen Macs der Flotte**: Der Alias `assistant` nimmt Mitglieder nur von GPU-Sites (eigene und Partner) und von den Strata-Macs (Überlauf); die Ollama-Macs an Arbeitsplätzen bekommen keine Prompts des Assistenten.
 
 ## Audit
 
@@ -131,13 +131,13 @@ Fremde Inhalte erreichen das Modell über Werkzeugergebnisse: Projektnamen, Begr
 - Je Frage typischerweise 1–3 Modellaufrufe; fester Anteil je Aufruf: Systemprompt (~2 KB) und die Schemata der zehn Lesewerkzeuge (~7 KB, davon `estimate_resources` allein 2,5 KB), zusammen etwa 2.500–3.000 Tokens, dazu Werkzeugergebnisse. Erwartung 5.000–15.000 Tokens je Frage, Obergrenze 60.000.
 - Grenzen je Pod: 30 Fragen je Person und Stunde (`ASSISTANT_QUESTIONS_PER_HOUR`), 4 gleichzeitig über alle (`ASSISTANT_CONCURRENT`); 429 mit `Retry-After`. Bei mehreren Repliken gelten sie je Replik.
 - Eigener LiteLLM-Key für den Assistenten, nur für den Alias `assistant`, Budget etwa 20 je 30 Tage, eigene RPM/TPM-Grenzen; damit ist der Verbrauch im LiteLLM-Dashboard getrennt sichtbar, und LiteLLM begrenzt zusätzlich.
-- GPU: Der Alias `assistant` liegt auf dem RTX-Lückenfüller (`Qwen/Qwen3.6-35B-A3B-FP8`, vLLM mit `--max-num-seqs 32`), den er sich mit `code`, `agent` und `chat-fast` teilt. 4 gleichzeitige Fragen sind dagegen klein. Verdrängt eine GPU-Arbeit den Lückenfüller, hat `assistant` kein Mitglied mehr: Der Assistent antwortet dann mit 502 („Sprachmodell antwortet gerade nicht“), statt auf die Macs auszuweichen. Das ist gewollt (Datenschutz vor Verfügbarkeit).
+- GPU: Der Alias `assistant` liegt zuerst auf dem RTX-Lückenfüller (`Qwen/Qwen3.6-35B-A3B-FP8`, vLLM mit `--max-num-seqs 32`), den er sich mit `code`, `agent` und `chat-fast` teilt, und auf Partner-GPUs, die eines seiner Mitglieder anbieten. 4 gleichzeitige Fragen sind dagegen klein. Ist die GPU voll oder fehlt der Lückenfüller (eine GPU-Arbeit verdrängt ihn), gehen die Anfragen an die Strata-Macs (langsamer, nach dem Freiwerden gut 20 s bis zur ersten Antwort, Kontext 32k); sind auch die nicht da, antwortet der Assistent mit 502.
 - Später: Prompt-Caching (vLLM Prefix-Caching greift, weil Systemprompt und Werkzeugschemata vorn und gleich sind), Werkzeugschemata kürzen, Metriken (`assistant_questions_total{outcome}`, Tokens, Dauer) in `internal/metrics`.
 
 ## Modellwahl
 
-- Voreinstellung `assistant`: dasselbe Modell wie `agent` (Qwen3.6-35B-A3B, für Werkzeugaufrufe gebaut, MoE mit 3B aktiv, `--tool-call-parser qwen3_coder`), aber nur die GPU-Mitglieder, ohne die Macs der Flotte. Der Smoke-Test (`tests/llm-tool-smoke.py --models assistant`) prüft die Werkzeugaufrufe.
-- Weitere GPU-Modelle mit funktionierenden Werkzeugaufrufen können als Mitglieder dazukommen (z. B. `Qwen/Qwen3.6-27B-Coder` auf vLLM); Ollama- und Strata-Modelle der Macs nie.
+- Voreinstellung `assistant`: Mitglieder `Qwen/Qwen3.6-35B-A3B-FP8` und `Qwen/Qwen3.6-27B-Coder` auf vLLM mit `--tool-call-parser qwen3_coder` (eigene GPUs und Partner-GPUs), `minContext` 32768, dazu als Überlauf die Strata-Macs (Qwen3.8-Flash-Next, das Modell von `chat-large`). Der Smoke-Test (`tests/llm-tool-smoke.py --models assistant`) prüft vor dem Ausrollen die Werkzeugaufrufe; offen ist, ob Strata echte `tool_calls` liefert. Der Client liest einen als Text geschriebenen Aufruf in beiden Formen von Qwen (JSON in `<tool_call>` und das XML von `qwen3_coder` mit `<function=…>`/`<parameter=…>`) als echten Aufruf, damit ein Mitglied ohne Parser die Schleife nicht bricht.
+- Die gewöhnlichen Ollama-Macs der Flotte nie (`sites` ohne `fleet`).
 - Der Client entfernt `<think>…</think>` und liest einen als Text geschriebenen `<tool_call>{…}</tool_call>` als echten Aufruf, falls ein Backend den Parser nicht hat; so wird ein fehlkonfiguriertes Backend schlechter, aber nicht unbrauchbar.
 - Staging: Das Staging-LiteLLM hat nur kleine Testmodelle (`qwen2.5:0.5b`, `Qwen/Qwen2.5-0.5B-Instruct` auf vLLM); der Alias `assistant` ist dort mit dem vLLM-Testmodell vorbereitet. Für eine Qualitätsprobe braucht es einen Key am Prod-LiteLLM (nur für den Test).
 
@@ -158,7 +158,7 @@ Fremde Inhalte erreichen das Modell über Werkzeugergebnisse: Projektnamen, Begr
 ## Datenschutz
 
 - In den Prompt gehen: Systemprompt (ohne Name oder Adresse der Person), Frage, bis zu 6 frühere Wortwechsel aus dem Portal, Werkzeugergebnisse (nur Daten, die die Person sehen darf: Projekt- und Budgetnamen, Begründungen, Eigentümer und Verwaltende als `user:<Adresse>`, Grenzen, Verbrauch).
-- Verarbeitung nur auf dem KI-Cluster: LiteLLM und die GPU-Repliken des Alias `assistant`, nie die Macs der Flotte (entschieden 25.11.2026). vLLM protokolliert keine Prompts (im KI-Dienst erzwungen); LiteLLM speichert Prompts nur mit `store_prompts_in_spend_logs`, das aus bleibt (zu prüfen und festzuhalten).
+- Verarbeitung auf der Plattform: LiteLLM, die GPU-Repliken und Partner-GPU-Sites des Alias `assistant` und als Überlauf die Strata-Macs; nie die gewöhnlichen Ollama-Macs der Flotte (entschieden und überarbeitet 25.11.2026). Strata protokolliert keine Prompts und hält Unterhaltungen nur im Speicher (geprüft 04.11.2026). vLLM protokolliert keine Prompts (im KI-Dienst erzwungen); LiteLLM speichert Prompts nur mit `store_prompts_in_spend_logs`, das aus bleibt (zu prüfen und festzuhalten).
 - Keine Speicherung in os-mgt-api: weder Frage noch Antwort noch Verlauf; das Portal hält den Verlauf nur im Speicher der Seite (entschieden). Log nur mit Zahlen.
 
 ## Evaluation
@@ -186,7 +186,7 @@ Auszug:
 ## Erprobung auf Staging
 
 1. Images von os-mgt-api (und optional self-service-ui) aus dem Branch bauen, Umbrella-Test-Release (nicht Teil dieses Entwurfs).
-2. Alias `assistant` im KI-Dienst ausrollen (aiaas-deployment, vorbereitet und committet, nicht ausgerollt; `--tags platform` bzw. der Discovery-Lauf übernimmt ihn), danach `tests/llm-tool-smoke.py --models assistant`.
+2. Alias `assistant` im KI-Dienst ausrollen (aiaas-deployment, vorbereitet und committet, nicht ausgerollt; `--tags platform` bzw. der Discovery-Lauf übernimmt ihn), danach `tests/llm-tool-smoke.py --models assistant` und in LiteLLM prüfen: GPU-Deployments `order` 1 mit `max_parallel_requests`, Strata-Macs `order` 2, keine Ollama-Macs. Der Alias steht nicht in `llmManagementApi.baseModels` und hat keine Verfügbarkeit `llm-model-assistant` im Katalog, erscheint also bei keinem Projekt; nur der eigene Key des Assistenten darf ihn.
 3. LiteLLM-Key „self-service-assistant (staging)“ anlegen, nur Alias `assistant`, Budget etwa 20 je 30 Tage, RPM 30.
 4. Staging-Inventar (dhbw-deployment, `openstackManagementAPI`): `assistant.llmURL: "https://api.staging.llm.services.dhbw.cloud/v1"`, `assistant.llmModel: "assistant"`, Key über das Secret `assistant-llm-api-key` (Helm-Werte `openstackManagementApi.assistant.*` im Chart sind vorbereitet; Umbrella und `tasks/platform.yaml` brauchen noch die Durchreichung wie beim Schätzhelfer).
 5. Da Staging nur Testmodelle hat: Verdrahtung, Rechte, Limits, 429/502/503 prüfen; Qualität mit `TestEvalAgainstModel` gegen einen Prod-Key auf `assistant` (nur Beispieldaten, keine echten Projektdaten).

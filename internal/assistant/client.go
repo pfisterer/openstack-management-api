@@ -158,9 +158,12 @@ var (
 	thinkBlock    = regexp.MustCompile(`(?s)<think>.*?</think>`)
 	textToolCall  = regexp.MustCompile(`(?s)<tool_call>\s*(\{.*?\})\s*</tool_call>`)
 	unclosedThink = regexp.MustCompile(`(?s)^.*</think>`)
+	// The XML form of qwen3_coder (Qwen3.6 on a vLLM without --tool-call-parser, as ZWR-KI-VLLM-LARGE sent it until 24.11.2026).
+	xmlToolCall  = regexp.MustCompile(`(?s)<tool_call>\s*<function=([^>\s]+)>(.*?)</function>\s*</tool_call>`)
+	xmlParameter = regexp.MustCompile(`(?s)<parameter=([^>\s]+)>\n?(.*?)\n?</parameter>`)
 )
 
-// normalizeReply cleans what a Qwen model behind vLLM or Ollama may send instead of the OpenAI form: its reasoning in <think> (dropped, it is not for the person), and a tool call written as text in <tool_call>{"name":…,"arguments":{…}}</tool_call> when the backend's parser did not take it (read as a real call, so a misconfigured backend degrades instead of answering with markup).
+// normalizeReply cleans what a Qwen model behind vLLM or Ollama may send instead of the OpenAI form: its reasoning in <think> (dropped, it is not for the person), and a tool call written as text when the backend's parser did not take it, as JSON (<tool_call>{"name":…,"arguments":{…}}</tool_call>) or in the XML of qwen3_coder (<tool_call><function=…><parameter=…>…</parameter></function></tool_call>) (read as a real call, so a misconfigured backend degrades instead of answering with markup).
 func normalizeReply(r Reply) Reply {
 	c := thinkBlock.ReplaceAllString(r.Content, "")
 	c = unclosedThink.ReplaceAllString(c, "")
@@ -181,8 +184,26 @@ func normalizeReply(r Reply) Reply {
 			}
 			r.ToolCalls = append(r.ToolCalls, call)
 		}
+		for i, m := range xmlToolCall.FindAllStringSubmatch(c, -1) {
+			args := map[string]any{}
+			for _, p := range xmlParameter.FindAllStringSubmatch(m[2], -1) {
+				// A value that is JSON (a number, an object, a list, true) is taken as such, anything else as text.
+				var v any
+				if json.Unmarshal([]byte(strings.TrimSpace(p[2])), &v) == nil {
+					args[p[1]] = v
+				} else {
+					args[p[1]] = p[2]
+				}
+			}
+			raw, _ := json.Marshal(args)
+			call := ToolCall{ID: fmt.Sprintf("xml-%d", i), Type: "function"}
+			call.Function.Name = m[1]
+			call.Function.Arguments = string(raw)
+			r.ToolCalls = append(r.ToolCalls, call)
+		}
 		if len(r.ToolCalls) > 0 {
 			c = textToolCall.ReplaceAllString(c, "")
+			c = xmlToolCall.ReplaceAllString(c, "")
 		}
 	}
 	r.Content = strings.TrimSpace(c)

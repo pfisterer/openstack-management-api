@@ -1,5 +1,11 @@
-name: Docker Image CI
+name: CI
 
+# DRAFT (release-speedup, not merged): one workflow from push to published artifact, in three jobs:
+#   checks   the Checks workflow (checks.yml, needs a workflow_call trigger and no own push trigger), called here on a push to main so a version is only published from a green commit
+#   build    the image, in parallel with the checks; on main it is pushed only under its commit (sha-<commit>), which nothing deploys
+#   publish  after both: gives the image a version by retagging (no second build), pushes the chart, tags stable releases
+#
+# Every green commit on main is published, not only the ones that raise VERSION. A commit whose VERSION is already published gets an automatic prerelease version that sorts after it (X.Y.Z-test.N.<run> after X.Y.Z-test.N, X.Y.(Z+1)-0.ci.<run> after a stable X.Y.Z), so the umbrella's bump picks it up and staging, which follows ">=0.0.0-0", runs it a few minutes later. Production pins exact versions in the dhbw-deployment inventory and never sees these.
 on:
   push:
     branches: ["main"]
@@ -11,33 +17,81 @@ concurrency:
   group: docker-image-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}
+
 jobs:
+  checks:
+    # On a pull request checks.yml runs by itself; calling it here as well would run it twice.
+    if: github.event_name == 'push'
+    uses: ./.github/workflows/checks.yml
+    permissions:
+      contents: read
+
   build:
     runs-on: ubuntu-latest
     permissions:
-      # write: the release step below creates a tag and a GitHub release.
-      contents: write
+      contents: read
       packages: write
-
     steps:
-
       - name: Checkout repository
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
-          # Full history: the release notes are derived from the commits since
-          # the previous tag, and a shallow clone has neither.
-          fetch-depth: 0
+          fetch-depth: 2
 
-      - name: Read version from VERSION file
-        id: get_version
-        run: echo "VERSION=$(cat VERSION)" >> "$GITHUB_OUTPUT"
-
-      # Chart.yaml must state the same version as the source of truth above.
-      # Deliberately a check, not a fix-up: a workflow that silently rewrote the
-      # file would leave the repository wrong and hide the omission. It runs
-      # before the build so a mismatch costs nothing but a red run.
       - name: Check the chart version matches
         run: make version-check
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GitHub Container Registry
+        if: github.event_name == 'push'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # A "release x.y.z" commit changes nothing but the version numbers, so its image is the previous commit's: retag that one instead of building the same code again.
+      - name: Reuse the previous commit's image for a version-only commit
+        id: reuse
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          PARENT=$(git rev-parse HEAD^ 2>/dev/null || true)
+          OTHER=$(git diff --name-only HEAD^ HEAD 2>/dev/null | grep -vxE 'VERSION|helm-chart/Chart.yaml' || true)
+          if [ -n "$PARENT" ] && [ -z "$OTHER" ] && docker buildx imagetools inspect "$IMAGE:sha-$PARENT" >/dev/null 2>&1; then
+            docker buildx imagetools create -t "$IMAGE:sha-$GITHUB_SHA" "$IMAGE:sha-$PARENT"
+            echo "done=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "done=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build (and on main push under the commit)
+        if: steps.reuse.outputs.done != 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./Dockerfile
+          push: ${{ github.event_name == 'push' }}
+          platforms: linux/amd64
+          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  publish:
+    needs: [checks, build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -46,149 +100,63 @@ jobs:
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
-          username: ${{ github.actor }} # The GitHub user that triggered the workflow
-          password: ${{ secrets.GITHUB_TOKEN }} # The special GitHub token for workflows
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      # The same invariant the chart step below already enforces, asked the same
-      # way: of the registry, not of the diff. Without it every push to main
-      # rebuilt ghcr.io/…:$VERSION and silently replaced the contents of a tag
-      # that production is running — the pod keeps going, but the next restart or
-      # rescheduling pulls different code under the same number.
-      #
-      # The build itself still runs, so a broken Dockerfile is caught on the
-      # commit that broke it. Only the push is withheld.
-      - name: Check whether this image version is already published
-        id: image_published
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Choose the version
+        id: ver
         run: |
           set -euo pipefail
-          IMAGE="ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}"
-          VERSION="${{ steps.get_version.outputs.VERSION }}"
-          if docker buildx imagetools inspect "$IMAGE:$VERSION" >/dev/null 2>&1; then
-            echo "published=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::$IMAGE:$VERSION is already published — building to verify, not pushing. Bump VERSION to release."
+          BASE=$(tr -d '\n' < VERSION)
+          if docker buildx imagetools inspect "$IMAGE:$BASE" >/dev/null 2>&1; then
+            if [[ "$BASE" == *-* ]]; then
+              V="$BASE.$GITHUB_RUN_NUMBER"
+            else
+              IFS=. read -r MA MI PA <<< "$BASE"
+              V="$MA.$MI.$((PA + 1))-0.ci.$GITHUB_RUN_NUMBER"
+            fi
+            echo "auto=true" >> "$GITHUB_OUTPUT"
           else
-            echo "published=false" >> "$GITHUB_OUTPUT"
+            V="$BASE"
+            echo "auto=false" >> "$GITHUB_OUTPUT"
           fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: ./Dockerfile
-          # Never on a pull request either: that pushed to the registry too, and
-          # a PR is by definition not a release.
-          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.image_published.outputs.published != 'true' }}
-          # amd64 only — the k3s nodes are x86_64, so the emulated arm64 build
-          # is unnecessary (and, under qemu, was the main source of build-time
-          # memory pressure).
-          platforms: linux/amd64
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:${{ steps.get_version.outputs.VERSION }}
-            ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Give the image its version
+        env:
+          V: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          TAGS=(-t "$IMAGE:$V")
+          [ "${{ steps.ver.outputs.auto }}" = "true" ] || TAGS+=(-t "$IMAGE:latest")
+          docker buildx imagetools create "${TAGS[@]}" "$IMAGE:sha-$GITHUB_SHA"
 
-      # --- chart artifact ---
-      # The chart goes to the same registry as the image, under
-      # ghcr.io/<owner>/charts/<chart-name>, versioned by Chart.yaml — which the
-      # check at the top of this job guarantees agrees with the source of truth.
-      # That guarantee is the point: here the number stops being a label and
-      # becomes the artifact's identity.
-      #
-      # Prereleases are pushed too, so staging can consume charts the same way
-      # production will rather than staying a special case. This is additive:
-      # Argo CD still pulls the chart from the Git path, so nothing about the
-      # deployment changes until the umbrella chart starts consuming these.
       - name: Set up Helm
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
 
       - name: Package and push the Helm chart
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          V: ${{ steps.ver.outputs.version }}
         run: |
           set -euo pipefail
-          echo "$GH_TOKEN" | helm registry login ghcr.io \
-            -u "${{ github.actor }}" --password-stdin
-          # An already published version is never overwritten. The question is
-          # asked of the registry rather than of the diff: "has this version been
-          # published" is the invariant that matters, and a paths filter would
-          # only answer "did this file change".
+          echo "$GH_TOKEN" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
           NAME=$(awk '/^name:/{print $2; exit}' helm-chart/Chart.yaml)
-          VERSION=$(awk '/^version:/{print $2; exit}' helm-chart/Chart.yaml)
-          if helm show chart "oci://ghcr.io/${{ github.repository_owner }}/charts/$NAME" \
-               --version "$VERSION" >/dev/null 2>&1; then
-            echo "$NAME $VERSION is already published - nothing to do."
+          if helm show chart "oci://ghcr.io/${{ github.repository_owner }}/charts/$NAME" --version "$V" >/dev/null 2>&1; then
+            echo "$NAME $V is already published - nothing to do."
             exit 0
           fi
+          helm package helm-chart/ --version "$V" --app-version "$V" --destination "$RUNNER_TEMP"
+          helm push "$RUNNER_TEMP"/*.tgz "oci://ghcr.io/${{ github.repository_owner }}/charts"
 
-          helm package helm-chart/ --destination "$RUNNER_TEMP"
-          helm push "$RUNNER_TEMP"/*.tgz \
-            "oci://ghcr.io/${{ github.repository_owner }}/charts"
+      # TODO (resume): copy the "Tag and release stable versions" step from main unchanged, conditioned on steps.ver.outputs.auto != 'true' && !contains(steps.ver.outputs.version, '-').
 
-      # --- release ---
-      # A stable VERSION gets a Git tag and a GitHub release; a "-test.N" one
-      # deliberately gets neither. That omission is the whole mechanism: Argo CD
-      # pulls this repo's Helm chart, and production resolves it against tags,
-      # so an untagged commit simply does not exist for production.
-      - name: Tag and release stable versions
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(steps.get_version.outputs.VERSION, '-')
+      # Tells the umbrella to pick the new chart up now. Needs secret UMBRELLA_DISPATCH_TOKEN (fine-grained, Actions: write on cloud-self-service); without it the umbrella's schedule applies.
+      - name: Trigger the umbrella bump
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.get_version.outputs.VERSION }}
+          GH_TOKEN: ${{ secrets.UMBRELLA_DISPATCH_TOKEN }}
         run: |
-          set -euo pipefail
-          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
-            echo "v$VERSION is already tagged — nothing to release."
-            exit 0
-          fi
-          # The commit subjects are the changelog; they are already written as
-          # one. Only the "release X.Y.Z" bumps say nothing worth reading.
-          NOTES="$RUNNER_TEMP/notes.md"
-          PREV=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
-          RANGE=HEAD
-          [ -n "$PREV" ] && RANGE="$PREV..HEAD"
-          git log --pretty=%s "$RANGE" | grep -v '^release ' |
-            awk -F': ' '{ line = $0; g = "zz-other";
-                          # Only a bare lowercase word counts as a topic prefix.
-                          # Without that test, `Revert "nodes: ..."` splits at its
-                          # own colon and invents the group `Revert "nodes`.
-                          if (NF > 1 && $1 ~ /^[a-z0-9._-]+$/) { g = $1; sub(/^[^:]*: /, "", line) }
-                          printf "%s\t%s\n", g, line }' |
-            sort -s -t "$(printf '\t')" -k1,1 |
-            awk -F'\t' '{ g = $1; sub(/^zz-/, "", g);   # sorts ungrouped ones last
-                          if (g != last) { printf "\n**%s**\n", g; last = g }
-                          printf "- %s\n", $2 }' > "$NOTES" || true
-          [ -s "$NOTES" ] || echo "Maintenance release." > "$NOTES"
-          git tag "v$VERSION"
-          git push origin "v$VERSION"
-          gh release create "v$VERSION" --title "v$VERSION" --notes-file "$NOTES"
+          if [ -z "$GH_TOKEN" ]; then echo "no UMBRELLA_DISPATCH_TOKEN — the umbrella's schedule picks this up"; exit 0; fi
+          gh workflow run bump.yml -R "${{ github.repository_owner }}/cloud-self-service" || echo "::warning::could not trigger the umbrella bump"
 
-      # --- ghcr retention (runs after the push, so counts include the new tag) ---
-      # Keep only the newest pre-release "-test.N" tag
-      - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
-        with:
-          use-regex: true
-          exclude-tags: '^latest$'
-          delete-tags: '^\d+\.\d+\.\d+-test\.\d+$'
-          keep-n-tagged: 1
-      # Keep the newest 3 stable semver tags (X.Y.Z)
-      - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
-        with:
-          use-regex: true
-          exclude-tags: '^latest$'
-          delete-tags: '^v?\d+\.\d+\.\d+$'
-          keep-n-tagged: 3
-      # Delete all old pre-release "-alpha" tags
-      - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
-        with:
-          use-regex: true
-          delete-tags: '^.*-alpha$'
-      # Clean up untagged / ghost / orphaned leftovers
-      - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
-        with:
-          delete-untagged: true
-          delete-ghost-images: true
-          delete-orphaned-images: true
+      # TODO (resume): retention steps from main, plus rules for '^\d+\.\d+\.\d+-(test\.\d+\.\d+|0\.ci\.\d+)$' (keep 3) and '^sha-[0-9a-f]{40}$' (keep 10).

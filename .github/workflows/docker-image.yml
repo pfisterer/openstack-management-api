@@ -147,7 +147,12 @@ jobs:
             exit 0
           fi
           helm package helm-chart/ --version "$V" --app-version "$V" --destination "$RUNNER_TEMP"
-          helm push "$RUNNER_TEMP"/*.tgz "oci://ghcr.io/${{ github.repository_owner }}/charts"
+          # GHCR sometimes answers a push with "failed to perform Tag … not found" right after the upload; a second try goes through.
+          for i in 1 2 3; do
+            helm push "$RUNNER_TEMP"/*.tgz "oci://ghcr.io/${{ github.repository_owner }}/charts" && exit 0
+            echo "::warning::helm push failed (try $i), retrying"; sleep $((i * 10))
+          done
+          exit 1
 
       # --- release ---
       # A stable VERSION gets a Git tag and a GitHub release; a "-test.N" one

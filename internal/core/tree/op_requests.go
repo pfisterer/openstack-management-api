@@ -157,6 +157,8 @@ type TransferOwnerRequest struct {
 // keeping it for the grace period.
 type ReleaseNodeRequest struct {
 	Delete bool `json:"delete,omitempty"`
+	// AtEnd, on an allocation, lets the project go on without it: the allocation ends at its own date instead of now (Node.EndsAlone), and the project's end is read from the others — how a project is extended when one paying budget does not extend.
+	AtEnd bool `json:"at_end,omitempty"`
 }
 
 // PromoteNodeRequest converts an imported leaf into a managed request: the leaf is

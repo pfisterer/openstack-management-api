@@ -17,23 +17,25 @@ import (
 // ── Postgres ──────────────────────────────────────────────────────────────────
 
 type dbDay struct {
-	Day         time.Time `gorm:"column:day;type:date;primaryKey"`
-	NodeID      string    `gorm:"column:node_id;primaryKey"`
-	ExternalID  string    `gorm:"column:external_id;index"`
-	ProjectName string    `gorm:"column:project_name"`
-	Owner       string    `gorm:"column:owner;index"`
-	Status      string    `gorm:"column:status"`
-	BudgetID    string    `gorm:"column:budget_id;index"`
-	BudgetPath  []byte    `gorm:"column:budget_path;type:jsonb;not null"`
-	People      int       `gorm:"column:people"`
-	Groups      int       `gorm:"column:member_groups"`
-	ServerHours float64   `gorm:"column:server_hours"`
-	VCPUHours   float64   `gorm:"column:vcpu_hours"`
-	RAMGBHours  float64   `gorm:"column:ram_gb_hours"`
-	DiskGBHours float64   `gorm:"column:disk_gb_hours"`
-	StorageGB   float64   `gorm:"column:storage_gb"`
-	PublicIPv4  *int      `gorm:"column:public_ipv4"`
-	Reserved    []byte    `gorm:"column:reserved;type:jsonb;not null"`
+	Day    time.Time `gorm:"column:day;type:date;primaryKey"`
+	NodeID string    `gorm:"column:node_id;primaryKey"`
+	// AllocationID is the allocation the row's share was paid by; part of the key (ensureAllocationKey). Empty on rows from before allocations.
+	AllocationID string  `gorm:"column:allocation_id;not null;default:''"`
+	ExternalID   string  `gorm:"column:external_id;index"`
+	ProjectName  string  `gorm:"column:project_name"`
+	Owner        string  `gorm:"column:owner;index"`
+	Status       string  `gorm:"column:status"`
+	BudgetID     string  `gorm:"column:budget_id;index"`
+	BudgetPath   []byte  `gorm:"column:budget_path;type:jsonb;not null"`
+	People       int     `gorm:"column:people"`
+	Groups       int     `gorm:"column:member_groups"`
+	ServerHours  float64 `gorm:"column:server_hours"`
+	VCPUHours    float64 `gorm:"column:vcpu_hours"`
+	RAMGBHours   float64 `gorm:"column:ram_gb_hours"`
+	DiskGBHours  float64 `gorm:"column:disk_gb_hours"`
+	StorageGB    float64 `gorm:"column:storage_gb"`
+	PublicIPv4   *int    `gorm:"column:public_ipv4"`
+	Reserved     []byte  `gorm:"column:reserved;type:jsonb;not null"`
 	// Nullable: the rows from before attributes existed have none.
 	Attributes  []byte    `gorm:"column:attributes;type:jsonb"`
 	Backfilled  bool      `gorm:"column:backfilled"`
@@ -59,7 +61,36 @@ func NewPostgresStore(db *gorm.DB) (*PostgresStore, error) {
 	if err := db.AutoMigrate(&dbDay{}); err != nil {
 		return nil, fmt.Errorf("migrate usage table: %w", err)
 	}
+	if err := ensureAllocationKey(db); err != nil {
+		return nil, err
+	}
 	return &PostgresStore{db: db}, nil
+}
+
+// ensureAllocationKey makes (day, node_id, allocation_id) the table's key: a project paid by several budgets has one row per allocation and day (Books.RecordDay). AutoMigrate adds the column but never touches a key, so this does, once.
+func ensureAllocationKey(db *gorm.DB) error {
+	var n int64
+	if err := db.Raw(`SELECT count(*) FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey) WHERE i.indrelid = 'project_usage_daily'::regclass AND i.indisprimary AND a.attname = 'allocation_id'`).Scan(&n).Error; err != nil {
+		return fmt.Errorf("read usage key: %w", err)
+	}
+	if n > 0 {
+		return nil
+	}
+	var name string
+	if err := db.Raw(`SELECT conname FROM pg_constraint WHERE conrelid = 'project_usage_daily'::regclass AND contype = 'p'`).Scan(&name).Error; err != nil {
+		return fmt.Errorf("read usage key name: %w", err)
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		if name != "" {
+			if err := tx.Exec(`ALTER TABLE project_usage_daily DROP CONSTRAINT "` + name + `"`).Error; err != nil {
+				return fmt.Errorf("drop usage key: %w", err)
+			}
+		}
+		if err := tx.Exec(`ALTER TABLE project_usage_daily ADD PRIMARY KEY (day, node_id, allocation_id)`).Error; err != nil {
+			return fmt.Errorf("add usage key: %w", err)
+		}
+		return nil
+	})
 }
 
 func (s *PostgresStore) ReplaceDay(ctx context.Context, day time.Time, rows []Day) error {
@@ -81,7 +112,7 @@ func (s *PostgresStore) ReplaceDay(ctx context.Context, day time.Time, rows []Da
 			}
 		}
 		recs = append(recs, dbDay{
-			Day: day, NodeID: r.NodeID, ExternalID: r.ExternalID, ProjectName: r.ProjectName,
+			Day: day, NodeID: r.NodeID, AllocationID: r.AllocationID, ExternalID: r.ExternalID, ProjectName: r.ProjectName,
 			Owner: r.Owner, Status: r.Status, BudgetID: r.BudgetID, BudgetPath: path,
 			People: r.People, Groups: r.Groups,
 			ServerHours: r.ServerHours, VCPUHours: r.VCPUHours, RAMGBHours: r.RAMGBHours,
@@ -134,13 +165,13 @@ func (s *PostgresStore) DaysUnder(ctx context.Context, budgetID string, from, to
 
 func (s *PostgresStore) find(q *gorm.DB) ([]Day, error) {
 	var recs []dbDay
-	if err := q.Order("day, node_id").Find(&recs).Error; err != nil {
+	if err := q.Order("day, node_id, allocation_id").Find(&recs).Error; err != nil {
 		return nil, err
 	}
 	out := make([]Day, 0, len(recs))
 	for _, r := range recs {
 		d := Day{
-			Day: label(r.Day), NodeID: r.NodeID, ExternalID: r.ExternalID, ProjectName: r.ProjectName,
+			Day: label(r.Day), NodeID: r.NodeID, AllocationID: r.AllocationID, ExternalID: r.ExternalID, ProjectName: r.ProjectName,
 			Owner: r.Owner, Status: r.Status, BudgetID: r.BudgetID, People: r.People, Groups: r.Groups,
 			ServerHours: r.ServerHours, VCPUHours: r.VCPUHours, RAMGBHours: r.RAMGBHours,
 			DiskGBHours: r.DiskGBHours, StorageGB: r.StorageGB, PublicIPv4: r.PublicIPv4,

@@ -44,6 +44,55 @@ func resolveCap(chain []Node, d common.Cap) (int, bool) {
 	return v, set
 }
 
+// CapMerge is how the caps of several budgets paying for one project are merged into the one value the provider is told (release times, batch jobs per person, batch hours, local storage): a provider project can have only one. Decided 25.11.2026 (Dennis): the most generous — a permission (Grant cap) applies when any paying budget grants it, a bound is the loosest of the paying budgets. Along one budget's chain the strictest still applies (ResolveCaps).
+var CapMerge = CapMergeLoosest
+
+// Cap merge rules for CapMerge.
+const (
+	// CapMergeLoosest: the most generous value; a Grant cap where any grants it.
+	CapMergeLoosest = "loosest"
+	// CapMergeStrictest: the strictest value; a Grant cap only where all grant it.
+	CapMergeStrictest = "strictest"
+)
+
+// MergeCaps merges what applies below each paying budget (ResolveCaps over each one's chain) into what applies to the project, by CapMerge. One input is returned as it is.
+func MergeCaps(perBudget []common.Caps, defs []common.Cap) common.Caps {
+	if len(perBudget) == 1 {
+		return perBudget[0].Clone()
+	}
+	out := common.Caps{}
+	for _, d := range defs {
+		var v int
+		set, count := false, 0
+		for _, c := range perBudget {
+			own, ok := c[d.ID]
+			if !ok {
+				continue
+			}
+			count++
+			switch {
+			case !set:
+				v, set = own, true
+			case CapMerge == CapMergeStrictest:
+				v = d.Stricter(v, own)
+			default:
+				if d.Looser(own, v) {
+					v = own
+				}
+			}
+		}
+		if !set {
+			continue
+		}
+		// Strictest: a Grant cap missing at one budget is none; an ordinary one missing there sets nothing of its own.
+		if CapMerge == CapMergeStrictest && d.Grant && count < len(perBudget) {
+			continue
+		}
+		out[d.ID] = v
+	}
+	return out.Clone()
+}
+
 // ValidateCaps checks a budget's own caps against defs and against inherited, what the budgets above allow (ResolveCaps over them): every id known, every value within its cap, none looser than above; a Grant cap only where those above have it (root: there is nothing above) and not on a budget that inherits its limit; a Together set all or none.
 func ValidateCaps(own, inherited common.Caps, root, inheritsLimit bool, defs []common.Cap) error {
 	catalog := common.CapCatalog(defs)

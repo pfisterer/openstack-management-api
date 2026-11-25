@@ -164,14 +164,38 @@ func truncateRunes(s string, n int) string {
 // descriptionPathSeparator joins the budget path and the owner in a description.
 const descriptionPathSeparator = " -> "
 
-// budgetPath returns the names of the budgets a leaf hangs under, top-down and
+// budgetPath returns the names of the budgets a project is paid from, top-down and
 // without the root, e.g. ["DHBW Mannheim", "Fakultät Technik", "Prof-X"]. It is
-// what an operator in Horizon needs to tell where a project belongs. A budget
-// missing from budgetByID ends the walk, as does a cycle.
+// what an operator in Horizon needs to tell where a project belongs. A project
+// paid by several budgets names every path (decided 25.11.2026), joined by
+// descriptionFundersSeparator into one element, so a project with one budget
+// reads as before. A budget missing from budgetByID ends a walk, as does a cycle.
 func budgetPath(budgetByID map[string]model.Node, leaf model.Node) []string {
+	var paths [][]string
+	for _, start := range leaf.FundingBudgets() {
+		paths = append(paths, pathFrom(budgetByID, start))
+	}
+	switch len(paths) {
+	case 0:
+		return nil
+	case 1:
+		return paths[0]
+	}
+	joined := make([]string, 0, len(paths))
+	for _, p := range paths {
+		joined = append(joined, strings.Join(p, descriptionPathSeparator))
+	}
+	return []string{strings.Join(joined, descriptionFundersSeparator)}
+}
+
+// descriptionFundersSeparator joins the paths of several paying budgets in a description.
+const descriptionFundersSeparator = " + "
+
+// pathFrom is the names from below the root down to the budget start.
+func pathFrom(budgetByID map[string]model.Node, start string) []string {
 	var path []string
 	seen := map[string]struct{}{}
-	for id := leaf.BudgetAnchor(); id != nil && *id != model.RootNodeID; {
+	for id := &start; id != nil && *id != model.RootNodeID; {
 		if _, dup := seen[*id]; dup {
 			break
 		}

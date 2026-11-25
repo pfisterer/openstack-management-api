@@ -344,8 +344,8 @@ func TestDeleteNode_Guards(t *testing.T) {
 	assertStatus(t, do(t, h, http.MethodDelete, "/v1/nodes/root", userRoot, nil), http.StatusForbidden)
 	assertStatus(t, do(t, h, http.MethodDelete, "/v1/nodes/unassigned", userRoot, nil), http.StatusForbidden)
 
-	// A subtree with active/pending leaves cannot be deleted.
-	assertStatus(t, do(t, h, http.MethodDelete, "/v1/nodes/b_dept_cs", userRoot, nil), http.StatusBadRequest)
+	// A subtree with live allocations or undecided budgets cannot be deleted: a conflict to resolve first.
+	assertStatus(t, do(t, h, http.MethodDelete, "/v1/nodes/b_dept_cs", userRoot, nil), http.StatusConflict)
 
 	// Leaves are not deleted via the API.
 	assertStatus(t, do(t, h, http.MethodDelete, "/v1/nodes/p_001", userFaculty, nil), http.StatusBadRequest)
@@ -392,8 +392,8 @@ func TestPromote_Flow(t *testing.T) {
 	if n.Status != model.StatusImported {
 		t.Errorf("status should remain imported until the reconciler tags the OS project, got %q", n.Status)
 	}
-	if n.HomeBudgetID == nil || *n.HomeBudgetID != "b_cs_faculty" || n.Owner != "user:"+userFaculty {
-		t.Errorf("promotion should set the budget and the owner, got home=%v owner=%q", n.HomeBudgetID, n.Owner)
+	if len(n.FundingBudgetIDs) != 1 || n.FundingBudgetIDs[0] != "b_cs_faculty" || n.Owner != "user:"+userFaculty {
+		t.Errorf("promotion should set the budget and the owner, got %v owner=%q", n.FundingBudgetIDs, n.Owner)
 	}
 	found := false
 	for _, f := range n.Flags {

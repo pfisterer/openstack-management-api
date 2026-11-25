@@ -80,23 +80,15 @@ const (
 	StatusReleased      = "released"
 	StatusArchived      = "archived"
 	StatusImported      = "imported"
-	// StatusEnded is an allocation that no longer pays for its project: given back, withdrawn by a manager, or cut after it expired (see Expiry). Terminal and never charged; the project itself goes on with its other allocations.
+	// StatusEnded is an allocation that no longer pays for its project: given back, withdrawn by a manager, or let run out at its own end while the project was extended without it (Node.EndsAlone). Terminal and never charged; the project itself goes on with its other allocations.
 	StatusEnded = "ended"
-)
-
-// Allocation expiry causes (Expiry.Cause).
-const (
-	// ExpiryEnded: the allocation's end date has passed.
-	ExpiryEnded = "ended"
-	// ExpiryBudgetDeleted: the budget that paid for it was deleted; the allocation now hangs under the budget above it.
-	ExpiryBudgetDeleted = "budget_deleted"
 )
 
 // Project start modes (Node.StartWhen).
 const (
 	// StartNow: the project starts as soon as one of its allocations is approved; the others follow when decided.
 	StartNow = "now"
-	// StartAll: the project waits until every allocation it asked for is decided.
+	// StartAll: all or nothing — the project waits until every allocation it asked for is approved, and is refused as a whole when one of them is.
 	StartAll = "all"
 )
 
@@ -187,33 +179,23 @@ type Allocation struct {
 	BudgetID string              `json:"budget_id"`
 	Status   string              `json:"status"`
 	Limit    common.ProjectQuota `json:"limit"`
-	// TerminationDate is the allocation's own end; the project runs as long as its latest one.
+	// TerminationDate is how long the allocation's budget has granted it; the project ends at the earliest of these (Node.TerminationDate), and every allocation runs until then.
 	TerminationDate *string `json:"termination_date,omitempty"`
+	// EndsAlone marks an allocation the project was extended without: it ends at its own date and the project goes on with the others.
+	EndsAlone bool `json:"ends_alone,omitempty"`
+	// Attributes are the allocation's own attributes (cost centre and the like), set by its budget's managers.
+	Attributes Attributes `json:"attributes,omitempty"`
 	// Pending is a change of this allocation waiting for the budget's managers.
 	Pending   *PendingChanges `json:"pending,omitempty"`
 	Reason    string          `json:"reason,omitempty"`
 	CreatedBy string          `json:"created_by,omitempty"`
 	CreatedAt string          `json:"created_at,omitempty"`
-	// Expired is set while the allocation has expired but still pays (see Expiry).
-	Expired *Expiry `json:"expired,omitempty"`
-	// Home marks the allocation the project's place in the tree is read from (Node.HomeBudgetID).
-	Home bool `json:"home,omitempty"`
 	// Revision of the allocation node, for deciding on it (ApproveNodeRequest.ExpectedRevision).
 	Revision int `json:"revision"`
 	// BudgetName is the name of the paying budget.
 	BudgetName string `json:"budget_name,omitempty"`
 	// BudgetPath is the budgets from below the root down to BudgetID, root-most first.
 	BudgetPath []PathEntry `json:"budget_path,omitempty"`
-}
-
-// Expiry marks an allocation that has run out — its end passed, or its budget was deleted — while it still pays for the project: overbooking is accepted, nothing is taken away at once (decided 25.11.2026). Its owner and managers can extend it or move it to another budget; once Due has passed it is cut and the project shrinks by it. Without a notification service Due stays empty and nothing is cut automatically.
-type Expiry struct {
-	At    string `json:"at"`
-	Cause string `json:"cause" enums:"ended,budget_deleted"`
-	// Due is the day after which the allocation is cut, empty while nothing is cut automatically.
-	Due *string `json:"due,omitempty"`
-	// BudgetName names the budget that was deleted (cause budget_deleted).
-	BudgetName string `json:"budget_name,omitempty"`
 }
 
 // PathEntry is one budget on the way down from the root.
@@ -466,13 +448,12 @@ type Node struct {
 
 	// ProjectID is, on an allocation, the project it pays for.
 	ProjectID string `json:"project_id,omitempty"`
-	// Expired marks an allocation that has run out but still pays (see Expiry).
-	Expired *Expiry `json:"expired,omitempty"`
+	// EndsAlone marks, on an allocation, that the project was extended without it: it ends at its own date (an allocation runs out only so), and the project's end is read from the others.
+	EndsAlone bool `json:"ends_alone,omitempty"`
 	// StartWhen is, on a project, when it starts: StartNow (as soon as one allocation is approved, the default) or StartAll (once every allocation asked for is decided).
 	StartWhen string `json:"start_when,omitempty" enums:"now,all"`
-	// HomeBudgetID and HomeAllocationID are, on a project, the allocation its place in the tree is read from: the budget path in OpenStack's description, the budget settings passed down to it (release times, attributes), where what it uses beyond its limits is charged. The oldest allocation that pays, recomputed with Limit.
-	HomeBudgetID     *string `json:"home_budget_id,omitempty"`
-	HomeAllocationID string  `json:"home_allocation_id,omitempty"`
+	// FundingBudgetIDs are, on a project, the budgets of its paying allocations, oldest first, recomputed with Limit: where a project is listed, whose paths OpenStack's description names, whose settings the providers merge (MergeCaps).
+	FundingBudgetIDs []string `json:"funding_budget_ids,omitempty"`
 	// WaitingKey is, on a node waiting for a decision, the key of the approval.waiting notification sent for it, so the decision can resolve it.
 	WaitingKey string `json:"waiting_key,omitempty"`
 	// EndingNotified is, on a project, the end date project.ending was sent for.
@@ -604,12 +585,15 @@ func (n *Node) IsLeaf() bool { return n.Kind == KindAllocation }
 // IsProject reports whether the node is a project.
 func (n *Node) IsProject() bool { return n.Kind == KindProject }
 
-// BudgetAnchor is where a node hangs in the tree for everything that reads a path or settings along it: its parent, or for a project its home budget (HomeBudgetID).
-func (n *Node) BudgetAnchor() *string {
+// FundingBudgets are the budgets a node draws from: a project's funding budgets, else its parent.
+func (n *Node) FundingBudgets() []string {
 	if n.Kind == KindProject {
-		return n.HomeBudgetID
+		return n.FundingBudgetIDs
 	}
-	return n.ParentID
+	if n.ParentID == nil {
+		return nil
+	}
+	return []string{*n.ParentID}
 }
 
 // OwnerEmail returns the email part of the owner token ("" when unset).

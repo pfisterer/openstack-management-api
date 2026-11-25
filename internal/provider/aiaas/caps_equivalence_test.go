@@ -29,7 +29,7 @@ func wireOf(chain []model.Node) string {
 		Scratch  int
 		Priority string
 		Jobs     *BatchJobs
-	}{ReleaseFor(chain), ScratchFor(chain), BatchPriorityFor(chain), BatchJobsFor(chain)})
+	}{ReleaseFor([][]model.Node{chain}), ScratchFor([][]model.Node{chain}), BatchPriorityFor([][]model.Node{chain}), BatchJobsFor([][]model.Node{chain})})
 	return string(b)
 }
 

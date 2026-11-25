@@ -218,3 +218,22 @@ func TestShortNodeID(t *testing.T) {
 		}
 	}
 }
+
+// A project paid by several budgets names every path in its description; one with a single budget reads as before.
+func TestBudgetPath_SeveralFunders(t *testing.T) {
+	root := model.RootNodeID
+	budgets := map[string]model.Node{
+		root: {ID: root},
+		"a":  {ID: "a", Name: "Mannheim", ParentID: &root},
+		"a1": {ID: "a1", Name: "Kurs", ParentID: new("a")},
+		"b":  {ID: "b", Name: "Grundversorgung", ParentID: &root},
+	}
+	leaf := model.Node{Kind: model.KindProject, FundingBudgetIDs: []string{"a1", "b"}, Owner: "user:s@example.org", Reason: "r"}
+	if got := buildDescription(leaf, budgetPath(budgets, leaf)); !strings.HasPrefix(got, "Mannheim -> Kurs + Grundversorgung -> s@example.org: r") {
+		t.Errorf("description = %q", got)
+	}
+	leaf.FundingBudgetIDs = []string{"a1"}
+	if got := budgetPath(budgets, leaf); !slices.Equal(got, []string{"Mannheim", "Kurs"}) {
+		t.Errorf("one budget: %v", got)
+	}
+}

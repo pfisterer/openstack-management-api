@@ -191,6 +191,7 @@ func BuildReport(rows []Day, from, to time.Time, m Mapping, prices *Prices) Repo
 	days := map[string]*DayTotals{}
 	backfilled := map[string]bool{}
 	projects := map[string]*ProjectTotals{}
+	seenOn := map[string]map[string]bool{}
 	for _, d := range rows {
 		key := d.Day.Format(time.DateOnly)
 		dt := days[key]
@@ -198,7 +199,14 @@ func BuildReport(rows []Day, from, to time.Time, m Mapping, prices *Prices) Repo
 			dt = &DayTotals{Day: key}
 			days[key] = dt
 		}
-		dt.Projects++
+		// A project paid by several budgets has a row per allocation; it is one project.
+		if seenOn[key] == nil {
+			seenOn[key] = map[string]bool{}
+		}
+		if !seenOn[key][d.NodeID] {
+			seenOn[key][d.NodeID] = true
+			dt.Projects++
+		}
 		dt.add(d, m)
 		if d.Backfilled {
 			backfilled[key] = true
@@ -213,7 +221,10 @@ func BuildReport(rows []Day, from, to time.Time, m Mapping, prices *Prices) Repo
 		// Rows come oldest first, so the last one names the project.
 		p.ProjectName, p.Owner, p.Status = d.ProjectName, d.Owner, d.Status
 		p.BudgetID, p.BudgetPath, p.People = d.BudgetID, d.BudgetPath, d.People
-		p.Days++
+		if !seenOn[key][pk+"\x00day"] {
+			seenOn[key][pk+"\x00day"] = true
+			p.Days++
+		}
 		p.add(d, m)
 		if d.ServerHours > 0 {
 			p.LastActive = key

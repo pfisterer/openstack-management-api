@@ -85,14 +85,6 @@ func (s *Service) projectObject(p model.Node) notify.Object {
 	return notify.Object{Kind: model.KindProject, ID: p.ID, Name: p.Name, URL: s.projectURL(p.ID)}
 }
 
-// expiryDue is the day an allocation marked as expired today is cut: GraceDays from today. Nil without a notification service — then nothing is cut automatically (decided 25.11.2026), because nobody would have been told.
-func (s *Service) expiryDue() *string {
-	if !s.notifier.Enabled() {
-		return nil
-	}
-	return new(s.today().AddDays(s.expiry.GraceDays).String())
-}
-
 // dueRFC3339 is an end day as the contract's due: the start of the day after it in Berlin, the moment it has passed.
 func dueRFC3339(day *string) string {
 	if day == nil {
@@ -125,11 +117,8 @@ func allocationData(a model.Node, budgetName string) map[string]any {
 			data["requested_termination_date"] = *a.Pending.TerminationDate
 		}
 	}
-	if a.Expired != nil {
-		data["expired_cause"] = a.Expired.Cause
-		if a.Expired.BudgetName != "" {
-			data["deleted_budget_name"] = a.Expired.BudgetName
-		}
+	if a.EndsAlone {
+		data["ends_alone"] = true
 	}
 	return data
 }
@@ -200,17 +189,7 @@ func requesterOf(n model.Node) string {
 	return strings.TrimPrefix(n.Owner, "user:")
 }
 
-// notifyExpired tells the owner, the admins of the project and the managers of the allocation's budget that an allocation expired and what happens next.
-func (s *Service) notifyExpired(ctx context.Context, alloc model.Node, project model.Node, actor model.Actor) {
-	if !s.notifier.Enabled() || alloc.ParentID == nil || alloc.Expired == nil {
-		return
-	}
-	managers, name := s.budgetManagers(ctx, *alloc.ParentID)
-	data := allocationData(alloc, name)
-	s.notifier.Notify(notify.Event{Type: notify.TypeAllocationExpired, Key: "allocation-expired:" + alloc.ID, Class: notify.ClassAction, Recipients: recipientsOf(projectHolders(project), managers), Actor: actorOf(actor), Due: dueRFC3339(alloc.Expired.Due), Object: s.projectObject(project), Data: data})
-}
-
-// notifyShortened tells the same people that a project lost an allocation it was using: cut after its period, or withdrawn by the budget's managers.
+// notifyShortened tells the owner, the project's admins and the managers of the allocation's budget that a project lost an allocation it was using: withdrawn by the budget's managers, or ended at its own date after the project was extended without it.
 func (s *Service) notifyShortened(ctx context.Context, alloc model.Node, project model.Node, actor model.Actor, reason string) {
 	if !s.notifier.Enabled() || alloc.ParentID == nil {
 		return
@@ -223,10 +202,6 @@ func (s *Service) notifyShortened(ctx context.Context, alloc model.Node, project
 		data["project_limit"] = p.Limit
 	}
 	s.notifier.Notify(notify.Event{Type: notify.TypeAllocationShortened, Key: "allocation-shortened:" + alloc.ID, Class: notify.ClassDisruption, Recipients: recipientsOf(projectHolders(project), managers), Actor: actorOf(actor), Object: s.projectObject(project), Data: data})
-	// The expiry is settled with it.
-	if alloc.Expired != nil || slices.ContainsFunc(alloc.History, func(h model.HistoryEntry) bool { return h.Event == "expired" }) {
-		s.notifier.Notify(notify.Event{Type: notify.TypeAllocationExpired, Key: "allocation-expired:" + alloc.ID, Class: notify.ClassAction, Resolve: true, Recipients: recipientsOf(projectHolders(project), managers), Actor: actorOf(actor), Object: s.projectObject(project), Data: data})
-	}
 }
 
 // notifyEnding tells the owner and admins that their project ends soon.

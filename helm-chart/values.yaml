@@ -60,14 +60,13 @@ openstackManagementApi:
     # Days after a project's end (or its release, if earlier) when its Lab/AI part — workspaces, homes, shared folder — is deleted, and a released project's leaf with it unless OpenStack still carries it out; 0 = never. Keep it equal to reconciler.releasedDeleteGraceDays.
     deleteGraceDays: 14
 
-  # The notification service (pfisterer/notifications). url empty = no events, and expired allocations are only marked, never cut. The token goes into the Secret (key notify-token); with existingSecret it has to be there.
+  # The notification service (pfisterer/notifications). url empty = no events. The token goes into the Secret (key notify-token); with existingSecret it has to be there.
   notify:
     url: ""
     token: ""
 
-  # Expired allocations (an allocation's end passed, or its budget was deleted) are marked; with notifications they are cut after graceDays. endingNoticeDays before a project's end its people are told. portalURL is the self-service portal, for links in notifications.
+  # endingNoticeDays before a project's end its people are told. portalURL is the self-service portal, for links in notifications. graceDays is accepted for older values and unused.
   expiry:
-    graceDays: 14
     endingNoticeDays: 14
     intervalMinutes: 60
     portalURL: ""

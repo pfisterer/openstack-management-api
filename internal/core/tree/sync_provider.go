@@ -86,18 +86,22 @@ func (p *ProviderSync) Budgets(ctx context.Context) (map[string]model.Node, erro
 	return budgets, nil
 }
 
-// BudgetChain is the budgets above a project — those above its home allocation (Node.HomeBudgetID) —, parent first and the root last when it is among budgets; it stops at a budget it does not know or at a cycle.
-func BudgetChain(budgets map[string]model.Node, leaf model.Node) []model.Node {
-	var out []model.Node
-	seen := map[string]bool{}
-	for id := leaf.BudgetAnchor(); id != nil && !seen[*id]; {
-		seen[*id] = true
-		b, ok := budgets[*id]
-		if !ok {
-			break
+// BudgetChains are, per budget paying for a project (Node.FundingBudgetIDs), the budgets from it up, nearest first and the root last when it is among budgets; a chain stops at a budget it does not know or at a cycle. What a provider can be told only once per project is merged over them (model.MergeCaps).
+func BudgetChains(budgets map[string]model.Node, leaf model.Node) [][]model.Node {
+	var out [][]model.Node
+	for _, start := range leaf.FundingBudgets() {
+		var chain []model.Node
+		seen := map[string]bool{}
+		for id := &start; id != nil && !seen[*id]; {
+			seen[*id] = true
+			b, ok := budgets[*id]
+			if !ok {
+				break
+			}
+			chain = append(chain, b)
+			id = b.ParentID
 		}
-		out = append(out, b)
-		id = b.ParentID
+		out = append(out, chain)
 	}
 	return out
 }

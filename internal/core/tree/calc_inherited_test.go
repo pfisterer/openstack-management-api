@@ -26,7 +26,11 @@ func TestInherited_SameAsResolveOverTheChain(t *testing.T) {
 	for _, id := range []string{model.RootNodeID, a.ID, pass.ID, b.ID, p.ID} {
 		n := mustGet(t, svc, id)
 		var above []model.Node
-		for parent := n.BudgetAnchor(); parent != nil; {
+		var start *string
+		if fb := n.FundingBudgets(); len(fb) > 0 {
+			start = &fb[0]
+		}
+		for parent := start; parent != nil; {
 			up := mustGet(t, svc, *parent)
 			above = append(above, up)
 			parent = up.ParentID

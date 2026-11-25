@@ -55,9 +55,7 @@ func (s *Service) attachChildCounts(ctx context.Context, nodes []model.Node) ([]
 func (s *Service) attachParentNames(ctx context.Context, nodes []model.Node, viewer common.TokenList) ([]model.Node, error) {
 	var start []string
 	for _, n := range nodes {
-		if anchor := n.BudgetAnchor(); anchor != nil {
-			start = append(start, *anchor)
-		}
+		start = append(start, n.FundingBudgets()...)
 		for _, a := range n.Allocations {
 			start = append(start, a.BudgetID)
 		}
@@ -79,27 +77,34 @@ func (s *Service) attachParentNames(ctx context.Context, nodes []model.Node, vie
 			nodes[i].Attributes = nil
 			nodes[i].EffectiveAttributes = nil
 		}
-		above := tree.budgetsAbove(nodes[i])
-		nodes[i].InheritedCaps = model.ResolveCaps(above, s.capDefs())
-		if anchor := nodes[i].BudgetAnchor(); anchor != nil {
-			nodes[i].ParentName = tree.nodes[*anchor].Name
-			nodes[i].ParentPath = tree.path(*anchor)
+		nodes[i].InheritedCaps = s.capsOf(tree, nodes[i])
+		if nodes[i].ParentID != nil {
+			nodes[i].ParentName = tree.nodes[*nodes[i].ParentID].Name
+			nodes[i].ParentPath = tree.path(*nodes[i].ParentID)
 		}
 		nodes[i].Allocations = tree.nameAllocations(nodes[i].Allocations)
 		if nodes[i].Project != nil {
 			p := *nodes[i].Project
 			p.Allocations = tree.nameAllocations(p.Allocations)
-			if p.HomeBudgetID != nil {
-				p.ParentName = tree.nodes[*p.HomeBudgetID].Name
-				p.ParentPath = tree.path(*p.HomeBudgetID)
-			}
-			if !tree.attributesVisible(nodes[i], viewerSet) {
-				p.Attributes = nil
-			}
 			nodes[i].Project = &p
 		}
 	}
 	return nodes, nil
+}
+
+// capsOf is what applies to a node of the caps the budgets set: below a budget or an allocation the strictest along its chain; for a project, merged over the chains of the budgets paying for it (model.MergeCaps).
+func (s *Service) capsOf(tree ancestry, n model.Node) common.Caps {
+	if n.Kind != model.KindProject {
+		return model.ResolveCaps(tree.budgetsAbove(n), s.capDefs())
+	}
+	var per []common.Caps
+	for _, b := range n.FundingBudgetIDs {
+		per = append(per, model.ResolveCaps(tree.chainFrom(b), s.capDefs()))
+	}
+	if len(per) == 0 {
+		return nil
+	}
+	return model.MergeCaps(per, s.capDefs())
 }
 
 // nameAllocations gives each allocation the name and path of its budget, in a copy.
@@ -117,11 +122,15 @@ func (a ancestry) nameAllocations(allocs []model.Allocation) []model.Allocation 
 
 // budgetsAbove are the budgets above n as walkAncestors loaded them, parent first: the chain the model.Resolve* functions take, as parentChainNodes would load it. Only the fields walkAncestors keeps (slimNode) are set; a budget it could not load is an empty node with its id. Nil for the root.
 func (a ancestry) budgetsAbove(n model.Node) []model.Node {
-	anchor := n.BudgetAnchor()
-	if anchor == nil {
+	if n.ParentID == nil {
 		return nil
 	}
-	ids := append([]string{*anchor}, a.chain(*anchor)...)
+	return a.chainFrom(*n.ParentID)
+}
+
+// chainFrom is the budget id and those above it as walkAncestors loaded them, nearest first.
+func (a ancestry) chainFrom(id string) []model.Node {
+	ids := append([]string{id}, a.chain(id)...)
 	out := make([]model.Node, 0, len(ids))
 	for _, id := range ids {
 		b := a.nodes[id]

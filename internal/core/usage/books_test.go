@@ -67,32 +67,51 @@ func TestRecordDay(t *testing.T) {
 		t.Fatal(err)
 	}
 	rows, _ := store.Days(ctx, nil, yesterday, yesterday.AddDate(0, 0, 1))
-	if len(rows) != 2 {
-		t.Fatalf("want the project that ran and the idle one, not the rejected or a foreign one; got %d rows", len(rows))
+	// The project that ran is paid by two budgets (its share under Students, 8 cores from Uni): a row per allocation, its use split like their limits.
+	if len(rows) != 3 {
+		t.Fatalf("want the project that ran (two allocations) and the idle one, not the rejected or a foreign one; got %d rows", len(rows))
 	}
-	run := rows[1]
-	if run.NodeID != "p_run" {
-		t.Fatalf("unexpected order: %+v", rows)
+	var parts []Day
+	for _, r := range rows {
+		if r.NodeID == "p_run" {
+			parts = append(parts, r)
+		}
 	}
-	if run.VCPUHours != 96 || run.RAMGBHours != 192 || run.ServerHours != 24 || run.DiskGBHours != 480 {
-		t.Errorf("used amounts = %+v", run)
+	if len(parts) != 2 {
+		t.Fatalf("rows = %+v", rows)
 	}
-	if run.StorageGB != 30 || run.Backfilled {
-		t.Errorf("yesterday is sampled, not backfilled: storage %v, backfilled %v", run.StorageGB, run.Backfilled)
+	var vcpu, ram, server, disk, storage float64
+	reserved := 0
+	for _, r := range parts {
+		vcpu, ram, server, disk, storage = vcpu+r.VCPUHours, ram+r.RAMGBHours, server+r.ServerHours, disk+r.DiskGBHours, storage+r.StorageGB
+		reserved += r.Reserved["cores"]
+		if r.AllocationID == "" {
+			t.Errorf("a row of a project with allocations names its allocation: %+v", r)
+		}
 	}
-	if run.Reserved["cores"] != 12 || len(run.Reserved) != 2 {
-		t.Errorf("reserved should be quantities incl. allocations, without availabilities or static quotas: %v", run.Reserved)
+	if vcpu != 96 || ram != 192 || server != 24 || disk != 480 || storage != 30 || reserved != 12 {
+		t.Errorf("the parts add up to the project's use: vcpu %v ram %v server %v disk %v storage %v reserved %d", vcpu, ram, server, disk, storage, reserved)
+	}
+	run := parts[0]
+	if run.BudgetID != "stud" {
+		run = parts[1]
+	}
+	if run.VCPUHours != 32 || run.StorageGB != 30 || run.Backfilled {
+		t.Errorf("the share under Students: 4 of 12 cores, all of the storage: %+v", run)
+	}
+	if run.Reserved["cores"] != 4 || len(run.Reserved) != 2 {
+		t.Errorf("reserved is the allocation's own, quantities only: %v", run.Reserved)
 	}
 	if len(run.BudgetPath) != 3 || run.BudgetPath[0].Name != "Students" || run.BudgetPath[2].ID != "root" {
 		t.Errorf("budget path = %+v", run.BudgetPath)
 	}
 	if len(run.Attributes) != 2 || run.Attributes["billing"]["cost_center"] != "4711" || run.Attributes["funding"]["wbs"] != "D-1" {
-		t.Errorf("attributes = %v, want the university's billing and the project's own funding", run.Attributes)
+		t.Errorf("attributes = %v, want the university's billing and the allocation's own funding", run.Attributes)
 	}
 	if run.People != 3 || run.Groups != 1 {
 		t.Errorf("people/groups = %d/%d, want owner a, admin b, member c and one group", run.People, run.Groups)
 	}
-	if idle := rows[0]; idle.VCPUHours != 0 || idle.Reserved["cores"] != 2 {
+	if idle := rows[0]; idle.NodeID != "p_idle" || idle.VCPUHours != 0 || idle.Reserved["cores"] != 2 {
 		t.Errorf("an idle reservation must still be recorded: %+v", idle)
 	}
 }
@@ -163,8 +182,8 @@ func TestDaysToRecord(t *testing.T) {
 		t.Errorf("last day = %v, want yesterday — today is not finished", last)
 	}
 	rows, _ := store.Days(ctx, []string{"p_run"}, time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), last.AddDate(0, 0, 1))
-	if len(rows) != 40 || !rows[0].Backfilled || rows[0].StorageGB != 0 {
-		t.Errorf("older days are backfilled without a storage sample: %d rows, first %+v", len(rows), rows[0])
+	if len(rows) != 80 || !rows[0].Backfilled || rows[0].StorageGB != 0 {
+		t.Errorf("older days are backfilled without a storage sample (two allocations, two rows a day): %d rows, first %+v", len(rows), rows[0])
 	}
 
 	// Recording a day again replaces it.
@@ -172,8 +191,8 @@ func TestDaysToRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	again, _ := store.Days(ctx, nil, last, last.AddDate(0, 0, 1))
-	if len(again) != 2 {
-		t.Errorf("a day recorded twice holds %d rows, want 2", len(again))
+	if len(again) != 3 {
+		t.Errorf("a day recorded twice holds %d rows, want 3", len(again))
 	}
 }
 

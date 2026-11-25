@@ -385,8 +385,9 @@ func TestParentNameIsAttached(t *testing.T) {
 	if len(mine.Items) != 1 {
 		t.Fatalf("expected 1 project, got %d", len(mine.Items))
 	}
-	if mine.Items[0].ParentName != "Course WI" {
-		t.Errorf("expected parent_name %q, got %q", "Course WI", mine.Items[0].ParentName)
+	// A project is paid from its allocations' budgets, each named with it.
+	if a := mine.Items[0].Allocations; len(a) != 1 || a[0].BudgetName != "Course WI" {
+		t.Errorf("expected the allocation from %q, got %+v", "Course WI", a)
 	}
 
 	// The root itself has no parent to name.

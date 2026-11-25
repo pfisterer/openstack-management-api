@@ -720,9 +720,6 @@ func (s *Service) requestChangeLocked(ctx context.Context, current *model.Node, 
 		} else {
 			updated.History = append(updated.History, autoApprovedEntry(actor, model.StatusChangePending, reason))
 		}
-		if updated.Expired != nil && updated.Expired.Cause == model.ExpiryEnded && !endPassed(updated.TerminationDate, s.today()) {
-			updated.Expired = nil
-		}
 	} else {
 		updated.Pending = pending
 		updated.Status = model.StatusChangePending
@@ -921,9 +918,6 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor model.Act
 		n.AuthorizedUsers = finalAuthorizedUsers
 		n.Pending = nil
 		n.WaitingKey = ""
-		if n.Expired != nil && n.Expired.Cause == model.ExpiryEnded && !endPassed(n.TerminationDate, s.today()) {
-			n.Expired = nil
-		}
 		n.History = append(slices.Clone(n.History), historyEntry)
 		updated = *n
 		return nil
@@ -946,6 +940,12 @@ func (s *Service) afterDecision(ctx context.Context, before, updated model.Node,
 	if !updated.IsLeaf() || project == nil {
 		return updated, nil
 	}
+	// Waiting for all is all or nothing (decided 25.11.2026): one part refused refuses the whole request.
+	if decision == "rejected" && before.Status == model.StatusPending && project.Status == model.StatusPending && project.StartWhen == model.StartAll {
+		if err := s.refuseWhole(ctx, *project, updated.ID, actor); err != nil {
+			return model.Node{}, err
+		}
+	}
 	stored, err := s.refreshProject(ctx, project.ID, actor)
 	if err != nil {
 		return model.Node{}, err
@@ -961,6 +961,27 @@ func (s *Service) afterDecision(ctx context.Context, before, updated model.Node,
 		return result, nil
 	}
 	return out[0], nil
+}
+
+// refuseWhole ends every other allocation of a project that waits for all of them, after one was refused: waiting ones are rejected, granted ones end before the project ever started. The project is then rejected by refreshProject. Callers hold approvalMu.
+func (s *Service) refuseWhole(ctx context.Context, project model.Node, refused string, actor model.Actor) error {
+	allocs, err := s.allocationsOf(ctx, project.ID)
+	if err != nil {
+		return err
+	}
+	for _, a := range allocs[project.ID] {
+		if a.ID == refused || !slices.Contains(liveAllocationStatuses, a.Status) {
+			continue
+		}
+		to := model.StatusEnded
+		if a.Status == model.StatusPending {
+			to = model.StatusRejected
+		}
+		if err := s.setAllocationStatus(ctx, a.ID, to, "rejected_with_project", actor, "Ein anderer Teil der Anfrage wurde abgelehnt; die Anfrage wartete auf alles"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // checkRevision refuses to decide on a node whose revision is not the one the caller saw, and a decision that does not say which one that was.

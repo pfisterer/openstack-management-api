@@ -23,6 +23,12 @@ func migrateAllocationLeaves(db *gorm.DB, log *zap.SugaredLogger, dryRun bool) (
 			return err
 		}
 		if waiting == 0 {
+			if err := reviseAllocationLeaves(tx, log, &rep); err != nil {
+				return err
+			}
+			if dryRun {
+				return errDryRun
+			}
 			return nil
 		}
 		var rows []nodeRow
@@ -60,6 +66,9 @@ func migrateAllocationLeaves(db *gorm.DB, log *zap.SugaredLogger, dryRun bool) (
 		if err := verifyAllocationMigration(tx, legacy, &rep); err != nil {
 			return err
 		}
+		if err := reviseAllocationLeaves(tx, log, &rep); err != nil {
+			return err
+		}
 		if dryRun {
 			return errDryRun
 		}
@@ -72,6 +81,62 @@ func migrateAllocationLeaves(db *gorm.DB, log *zap.SugaredLogger, dryRun bool) (
 		log.Infow("Projects migrated to allocation leaves", "dry_run", dryRun, "projects", rep.Projects, "allocations", rep.Allocations, "extra_allocations", rep.ExtraAllocations, "pending_changes", rep.PendingChanges, "imported", rep.Imported, "dropped_member_changes", rep.DroppedMemberChange)
 	}
 	return rep, err
+}
+
+// reviseAllocationLeaves runs ReviseAllocationLeaves where the first form of the model left traces (a home allocation, an expiry mark), inside the migration's transaction, and checks that every project keeps its limit and the number of projects and allocations stays.
+func reviseAllocationLeaves(tx *gorm.DB, log *zap.SugaredLogger, rep *AllocationMigrationReport) error {
+	var traces int64
+	if err := tx.Model(&nodeRow{}).Where("data -> 'home_budget_id' IS NOT NULL OR data -> 'home_allocation_id' IS NOT NULL OR data -> 'expired' IS NOT NULL").Count(&traces).Error; err != nil {
+		return err
+	}
+	if traces == 0 {
+		return nil
+	}
+	var rows []nodeRow
+	if err := tx.Where("kind IN ?", []string{model.KindProject, model.KindAllocation}).Find(&rows).Error; err != nil {
+		return err
+	}
+	nodes, err := fromNodeRows(rows)
+	if err != nil {
+		return err
+	}
+	var expired int
+	for _, r := range rows {
+		var m map[string]json.RawMessage
+		if json.Unmarshal(r.DataJSON, &m) == nil && m["expired"] != nil {
+			expired++
+		}
+	}
+	before := map[string]model.Node{}
+	for _, n := range nodes {
+		before[n.ID] = n
+	}
+	writes, err := ReviseAllocationLeaves(nodes)
+	if err != nil {
+		return err
+	}
+	for _, n := range writes {
+		if n.Kind == model.KindProject && !QuotaEqual(n.Limit, before[n.ID].Limit) {
+			return fmt.Errorf("project %s would change its limit", n.ID)
+		}
+		row := toNodeRow(n)
+		if err := tx.Save(&row).Error; err != nil {
+			return fmt.Errorf("write %s: %w", n.ID, err)
+		}
+	}
+	var after int64
+	if err := tx.Model(&nodeRow{}).Where("kind IN ?", []string{model.KindProject, model.KindAllocation}).Count(&after).Error; err != nil {
+		return err
+	}
+	if int(after) != len(nodes) {
+		return fmt.Errorf("%d projects and allocations after the revision, %d before", after, len(nodes))
+	}
+	rep.Revised = len(writes)
+	rep.ExpiryMarksRemoved = expired
+	if log != nil {
+		log.Infow("Allocation leaves revised (no home allocation, attributes on allocations, no expiry marks)", "nodes", len(writes), "expiry_marks_removed", expired)
+	}
+	return nil
 }
 
 // verifyAllocationMigration reads the migrated nodes back inside the transaction and checks what the acceptance asks for: as many projects as before, none of them in the tree any more, and every project's allocations adding up to what it held before.

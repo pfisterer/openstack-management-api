@@ -168,11 +168,11 @@ func (s *Service) refreshProject(ctx context.Context, projectID string, actor mo
 	return out, nil
 }
 
-// applyAllocations sets what a project derives from its allocations and reports whether anything changed:
+// applyAllocations sets what a project derives from its allocations and reports whether anything changed (decided 25.11.2026, revised the same day):
 //   - Limit: the sum of the allocations that pay (approved, change_pending), or for a project given up, of those that paid when it was (released, archived);
-//   - TerminationDate: the latest end of those, none if one of them has none; for a project still waiting, of what it asks for;
-//   - HomeAllocationID/HomeBudgetID: the oldest of those, kept while it pays (see Node.HomeBudgetID);
-//   - Status: a waiting project starts once one allocation pays (StartNow) or once nothing is waiting any more and something pays (StartAll); it is rejected once nothing waits and nothing pays.
+//   - TerminationDate: the EARLIEST end of those — every allocation runs until the project ends —, leaving out an allocation the project was extended without (EndsAlone); none when none of them has one; for a project still waiting, of what it asks for;
+//   - FundingBudgetIDs: the budgets of those, oldest first;
+//   - Status: a waiting project starts once one allocation pays (StartNow) or once every one is approved (StartAll, all or nothing: a refusal ends it, see refuseWhole); it is rejected once nothing waits and nothing pays.
 func applyAllocations(p *model.Node, allocs []model.Node, actor model.Actor) bool {
 	if p.Status == model.StatusImported {
 		// It mirrors OpenStack until it is adopted; what it asks for then is decided like any request.
@@ -198,26 +198,20 @@ func applyAllocations(p *model.Node, allocs []model.Node, actor model.Actor) boo
 		ends = waiting
 	}
 	if len(ends) > 0 {
-		var end *string
-		for i, a := range ends {
-			if a.TerminationDate == nil {
-				end = nil
-				break
-			}
-			if i == 0 || !model.EndsNoLater(*a.TerminationDate, end) {
-				end = a.TerminationDate
-			}
-		}
+		end := nodestore.ProjectEnd(ends)
 		if !model.SameEnd(end, p.TerminationDate) || (end == nil) != (p.TerminationDate == nil) {
 			p.TerminationDate = end
 			changed = true
 		}
 	}
-	home := homeOf(p.HomeAllocationID, counted, waiting, allocs)
-	if home != nil {
-		if p.HomeAllocationID != home.ID || derefParent(p.HomeBudgetID) != derefParent(home.ParentID) {
-			p.HomeAllocationID = home.ID
-			p.HomeBudgetID = home.ParentID
+	funders := counted
+	if len(funders) == 0 {
+		funders = waiting
+	}
+	if len(funders) > 0 {
+		ids := nodestore.FundingBudgets(funders)
+		if !slices.Equal(ids, p.FundingBudgetIDs) {
+			p.FundingBudgetIDs = ids
 			changed = true
 		}
 	}
@@ -233,7 +227,7 @@ func applyAllocations(p *model.Node, allocs []model.Node, actor model.Actor) boo
 			entry.StatusFrom = new(model.StatusPending)
 			entry.Reason = new("Gestartet: eine Zuteilung ist genehmigt")
 			if p.StartWhen == model.StartAll {
-				entry.Reason = new("Gestartet: über alle Zuteilungen ist entschieden")
+				entry.Reason = new("Gestartet: alle Zuteilungen sind genehmigt")
 			}
 			p.Status = model.StatusApproved
 			p.History = append(slices.Clone(p.History), entry)
@@ -271,25 +265,8 @@ func deciderOf(allocs []model.Node, fallback model.Actor) model.Actor {
 	return model.Actor{Email: latest.Actor, ActedBy: latest.ActedBy, Via: latest.Via}
 }
 
-// homeOf picks the home allocation: the current one while it still counts, else the oldest that counts, else the oldest waiting, else the oldest at all; nil without allocations.
-func homeOf(current string, counted, waiting, all []model.Node) *model.Node {
-	for _, set := range [][]model.Node{counted, waiting, all} {
-		if len(set) == 0 {
-			continue
-		}
-		if i := slices.IndexFunc(set, func(a model.Node) bool { return a.ID == current }); i >= 0 {
-			return &set[i]
-		}
-		oldest := slices.MinFunc(set, func(a, b model.Node) int {
-			return cmp.Or(cmp.Compare(a.CreatedAt, b.CreatedAt), cmp.Compare(a.ID, b.ID))
-		})
-		return &oldest
-	}
-	return nil
-}
-
 // allocationView is how a project lists one of its allocations.
-func allocationView(a model.Node, homeID string) model.Allocation {
+func allocationView(a model.Node) model.Allocation {
 	return model.Allocation{
 		ID:              a.ID,
 		BudgetID:        derefParent(a.ParentID),
@@ -300,8 +277,8 @@ func allocationView(a model.Node, homeID string) model.Allocation {
 		Reason:          a.Reason,
 		CreatedBy:       a.CreatedBy,
 		CreatedAt:       a.CreatedAt,
-		Expired:         a.Expired,
-		Home:            a.ID == homeID,
+		EndsAlone:       a.EndsAlone,
+		Attributes:      a.Attributes,
 		Revision:        a.CurrentRevision(),
 	}
 }
@@ -329,7 +306,7 @@ func (s *Service) attachAllocations(ctx context.Context, nodes []model.Node) ([]
 	views := func(p model.Node) []model.Allocation {
 		out := make([]model.Allocation, 0, len(allocs[p.ID]))
 		for _, a := range allocs[p.ID] {
-			out = append(out, allocationView(a, p.HomeAllocationID))
+			out = append(out, allocationView(a))
 		}
 		return out
 	}

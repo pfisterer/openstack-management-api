@@ -5,6 +5,7 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,6 +30,8 @@ type AllocationMigrationReport struct {
 	PendingChanges      int      `json:"pending_changes"`
 	Imported            int      `json:"imported"`
 	DroppedMemberChange int      `json:"dropped_member_changes"`
+	Revised             int      `json:"revised,omitempty"`
+	ExpiryMarksRemoved  int      `json:"expiry_marks_removed,omitempty"`
 	Mismatches          []string `json:"mismatches,omitempty"`
 }
 
@@ -130,8 +133,14 @@ func MigrateToAllocations(nodes []LegacyNode, now time.Time) ([]model.Node, Allo
 			project.Status = model.StatusApproved
 		}
 		project.Pending = nil
-		project.HomeBudgetID = &parent
-		project.HomeAllocationID = main.ID
+		// Attributes (cost centre and the like) belong to the allocations now, set by their budget's managers: the project's own go to each of them.
+		if len(project.Attributes) > 0 {
+			for i := range allocs {
+				allocs[i].Attributes = maps.Clone(project.Attributes)
+			}
+			project.Attributes = nil
+		}
+		project.FundingBudgetIDs = FundingBudgets(allocs)
 		project.StartWhen = model.StartNow
 		project.Limit = SumAllocations(allocs, ProjectChargedStatuses(project.Status))
 		if model.IsRetiredStatus(project.Status) || project.Status == model.StatusApproved {
@@ -163,6 +172,88 @@ type LegacyAllocation struct {
 	Reason    string              `json:"reason"`
 	GrantedBy string              `json:"granted_by"`
 	GrantedAt string              `json:"granted_at"`
+}
+
+// ProjectEnd is the end of a project with these allocations (decided 25.11.2026): the earliest of their ends — every allocation runs until the project ends —, leaving out those the project was extended without (Node.EndsAlone) unless that is all of them, and those without an end; none when none has one.
+func ProjectEnd(allocs []model.Node) *string {
+	considered := slices.DeleteFunc(slices.Clone(allocs), func(a model.Node) bool { return a.EndsAlone })
+	if len(considered) == 0 {
+		considered = allocs
+	}
+	var end *string
+	for _, a := range considered {
+		if a.TerminationDate == nil {
+			continue
+		}
+		if end == nil || model.EndsNoLater(*a.TerminationDate, end) {
+			end = a.TerminationDate
+		}
+	}
+	return end
+}
+
+// FundingBudgets are the budgets of the allocations, oldest allocation first, each once.
+func FundingBudgets(allocs []model.Node) []string {
+	sorted := slices.Clone(allocs)
+	slices.SortStableFunc(sorted, func(a, b model.Node) int {
+		if c := strings.Compare(a.CreatedAt, b.CreatedAt); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	var out []string
+	for _, a := range sorted {
+		if a.ParentID != nil && !slices.Contains(out, *a.ParentID) {
+			out = append(out, *a.ParentID)
+		}
+	}
+	return out
+}
+
+// ReviseAllocationLeaves brings data migrated by the first form of the model (25.11.2026, morning) to the revised one (same day): no home allocation, attributes on the allocations, no expiry marks, and the project's end the earliest of its paying allocations. It returns the nodes to write. Nothing ends or shrinks: an allocation that was marked as expired just loses the mark and keeps paying; the project's limit is not touched.
+func ReviseAllocationLeaves(nodes []model.Node) ([]model.Node, error) {
+	allocs := map[string][]model.Node{}
+	for _, n := range nodes {
+		if n.Kind == model.KindAllocation {
+			allocs[n.ProjectID] = append(allocs[n.ProjectID], n)
+		}
+	}
+	var out []model.Node
+	for _, p := range nodes {
+		if p.Kind != model.KindProject || p.ParentID != nil {
+			continue
+		}
+		own := allocs[p.ID]
+		if len(p.Attributes) > 0 {
+			for i := range own {
+				if len(own[i].Attributes) == 0 {
+					own[i].Attributes = maps.Clone(p.Attributes)
+				}
+			}
+			p.Attributes = nil
+		}
+		statuses := ProjectChargedStatuses(p.Status)
+		var counted, waiting []model.Node
+		for _, a := range own {
+			switch {
+			case slices.Contains(statuses, a.Status):
+				counted = append(counted, a)
+			case a.Status == model.StatusPending:
+				waiting = append(waiting, a)
+			}
+		}
+		set := counted
+		if len(set) == 0 {
+			set = waiting
+		}
+		if len(set) > 0 {
+			p.FundingBudgetIDs = FundingBudgets(set)
+			p.TerminationDate = ProjectEnd(set)
+		}
+		out = append(out, p)
+		out = append(out, own...)
+	}
+	return out, nil
 }
 
 // ProjectChargedStatuses are the allocation statuses that make up a project's Limit in the given project status: what pays for a running project, or what paid for it when it was given up. Nil (every status) is never returned.

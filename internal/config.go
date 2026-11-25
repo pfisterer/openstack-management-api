@@ -223,7 +223,7 @@ type AppConfiguration struct {
 	UsagePrices *usage.Prices `json:"usage_prices,omitempty"`
 	// Notify is where events go (the notification service, pdns-bwcloud/notifications); no URL = none are sent, and expired allocations are only marked, never cut.
 	Notify NotifyConfig `json:"notify"`
-	// Expiry is how expired allocations and ending projects are followed up (tree.Expiry).
+	// Expiry is how the ends of projects are followed up (tree.Expiry).
 	Expiry ExpiryConfig `json:"expiry"`
 	// MigrateDryRun (MIGRATE_DRY_RUN) runs the migration to allocation leaves on the database without committing, prints its report and exits — for a trial run against a copy of a database.
 	MigrateDryRun bool `json:"migrate_dry_run"`
@@ -235,9 +235,8 @@ type NotifyConfig struct {
 	Token string `json:"-"`
 }
 
-// ExpiryConfig: EXPIRY_GRACE_DAYS (14) between marking an allocation as expired and cutting it, EXPIRY_ENDING_NOTICE_DAYS (14) before a project's end its people are told, EXPIRY_INTERVAL_MINUTES (60) between sweeps, PORTAL_URL for links in notifications.
+// ExpiryConfig: EXPIRY_ENDING_NOTICE_DAYS (14) before a project's end its people are told, EXPIRY_INTERVAL_MINUTES (60) between sweeps, PORTAL_URL for links in notifications.
 type ExpiryConfig struct {
-	GraceDays        int    `json:"grace_days"`
 	EndingNoticeDays int    `json:"ending_notice_days"`
 	IntervalMinutes  int    `json:"interval_minutes"`
 	PortalURL        string `json:"portal_url"`
@@ -362,7 +361,6 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			Token: envconf.String("NOTIFY_TOKEN", ""),
 		},
 		Expiry: ExpiryConfig{
-			GraceDays:        envconf.Int("EXPIRY_GRACE_DAYS", 14),
 			EndingNoticeDays: envconf.Int("EXPIRY_ENDING_NOTICE_DAYS", 14),
 			IntervalMinutes:  envconf.Int("EXPIRY_INTERVAL_MINUTES", 60),
 			PortalURL:        envconf.String("PORTAL_URL", ""),

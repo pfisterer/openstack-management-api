@@ -68,7 +68,17 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor model.A
 	// charged usage into a budget that has no room for it.
 	if slices.Contains(s.chargedStatuses(), current.Status) {
 		if current.IsLeaf() {
-			need := s.leafCost(*current, project)
+			var f *funded
+			if project != nil {
+				fs, err := s.projectsOfAllocations(ctx, []model.Node{*current})
+				if err != nil {
+					return model.Node{}, err
+				}
+				if got, ok := fs[project.ID]; ok {
+					f = &got
+				}
+			}
+			need := s.leafCost(*current, f)
 			// What it costs is charged; a retired project's limit is no
 			// longer granted, so only an active one is checked against it.
 			if err := s.checkCapacity(ctx, newParentChain, need, nil); err != nil {
@@ -120,10 +130,6 @@ func (s *Service) ReparentNode(id string, req ReparentNodeRequest, actor model.A
 	updated := *current
 	updated.ParentID = &newParent.ID
 	updated.History = append(slices.Clone(current.History), historyEntry)
-	// Moved to a budget that exists, it no longer stands for one that was deleted.
-	if updated.Expired != nil && updated.Expired.Cause == model.ExpiryBudgetDeleted {
-		updated.Expired = nil
-	}
 	// Under a budget that ends sooner, the moved node and everything below it
 	// end with it; under a budget with a shorter maximum project term, the
 	// projects among them are shortened to it.
@@ -366,9 +372,9 @@ func (s *Service) PromoteNode(id string, req PromoteNodeRequest, actor model.Act
 			return model.Node{}, err
 		}
 	}
-	updated.HomeBudgetID, updated.HomeAllocationID = &newParent.ID, alloc.ID
+	updated.FundingBudgetIDs = []string{newParent.ID}
 	if _, err := s.store.UpdateNode(ctx, updated.ID, func(n *model.Node) error {
-		n.HomeBudgetID, n.HomeAllocationID = &newParent.ID, alloc.ID
+		n.FundingBudgetIDs = []string{newParent.ID}
 		return nil
 	}); err != nil {
 		return model.Node{}, err

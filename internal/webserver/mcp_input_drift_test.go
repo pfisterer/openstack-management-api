@@ -100,6 +100,9 @@ var toolInputContracts = []mcptest.Input{
 	},
 	{
 		Tool: "release_project", Domain: tree.ReleaseNodeRequest{}, Input: mcpReleaseInput{},
+		Omitted: map[string]string{
+			"at_end": "allocation-only: going on without an allocation after its end is offered by end_allocation",
+		},
 	},
 	{
 		Tool: "set_project_admins", Domain: tree.UpdateNodeRequest{}, Input: mcpSetAdminsInput{},

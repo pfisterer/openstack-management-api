@@ -50,7 +50,7 @@ func TestMigrateToAllocations(t *testing.T) {
 		}
 	}
 	plain := byID["p_plain"]
-	if plain.ParentID != nil || plain.HomeBudgetID == nil || *plain.HomeBudgetID != "stud" || plain.Owner != "user:a@x" || len(plain.AuthorizedUsers) != 1 ||
+	if plain.ParentID != nil || len(plain.FundingBudgetIDs) != 1 || plain.FundingBudgetIDs[0] != "stud" || plain.Owner != "user:a@x" || len(plain.AuthorizedUsers) != 1 ||
 		plain.Binding("openstack").ExternalID != "os-1" || len(plain.History) != 2 || plain.Limit["cores"] != 4 || *plain.TerminationDate != "2027-03-31" {
 		t.Errorf("p_plain = %+v", plain)
 	}
@@ -93,5 +93,30 @@ func TestMigrateToAllocations_Idempotent(t *testing.T) {
 	}
 	if MigratedAllocationID("p", "b") != MigratedAllocationID("p", "b") || MigratedAllocationID("p", "b") == MigratedAllocationID("p", "c") {
 		t.Error("ids are not a function of project and budget")
+	}
+}
+
+// Data migrated by the first form of the model keeps everything that pays: the attributes move to the allocations, the project's end becomes the earliest of its paying allocations, nothing ends or shrinks.
+func TestReviseAllocationLeaves(t *testing.T) {
+	early, late := "2026-11-23", "2027-03-31"
+	nodes := []model.Node{
+		{ID: "p", Kind: model.KindProject, Status: model.StatusApproved, Limit: common.ProjectQuota{"cores": 6}, TerminationDate: &late, Attributes: model.Attributes{"billing": {"wbs": "1"}}},
+		{ID: "a1", Kind: model.KindAllocation, ProjectID: "p", ParentID: new("b1"), Status: model.StatusApproved, Limit: common.ProjectQuota{"cores": 2}, TerminationDate: &late, CreatedAt: "1"},
+		{ID: "a2", Kind: model.KindAllocation, ProjectID: "p", ParentID: new("b2"), Status: model.StatusApproved, Limit: common.ProjectQuota{"cores": 4}, TerminationDate: &early, CreatedAt: "2", Attributes: model.Attributes{"billing": {"wbs": "2"}}},
+	}
+	out, err := ReviseAllocationLeaves(nodes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]model.Node{}
+	for _, n := range out {
+		byID[n.ID] = n
+	}
+	p := byID["p"]
+	if p.Attributes != nil || p.Limit["cores"] != 6 || *p.TerminationDate != early || len(p.FundingBudgetIDs) != 2 || p.FundingBudgetIDs[0] != "b1" {
+		t.Errorf("project = %+v", p)
+	}
+	if byID["a1"].Attributes["billing"]["wbs"] != "1" || byID["a2"].Attributes["billing"]["wbs"] != "2" || byID["a2"].Status != model.StatusApproved {
+		t.Errorf("allocations = %+v / %+v", byID["a1"], byID["a2"])
 	}
 }

@@ -64,8 +64,17 @@ func init() {
 	}
 }
 
-// resolved is what applies below chain of the AI service's caps.
-func resolved(chain []model.Node) common.Caps { return model.ResolveCaps(chain, Caps) }
+// resolved is what applies to a project of the AI service's caps: along each paying budget's chain the strictest, merged over the paying budgets by model.MergeCaps (the most generous, decided 25.11.2026). An AI service project has one value of each.
+func resolved(chains [][]model.Node) common.Caps {
+	per := make([]common.Caps, 0, len(chains))
+	for _, c := range chains {
+		per = append(per, model.ResolveCaps(c, Caps))
+	}
+	if len(per) == 0 {
+		return common.Caps{}
+	}
+	return model.MergeCaps(per, Caps)
+}
 
 func optional(c common.Caps, id string) *int {
 	if v, ok := c[id]; ok {
@@ -74,9 +83,9 @@ func optional(c common.Caps, id string) *int {
 	return nil
 }
 
-// ReleaseFor is what the AI service is told about a leaf's release times: the strictest of the budgets above it (chain, in any order). Never nil, also when no budget sets any: then every field is left out and the AI service applies its defaults.
-func ReleaseFor(chain []model.Node) *Release {
-	c := resolved(chain)
+// ReleaseFor is what the AI service is told about a project's release times (resolved). Never nil, also when no budget sets any: then every field is left out and the AI service applies its defaults.
+func ReleaseFor(chains [][]model.Node) *Release {
+	c := resolved(chains)
 	return &Release{
 		CPU: ReleaseTimes{IdleOpenMinutes: optional(c, CapReleaseCPUIdleOpen), IdleClosedMinutes: optional(c, CapReleaseCPUIdleClosed), MaxHours: optional(c, CapReleaseCPUMaxHours)},
 		GPU: ReleaseTimes{IdleOpenMinutes: optional(c, CapReleaseGPUIdleOpen), IdleClosedMinutes: optional(c, CapReleaseGPUIdleClosed), MaxHours: optional(c, CapReleaseGPUMaxHours)},
@@ -84,11 +93,11 @@ func ReleaseFor(chain []model.Node) *Release {
 }
 
 // ScratchFor is what the AI service is told about a leaf's local storage per workspace: the smallest value of the budgets above it, 0 when none sets one.
-func ScratchFor(chain []model.Node) int { return resolved(chain)[CapWorkspaceScratchGB] }
+func ScratchFor(chains [][]model.Node) int { return resolved(chains)[CapWorkspaceScratchGB] }
 
 // BatchPriorityFor is what the AI service is told about a leaf's batch priority: the strictest value of the budgets above it, empty when none sets one.
-func BatchPriorityFor(chain []model.Node) string {
-	v, ok := resolved(chain)[CapBatchPriority]
+func BatchPriorityFor(chains [][]model.Node) string {
+	v, ok := resolved(chains)[CapBatchPriority]
 	if !ok {
 		return ""
 	}
@@ -96,8 +105,8 @@ func BatchPriorityFor(chain []model.Node) string {
 }
 
 // BatchJobsFor is what the AI service is told about a leaf's batch jobs: what the budgets above it allow, {0, 0} where they have none. Never nil.
-func BatchJobsFor(chain []model.Node) *BatchJobs {
-	c := resolved(chain)
+func BatchJobsFor(chains [][]model.Node) *BatchJobs {
+	c := resolved(chains)
 	return &BatchJobs{JobsPerPerson: c[CapBatchJobsPerPerson], MaxHours: c[CapBatchMaxHours]}
 }
 

@@ -138,7 +138,7 @@ type mcpProject struct {
 	Admins []string `json:"admins,omitempty" jsonschema:"on a project: who administers it together with the owner; on a budget: who approves requests there"`
 	Shared bool     `json:"shared,omitempty" jsonschema:"true for a project that others administer together with its owner"`
 	// PaidFrom is the id of a budget, not its name: the name is not unique and cannot be fed back into another tool.
-	PaidFrom     string         `json:"paid_from,omitempty" jsonschema:"on an allocation: id of the budget paying it; on a project: the budget of its home allocation (where its place in the tree is read from)"`
+	PaidFrom     string         `json:"paid_from,omitempty" jsonschema:"on an allocation or a budget: id of the budget it comes from; on a project see allocations, one per paying budget"`
 	PaidFromName string         `json:"paid_from_name,omitempty" jsonschema:"name of that budget, where known"`
 	Limit        map[string]int `json:"limit,omitempty" jsonschema:"on a project: granted resources in total, the sum of its allocations; on an allocation: what its budget pays; on a budget: its cap"`
 	// The breakdown of a project's Limit; without it a model cannot tell what a change request may touch.
@@ -146,8 +146,8 @@ type mcpProject struct {
 	// The project an allocation pays for.
 	ProjectID   string `json:"project_id,omitempty" jsonschema:"on an allocation: the project it pays for"`
 	ProjectName string `json:"project_name,omitempty" jsonschema:"on an allocation: that project's name"`
-	// An allocation that ran out but still pays.
-	Expired *mcpExpiry `json:"expired,omitempty" jsonschema:"on an allocation: set while it has expired (its end passed or its budget was deleted) but still pays; it is cut after due unless extended or moved"`
+	// An allocation the project was extended without.
+	EndsAlone bool `json:"ends_alone,omitempty" jsonschema:"on an allocation: the project was extended without it; it ends at its own date and the project goes on with the others"`
 	// What a pending request or change asks for. Without it a manager asked to
 	// approve "with less" cannot know what "more" was.
 	RequestedLimit     map[string]int       `json:"requested_limit,omitempty" jsonschema:"resources a pending request or change asks for; limit keeps what is granted until it is decided"`
@@ -173,26 +173,10 @@ type mcpAllocation struct {
 	Status          string         `json:"status" jsonschema:"pending, approved, change_pending, rejected, ended, released, archived"`
 	Limit           map[string]int `json:"limit" jsonschema:"what this budget pays"`
 	RequestedLimit  map[string]int `json:"requested_limit,omitempty" jsonschema:"what a waiting change asks for"`
-	TerminationDate string         `json:"termination_date,omitempty" jsonschema:"the allocation's end"`
-	Expired         *mcpExpiry     `json:"expired,omitempty" jsonschema:"set while it has expired but still pays"`
+	TerminationDate string         `json:"termination_date,omitempty" jsonschema:"until when its budget granted it; the project ends at the earliest of these"`
+	EndsAlone       bool           `json:"ends_alone,omitempty" jsonschema:"the project was extended without it: it ends at its own date"`
 	Reason          string         `json:"reason,omitempty" jsonschema:"why it was asked for or granted"`
 	Revision        int            `json:"revision" jsonschema:"approve_request needs it back as expected_revision"`
-}
-
-type mcpExpiry struct {
-	Cause string `json:"cause" jsonschema:"ended (its end passed) or budget_deleted"`
-	Due   string `json:"due,omitempty" jsonschema:"the day after which it is cut; empty while nothing is cut automatically"`
-}
-
-func toMCPExpiry(e *model.Expiry) *mcpExpiry {
-	if e == nil {
-		return nil
-	}
-	out := &mcpExpiry{Cause: e.Cause}
-	if e.Due != nil {
-		out.Due = *e.Due
-	}
-	return out
 }
 
 func toMCPProject(n model.Node) mcpProject {
@@ -213,14 +197,14 @@ func toMCPProject(n model.Node) mcpProject {
 		InheritsLimit:      n.InheritsLimit,
 		Revision:           n.CurrentRevision(),
 	}
-	if anchor := n.BudgetAnchor(); anchor != nil {
-		p.PaidFrom = *anchor
+	if n.ParentID != nil {
+		p.PaidFrom = *n.ParentID
 	}
 	p.ProjectID = n.ProjectID
 	if n.Project != nil {
 		p.ProjectName = n.Project.Name
 	}
-	p.Expired = toMCPExpiry(n.Expired)
+	p.EndsAlone = n.EndsAlone
 	if n.Pending != nil && n.Pending.Limit != nil {
 		p.RequestedLimit = *n.Pending.Limit
 	}
@@ -240,7 +224,7 @@ func toMCPProject(n model.Node) mcpProject {
 		p.RunsAt[provider] = mcpRunsAt{ExternalID: b.ExternalID, ExternalName: b.ExternalName}
 	}
 	for _, a := range n.Allocations {
-		m := mcpAllocation{ID: a.ID, BudgetID: a.BudgetID, BudgetName: a.BudgetName, Status: a.Status, Limit: a.Limit, Reason: a.Reason, Expired: toMCPExpiry(a.Expired), Revision: a.Revision}
+		m := mcpAllocation{ID: a.ID, BudgetID: a.BudgetID, BudgetName: a.BudgetName, Status: a.Status, Limit: a.Limit, Reason: a.Reason, EndsAlone: a.EndsAlone, Revision: a.Revision}
 		if a.Pending != nil && a.Pending.Limit != nil {
 			m.RequestedLimit = *a.Pending.Limit
 		}
@@ -335,6 +319,7 @@ type mcpAddAllocationInput struct {
 type mcpEndAllocationInput struct {
 	ID              string `json:"id" jsonschema:"id of the allocation to end (get_project lists a project's allocations)"`
 	ConfirmBudgetID string `json:"confirm_budget_id" jsonschema:"the id of the budget paying it, as a confirmation that this is the right one"`
+	AtEnd           bool   `json:"at_end,omitempty" jsonschema:"instead of now: let the project go on without it after its own end — how a project is extended when one paying budget does not extend"`
 }
 
 type mcpChangeInput struct {
@@ -578,11 +563,12 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
 		Name: "request_project_change",
-		Description: "Propose new resource amounts or a new end for one allocation of a project (the id of the allocation, " +
-			"or of a project that has only one). Giving resources back, or growing within what the allocation's budget approves " +
-			"automatically, takes effect at once (status approved), and so does any change by someone who manages that budget, " +
-			"if it fits; otherwise the allocation keeps its approved amounts until someone accepts the proposal (status change_pending). " +
-			"To get more from another budget, use add_project_allocation.",
+		Description: "Propose new resource amounts for one allocation of a project (the id of the allocation, or of a project " +
+			"that has only one), or a new end for the project (its id): the project ends at the earliest end of its allocations, so a " +
+			"later end is asked of every paying budget and holds once all agree; one that does not can be left behind with end_allocation " +
+			"and at_end. Giving resources back, or growing within what the allocation's budget approves automatically, takes effect at " +
+			"once (status approved), and so does any change by someone who manages that budget, if it fits; otherwise it waits (status " +
+			"change_pending). To get more from another budget, use add_project_allocation.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpChangeInput) (*mcp.CallToolResult, mcpProject, error) {
 		var req tree.ChangeNodeRequest
 		if in.Limit != nil {
@@ -838,7 +824,7 @@ func registerDestructiveTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, lo
 			return nil, mcpProject{}, mcpRefusal("confirm_budget_id %q stimmt nicht: %q wird von einem anderen Budget bezahlt. Erst lesen, dann die ID des Budgets zurückgeben.", "confirm_budget_id %q does not match: %q is paid by another budget. Read it first, then pass back the budget's id.", in.ConfirmBudgetID, in.ID)
 		}
 		log.Infow("MCP end_allocation", "actor", caller.actorEmail, "node_id", in.ID)
-		out, err := cfg.Service.ReleaseNode(in.ID, tree.ReleaseNodeRequest{}, caller.serviceActor(), caller.tokens)
+		out, err := cfg.Service.ReleaseNode(in.ID, tree.ReleaseNodeRequest{AtEnd: in.AtEnd}, caller.serviceActor(), caller.tokens)
 		return nodeResult(log, out, err, "Zuteilung %q beenden", "end the allocation %q", in.ID)
 	})
 

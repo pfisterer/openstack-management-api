@@ -192,9 +192,6 @@ func (s *Service) SetNotifier(n notify.Notifier) {
 
 // SetExpiry sets how expired allocations are followed up; zero fields keep the defaults.
 func (s *Service) SetExpiry(e Expiry) {
-	if e.GraceDays <= 0 {
-		e.GraceDays = DefaultExpiry.GraceDays
-	}
 	if e.EndingNoticeDays <= 0 {
 		e.EndingNoticeDays = DefaultExpiry.EndingNoticeDays
 	}

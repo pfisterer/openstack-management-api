@@ -3,6 +3,7 @@ package tree_test
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"testing"
 	"time"
@@ -192,8 +193,8 @@ func TestSplit_AutoFirstMostSpecificFirstRestAsRequest(t *testing.T) {
 	if b := a[f.base.ID]; b.Status != model.StatusApproved || b.Limit["cores"] != 2 {
 		t.Errorf("base allocation = %q %v", b.Status, b.Limit)
 	}
-	if len(p.Allocations) != 2 || p.HomeBudgetID == nil {
-		t.Errorf("the project lists its allocations and has a home: %+v / %v", p.Allocations, p.HomeBudgetID)
+	if len(p.Allocations) != 2 || len(p.FundingBudgetIDs) != 2 {
+		t.Errorf("the project lists its allocations and both budgets: %+v / %v", p.Allocations, p.FundingBudgetIDs)
 	}
 
 	// The course's manager decides on the rest; the project grows by it.
@@ -250,8 +251,22 @@ func TestStartWhen(t *testing.T) {
 	if _, err := f.svc.RejectNode(gpu.ID, tree.RejectNodeRequest{Reason: new("no GPU this term")}, model.UIActor("course@x"), courseMgr); err != nil {
 		t.Fatal(err)
 	}
-	if p := f.node(t, all.ID); p.Status != model.StatusApproved || p.Limit["cores"] != 1 {
-		t.Errorf("once all is decided it starts with what was granted: %q %v", p.Status, p.Limit)
+	// All or nothing: one part refused refuses the whole request, the part granted at once ends with it.
+	if p := f.node(t, all.ID); p.Status != model.StatusRejected {
+		t.Errorf("waiting for all, one refusal refuses all: %q %v", p.Status, p.Limit)
+	}
+	if b := f.allocations(t, all.ID)[f.base.ID]; b.Status != model.StatusEnded {
+		t.Errorf("the granted part ends with it: %q", b.Status)
+	}
+	// And no partial approval while waiting for all: the split's rest is not granted in part.
+	partial, err := f.svc.CreateNode(tree.CreateNodeRequest{Kind: model.KindProject, Name: "Partial", Reason: "t", StartWhen: model.StartAll, Allocations: []tree.AllocationSpec{
+		{BudgetID: f.course.ID, Limit: cores(6)},
+	}}, model.UIActor("stud@x"), "stud@x", studT)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := f.allocations(t, partial.ID)[f.course.ID]; c.Status != model.StatusPending || c.Limit["cores"] != 6 {
+		t.Errorf("waiting for all asks for the whole part: %q %v", c.Status, c.Limit)
 	}
 }
 
@@ -350,7 +365,7 @@ func TestAddAllocation(t *testing.T) {
 	}
 }
 
-// Each allocation is charged to its own budget and those above; a person's share counts per budget; what the project uses beyond its limit goes to its home allocation.
+// Each allocation is charged to its own budget and those above; a person's share counts per budget; what the project uses beyond its limit is split among the allocations like their limits.
 func TestAccounting_PerAllocation(t *testing.T) {
 	f := newSplitFixture(t)
 	p, err := f.svc.CreateNode(tree.CreateNodeRequest{Kind: model.KindProject, Name: "Both", Reason: "t", Allocations: []tree.AllocationSpec{
@@ -385,17 +400,9 @@ func TestAccounting_PerAllocation(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	home := f.node(t, p.ID).HomeBudgetID
-	other := f.course.ID
-	if *home == f.course.ID {
-		other = f.base.ID
-	}
-	homeAlloc := f.allocations(t, p.ID)[*home]
-	if got := usage(*home, rootTokens); got != homeAlloc.Limit["cores"]+3 {
-		t.Errorf("home budget charged %d, want its allocation plus the 3 cores beyond the project's 6", got)
-	}
-	if got := usage(other, rootTokens); got != f.allocations(t, p.ID)[other].Limit["cores"] {
-		t.Errorf("the other budget is charged %d, want only its allocation", got)
+	// 9 in use, 6 held: the 3 beyond are split 2:4 like the limits — 1 to the base, 2 to the course.
+	if b, c := usage(f.base.ID, rootTokens), usage(f.course.ID, rootTokens); b != 3 || c != 6 {
+		t.Errorf("charged base %d, course %d; want 2+1 and 4+2", b, c)
 	}
 }
 
@@ -414,151 +421,137 @@ func mustFind(t *testing.T, store *nodestore.InMemoryStore, name string) model.N
 	return model.Node{}
 }
 
-// (2) and (6): an allocation whose end passed is only marked; without notifications nothing is cut; with them it is cut after the period, the project shrinks, and the people are told. Moving the end later lifts the mark.
-func TestExpiry_MarkThenCutOnlyWithNotifications(t *testing.T) {
+// (1) The project ends at the earliest end of its allocations; an allocation added later has to cover that end.
+func TestEnd_EarliestAndCovered(t *testing.T) {
 	f := newSplitFixture(t)
-	p, err := f.svc.CreateNode(tree.CreateNodeRequest{Kind: model.KindProject, Name: "Ending", Reason: "t", StartWhen: model.StartNow, Allocations: []tree.AllocationSpec{
-		{BudgetID: f.base.ID, Limit: cores(2), TerminationDate: ptr("2026-12-31")}, {BudgetID: f.course.ID, Limit: cores(4), TerminationDate: ptr("2026-12-10")},
+	short := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: model.RootNodeID, Kind: model.KindBudget, Name: "Kurz", Limit: cores(10), TerminationDate: ptr("2026-12-31"), EligibleRequesters: common.TokenList{"group:students"}, AutoApprove: &model.AutoApprove{}})
+	p, err := f.svc.CreateNode(tree.CreateNodeRequest{Kind: model.KindProject, Name: "Ends", Reason: "t", Allocations: []tree.AllocationSpec{
+		{BudgetID: f.base.ID, Limit: cores(2), TerminationDate: ptr("2027-03-31")}, {BudgetID: short.ID, Limit: cores(2), TerminationDate: ptr("2026-12-31")},
 	}}, model.UIActor("stud@x"), "stud@x", studT)
 	if err != nil {
 		t.Fatal(err)
 	}
-	course := f.allocations(t, p.ID)[f.course.ID]
-	if got := f.node(t, p.ID); endOf(got) != "2026-12-31" {
-		t.Errorf("the project ends with its latest allocation, got %s", endOf(got))
+	if endOf(p) != "2026-12-31" {
+		t.Errorf("the project ends at the earliest allocation: %s", endOf(p))
 	}
-	ctx := context.Background()
+	q, err := f.svc.CreateNode(tree.CreateNodeRequest{Kind: model.KindProject, Name: "Long", Reason: "t", ParentID: f.base.ID, Limit: cores(1), TerminationDate: ptr("2027-06-30")}, model.UIActor("stud@x"), "stud@x", studT)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.svc.CreateNode(tree.CreateNodeRequest{Kind: model.KindAllocation, ProjectID: q.ID, ParentID: short.ID, Limit: cores(1), Reason: "mehr"}, model.UIActor("stud@x"), "stud@x", studT)
+	if err == nil || !strings.Contains(err.Error(), "Kurz") {
+		t.Errorf("an allocation that cannot cover the project's end is refused with a reason: %v", err)
+	}
+	if got := f.node(t, q.ID); endOf(got) != "2027-06-30" {
+		t.Errorf("nothing is shortened silently: %s", endOf(got))
+	}
+}
 
-	// Without a notification service: marked, never cut.
-	*f.clock = time.Date(2026, 12, 11, 10, 0, 0, 0, time.UTC)
-	if res, err := f.svc.SweepExpiry(ctx); err != nil || res.Marked != 1 {
+// (1) Extending asks every paying budget; one that does not agree leaves the end where it is, until the project is extended without it — then it ends at its own date and the project shrinks by it.
+func TestEnd_ExtendAtEveryBudgetOrWithoutOne(t *testing.T) {
+	f := newSplitFixture(t)
+	if _, err := f.svc.UpdateNode(f.faculty.ID, tree.UpdateNodeRequest{AutoApproveExtensions: new(false)}, rootActor(), rootTokens); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.UpdateNode(f.course.ID, tree.UpdateNodeRequest{AutoApproveExtensions: new(false)}, rootActor(), rootTokens); err != nil {
+		t.Fatal(err)
+	}
+	p, err := f.svc.CreateNode(tree.CreateNodeRequest{Kind: model.KindProject, Name: "Ext", Reason: "t", TerminationDate: ptr("2026-12-31"), Allocations: []tree.AllocationSpec{
+		{BudgetID: f.base.ID, Limit: cores(2)}, {BudgetID: f.course.ID, Limit: cores(4)},
+	}}, model.UIActor("stud@x"), "stud@x", studT)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.RequestChange(p.ID, tree.ChangeNodeRequest{TerminationDate: ptr("2027-03-31")}, model.UIActor("stud@x"), studT); err != nil {
+		t.Fatal(err)
+	}
+	a := f.allocations(t, p.ID)
+	if endOf(a[f.base.ID]) != "2027-03-31" || a[f.course.ID].Status != model.StatusChangePending {
+		t.Fatalf("the base extends by itself, the course waits: %s / %q", endOf(a[f.base.ID]), a[f.course.ID].Status)
+	}
+	if got := f.node(t, p.ID); endOf(got) != "2026-12-31" {
+		t.Errorf("the project's end moves only once all agree: %s", endOf(got))
+	}
+	c := a[f.course.ID]
+	if _, err := f.svc.RejectNode(c.ID, tree.RejectNodeRequest{}, model.UIActor("course@x"), courseMgr); err != nil {
+		t.Fatal(err)
+	}
+	// The owner goes on without the course: it ends at its own date.
+	if _, err := f.svc.ReleaseNode(c.ID, tree.ReleaseNodeRequest{AtEnd: true}, model.UIActor("stud@x"), studT); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.node(t, p.ID); endOf(got) != "2027-03-31" || got.Limit["cores"] != 6 {
+		t.Errorf("extended without the course: %s %v, want the new end with both until the course ends", endOf(got), got.Limit)
+	}
+	*f.clock = time.Date(2027, 1, 2, 10, 0, 0, 0, time.UTC)
+	rec := &recorder{}
+	f.svc.SetNotifier(rec)
+	if res, err := f.svc.SweepExpiry(context.Background()); err != nil || res.Ended != 1 {
 		t.Fatalf("sweep: %v %+v", err, res)
 	}
-	marked := f.node(t, course.ID)
-	if marked.Expired == nil || marked.Expired.Cause != model.ExpiryEnded || marked.Expired.Due != nil || marked.Status != model.StatusApproved {
-		t.Fatalf("marked = %+v %q, want expired without a day to cut, still paying", marked.Expired, marked.Status)
+	if got := f.node(t, p.ID); got.Limit["cores"] != 2 || endOf(got) != "2027-03-31" {
+		t.Errorf("after its date the course has ended: %v %s", got.Limit, endOf(got))
 	}
-	*f.clock = time.Date(2027, 2, 1, 10, 0, 0, 0, time.UTC)
-	if _, err := f.svc.SweepExpiry(ctx); err != nil {
-		t.Fatal(err)
+	if len(rec.ofType(notify.TypeAllocationShortened)) != 1 {
+		t.Errorf("allocation.shortened = %+v", rec.events)
 	}
-	if got := f.node(t, p.ID); got.Limit["cores"] != 6 {
-		t.Errorf("without notifications nothing is cut: %v", got.Limit)
-	}
-	// The project shows which allocation ran out.
-	view, _ := f.svc.GetNode(p.ID, studT)
-	expired := 0
-	for _, a := range view.Allocations {
-		if a.Expired != nil {
-			expired++
-		}
-	}
-	if expired != 2 {
-		t.Errorf("both allocations have run out by February, %d are marked", expired)
-	}
-
-	// With one: the mark gets its day and is sent; after it the allocation is cut.
-	rec := &recorder{}
-	f.svc.SetNotifier(rec)
-	*f.clock = time.Date(2027, 2, 2, 10, 0, 0, 0, time.UTC)
-	if res, err := f.svc.SweepExpiry(ctx); err != nil || res.Dated != 2 {
-		t.Fatalf("sweep with notifications: %v %+v", err, res)
-	}
-	sent := rec.ofType(notify.TypeAllocationExpired)
-	if len(sent) != 2 || sent[0].Class != notify.ClassAction || sent[0].Due == "" || sent[0].Actor != "" || sent[0].Object.ID != p.ID {
-		t.Fatalf("allocation.expired = %+v", sent)
-	}
-	recips := map[string]bool{}
-	for _, r := range sent[0].Recipients {
-		recips[r.User+r.Group] = true
-	}
-	if !recips["stud@x"] {
-		t.Errorf("the owner is told: %+v", sent[0].Recipients)
-	}
-	*f.clock = time.Date(2027, 2, 17, 10, 0, 0, 0, time.UTC)
-	if res, err := f.svc.SweepExpiry(ctx); err != nil || res.Cut != 2 {
-		t.Fatalf("sweep after the period: %v %+v", err, res)
-	}
-	if got := f.node(t, p.ID); got.Limit["cores"] != 0 {
-		t.Errorf("after the period the project shrinks by both: %v", got.Limit)
-	}
-	if cut := f.node(t, course.ID); cut.Status != model.StatusEnded {
-		t.Errorf("the cut allocation ended: %q", cut.Status)
-	}
-	if len(rec.ofType(notify.TypeAllocationShortened)) != 2 {
-		t.Errorf("allocation.shortened = %+v", rec.ofType(notify.TypeAllocationShortened))
+	// The last allocation cannot be let go this way.
+	b := f.allocations(t, p.ID)[f.base.ID]
+	if _, err := f.svc.ReleaseNode(b.ID, tree.ReleaseNodeRequest{AtEnd: true}, model.UIActor("stud@x"), studT); !errors.Is(err, common.ErrConflict) {
+		t.Errorf("the last allocation: %v", err)
 	}
 }
 
-func TestExpiry_ExtensionLiftsTheMark(t *testing.T) {
+// (3) A budget others' projects are paid from cannot be deleted while those allocations live.
+func TestDeleteBudget_RefusedWhileAllocationsLive(t *testing.T) {
 	f := newSplitFixture(t)
-	p, err := f.svc.CreateNode(tree.CreateNodeRequest{Kind: model.KindProject, Name: "Ext", Reason: "t", ParentID: f.base.ID, Limit: cores(1), TerminationDate: ptr("2026-12-10")}, model.UIActor("stud@x"), "stud@x", studT)
-	if err != nil {
-		t.Fatal(err)
-	}
-	*f.clock = time.Date(2026, 12, 12, 10, 0, 0, 0, time.UTC)
-	if _, err := f.svc.SweepExpiry(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	a := f.allocations(t, p.ID)[f.base.ID]
-	if a.Expired == nil {
-		t.Fatal("not marked")
-	}
-	if _, err := f.svc.RequestChange(a.ID, tree.ChangeNodeRequest{TerminationDate: ptr("2027-03-31")}, model.UIActor("base@x"), baseMgr); err != nil {
-		t.Fatal(err)
-	}
-	if got := f.node(t, a.ID); got.Expired != nil || endOf(got) != "2027-03-31" {
-		t.Errorf("extended: %+v %s", got.Expired, endOf(got))
-	}
-}
-
-// (6) A budget is deleted while projects of others draw from it: overbooking is accepted, the allocation moves to the budget above, marked; a request still waiting is withdrawn.
-func TestDeleteBudget_WithForeignAllocations(t *testing.T) {
-	f := newSplitFixture(t)
-	rec := &recorder{}
-	f.svc.SetNotifier(rec)
 	p, err := f.svc.CreateNode(tree.CreateNodeRequest{Kind: model.KindProject, Name: "Funded", Reason: "t", Allocations: []tree.AllocationSpec{
-		{BudgetID: f.base.ID, Limit: cores(2)}, {BudgetID: f.course.ID, Limit: cores(6)},
+		{BudgetID: f.base.ID, Limit: cores(2)}, {BudgetID: f.course.ID, Limit: cores(4)},
 	}}, model.UIActor("stud@x"), "stud@x", studT)
 	if err != nil {
 		t.Fatal(err)
 	}
-	waiting, err := f.svc.CreateNode(tree.CreateNodeRequest{Kind: model.KindProject, Name: "Waiting", Reason: "t", ParentID: f.course.ID, Limit: common.ProjectQuota{"gpu": 1}}, model.UIActor("stud@x"), "stud@x", studT)
+	err = f.svc.DeleteNode(f.faculty.ID, model.UIActor("root@x"), rootTokens)
+	if !errors.Is(err, common.ErrConflict) || !strings.Contains(err.Error(), "entziehen oder auslaufen lassen") {
+		t.Fatalf("delete with a live allocation below: %v", err)
+	}
+	c := f.allocations(t, p.ID)[f.course.ID]
+	if _, err := f.svc.ReleaseNode(c.ID, tree.ReleaseNodeRequest{}, model.UIActor("course@x"), courseMgr); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.svc.DeleteNode(f.faculty.ID, model.UIActor("root@x"), rootTokens); err != nil {
+		t.Fatalf("delete once withdrawn: %v", err)
+	}
+	if got := f.node(t, p.ID); got.Limit["cores"] != 2 || len(got.FundingBudgetIDs) != 1 {
+		t.Errorf("the project keeps the base: %v %v", got.Limit, got.FundingBudgetIDs)
+	}
+}
+
+// (2b) Attributes are per allocation, set by its budget's managers, inherited from its budget.
+func TestAttributes_PerAllocation(t *testing.T) {
+	f := newSplitFixture(t)
+	p, err := f.svc.CreateNode(tree.CreateNodeRequest{Kind: model.KindProject, Name: "Billed", Reason: "t", Allocations: []tree.AllocationSpec{
+		{BudgetID: f.base.ID, Limit: cores(2)}, {BudgetID: f.course.ID, Limit: cores(4)},
+	}}, model.UIActor("stud@x"), "stud@x", studT)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.svc.DeleteNode(f.course.ID, model.UIActor("course@x"), courseMgr); err != nil {
-		t.Fatalf("delete a budget others draw from: %v", err)
-	}
-	moved := f.allocations(t, p.ID)[f.faculty.ID]
-	if moved.ID == "" || moved.Expired == nil || moved.Expired.Cause != model.ExpiryBudgetDeleted || moved.Expired.BudgetName != "Kurs" || moved.Status != model.StatusApproved {
-		t.Fatalf("the allocation should hang under the faculty, marked: %+v", moved)
-	}
-	if moved.Limit["cores"] != 4 || moved.Pending != nil {
-		t.Errorf("it keeps what was approved, the waiting rest is dropped: %v %+v", moved.Limit, moved.Pending)
-	}
-	if got := f.node(t, p.ID); got.Limit["cores"] != 6 {
-		t.Errorf("the project keeps its resources: %v", got.Limit)
-	}
-	if fac, _ := f.svc.GetNode(f.faculty.ID, rootTokens); fac.Usage.Total([]string{"cores"})["cores"] != 4 {
-		t.Errorf("the faculty carries it now: %v", fac.Usage)
-	}
-	if w := f.node(t, waiting.ID); w.Status != model.StatusRejected {
-		t.Errorf("a project waiting only for the deleted budget is not started: %q", w.Status)
-	}
-	if len(rec.ofType(notify.TypeAllocationExpired)) != 1 || rec.ofType(notify.TypeAllocationExpired)[0].Due == "" {
-		t.Errorf("allocation.expired with its day: %+v", rec.ofType(notify.TypeAllocationExpired))
-	}
-	// Moved to a budget that exists, it is no longer marked.
-	if _, err := f.svc.ReparentNode(moved.ID, tree.ReparentNodeRequest{NewParentID: f.base.ID}, rootActor(), rootTokens); !errors.Is(err, common.ErrConflict) {
-		t.Errorf("one allocation per budget: %v", err)
-	}
-	other := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: model.RootNodeID, Kind: model.KindBudget, Name: "Neu", Limit: cores(10)})
-	if _, err := f.svc.ReparentNode(moved.ID, tree.ReparentNodeRequest{NewParentID: other.ID}, rootActor(), rootTokens); err != nil {
+	if _, err := f.svc.SetAttributes(f.faculty.ID, tree.SetAttributesRequest{Attributes: model.Attributes{"billing": {"cost_center": "F1"}}}, rootActor(), rootTokens); err != nil {
 		t.Fatal(err)
 	}
-	if got := f.node(t, moved.ID); got.Expired != nil {
-		t.Errorf("moved, the mark is gone: %+v", got.Expired)
+	a := f.allocations(t, p.ID)
+	if _, err := f.svc.SetAttributes(a[f.course.ID].ID, tree.SetAttributesRequest{Attributes: model.Attributes{"billing": {"wbs": "X"}}}, model.UIActor("base@x"), baseMgr); !errors.Is(err, common.ErrForbidden) {
+		t.Errorf("a co-funder sets another allocation's attributes: %v", err)
+	}
+	if _, err := f.svc.SetAttributes(p.ID, tree.SetAttributesRequest{Attributes: model.Attributes{"billing": {"wbs": "X"}}}, rootActor(), rootTokens); err == nil {
+		t.Error("attributes on the project were accepted")
+	}
+	got, err := f.svc.GetNode(a[f.course.ID].ID, courseMgr)
+	if err != nil || got.EffectiveAttributes["billing"].Values["cost_center"] != "F1" {
+		t.Errorf("the course's allocation inherits from the faculty: %v %+v", err, got.EffectiveAttributes)
+	}
+	if _, err := f.svc.SetAttributes(a[f.base.ID].ID, tree.SetAttributesRequest{Attributes: model.Attributes{"billing": {"cost_center": "B7"}}}, model.UIActor("base@x"), baseMgr); err != nil {
+		t.Errorf("the base's managers set their allocation's: %v", err)
 	}
 }
 

@@ -257,7 +257,7 @@ func RunApplication() {
 		logger.Fatalw("Invalid caps of the providers", "error", err)
 	}
 	treeSvc.SetProviderRules(osclient.Rules{Members: config.MaxAuthorizedUsers}, aiaas.Rules{Members: config.MaxAuthorizedUsersOther})
-	treeSvc.SetExpiry(tree.Expiry{GraceDays: config.Expiry.GraceDays, EndingNoticeDays: config.Expiry.EndingNoticeDays, PortalURL: config.Expiry.PortalURL})
+	treeSvc.SetExpiry(tree.Expiry{EndingNoticeDays: config.Expiry.EndingNoticeDays, PortalURL: config.Expiry.PortalURL})
 
 	// Bootstrap: optional mock seed into an empty store, then ensure the
 	// structural root/unassigned nodes (root admin scope is synced from config).
@@ -280,12 +280,12 @@ func RunApplication() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Events for the notification service; without NOTIFY_URL none, and expired allocations are only marked.
+	// Events for the notification service; without NOTIFY_URL none.
 	if config.Notify.URL != "" && config.Notify.Token == "" {
 		logger.Fatal("NOTIFY_URL is set but NOTIFY_TOKEN is not")
 	}
 	treeSvc.SetNotifier(notify.New(ctx, config.Notify.URL, config.Notify.Token, logger))
-	logger.Infow("Expiry of allocations", "notifications", config.Notify.URL != "", "grace_days", config.Expiry.GraceDays, "ending_notice_days", config.Expiry.EndingNoticeDays)
+	logger.Infow("Ends of projects", "notifications", config.Notify.URL != "", "ending_notice_days", config.Expiry.EndingNoticeDays)
 	go treeSvc.RunExpiryLoop(ctx, time.Duration(config.Expiry.IntervalMinutes)*time.Minute)
 
 	// Setup Gin web server with configured dependencies.

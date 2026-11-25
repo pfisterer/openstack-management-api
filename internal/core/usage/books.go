@@ -3,6 +3,7 @@ package usage
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -120,6 +121,14 @@ func (c *Books) RecordDay(ctx context.Context, day time.Time, report DayReport) 
 		ipv4 = nil
 	}
 
+	allocs := map[string][]model.Node{}
+	for _, n := range all {
+		if n.Kind == model.KindAllocation {
+			allocs[n.ProjectID] = append(allocs[n.ProjectID], n)
+		}
+	}
+	coresID, ramID := c.resourceFor(common.AccountsCores), c.resourceFor(common.AccountsRAM)
+
 	var rows []Day
 	for _, n := range all {
 		bound := n.Binding(c.provider)
@@ -139,15 +148,9 @@ func (c *Books) RecordDay(ctx context.Context, day time.Time, report DayReport) 
 			People: people, Groups: groups,
 			ServerHours: u.ServerHours, VCPUHours: u.VCPUHours,
 			RAMGBHours: u.RAMGBHours, DiskGBHours: u.DiskGBHours,
-			Reserved:   c.reserved(n),
+			Reserved:   c.reserved(n, n.Limit),
 			Backfilled: backfilled, CollectedAt: now,
 		}
-		// A project's row is booked under its home budget (Node.HomeBudgetID): what it used is not split by who pays.
-		if anchor := n.BudgetAnchor(); anchor != nil {
-			row.BudgetID = *anchor
-			row.BudgetPath = pathOf(*anchor, budgets)
-		}
-		row.Attributes = attributesOf(n, budgets)
 		if !backfilled && storageID != "" {
 			row.StorageGB = float64(bound.InUse[storageID])
 		}
@@ -155,7 +158,31 @@ func (c *Books) RecordDay(ctx context.Context, day time.Time, report DayReport) 
 			v := ipv4[bound.ExternalID]
 			row.PublicIPv4 = &v
 		}
-		rows = append(rows, row)
+		paying := payingAllocations(n, allocs[n.ID])
+		if len(paying) == 0 {
+			rows = append(rows, row)
+			continue
+		}
+		// One row per allocation: what the project used is split in proportion to each allocation's part of its limit, per resource (decided 25.11.2026).
+		for i, a := range paying {
+			r := row
+			r.AllocationID = a.ID
+			cores, ram, storage := Share(n, paying, a, coresID), Share(n, paying, a, ramID), Share(n, paying, a, storageID)
+			r.ServerHours, r.VCPUHours, r.DiskGBHours = row.ServerHours*cores, row.VCPUHours*cores, row.DiskGBHours*cores
+			r.RAMGBHours = row.RAMGBHours * ram
+			r.StorageGB = row.StorageGB * storage
+			// A count of addresses does not split; it is booked with the oldest allocation.
+			if i > 0 {
+				r.PublicIPv4 = nil
+			}
+			r.Reserved = c.reserved(n, a.Limit)
+			if a.ParentID != nil {
+				r.BudgetID = *a.ParentID
+				r.BudgetPath = pathOf(*a.ParentID, budgets)
+			}
+			r.Attributes = attributesOf(a, budgets)
+			rows = append(rows, r)
+		}
 	}
 	if err := c.store.ReplaceDay(ctx, day, rows); err != nil {
 		return fmt.Errorf("store usage of %s: %w", day.Format(time.DateOnly), err)
@@ -185,10 +212,41 @@ func (c *Books) resourceFor(accounts string) string {
 	return ""
 }
 
-// reserved is what the project holds back for itself: its limit, allocations
-// included — and once archived only the storage, the rest is frozen at zero.
-func (c *Books) reserved(n model.Node) common.ProjectQuota {
-	q := c.quantities(n.EffectiveLimit())
+// payingAllocations are the allocations that pay for the project in its status (or paid, for one given up), oldest first.
+func payingAllocations(p model.Node, allocs []model.Node) []model.Node {
+	statuses := nodestore.ProjectChargedStatuses(p.Status)
+	out := slices.DeleteFunc(slices.Clone(allocs), func(a model.Node) bool { return !slices.Contains(statuses, a.Status) })
+	slices.SortStableFunc(out, func(a, b model.Node) int {
+		if c := strings.Compare(a.CreatedAt, b.CreatedAt); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return out
+}
+
+// Share is the part of a project's use of resource id that allocation a bears (decided 25.11.2026): its part of what the paying allocations hold of it together; where they hold none of it, an equal part. Every share of one resource adds up to 1. The usage books and the budgets' rollup split by it.
+func Share(project model.Node, paying []model.Node, a model.Node, id string) float64 {
+	if len(paying) == 0 {
+		return 0
+	}
+	if id != "" {
+		total := 0
+		for _, p := range paying {
+			if v := p.Limit[id]; v > 0 {
+				total += v
+			}
+		}
+		if total > 0 {
+			return float64(max(a.Limit[id], 0)) / float64(total)
+		}
+	}
+	return 1 / float64(len(paying))
+}
+
+// reserved is what is held back: limit (a project's or an allocation's) — and once the project is archived only the storage, the rest is frozen at zero.
+func (c *Books) reserved(n model.Node, limit common.ProjectQuota) common.ProjectQuota {
+	q := c.quantities(limit)
 	if n.Status != model.StatusArchived {
 		return q
 	}
@@ -235,12 +293,12 @@ func pathOf(start string, budgets map[string]model.Node) []PathEntry {
 	return path
 }
 
-// attributesOf is what applies to the project: its own attribute groups and
-// those inherited from its budgets, values only.
+// attributesOf is what applies to an allocation: its own attribute groups and
+// those inherited from its budget, values only.
 func attributesOf(n model.Node, budgets map[string]model.Node) model.Attributes {
 	chain := []model.Node{n}
 	seen := map[string]bool{n.ID: true}
-	for p := n.BudgetAnchor(); p != nil && !seen[*p]; {
+	for p := n.ParentID; p != nil && !seen[*p]; {
 		seen[*p] = true
 		b, ok := budgets[*p]
 		if !ok {

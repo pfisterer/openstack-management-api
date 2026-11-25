@@ -28,6 +28,9 @@ func (s *Service) ReleaseNode(id string, req ReleaseNodeRequest, actor model.Act
 		return model.Node{}, err
 	}
 	if current.IsLeaf() {
+		if req.AtEnd {
+			return s.endAllocationAtItsEnd(ctx, current, actor, userTokens)
+		}
 		return s.endAllocation(ctx, current, actor, userTokens)
 	}
 	if !current.IsProject() {
@@ -133,6 +136,65 @@ func (s *Service) endAllocation(ctx context.Context, alloc *model.Node, actor mo
 	return out[0], nil
 }
 
+// endAllocationAtItsEnd is ReleaseNode with AtEnd on an allocation: the project goes on without it after its own end (EndsAlone), its waiting change is dropped. The project's holders and the managers of its budget may; not for the project's last allocation that would still run. Callers hold approvalMu.
+func (s *Service) endAllocationAtItsEnd(ctx context.Context, alloc *model.Node, actor model.Actor, userTokens common.TokenList) (model.Node, error) {
+	if !isPaying(*alloc) {
+		return model.Node{}, refuse(common.ErrConflict, "Im Status %q läuft die Zuteilung nicht.", "The allocation does not run in status %q.", alloc.Status)
+	}
+	if alloc.TerminationDate == nil {
+		return model.Node{}, invalid("Die Zuteilung hat kein Enddatum; sie lässt sich nur sofort beenden.", "The allocation has no end date; it can only be ended now.")
+	}
+	project, err := s.projectOf(ctx, alloc)
+	if err != nil {
+		return model.Node{}, err
+	}
+	manager, err := s.managesParentChain(ctx, userTokens, alloc)
+	if err != nil {
+		return model.Node{}, err
+	}
+	if !holdsProject(userTokens, project) && !manager {
+		return model.Node{}, errNoPermission
+	}
+	allocs, err := s.allocationsOf(ctx, project.ID)
+	if err != nil {
+		return model.Node{}, err
+	}
+	others := slices.ContainsFunc(allocs[project.ID], func(a model.Node) bool { return a.ID != alloc.ID && isPaying(a) && !a.EndsAlone })
+	if !others {
+		return model.Node{}, refuse(common.ErrConflict, "Das ist die letzte Zuteilung des Projekts; ohne sie liefe das Projekt nicht weiter.", "This is the project's last allocation; without it the project would not go on.")
+	}
+	var before model.Node
+	if _, err := s.store.UpdateNode(ctx, alloc.ID, func(n *model.Node) error {
+		before = *n
+		entry := model.NewHistoryEntry("ends_alone", actor, model.StatusApproved)
+		entry.Reason = new(fmt.Sprintf("Das Projekt läuft ohne diese Zuteilung weiter; sie endet am %s", model.EndLabel(*n.TerminationDate)))
+		if n.Status == model.StatusChangePending {
+			entry.StatusFrom = new(model.StatusChangePending)
+		}
+		n.Status = model.StatusApproved
+		n.Pending = nil
+		n.WaitingKey = ""
+		n.EndsAlone = true
+		n.History = append(slices.Clone(n.History), entry)
+		return nil
+	}); err != nil {
+		return model.Node{}, err
+	}
+	s.resolveWaiting(ctx, before, actor)
+	if _, err := s.refreshProject(ctx, project.ID, actor); err != nil {
+		return model.Node{}, err
+	}
+	stored, err := s.loadNode(ctx, alloc.ID)
+	if err != nil {
+		return model.Node{}, err
+	}
+	out, err := s.attachUsage(ctx, []model.Node{*stored}, userTokens)
+	if err != nil {
+		return *stored, nil
+	}
+	return out[0], nil
+}
+
 // setAllocationStatus moves an allocation to status with a history entry, dropping a waiting change and resolving its approval notification. Callers hold approvalMu and refresh the project afterwards.
 func (s *Service) setAllocationStatus(ctx context.Context, id, status, event string, actor model.Actor, reason string) error {
 	var before model.Node
@@ -145,9 +207,6 @@ func (s *Service) setAllocationStatus(ctx context.Context, id, status, event str
 		}
 		n.Status = status
 		n.Pending = nil
-		if status == model.StatusEnded {
-			n.Expired = nil
-		}
 		n.WaitingKey = ""
 		n.History = append(slices.Clone(n.History), entry)
 		return nil
@@ -233,10 +292,10 @@ func (s *Service) deletable(n model.Node) bool {
 }
 
 // DeleteNode removes a budget subtree. Refused while a budget in the subtree is
-// still pending or awaiting a change decision — those must be decided first so
-// nothing is silently discarded.
-//
-// The allocations below are not in the way (decided 25.11.2026): a request still waiting is withdrawn, a waiting change dropped, and every allocation that pays — or paid for a project given up that still holds its resources — moves under the budget above the deleted one, marked as expired because its budget was deleted. The project keeps its resources (overbooking is accepted there), its owner and managers are told, and the allocation is extended elsewhere or cut after the period (SweepExpiry). Ended and rejected allocations go with the subtree.
+// still pending or awaiting a change decision, and while an allocation in it is
+// live — waiting, approved or with a change waiting (decided 25.11.2026): those are
+// withdrawn or run out first, so no project loses what pays for it unseen. Ended,
+// rejected and retired allocations go with the subtree.
 //
 // Under the approval lock: a request created under the budget while its subtree is being collected would otherwise be deleted with it, unseen. Nothing of the subtree remains to carry a history entry, so who deleted it is written to the log.
 func (s *Service) DeleteNode(id string, actor model.Actor, userTokens common.TokenList) error {
@@ -278,91 +337,33 @@ func (s *Service) DeleteNode(id string, actor model.Actor, userTokens common.Tok
 	}
 
 	deleteIDs := append([]string{}, budgetIDs...)
-	var moving []model.Node
+	live := 0
+	var example string
 	for _, n := range descendants {
 		if n.Kind == model.KindBudget {
 			if n.Status == model.StatusPending || n.Status == model.StatusChangePending {
-				return invalid("Löschen nicht möglich: Über das Budget %q (%s) ist noch nicht entschieden.", "Cannot delete: the budget %q (%s) has not been decided on yet.", n.ID, n.Name)
+				return refuse(common.ErrConflict, "Löschen nicht möglich: Über das Budget %q ist noch nicht entschieden.", "Cannot delete: the budget %q has not been decided on yet.", nodeLabel(n))
 			}
 			continue // in deleteIDs via parentMap
 		}
-		if n.Kind != model.KindAllocation {
-			return invalid("Löschen nicht möglich: %q (%s) ist im Status %q.", "Cannot delete: %q (%s) is in status %q.", n.ID, n.Name, n.Status)
-		}
-		switch {
-		case n.Status == model.StatusPending, n.Status == model.StatusChangePending, isPaying(n), model.IsRetiredStatus(n.Status):
-			moving = append(moving, n)
-		default:
-			deleteIDs = append(deleteIDs, n.ID)
-		}
-	}
-
-	// The budget above: where what still pays goes.
-	above := *current.ParentID
-	budgetNames := map[string]string{}
-	for _, b := range append(s.mustList(ctx, budgetIDs), *current) {
-		budgetNames[b.ID] = nodeLabel(b)
-	}
-	touched := map[string]bool{}
-	var expired []model.Node
-	for _, a := range moving {
-		touched[a.ProjectID] = true
-		if a.Status == model.StatusPending {
-			if err := s.setAllocationStatus(ctx, a.ID, model.StatusEnded, "allocation_ended", actor, fmt.Sprintf("Das Budget %q wurde gelöscht", budgetNames[derefParent(a.ParentID)])); err != nil {
-				return err
-			}
-			if _, err := s.store.UpdateNode(ctx, a.ID, func(n *model.Node) error { n.ParentID = &above; return nil }); err != nil {
-				return err
+		if slices.Contains(liveAllocationStatuses, n.Status) {
+			live++
+			if example == "" {
+				example = nodeLabel(n)
 			}
 			continue
 		}
-		var before model.Node
-		if _, err := s.store.UpdateNode(ctx, a.ID, func(n *model.Node) error {
-			before = *n
-			from := derefParent(n.ParentID)
-			entry := model.NewHistoryEntry("budget_deleted", actor, n.Status)
-			if n.Status == model.StatusChangePending {
-				entry.StatusTo = model.StatusApproved
-				entry.StatusFrom = new(model.StatusChangePending)
-				n.Status = model.StatusApproved
-			}
-			entry.ParentFrom = &from
-			entry.ParentTo = &above
-			entry.Reason = new(fmt.Sprintf("Das Budget %q wurde gelöscht; die Zuteilung hängt jetzt am Budget darüber und ist als abgelaufen markiert", budgetNames[from]))
-			n.Pending = nil
-			n.WaitingKey = ""
-			n.ParentID = &above
-			if isPaying(*n) {
-				n.Expired = &model.Expiry{At: entry.Timestamp, Cause: model.ExpiryBudgetDeleted, BudgetName: budgetNames[from], Due: s.expiryDue()}
-			}
-			n.History = append(slices.Clone(n.History), entry)
-			return nil
-		}); err != nil {
-			return fmt.Errorf("move allocation %s: %w", a.ID, err)
-		}
-		s.resolveWaiting(ctx, before, actor)
-		if isPaying(before) {
-			if moved, err := s.store.GetNode(ctx, a.ID); err == nil && moved != nil {
-				expired = append(expired, *moved)
-			}
-		}
+		deleteIDs = append(deleteIDs, n.ID)
+	}
+	if live > 0 {
+		return refuse(common.ErrConflict, "Löschen nicht möglich: %d Projekte werden noch aus diesem Budget bezahlt (z. B. %q). Ihre Zuteilungen zuerst entziehen oder auslaufen lassen.", "Cannot delete: %d projects are still paid from this budget (e.g. %q). Withdraw their allocations or let them run out first.", live, example)
 	}
 
 	if err := s.store.DeleteNodes(ctx, deleteIDs); err != nil {
 		return fmt.Errorf("delete subtree: %w", err)
 	}
-	for pid := range touched {
-		if _, err := s.refreshProject(ctx, pid, actor); err != nil {
-			return err
-		}
-	}
-	for _, a := range expired {
-		if p, err := s.store.GetNode(ctx, a.ProjectID); err == nil && p != nil {
-			s.notifyExpired(ctx, a, *p, actor)
-		}
-	}
 	if s.log != nil {
-		s.log.Infow("budget subtree deleted", "node_id", current.ID, "name", current.Name, "actor", actor.Email, "acted_by", actor.ActedBy, "via", actor.Channel(), "deleted_ids", deleteIDs, "allocations_moved", len(moving), "moved_to", above)
+		s.log.Infow("budget subtree deleted", "node_id", current.ID, "name", current.Name, "actor", actor.Email, "acted_by", actor.ActedBy, "via", actor.Channel(), "deleted_ids", deleteIDs)
 	}
 	return nil
 }

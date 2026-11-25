@@ -140,6 +140,14 @@ func (s *Service) planSplit(ctx context.Context, want common.ProjectQuota, end *
 			p.Limit[k] += v
 		}
 	}
+	// Every allocation runs until the project ends: a budget that cannot grant the end asked for is left out.
+	cands = slices.DeleteFunc(cands, func(c candidate) bool {
+		if end == nil {
+			return false
+		}
+		_, err := s.fitNodeEnd(model.KindAllocation, end, c.chain)
+		return err != nil
+	})
 	for _, c := range cands {
 		if allZero(open) {
 			break
@@ -228,7 +236,7 @@ func (s *Service) nameSplit(ctx context.Context, plan SplitPlan) (SplitPlan, err
 	return plan, nil
 }
 
-// fitSplitEnd is the end an allocation under chain gets for a requested end: the requested one where the budgets allow it, else the latest they allow.
+// fitSplitEnd is the end an allocation under chain gets: the one asked for (planSplit leaves out budgets that cannot grant it), or without one the latest the budgets allow — the project then ends at the earliest of these.
 func (s *Service) fitSplitEnd(end *string, chain []model.Node) (*string, error) {
 	if fitted, err := s.fitNodeEnd(model.KindAllocation, end, chain); err == nil {
 		return fitted, nil

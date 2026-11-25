@@ -42,7 +42,7 @@ func TestClient_SendsTheContract(t *testing.T) {
 	if !n.Enabled() {
 		t.Fatal("a client with a URL is enabled")
 	}
-	n.Notify(Event{Type: TypeAllocationExpired, Key: "allocation-expired:a_1", Class: ClassAction, Recipients: []Recipient{{User: "a@b.de"}, {Group: "course"}},
+	n.Notify(Event{Type: TypeAllocationShortened, Key: "allocation-shortened:a_1", Class: ClassAction, Recipients: []Recipient{{User: "a@b.de"}, {Group: "course"}},
 		Actor: "a@b.de", Due: "2027-01-01T00:00:00+01:00", Object: Object{Kind: "project", ID: "p_1", Name: "P", URL: "https://portal/x"}})
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -62,7 +62,7 @@ func TestClient_SendsTheContract(t *testing.T) {
 		t.Fatalf("delivered %d after %d calls", len(got), calls)
 	}
 	ev := got[0]
-	if ev["source"] != Source || ev["type"] != TypeAllocationExpired || ev["key"] != "allocation-expired:a_1" || ev["class"] != "action" || ev["resolve"] != false || ev["actor"] != "a@b.de" || ev["due"] == nil {
+	if ev["source"] != Source || ev["type"] != TypeAllocationShortened || ev["key"] != "allocation-shortened:a_1" || ev["class"] != "action" || ev["resolve"] != false || ev["actor"] != "a@b.de" || ev["due"] == nil {
 		t.Errorf("event = %v", ev)
 	}
 	if obj := ev["object"].(map[string]any); obj["kind"] != "project" || obj["id"] != "p_1" || obj["url"] != "https://portal/x" {

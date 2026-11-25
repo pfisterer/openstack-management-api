@@ -32,6 +32,8 @@ type PathEntry struct {
 type Day struct {
 	Day    time.Time // the day's label: midnight UTC of its date, the form of the date column
 	NodeID string
+	// AllocationID is the allocation this row is the share of: a project paid by several budgets has one row per allocation, its use split in proportion to each one's part of the project's limit, per resource (Books.RecordDay). Empty on rows from before allocations.
+	AllocationID string
 
 	// Snapshot. For days collected after the fact (Backfilled) these are the
 	// values at collection time — the tree keeps no history of them.
@@ -40,7 +42,7 @@ type Day struct {
 	Owner       string
 	Status      string
 	BudgetID    string
-	BudgetPath  []PathEntry // the project's own budget first, the root last
+	BudgetPath  []PathEntry // the allocation's budget first, the root last
 	// People counts the distinct persons named on the project — owner, admins
 	// and members given as a person; Groups the members given as a group,
 	// whose size is not known here.
@@ -62,12 +64,11 @@ type Day struct {
 	// has no floating IPs to count.
 	PublicIPv4 *int
 
-	// Reserved is what the project held that day: its own limit plus its
-	// allocations, quantities only.
+	// Reserved is what the allocation held that day, quantities only.
 	Reserved common.ProjectQuota
 
-	// Attributes are the attribute groups that applied to the project that
-	// day, its own and inherited — what billing reads. A snapshot like the
+	// Attributes are the attribute groups that applied to the allocation that
+	// day, its own and inherited from its budget — what billing reads. A snapshot like the
 	// budget path, so changing a cost centre changes the days from then on.
 	Attributes model.Attributes
 

@@ -24,7 +24,6 @@ const (
 
 // Event types sent by this service.
 const (
-	TypeAllocationExpired   = "allocation.expired"
 	TypeAllocationShortened = "allocation.shortened"
 	TypeApprovalWaiting     = "approval.waiting"
 	TypeApprovalDecided     = "approval.decided"

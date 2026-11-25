@@ -67,7 +67,7 @@ func (a ancestry) attributesVisible(n model.Node, viewer common.TokenSet) bool {
 	if viewer.ContainsAny(n.AdminScope) || ((n.IsLeaf() || n.IsProject()) && n.Owner != "" && viewer.Contains(n.Owner)) {
 		return true
 	}
-	if n.BudgetAnchor() == nil {
+	if n.ParentID == nil {
 		return false
 	}
 	return managesInChain(viewer, a.budgetsAbove(n))
@@ -78,8 +78,8 @@ func (s *Service) AttributesVisible(n *model.Node, userTokens common.TokenList) 
 	ctx, cancel := s.newCtx()
 	defer cancel()
 	var start []string
-	if anchor := n.BudgetAnchor(); anchor != nil {
-		start = []string{*anchor}
+	if n.ParentID != nil {
+		start = []string{*n.ParentID}
 	}
 	tree, err := s.walkAncestors(ctx, start)
 	if err != nil {
@@ -90,7 +90,7 @@ func (s *Service) AttributesVisible(n *model.Node, userTokens common.TokenList) 
 
 // SetAttributes replaces a node's own attributes. They say who pays and what
 // for, so they are a manager's to set: on a budget its managers or those above,
-// on a project the managers of its budgets — not its owner or admins.
+// on an allocation the managers of its budget — not the project's owner or admins.
 func (s *Service) SetAttributes(id string, req SetAttributesRequest, actor model.Actor, userTokens common.TokenList) (model.Node, error) {
 	ctx, cancel := s.newCtx()
 	defer cancel()
@@ -104,11 +104,11 @@ func (s *Service) SetAttributes(id string, req SetAttributesRequest, actor model
 	}
 	var manages bool
 	switch {
-	case current.IsLeaf():
-		return model.Node{}, invalid("Attribute gehören an das Projekt, nicht an eine Zuteilung.", "Attributes belong on the project, not on an allocation.")
 	case current.IsProject():
-		// The budget the project's place in the tree is read from, and the attributes it inherits.
-		manages, err = s.managesChainFrom(ctx, common.NewTokenSet(userTokens), current.HomeBudgetID)
+		return model.Node{}, invalid("Attribute gehören an eine Zuteilung: Jedes zahlende Budget setzt sie an seiner eigenen.", "Attributes belong on an allocation: each paying budget sets them on its own.")
+	case current.IsLeaf():
+		// Who pays for this part sets what it is booked to (decided 25.11.2026); it inherits from its budget.
+		manages, err = s.managesParentChain(ctx, userTokens, current)
 	default:
 		manages, err = s.managesNode(ctx, userTokens, current)
 	}

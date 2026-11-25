@@ -33,6 +33,8 @@ func TestResolveAttributes_NearestGroupWinsWhole(t *testing.T) {
 
 func TestSetAttributes_RightsAndInheritance(t *testing.T) {
 	f := newAllocationFixture(t)
+	// Attributes sit on the allocation, set by its budget's managers (decided 25.11.2026).
+	f.project = mustGet(t, f.svc, mustGet(t, f.svc, f.project.ID).Allocations[0].ID)
 	set := func(id string, tokens common.TokenList, a model.Attributes) error {
 		_, err := f.svc.SetAttributes(id, tree.SetAttributesRequest{Attributes: a}, model.UIActor("x@x"), tokens)
 		return err
@@ -110,6 +112,8 @@ func TestAttributes_VisibleToThoseWhoLookAfterTheNode(t *testing.T) {
 		t.Fatalf("create shared project: %v", err)
 	}
 
+	alloc := mustGet(t, f.svc, p.ID).Allocations[0].ID
+	p = mustGet(t, f.svc, alloc)
 	sees := func(id string, tokens common.TokenList) bool {
 		t.Helper()
 		n, err := f.svc.GetNode(id, tokens)
@@ -123,7 +127,7 @@ func TestAttributes_VisibleToThoseWhoLookAfterTheNode(t *testing.T) {
 		tokens common.TokenList
 		want   bool
 	}{
-		"owner of the project":           {p.ID, ownerToken, true},
+		"owner of the project":           {alloc, ownerToken, true},
 		"manager of the students budget": {p.ID, studMgr, true},
 		"member of the project":          {p.ID, member, false},
 		"requester under the budget":     {f.stud.ID, ownerToken, false},

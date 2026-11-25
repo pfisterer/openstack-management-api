@@ -1,11 +1,14 @@
 package tree
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"github.com/pfisterer/openstack-management-api/internal/core/usage"
 	"maps"
 	"math"
 	"slices"
+	"strings"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
@@ -81,15 +84,21 @@ func (s *Service) loadSubtreeUsageAndInUse(ctx context.Context, roots []model.No
 	return buildRolledUpUsage(leaves, projects, parentMap, s.countIDs(), s.leafCost), rollUpInUse(leaves, projects, parentMap), nil
 }
 
-// projectsOfAllocations loads the projects the allocations pay for, by id.
-func (s *Service) projectsOfAllocations(ctx context.Context, allocs []model.Node) (map[string]model.Node, error) {
+// funded is a project as the accounting sees it: the project and its allocations that pay for it (in its status, or paid, for one given up), oldest first.
+type funded struct {
+	project model.Node
+	paying  []model.Node
+}
+
+// projectsOfAllocations loads the projects the allocations pay for, with all their paying allocations — also those outside the subtree being rolled up, since the shares are of the whole project —, by project id.
+func (s *Service) projectsOfAllocations(ctx context.Context, allocs []model.Node) (map[string]funded, error) {
 	var ids []string
 	for _, a := range allocs {
 		if a.ProjectID != "" {
 			ids = append(ids, a.ProjectID)
 		}
 	}
-	out := make(map[string]model.Node, len(ids))
+	out := make(map[string]funded, len(ids))
 	if len(ids) == 0 {
 		return out, nil
 	}
@@ -99,29 +108,73 @@ func (s *Service) projectsOfAllocations(ctx context.Context, allocs []model.Node
 	if err != nil {
 		return nil, fmt.Errorf("load projects of allocations: %w", err)
 	}
+	all, err := s.allocationsOf(ctx, ids...)
+	if err != nil {
+		return nil, err
+	}
 	for _, p := range list {
-		out[p.ID] = p
+		statuses := nodestore.ProjectChargedStatuses(p.Status)
+		var paying []model.Node
+		for _, a := range all[p.ID] {
+			if slices.Contains(statuses, a.Status) {
+				paying = append(paying, a)
+			}
+		}
+		slices.SortStableFunc(paying, func(a, b model.Node) int {
+			if c := strings.Compare(a.CreatedAt, b.CreatedAt); c != 0 {
+				return c
+			}
+			return strings.Compare(a.ID, b.ID)
+		})
+		out[p.ID] = funded{project: p, paying: paying}
 	}
 	return out, nil
 }
 
-// isHome reports whether alloc is its project's home allocation (Node.HomeAllocationID): the one charged with what the project measurably uses beyond its limit, and with the storage an archived project still holds.
-func isHome(alloc model.Node, project *model.Node) bool {
-	return project != nil && project.HomeAllocationID == alloc.ID
+// splitByShare splits what a project has of a resource among its paying allocations in proportion to each one's part of their limits of it (usage.Share), in whole units: the remainders go to the largest fractions, the earliest allocation first on a tie, so the parts add up exactly. Returns the part of the allocation id.
+func splitByShare(f funded, rid string, total int, id string) int {
+	n := len(f.paying)
+	if n == 0 || total == 0 {
+		return 0
+	}
+	parts := make([]int, n)
+	fracs := make([]float64, n)
+	sum := 0
+	for i, a := range f.paying {
+		exact := float64(total) * usage.Share(f.project, f.paying, a, rid)
+		parts[i] = int(math.Floor(exact))
+		fracs[i] = exact - float64(parts[i])
+		sum += parts[i]
+	}
+	order := make([]int, n)
+	for i := range order {
+		order[i] = i
+	}
+	slices.SortStableFunc(order, func(a, b int) int { return cmp.Compare(fracs[b], fracs[a]) })
+	for k := 0; sum < total && k < n; k++ {
+		parts[order[k]]++
+		sum++
+	}
+	for i, a := range f.paying {
+		if a.ID == id {
+			return parts[i]
+		}
+	}
+	return 0
 }
 
-// rollUpInUse sums what each project measurably uses (its providers' in_use) into the budget of its home allocation and every tracked budget above, so a budget can show what of its handed-out capacity is really used. A project's whole consumption goes up the chain of its home allocation only — in_use is not split by where its limit came from, and counting it under every allocation would count it several times. Keys no project measures stay absent rather than 0, as in Binding.InUse.
-func rollUpInUse(leaves []model.Node, projects map[string]model.Node, parentMap map[string]*string) map[string]common.ProjectQuota {
+// rollUpInUse sums what each project measurably uses (its providers' in_use) into its allocations' budgets and every tracked budget above, so a budget can show what of its handed-out capacity is really used: split among the paying allocations by their share of the project's limit, per resource (splitByShare), so nothing is counted twice. Keys no project measures stay absent rather than 0, as in Binding.InUse.
+func rollUpInUse(leaves []model.Node, projects map[string]funded, parentMap map[string]*string) map[string]common.ProjectQuota {
 	out := map[string]common.ProjectQuota{}
 	for _, leaf := range leaves {
 		if leaf.ParentID == nil {
 			continue
 		}
-		project, ok := projects[leaf.ProjectID]
-		if !ok || !isHome(leaf, &project) {
+		f, ok := projects[leaf.ProjectID]
+		if !ok || !slices.ContainsFunc(f.paying, func(a model.Node) bool { return a.ID == leaf.ID }) {
 			continue
 		}
-		used := project.InUse()
+		used := f.project.InUse()
 		if len(used) == 0 {
 			continue
 		}
@@ -136,7 +189,8 @@ func rollUpInUse(leaves []model.Node, projects map[string]model.Node, parentMap 
 				sum = common.ProjectQuota{}
 			}
 			for id, v := range used {
-				total, ok := addInts(sum[id], v)
+				part := splitByShare(f, id, v, leaf.ID)
+				total, ok := addInts(sum[id], part)
 				if !ok {
 					total = saturate(sum[id])
 				}
@@ -157,18 +211,18 @@ func rollUpInUse(leaves []model.Node, projects map[string]model.Node, parentMap 
 // every tracked ancestor, so a budget's usage reflects total consumption across
 // its entire subtree — not just its direct children. Every allocation is charged
 // to its own budget and those above it; a budget beside it never carries it.
-func buildRolledUpUsage(leaves []model.Node, projects map[string]model.Node, parentMap map[string]*string, resourceIDs []string, cost leafCostFunc) model.UsagePerNode {
+func buildRolledUpUsage(leaves []model.Node, projects map[string]funded, parentMap map[string]*string, resourceIDs []string, cost leafCostFunc) model.UsagePerNode {
 	result := make(model.UsagePerNode)
 	for _, leaf := range leaves {
 		if leaf.ParentID == nil {
 			continue
 		}
-		var project *model.Node
+		var f *funded
 		if p, ok := projects[leaf.ProjectID]; ok {
-			project = &p
+			f = &p
 		}
 		// Per allocation, before any summation — see chargedQuota.
-		amount := cost(leaf, project)
+		amount := cost(leaf, f)
 		current := *leaf.ParentID
 		for {
 			if _, tracked := parentMap[current]; !tracked {
@@ -212,11 +266,11 @@ func (s *Service) ownerActiveUsage(ctx context.Context, budgetID string, ownerTo
 	}
 	usage := make(common.ProjectQuota, len(s.countIDs()))
 	for _, leaf := range leaves {
-		var project *model.Node
+		var f *funded
 		if p, ok := projects[leaf.ProjectID]; ok {
-			project = &p
+			f = &p
 		}
-		charged := s.leafCost(leaf, project)
+		charged := s.leafCost(leaf, f)
 		for _, id := range s.countIDs() {
 			usage[id] += charged[id]
 		}
@@ -240,29 +294,35 @@ func (s *Service) chargedStatuses() []string {
 	return statuses
 }
 
-// leafCostFunc says what one allocation costs its budget, given the project it pays for (nil when that could not be loaded).
-type leafCostFunc func(alloc model.Node, project *model.Node) common.ProjectQuota
+// leafCostFunc says what one allocation costs its budget, given its project and the project's paying allocations (nil when that could not be loaded).
+type leafCostFunc func(alloc model.Node, f *funded) common.ProjectQuota
 
-// leafCost is the deployment's leafCostFunc. An allocation costs its limit. The home allocation of its project (isHome) also carries what the project measurably uses beyond everything it holds (chargedQuota); of an archived project it costs only the storage the project still holds, and the others nothing.
-func (s *Service) leafCost(alloc model.Node, project *model.Node) common.ProjectQuota {
-	home := isHome(alloc, project)
-	if alloc.Status == model.StatusArchived {
-		if !home {
+// leafCost is the deployment's leafCostFunc (decided 25.11.2026): an allocation costs its limit plus its share of what the project measurably uses beyond its limit (chargedQuota); of an archived project its share of the storage the project still holds. Shares are per resource, in proportion to each paying allocation's part of the project's limit (splitByShare).
+func (s *Service) leafCost(alloc model.Node, f *funded) common.ProjectQuota {
+	if f == nil {
+		if alloc.Status == model.StatusArchived {
 			return common.ProjectQuota{}
 		}
-		return archivedQuota(*project, s.storageIDs())
-	}
-	if !home || !s.accounting.ChargeInUse {
 		return alloc.Limit
 	}
-	excess := chargedQuota(*project, s.countIDs(), true)
+	if alloc.Status == model.StatusArchived {
+		out := common.ProjectQuota{}
+		for id, v := range archivedQuota(f.project, s.storageIDs()) {
+			out[id] = splitByShare(*f, id, v, alloc.ID)
+		}
+		return out
+	}
+	if !s.accounting.ChargeInUse {
+		return alloc.Limit
+	}
+	charged := chargedQuota(f.project, s.countIDs(), true)
 	out := make(common.ProjectQuota, len(alloc.Limit))
 	for id, v := range alloc.Limit {
 		out[id] = v
 	}
 	for _, id := range s.countIDs() {
-		if over := excess[id] - project.Limit[id]; over > 0 {
-			out[id] += over
+		if over := charged[id] - f.project.Limit[id]; over > 0 {
+			out[id] += splitByShare(*f, id, over, alloc.ID)
 		}
 	}
 	return out
@@ -287,7 +347,7 @@ func archivedQuota(leaf model.Node, storageIDs []string) common.ProjectQuota {
 // chargedQuota is what a project COSTS in total: its limit (the sum of its
 // allocations), or the measured OpenStack usage where that is higher. With
 // chargeInUse off it is the limit alone, which is the pre-2026-08 behaviour.
-// What runs over the limit is charged to the home allocation (leafCost).
+// What runs over the limit is split among its allocations (leafCost).
 //
 // Why the max: shrinking a limit after filling the project frees budget on
 // paper while the servers keep running. OpenStack accepts the smaller quota,

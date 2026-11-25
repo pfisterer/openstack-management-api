@@ -190,7 +190,8 @@ func (s *Service) createProject(req CreateNodeRequest, actor model.Actor, userEm
 	}
 	var allocs []model.Node
 	for _, t := range todo {
-		a, err := s.placeAllocation(ctx, project, t.budget, t.chain, t.spec.Limit, t.spec.TerminationDate, req.Reason, t.manager, split, actor, userEmail)
+		// Partial approval only where the project starts with what is granted; waiting for all is all or nothing (decided 25.11.2026).
+		a, err := s.placeAllocation(ctx, project, t.budget, t.chain, t.spec.Limit, t.spec.TerminationDate, req.Reason, t.manager, split && project.StartWhen != model.StartAll, actor, userEmail)
 		if err != nil {
 			undo()
 			return model.Node{}, err
@@ -411,7 +412,8 @@ func (s *Service) createAllocation(req CreateNodeRequest, actor model.Actor, use
 	if err := checkMemberCeilingFalls(len(project.AuthorizedUsers), s.memberCeilingOf(*project), s.memberCeilingOf(*project, req.Limit)); err != nil {
 		return model.Node{}, err
 	}
-	if end, err = s.fitNodeEnd(model.KindAllocation, end, chain); err != nil {
+	// It runs until the project ends (decided 25.11.2026): its budget has to cover that end, nothing is shortened silently.
+	if end, err = s.coverProjectEnd(*project, *budget, chain, end); err != nil {
 		return model.Node{}, err
 	}
 	a, err := s.placeAllocation(ctx, *project, *budget, chain, req.Limit, end, req.Reason, manager, false, actor, userEmail)
@@ -442,6 +444,30 @@ func (s *Service) createAllocation(req CreateNodeRequest, actor model.Actor, use
 		return a, nil
 	}
 	return out[0], nil
+}
+
+// coverProjectEnd is the end of an allocation added to a project: the project's end. Refused when the budget cannot grant that long (its end, or its longest project term from today), or when an end asked for differs from it.
+func (s *Service) coverProjectEnd(project, budget model.Node, chain []model.Node, asked *string) (*string, error) {
+	want := project.TerminationDate
+	if asked != nil && !model.SameEnd(asked, want) {
+		if want == nil {
+			return nil, invalid("Das Projekt läuft ohne Enddatum; eine Zuteilung läuft so lange wie das Projekt.", "The project has no end date; an allocation runs as long as the project.")
+		}
+		return nil, invalid("Eine Zuteilung läuft so lange wie das Projekt, bis %s.", "An allocation runs as long as the project, until %s.", dateOnly(*want))
+	}
+	fitted, err := s.fitNodeEnd(model.KindAllocation, want, chain)
+	if err != nil || (want == nil && fitted != nil) {
+		bound, _ := s.endBound(model.KindAllocation, chain)
+		until := "—"
+		if bound != nil {
+			until = dateOnly(*bound)
+		}
+		if want == nil {
+			return nil, invalid("Das Budget %q vergibt nur bis %s, das Projekt läuft ohne Enddatum. Erst das Projekt befristen oder ein anderes Budget wählen.", "The budget %q grants only until %s, the project has no end date. Give the project an end first or choose another budget.", nodeLabel(budget), until)
+		}
+		return nil, invalid("Das Budget %q vergibt nur bis %s, das Projekt läuft bis %s. Eine Zuteilung läuft so lange wie das Projekt; ein anderes Budget wählen oder das Projekt früher enden lassen.", "The budget %q grants only until %s, the project runs until %s. An allocation runs as long as the project; choose another budget or let the project end earlier.", nodeLabel(budget), until, dateOnly(*want))
+	}
+	return fitted, nil
 }
 
 // updateProject is UpdateNode on a project: its name and its admins, by its owner, its admins and whoever manages every budget paying for it. A new name is carried to its allocations. Callers hold approvalMu.
@@ -480,6 +506,35 @@ func (s *Service) updateProject(ctx context.Context, current *model.Node, req Up
 	return out[0], nil
 }
 
+// changeProjectEnd asks every live allocation of a project for the new end, each under its budget's rules: at once where it shortens or the budget extends by itself, else waiting for its managers. A date one of the budgets cannot grant at all refuses the whole change before anything is written. Callers hold approvalMu.
+func (s *Service) changeProjectEnd(ctx context.Context, project *model.Node, live []model.Node, req ChangeNodeRequest, actor model.Actor, userTokens common.TokenList) (model.Node, error) {
+	for _, a := range live {
+		chain, err := s.parentChainNodes(ctx, &a)
+		if err != nil {
+			return model.Node{}, err
+		}
+		if _, err := s.fitNodeEnd(model.KindAllocation, req.TerminationDate, chain); err != nil {
+			return model.Node{}, invalid("Das Budget %q kann so lange nicht vergeben: %w", "The budget %q cannot grant that long: %w", nodeLabel(chain[0]), err)
+		}
+	}
+	for _, a := range live {
+		alloc := a
+		sub := ChangeNodeRequest{TerminationDate: req.TerminationDate, Reason: req.Reason}
+		if _, err := s.requestChangeLocked(ctx, &alloc, sub, actor, userTokens); err != nil {
+			return model.Node{}, err
+		}
+	}
+	stored, err := s.loadNode(ctx, project.ID)
+	if err != nil {
+		return model.Node{}, err
+	}
+	out, err := s.attachUsage(ctx, []model.Node{*stored}, userTokens)
+	if err != nil {
+		return *stored, nil
+	}
+	return out[0], nil
+}
+
 // liveLimits are what the live allocations of a project hold and ask for: the ceiling on its members follows every provider one of them concerns.
 func liveLimits(allocs []model.Node) []common.ProjectQuota {
 	var out []common.ProjectQuota
@@ -507,6 +562,18 @@ func (s *Service) requestProjectChange(ctx context.Context, current *model.Node,
 	}
 	if !holdsProject(userTokens, current) && !funder {
 		return model.Node{}, errNoPermission
+	}
+	// A new end belongs to the project: every allocation runs until it, so it is asked of every paying budget (decided 25.11.2026); the project's end moves once all have agreed.
+	if req.AuthorizedUsers == nil && req.Limit == nil && req.TerminationDate != nil {
+		var live []model.Node
+		for _, a := range allocs[current.ID] {
+			if slices.Contains(liveAllocationStatuses, a.Status) && !a.EndsAlone {
+				live = append(live, a)
+			}
+		}
+		if len(live) > 1 {
+			return s.changeProjectEnd(ctx, current, live, req, actor, userTokens)
+		}
 	}
 	// Without members it is all the allocation's: answered with the allocation, as a change of a project's only leaf always was.
 	if req.AuthorizedUsers == nil {

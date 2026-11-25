@@ -127,11 +127,11 @@ func (s *Syncer) Pass(ctx context.Context) (Result, error) {
 			continue
 		}
 		p := ProjectFor(leaf, resources)
-		chain := tree.BudgetChain(budgets, leaf)
-		p.Release = ReleaseFor(chain)
-		p.WorkspaceScratchGB = ScratchFor(chain)
-		p.BatchPriority = BatchPriorityFor(chain)
-		p.BatchJobs = BatchJobsFor(chain)
+		chains := tree.BudgetChains(budgets, leaf)
+		p.Release = ReleaseFor(chains)
+		p.WorkspaceScratchGB = ScratchFor(chains)
+		p.BatchPriority = BatchPriorityFor(chains)
+		p.BatchJobs = BatchJobsFor(chains)
 		if planned {
 			p.DeleteAt = &at
 		}

@@ -97,6 +97,9 @@ spec:
             - name: tmp
               mountPath: /tmp
           env:
+            # The version this process reports (index page, config.json, portal footer): the tag the image is deployed under (same expression as the image tag). A stable release retags a pre-release image without rebuilding, so the version baked into the image can be the pre-release's.
+            - name: APP_VERSION
+              value: {{ .Values.openstackManagementApi.version | default .Chart.AppVersion | quote }}
             # ── Database ────────────────────────────────────────────────────
             - name: DB_TYPE
               value: {{ .Values.openstackManagementApi.db.type | quote }}

@@ -2,6 +2,7 @@ package webserver
 
 import (
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -9,9 +10,16 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/helper"
 )
 
-// appVersion is the embedded VERSION file, which ends in a newline — trim it
-// once here so no consumer has to (it used to reach the UI as "0.7.7\n").
-var appVersion = strings.TrimSpace(generated_docs.Version)
+// appVersion is the version this process reports (index page, config.json): APP_VERSION, which the Helm chart sets from the chart's appVersion — the tag the image is deployed under —, else the embedded VERSION file. The embedded file alone is not enough: a stable release retags the image of the pre-release before it without rebuilding, so the binary carries the pre-release's number.
+var appVersion = runningVersion(os.Getenv("APP_VERSION"), generated_docs.Version)
+
+// runningVersion is env when set, else the embedded version; both trimmed (the VERSION file ends in a newline).
+func runningVersion(env, embedded string) string {
+	if v := strings.TrimSpace(env); v != "" {
+		return v
+	}
+	return strings.TrimSpace(embedded)
+}
 
 // StaticConfig contains values needed by static endpoints.
 type StaticConfig struct {

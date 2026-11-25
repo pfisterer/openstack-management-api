@@ -151,6 +151,7 @@ func toNodeRow(n model.Node) nodeRow {
 	n.InheritedCaps = nil
 	// And how the caller of a listing sees the node.
 	n.ViewerRelation = ""
+	n.MembersHidden = 0
 	// Every write passes here, so this is where no node's history outgrows its cap.
 	model.CapHistory(&n)
 	return nodeRow{

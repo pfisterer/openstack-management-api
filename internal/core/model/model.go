@@ -534,8 +534,10 @@ type Node struct {
 	// from below the root down to ParentID, root-most first, so a client can
 	// tell two budgets of the same name apart. Empty when the parent is the root.
 	ParentPath []PathEntry `json:"parent_path,omitempty"`
-	// ViewerRelation is attached to the caller's own project list (never persisted): how the caller comes to see the project — "owner", "admin" (its admin scope names them or a group of theirs) or "member" (only an authorized user, who reads it and works in it but cannot change it). Only the server knows the caller's group tokens, so only it can tell an admin by group from a member by group.
+	// ViewerRelation is attached to the caller's own project list (never persisted): how the caller comes to see the project — "owner", "admin" (its admin scope names them or a group of theirs) or "member" (only an authorized user, who reads it and works in it but cannot change it). Only the server knows the caller's group tokens, so only it can tell an admin by group from a member by group. Every other response sets it to "member" where it shows a project in a member's view (MembersHidden).
 	ViewerRelation string `json:"viewer_relation,omitempty" enums:"owner,admin,member"`
+	// MembersHidden is attached to the view a member gets of a project (never persisted): how many entries of AuthorizedUsers are not shown because they are not the caller's own. A member sees only their own entries (the person, or a group they are in); the owner, the project's admins, the managers of a budget paying for it and the root admins see the whole list and no count. Wherever it applies, viewer_relation is "member" and admin_scope and history are left out.
+	MembersHidden int `json:"members_hidden,omitempty"`
 	// EffectiveAttributes is attached to API responses (never persisted): the
 	// attribute groups that apply at this node, its own and inherited, each with
 	// the node it comes from. Like Attributes, only for those who look after the

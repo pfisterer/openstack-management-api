@@ -15,7 +15,7 @@ import (
 // getNode returns a single node by ID if the caller is authorized to view it.
 //
 //	@Summary		Get node
-//	@Description	Fetches a single node (budget or project leaf). Accessible by the leaf owner, authorized users, eligible requesters of a budget, and managers of the node's ancestor chain.
+//	@Description	Fetches a single node (budget or project leaf). Accessible by the leaf owner, authorized users, eligible requesters of a budget, and managers of the node's ancestor chain. A project's members (authorized users who are not its owner, an admin, a manager of a paying budget or a root admin) get the member's view: only their own entries of authorized_users plus members_hidden, viewer_relation member, no admin_scope and no history; the same applies to every listing and to the project embedded in an allocation.
 //	@Tags			nodes
 //	@Produce		json
 //	@Security		Bearer

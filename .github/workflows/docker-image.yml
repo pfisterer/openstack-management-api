@@ -35,7 +35,7 @@ jobs:
       packages: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 2
 
@@ -89,7 +89,7 @@ jobs:
       packages: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -132,7 +132,7 @@ jobs:
           docker buildx imagetools create "${TAGS[@]}" "$IMAGE:sha-$GITHUB_SHA"
 
       - name: Set up Helm
-        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
 
       - name: Package and push the Helm chart
         env:
@@ -198,39 +198,39 @@ jobs:
 
       # --- ghcr retention (runs after the push, so counts include the new tag) ---
       # Keep only the newest pre-release "-test.N" tag
-      - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+      - uses: dataaxiom/ghcr-cleanup-action@ac45a8c04b1eb4b27974ca79a0a74f344c93664b # v1.3.0
         with:
           use-regex: true
           exclude-tags: '^latest$'
           delete-tags: '^\d+\.\d+\.\d+-test\.\d+$'
           keep-n-tagged: 1
       # Keep the newest 3 automatic versions (X.Y.Z-test.N.R, X.Y.Z-0.ci.R)
-      - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+      - uses: dataaxiom/ghcr-cleanup-action@ac45a8c04b1eb4b27974ca79a0a74f344c93664b # v1.3.0
         with:
           use-regex: true
           exclude-tags: '^latest$'
           delete-tags: '^\d+\.\d+\.\d+-(test\.\d+\.\d+|0\.ci\.\d+)$'
           keep-n-tagged: 3
       # Keep the newest 10 commit images (sha-<commit>); nothing deploys them, they are only the source of the retag
-      - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+      - uses: dataaxiom/ghcr-cleanup-action@ac45a8c04b1eb4b27974ca79a0a74f344c93664b # v1.3.0
         with:
           use-regex: true
           delete-tags: '^sha-[0-9a-f]{40}$'
           keep-n-tagged: 10
       # Keep the newest 3 stable semver tags (X.Y.Z)
-      - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+      - uses: dataaxiom/ghcr-cleanup-action@ac45a8c04b1eb4b27974ca79a0a74f344c93664b # v1.3.0
         with:
           use-regex: true
           exclude-tags: '^latest$'
           delete-tags: '^v?\d+\.\d+\.\d+$'
           keep-n-tagged: 3
       # Delete all old pre-release "-alpha" tags
-      - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+      - uses: dataaxiom/ghcr-cleanup-action@ac45a8c04b1eb4b27974ca79a0a74f344c93664b # v1.3.0
         with:
           use-regex: true
           delete-tags: '^.*-alpha$'
       # Clean up untagged / ghost / orphaned leftovers
-      - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+      - uses: dataaxiom/ghcr-cleanup-action@ac45a8c04b1eb4b27974ca79a0a74f344c93664b # v1.3.0
         with:
           delete-untagged: true
           delete-ghost-images: true

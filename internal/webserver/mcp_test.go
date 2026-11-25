@@ -58,6 +58,7 @@ func mcpTestServerWithService(t *testing.T) (*httptest.Server, *tree.Service) {
 var mcpReadTools = []string{
 	"get_project", "list_budget_contents", "list_my_budgets", "list_my_projects",
 	"list_requestable_budgets", "list_requests_to_decide", "search_projects", "plan_project_split",
+	"estimate_options", "estimate_resources",
 }
 
 // The whole reason the read-only rule moved off the HTTP method: every MCP call
@@ -234,6 +235,8 @@ func TestMCP_ToolsDeclareTheirRequiredArguments(t *testing.T) {
 		"create_budget":            {"parent_id", "name", "reason", "limit", "admin_scope"},
 		"create_project":           {"name", "reason"},
 		"plan_project_split":       {"limit"},
+		"estimate_options":         {},
+		"estimate_resources":       {},
 		"add_project_allocation":   {"project_id", "budget_id", "limit", "reason"},
 		"end_allocation":           {"id", "confirm_budget_id"},
 		"release_project":          {"id", "confirm_name"},

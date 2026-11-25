@@ -25,6 +25,10 @@ var pairConstructors = map[string]int{
 	"nodeResult": 3,
 	// mcpServiceError(log, err, de, en, ...)
 	"mcpServiceError": 2,
+	// the estimator's notes: r.assume(code, de, en, ...), r.warn(code, de, en, ...), fix(code, de, en, ...)
+	"r.assume": 1,
+	"r.warn":   1,
+	"fix":      1,
 }
 
 // storedGerman are German texts that are no answer of the API but stored, written once in the language of the platform (decided: stored history texts stay as they are): the notes the server writes into a node's history, and the purpose of imported projects and of the bootstrap's collection budget.

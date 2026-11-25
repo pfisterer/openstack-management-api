@@ -65,6 +65,13 @@ openstackManagementApi:
     url: ""
     token: ""
 
+  # The resource estimator (Schätzhelfer, /v1/estimate). llmURL is an OpenAI-compatible base URL (the platform's LiteLLM, …/v1) for reading free-text descriptions; empty = descriptions off, the estimator still computes. The key goes into the Secret (key estimate-llm-api-key); with existingSecret it has to be there.
+  estimate:
+    llmURL: ""
+    llmModel: "chat-large"
+    llmTimeoutSeconds: 60
+    llmAPIKey: ""
+
   # endingNoticeDays before a project's end its people are told. portalURL is the self-service portal, for links in notifications. graceDays is accepted for older values and unused.
   expiry:
     endingNoticeDays: 14

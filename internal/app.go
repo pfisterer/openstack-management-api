@@ -28,6 +28,7 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"github.com/pfisterer/openstack-management-api/internal/core/usage"
 	"github.com/pfisterer/openstack-management-api/internal/dev"
+	"github.com/pfisterer/openstack-management-api/internal/estimate"
 	"github.com/pfisterer/openstack-management-api/internal/provider/aiaas"
 	"github.com/pfisterer/openstack-management-api/internal/provider/openstack/catalog"
 	osclient "github.com/pfisterer/openstack-management-api/internal/provider/openstack/client"
@@ -378,6 +379,24 @@ func RunApplication() {
 		logger.Info("Reconciler disabled (set RECONCILER_ENABLED=true to enable)")
 	}
 
+	// The resource estimator: its profiles (built in, or ESTIMATE_PROFILES_FILE), OpenStack's flavours through the reconciler's connection (cached; the configured fallback while it connects), and the model for free-text descriptions when one is configured.
+	estimateCfg, err := estimate.LoadConfig(config.Estimate.ProfilesFile)
+	if err != nil {
+		logger.Fatalw("Invalid estimator profiles", "error", err)
+	}
+	estimateAPI := &webserver.EstimateConfig{
+		Estimator:    estimate.New(estimateCfg, nil),
+		Flavors:      &estimate.CachedFlavors{Source: flavorSource{reconcilerAPI}, Fallback: estimateCfg.Cloud.FallbackFlavors, TTL: 10 * time.Minute},
+		FlavorGrants: func() map[string]string { return flavorGrants(resourceCatalog) },
+	}
+	llmClient := estimate.ClientConfig{URL: config.Estimate.LLMURL, APIKey: config.Estimate.LLMAPIKey, Model: config.Estimate.LLMModel, TimeoutSeconds: config.Estimate.LLMTimeoutSeconds}
+	if llmClient.Enabled() {
+		estimateAPI.Describer = estimate.NewDescriber(estimateCfg, estimate.NewOpenAIClient(llmClient))
+		logger.Infow("Estimator: free-text descriptions on", "model", config.Estimate.LLMModel, "profiles", estimateCfg.Version)
+	} else {
+		logger.Infow("Estimator: free-text descriptions off (ESTIMATE_LLM_URL and ESTIMATE_LLM_API_KEY unset)", "profiles", estimateCfg.Version)
+	}
+
 	// The probes: /healthz (alive) and /readyz (the database answers; the identity provider's keys are reported but do not take the pod out, since API tokens work without it).
 	probes := &ginweb.Health{}
 	if db, ok := nodeStore.(interface{ DB() *gorm.DB }); ok {
@@ -434,6 +453,7 @@ func RunApplication() {
 			Retirement:            retirementConfig(config),
 			Usage:                 usageStore,
 			UsagePrices:           config.UsagePrices,
+			Estimate:              estimateAPI,
 		},
 		Tokens: webserver.TokenConfig{
 			Service: apiTokens,
@@ -478,4 +498,36 @@ func activeProviders(config AppConfiguration) []string {
 		return []string{aiaas.Provider}
 	}
 	return nil
+}
+
+// flavorSource lists OpenStack's flavours through the reconciler's connection; none without a reconciler, and catalog.ErrUnavailable while it connects (the cache then serves the configured fallback).
+type flavorSource struct{ rec webserver.ReconcilerAPI }
+
+func (f flavorSource) Flavors(context.Context) ([]estimate.Flavor, error) {
+	lister, ok := f.rec.(interface {
+		Flavors() ([]osclient.FlavorInfo, error)
+	})
+	if f.rec == nil || !ok {
+		return nil, catalog.ErrUnavailable
+	}
+	infos, err := lister.Flavors()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]estimate.Flavor, 0, len(infos))
+	for _, i := range infos {
+		out = append(out, estimate.Flavor{ID: i.ID, Name: i.Name, VCPUs: i.VCPUs, RAMMB: i.RAMMB, DiskGB: i.DiskGB, GPUs: i.GPUs, Public: i.IsPublic})
+	}
+	return out, nil
+}
+
+// flavorGrants maps the OpenStack id of every private flavour the catalogue offers (an active availability of grant type flavor) to the availability's id.
+func flavorGrants(c *catalog.Catalog) map[string]string {
+	out := map[string]string{}
+	for _, e := range c.Entries() {
+		if e.State == catalog.StateActive && e.Grant.Type == osclient.GrantFlavor {
+			out[e.Grant.Target] = e.ID
+		}
+	}
+	return out
 }

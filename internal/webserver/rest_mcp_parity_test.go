@@ -44,6 +44,10 @@ var routeDecisions = map[string]mcptest.Route{
 	"GET /v1/nodes/:id/usage":                       {Omitted: "usage reports are not offered to an agent yet"},
 	"POST /v1/nodes/:id/promote":                    {Tools: []string{"adopt_imported_project"}},
 
+	"GET /v1/estimate/options":   {Tools: []string{"estimate_options"}},
+	"POST /v1/estimate":          {Tools: []string{"estimate_resources"}},
+	"POST /v1/estimate/describe": {Omitted: "an agent is a language model itself and fills estimate_resources directly; the free-text description is for people in the portal"},
+
 	"GET /v1/tokens":        {Omitted: "an agent authenticates with a token; it neither lists, mints nor revokes them (see createToken: a token that mints tokens outlives every expiry)"},
 	"POST /v1/tokens":       {Omitted: "see GET /v1/tokens"},
 	"DELETE /v1/tokens/:id": {Omitted: "see GET /v1/tokens"},

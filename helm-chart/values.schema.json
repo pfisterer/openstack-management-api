@@ -88,6 +88,16 @@
           },
           "additionalProperties": false
         },
+        "estimate": {
+          "type": "object",
+          "properties": {
+            "llmURL": { "type": "string" },
+            "llmModel": { "type": "string" },
+            "llmTimeoutSeconds": { "type": "integer", "minimum": 1 },
+            "llmAPIKey": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
         "notify": {
           "type": "object",
           "properties": {

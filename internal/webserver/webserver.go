@@ -163,6 +163,8 @@ type APIConfig struct {
 	Usage UsageReader
 	// UsagePrices put a euro value on the root admins' evaluation; nil for none.
 	UsagePrices *usage.Prices
+	// Estimate is the resource estimator (api_estimate.go); nil answers its routes with 503.
+	Estimate *EstimateConfig
 	// Log receives the detail of internal errors, which callers only see as "Interner Fehler." (code internal). SetupGinWebserver fills it in.
 	Log *zap.SugaredLogger
 }
@@ -312,6 +314,13 @@ func RegisterApiRoutes(v1 *gin.RouterGroup, cfg APIConfig, log *zap.SugaredLogge
 		nodes.DELETE("/:id/external-groups/:groupId", removeNodeExternalGroup(cfg))
 		nodes.GET("/:id/usage", getNodeUsage(cfg))
 		nodes.POST("/:id/promote", promoteNode(cfg))
+	}
+
+	est := v1.Group("/estimate")
+	{
+		est.GET("/options", getEstimateOptions(cfg))
+		est.POST("", postEstimate(cfg))
+		est.POST("/describe", postEstimateDescribe(cfg))
 	}
 
 	return v1

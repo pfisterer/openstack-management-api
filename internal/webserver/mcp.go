@@ -308,6 +308,10 @@ type mcpSplitInput struct {
 	BudgetIDs       []string       `json:"budget_ids,omitempty" jsonschema:"optional: only consider these budgets"`
 }
 
+type mcpEstimateOptionsInput struct {
+	BudgetID string `json:"budget_id,omitempty" jsonschema:"optional: the budget whose private flavours count; without it every budget you may request from or manage"`
+}
+
 type mcpAddAllocationInput struct {
 	ProjectID       string         `json:"project_id" jsonschema:"id of the project"`
 	BudgetID        string         `json:"budget_id" jsonschema:"the budget to pay it: one you may request from (a request under its rules), or one you manage (granted at once)"`
@@ -559,6 +563,32 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 			return nil, tree.SplitPlan{}, mcpServiceError(log, err, "Aufteilung vorschlagen", "propose a split")
 		}
 		return nil, plan, nil
+	})
+
+	mcpserve.AddTool(s, caller, false, &mcp.Tool{
+		Name: "estimate_options",
+		Description: "What a resource estimate can be made of: the LLM tools (chat, code, agent, script) with their measured usage profiles, " +
+			"the workspace kinds, the flavours the calling user may use (under budget_id, or under any budget of theirs), the GPU classes. Use before estimate_resources.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in mcpEstimateOptionsInput) (*mcp.CallToolResult, EstimateOptions, error) {
+		out, err := cfg.estimateOptions(ctx, caller.tokens, in.BudgetID, msg.LangOf(ctx))
+		if err != nil {
+			return nil, EstimateOptions{}, mcpEstimateError(log, err)
+		}
+		return nil, out, nil
+	})
+
+	mcpserve.AddTool(s, caller, false, &mcp.Tool{
+		Name: "estimate_resources",
+		Description: "Estimate what a project needs from its intended use, deterministically: llm (tool, persons, sessions_per_week, hours_per_session, weeks, together) " +
+			"gives the LLM token pool per 30 days (llm-mtokens), tokens and requests per minute; cloud (flavors × count, volumes, optionally per_person × participants) " +
+			"gives cores, RAM, storage and private flavour availabilities; workspaces (kind, persons, times, storage) gives vCPU, RAM and GPU hours per 30 days and storage. " +
+			"result.limit is ready for create_project; result.assumptions says what was assumed. With budget_id, budget says what that budget grants on its own and what would wait. Writes nothing.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in EstimateRequest) (*mcp.CallToolResult, EstimateResponse, error) {
+		out, err := cfg.runEstimate(ctx, identity.AuthContext{UserEmail: caller.userEmail, ActorEmail: caller.actorEmail, EffectiveTokens: caller.tokens}, in, msg.LangOf(ctx))
+		if err != nil {
+			return nil, EstimateResponse{}, mcpEstimateError(log, err)
+		}
+		return nil, out, nil
 	})
 
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
@@ -899,4 +929,16 @@ func mcpServiceError(log *zap.SugaredLogger, err error, de, en string, args ...a
 		return msg.Errorf(de+": %s", en+": %s", append(args, e.Msg)...)
 	}
 	return msg.Errorf(de+": %w", en+": %w", append(args, err)...)
+}
+
+// mcpEstimateError is what estimate_options and estimate_resources report: the estimator's own conditions as REST answers them, everything else as mcpServiceError.
+func mcpEstimateError(log *zap.SugaredLogger, err error) error {
+	e := estimateErrors.Classify(err)
+	if e.Status >= http.StatusInternalServerError {
+		if log != nil && e.Status == http.StatusInternalServerError {
+			log.Errorw("MCP tool failed", "error", err)
+		}
+		return msg.Err(e.Msg)
+	}
+	return mcpServiceError(log, err, "Schätzen", "estimate")
 }

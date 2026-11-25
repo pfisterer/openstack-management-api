@@ -44,9 +44,10 @@ func TestRedactedConfigShowsNoPartOfASecret(t *testing.T) {
 	c.Openstack.ApplicationCredentialSecret = "appcred-secret-value"
 	c.RoleProvider.APIToken = "rp-token-value"
 	c.AIaaS.Token = "aiaas-token-value"
+	c.Estimate.LLMAPIKey = "estimate-llm-key-value"
 	c.Storage.ConnectionString = "host=db user=osmgt password='pa ss word' dbname=osmgt sslmode=require"
 	r := redactedConfig(c)
-	if r.Openstack.Password != "set" || r.Openstack.ApplicationCredentialSecret != "set" || r.RoleProvider.APIToken != "set" || r.AIaaS.Token != "set" {
+	if r.Openstack.Password != "set" || r.Openstack.ApplicationCredentialSecret != "set" || r.RoleProvider.APIToken != "set" || r.AIaaS.Token != "set" || r.Estimate.LLMAPIKey != "set" {
 		t.Fatalf("secrets not reduced to set: %+v", r)
 	}
 	if got, want := r.Storage.ConnectionString, "host=db user=osmgt password=set dbname=osmgt sslmode=require"; got != want {

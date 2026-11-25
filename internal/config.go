@@ -225,8 +225,19 @@ type AppConfiguration struct {
 	Notify NotifyConfig `json:"notify"`
 	// Expiry is how the ends of projects are followed up (tree.Expiry).
 	Expiry ExpiryConfig `json:"expiry"`
+	// Estimate is the resource estimator (package estimate): its profiles and the model that reads descriptions.
+	Estimate EstimateConfig `json:"estimate"`
 	// MigrateDryRun (MIGRATE_DRY_RUN) runs the migration to allocation leaves on the database without committing, prints its report and exits — for a trial run against a copy of a database.
 	MigrateDryRun bool `json:"migrate_dry_run"`
+}
+
+// EstimateConfig is the resource estimator: ESTIMATE_PROFILES_FILE replaces the built-in profiles (internal/estimate/profiles.json) with a file of the same form; ESTIMATE_LLM_URL (an OpenAI-compatible base URL, e.g. the platform's LiteLLM …/v1), ESTIMATE_LLM_API_KEY and ESTIMATE_LLM_MODEL (default chat-large) are the model that reads free-text descriptions — without URL and key the description is off and the rest of the estimator works.
+type EstimateConfig struct {
+	ProfilesFile      string `json:"profiles_file"`
+	LLMURL            string `json:"llm_url"`
+	LLMAPIKey         string `json:"llm_api_key"`
+	LLMModel          string `json:"llm_model"`
+	LLMTimeoutSeconds int    `json:"llm_timeout_seconds"`
 }
 
 // NotifyConfig is the notification service: NOTIFY_URL (its base URL) and NOTIFY_TOKEN (the bearer token of this service there).
@@ -366,6 +377,13 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			PortalURL:        envconf.String("PORTAL_URL", ""),
 		},
 		MigrateDryRun: envconf.Bool("MIGRATE_DRY_RUN", false),
+		Estimate: EstimateConfig{
+			ProfilesFile:      envconf.String("ESTIMATE_PROFILES_FILE", ""),
+			LLMURL:            envconf.String("ESTIMATE_LLM_URL", ""),
+			LLMAPIKey:         envconf.String("ESTIMATE_LLM_API_KEY", ""),
+			LLMModel:          envconf.String("ESTIMATE_LLM_MODEL", "chat-large"),
+			LLMTimeoutSeconds: envconf.Int("ESTIMATE_LLM_TIMEOUT_SECONDS", 60),
+		},
 	}
 	// A JSON object rather than three numbers: envconf reads no floats, and the
 	// prices belong together.
@@ -478,6 +496,7 @@ func redactedConfig(appConfig AppConfiguration) AppConfiguration {
 	appConfig.Openstack.Password = redact.Secret(appConfig.Openstack.Password)
 	appConfig.RoleProvider.APIToken = redact.Secret(appConfig.RoleProvider.APIToken)
 	appConfig.AIaaS.Token = redact.Secret(appConfig.AIaaS.Token)
+	appConfig.Estimate.LLMAPIKey = redact.Secret(appConfig.Estimate.LLMAPIKey)
 	appConfig.Storage.ConnectionString = redact.ConnString(appConfig.Storage.ConnectionString)
 	return appConfig
 }

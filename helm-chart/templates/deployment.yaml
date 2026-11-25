@@ -234,6 +234,22 @@ spec:
                   key: notify-token
             {{- end }}
             {{- end }}
+            {{- with .Values.openstackManagementApi.estimate }}
+            {{- if .llmURL }}
+            # The resource estimator's model for free-text descriptions (an OpenAI-compatible endpoint, the platform's LiteLLM); without it the description is off and the estimator still computes.
+            - name: ESTIMATE_LLM_URL
+              value: {{ .llmURL | quote }}
+            - name: ESTIMATE_LLM_MODEL
+              value: {{ .llmModel | default "chat-large" | quote }}
+            - name: ESTIMATE_LLM_TIMEOUT_SECONDS
+              value: {{ .llmTimeoutSeconds | default 60 | quote }}
+            - name: ESTIMATE_LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: estimate-llm-api-key
+            {{- end }}
+            {{- end }}
             {{- with .Values.openstackManagementApi.expiry }}
             # Follow-up of the ends of projects (tree.Expiry).
             - name: EXPIRY_ENDING_NOTICE_DAYS

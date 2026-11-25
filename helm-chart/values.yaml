@@ -72,6 +72,19 @@ openstackManagementApi:
     llmTimeoutSeconds: 60
     llmAPIKey: ""
 
+  # The portal assistant (POST /v1/assistant/ask, stage 1: read only). llmURL is an OpenAI-compatible base URL (the platform's LiteLLM, …/v1) and llmModel an alias whose tool calls work on its backend (agent); empty llmURL = assistant off. The key goes into the Secret (key assistant-llm-api-key); with existingSecret it has to be there. questionsPerHour per person and concurrent over everyone bound the GPU load, per replica; maxSteps, maxToolCalls, maxTokens 0 = built-in defaults (6, 12, 60000).
+  assistant:
+    llmURL: ""
+    llmModel: "agent"
+    llmTimeoutSeconds: 60
+    timeoutSeconds: 120
+    questionsPerHour: 30
+    concurrent: 4
+    maxSteps: 0
+    maxToolCalls: 0
+    maxTokens: 0
+    llmAPIKey: ""
+
   # endingNoticeDays before a project's end its people are told. portalURL is the self-service portal, for links in notifications. graceDays is accepted for older values and unused.
   expiry:
     endingNoticeDays: 14

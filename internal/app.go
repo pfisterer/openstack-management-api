@@ -25,6 +25,7 @@ import (
 	"github.com/pfisterer/cloud-self-service-golib/retry"
 	"github.com/pfisterer/cloud-self-service-golib/token"
 	"github.com/pfisterer/cloud-self-service-golib/tokengorm"
+	"github.com/pfisterer/openstack-management-api/internal/assistant"
 	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/tree"
 	"github.com/pfisterer/openstack-management-api/internal/core/usage"
@@ -413,6 +414,28 @@ func RunApplication() {
 		logger.Infow("Estimator: free-text descriptions off (ESTIMATE_LLM_URL and ESTIMATE_LLM_API_KEY unset)", "profiles", estimateCfg.Version)
 	}
 
+	// The portal assistant (stage 1, read only): on only with a model configured.
+	var assistantAPI *webserver.AssistantConfig
+	assistantClient := assistant.ClientConfig{URL: config.Assistant.LLMURL, APIKey: config.Assistant.LLMAPIKey, Model: config.Assistant.LLMModel, TimeoutSeconds: config.Assistant.LLMTimeoutSeconds}
+	if assistantClient.Enabled() {
+		assistantAPI = &webserver.AssistantConfig{
+			Agent: &assistant.Agent{
+				Model:     assistant.NewOpenAIClient(assistantClient, 0),
+				ModelName: config.Assistant.LLMModel,
+				Limits: assistant.Limits{
+					MaxSteps:     config.Assistant.MaxSteps,
+					MaxToolCalls: config.Assistant.MaxToolCalls,
+					MaxTokens:    config.Assistant.MaxTokens,
+					Timeout:      time.Duration(config.Assistant.TimeoutSeconds) * time.Second,
+				},
+			},
+			Limiter: assistant.NewLimiter(config.Assistant.QuestionsPerHour, config.Assistant.Concurrent),
+		}
+		logger.Infow("Assistant: on (read only)", "model", config.Assistant.LLMModel, "questions_per_hour", config.Assistant.QuestionsPerHour, "concurrent", config.Assistant.Concurrent)
+	} else {
+		logger.Infow("Assistant: off (ASSISTANT_LLM_URL and ASSISTANT_LLM_API_KEY unset)")
+	}
+
 	// The probes: /healthz (alive) and /readyz (the database answers; the identity provider's keys are reported but do not take the pod out, since API tokens work without it).
 	probes := &ginweb.Health{}
 	if db, ok := nodeStore.(interface{ DB() *gorm.DB }); ok {
@@ -470,6 +493,7 @@ func RunApplication() {
 			Usage:                 usageStore,
 			UsagePrices:           config.UsagePrices,
 			Estimate:              estimateAPI,
+			Assistant:             assistantAPI,
 		},
 		Tokens: webserver.TokenConfig{
 			Service: apiTokens,

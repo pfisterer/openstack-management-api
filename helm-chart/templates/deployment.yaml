@@ -250,6 +250,34 @@ spec:
                   key: estimate-llm-api-key
             {{- end }}
             {{- end }}
+            {{- with .Values.openstackManagementApi.assistant }}
+            {{- if .llmURL }}
+            # The portal assistant (stage 1, read only): the model it asks and its limits; without llmURL it is off.
+            - name: ASSISTANT_LLM_URL
+              value: {{ .llmURL | quote }}
+            - name: ASSISTANT_LLM_MODEL
+              value: {{ .llmModel | default "agent" | quote }}
+            - name: ASSISTANT_LLM_TIMEOUT_SECONDS
+              value: {{ .llmTimeoutSeconds | default 60 | quote }}
+            - name: ASSISTANT_TIMEOUT_SECONDS
+              value: {{ .timeoutSeconds | default 120 | quote }}
+            - name: ASSISTANT_QUESTIONS_PER_HOUR
+              value: {{ .questionsPerHour | default 30 | quote }}
+            - name: ASSISTANT_CONCURRENT
+              value: {{ .concurrent | default 4 | quote }}
+            - name: ASSISTANT_MAX_STEPS
+              value: {{ .maxSteps | default 0 | quote }}
+            - name: ASSISTANT_MAX_TOOL_CALLS
+              value: {{ .maxToolCalls | default 0 | quote }}
+            - name: ASSISTANT_MAX_TOKENS
+              value: {{ .maxTokens | default 0 | quote }}
+            - name: ASSISTANT_LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: assistant-llm-api-key
+            {{- end }}
+            {{- end }}
             {{- with .Values.openstackManagementApi.expiry }}
             # Follow-up of the ends of projects (tree.Expiry).
             - name: EXPIRY_ENDING_NOTICE_DAYS

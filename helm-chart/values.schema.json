@@ -98,6 +98,22 @@
           },
           "additionalProperties": false
         },
+        "assistant": {
+          "type": "object",
+          "properties": {
+            "llmURL": { "type": "string" },
+            "llmModel": { "type": "string" },
+            "llmTimeoutSeconds": { "type": "integer", "minimum": 1 },
+            "timeoutSeconds": { "type": "integer", "minimum": 1 },
+            "questionsPerHour": { "type": "integer", "minimum": 0 },
+            "concurrent": { "type": "integer", "minimum": 0 },
+            "maxSteps": { "type": "integer", "minimum": 0 },
+            "maxToolCalls": { "type": "integer", "minimum": 0 },
+            "maxTokens": { "type": "integer", "minimum": 0 },
+            "llmAPIKey": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
         "notify": {
           "type": "object",
           "properties": {

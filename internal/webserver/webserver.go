@@ -74,6 +74,8 @@ type ConfigResponse struct {
 	OpenstackDashboardURL string `json:"openstackDashboardUrl,omitempty"`
 	// Retirement says what releasing a project leads to in this deployment.
 	Retirement RetirementConfig `json:"retirement"`
+	// Assistant says whether the portal assistant answers here (POST /v1/assistant/ask) and at which stage: "" when it is not set up, read_only for stage 1.
+	Assistant string `json:"assistant,omitempty" enums:"read_only"`
 }
 
 // RetirementConfig is what happens to a released project here: whether it is
@@ -165,6 +167,8 @@ type APIConfig struct {
 	UsagePrices *usage.Prices
 	// Estimate is the resource estimator (api_estimate.go); nil answers its routes with 503.
 	Estimate *EstimateConfig
+	// Assistant is the portal assistant (api_assistant.go); nil answers its route with 503.
+	Assistant *AssistantConfig
 	// Log receives the detail of internal errors, which callers only see as "Interner Fehler." (code internal). SetupGinWebserver fills it in.
 	Log *zap.SugaredLogger
 }
@@ -323,6 +327,8 @@ func RegisterApiRoutes(v1 *gin.RouterGroup, cfg APIConfig, log *zap.SugaredLogge
 		est.POST("/describe", postEstimateDescribe(cfg))
 	}
 
+	v1.POST("/assistant/ask", postAssistantAsk(cfg))
+
 	return v1
 }
 
@@ -419,6 +425,9 @@ func getConfig(cfg APIConfig) gin.HandlerFunc {
 			Providers:             append([]string{}, cfg.Providers...),
 			OpenstackDashboardURL: cfg.OpenstackDashboardURL,
 			Retirement:            cfg.Retirement,
+		}
+		if cfg.Assistant != nil && cfg.Assistant.Agent != nil {
+			config.Assistant = "read_only"
 		}
 		c.JSON(http.StatusOK, config)
 	}

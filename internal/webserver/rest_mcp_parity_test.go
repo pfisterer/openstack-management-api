@@ -48,6 +48,8 @@ var routeDecisions = map[string]mcptest.Route{
 	"POST /v1/estimate":          {Tools: []string{"estimate_resources"}},
 	"POST /v1/estimate/describe": {Omitted: "an agent is a language model itself and fills estimate_resources directly; the free-text description is for people in the portal"},
 
+	"POST /v1/assistant/ask": {Omitted: "the portal assistant is itself an agent over these tools (read only, in process); an agent talks to the tools directly"},
+
 	"GET /v1/tokens":        {Omitted: "an agent authenticates with a token; it neither lists, mints nor revokes them (see createToken: a token that mints tokens outlives every expiry)"},
 	"POST /v1/tokens":       {Omitted: "see GET /v1/tokens"},
 	"DELETE /v1/tokens/:id": {Omitted: "see GET /v1/tokens"},

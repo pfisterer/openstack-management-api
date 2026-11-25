@@ -308,6 +308,7 @@ All under `/v1`, JSON, authenticated as above. Swagger annotations on the handle
 | `POST /v1/nodes/{id}/promote` | move an imported leaf into a real budget with an owner and flag it for the reconciler (§8.5) |
 | `DELETE /v1/nodes/{id}` | delete a budget subtree; refused while anything below is pending, awaiting a change decision, imported, or an approved leaf. Leaves are never deleted directly |
 | `GET /v1/estimate/options` · `POST /v1/estimate` · `POST /v1/estimate/describe` | the resource estimator (§7.2): what an estimate can be made of, the estimate itself with an optional budget check, and the same from a free-text description; nothing is written |
+| `POST /v1/assistant/ask` | the portal assistant, stage 1 (read only): a question answered by the platform's model with the read tools of `/mcp`, in process, as the caller; nothing is written or stored |
 | `GET /v1/act-as` | whether the caller may act on behalf of others, and for whom this request acted (§6.3) |
 | `GET /v1/principals/search?q=…` | what a token field can be filled with: groups (by token, label or description) and users (by address only, only for a non-empty query; role-provider results plus everyone already owning or participating in a leaf) |
 | `GET/POST /v1/tokens` · `DELETE /v1/tokens/{id}` | API tokens of the actor |
@@ -338,6 +339,10 @@ Errors from the service are sentinel-wrapped and mapped centrally in [errors.go]
 - **Workspaces.** Person-hours × the kind's booked cores, GB and GPU share give vCPU, RAM and GPU hours per 30 days; GPUs at once follow from whether people work together.
 - **Budget check.** With `budget_id`, the proposed limit goes through `PlanSplit` restricted to that budget: what it grants on its own, what would wait for its managers, what it would not take. A refusal there (no right to request, a value beyond a maximum) is reported in the answer, not raised.
 - **Free text.** With `ESTIMATE_LLM_URL` and `ESTIMATE_LLM_API_KEY`, a chat model (default `chat-large` through the platform's LiteLLM) reads a description and returns only the estimator's input, as JSON by a schema that lists the allowed flavours; the answer is read leniently (a fenced block, numbers as text, a decimal comma) and checked strictly: an invalid part or a flavour outside the list is dropped and named in `corrections`, and only an answer with nothing usable is refused. The numbers are always computed by the estimator. Without the configuration the route answers 503 and everything else works.
+
+### 7.3 Portal assistant
+
+[internal/assistant](internal/assistant) answers questions in the person's own words with a bounded tool-calling loop over this service's own MCP tools ([api_assistant.go](internal/webserver/api_assistant.go)). The MCP server is built per request as `/mcp` builds it, for the caller, but as a read-only caller, and connected over an in-memory transport: same tools, schemas and rights, no network hop, no token of its own. On top, only `assistant.ReadTools` are shown to the model and called (a test holds them against the read-only server). Tool results go to the model inside an envelope that marks them as data, never instructions; the loop is bounded in steps, tool calls, tokens and time, and a limiter bounds questions per person and hour and at once. The answer carries every tool call with its arguments and result. Nothing is stored; the log line has counts, not content. Design, the later stages (prefilled dialogs, small changes after a click) and open questions: [docs/portal-assistant.md](docs/portal-assistant.md).
 
 ---
 

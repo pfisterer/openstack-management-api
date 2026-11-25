@@ -227,6 +227,8 @@ type AppConfiguration struct {
 	Expiry ExpiryConfig `json:"expiry"`
 	// Estimate is the resource estimator (package estimate): its profiles and the model that reads descriptions.
 	Estimate EstimateConfig `json:"estimate"`
+	// Assistant is the portal assistant (package assistant): the model it asks and its limits.
+	Assistant AssistantConfig `json:"assistant"`
 	// MigrateDryRun (MIGRATE_DRY_RUN) runs the migration to allocation leaves on the database without committing, prints its report and exits — for a trial run against a copy of a database.
 	MigrateDryRun bool `json:"migrate_dry_run"`
 }
@@ -238,6 +240,20 @@ type EstimateConfig struct {
 	LLMAPIKey         string `json:"llm_api_key"`
 	LLMModel          string `json:"llm_model"`
 	LLMTimeoutSeconds int    `json:"llm_timeout_seconds"`
+}
+
+// AssistantConfig is the portal assistant (POST /v1/assistant/ask, stage 1: read only): ASSISTANT_LLM_URL (an OpenAI-compatible base URL, the platform's LiteLLM …/v1), ASSISTANT_LLM_API_KEY and ASSISTANT_LLM_MODEL (default agent, a model whose tool calls work on its backend) — without URL and key the assistant is off. ASSISTANT_LLM_TIMEOUT_SECONDS bounds one call of the model, ASSISTANT_TIMEOUT_SECONDS a whole question; ASSISTANT_MAX_STEPS, ASSISTANT_MAX_TOOL_CALLS and ASSISTANT_MAX_TOKENS bound the loop (0 = the defaults of assistant.DefaultLimits); ASSISTANT_QUESTIONS_PER_HOUR per person and ASSISTANT_CONCURRENT at once over everyone bound the load on the GPUs (per replica).
+type AssistantConfig struct {
+	LLMURL            string `json:"llm_url"`
+	LLMAPIKey         string `json:"llm_api_key"`
+	LLMModel          string `json:"llm_model"`
+	LLMTimeoutSeconds int    `json:"llm_timeout_seconds"`
+	TimeoutSeconds    int    `json:"timeout_seconds"`
+	MaxSteps          int    `json:"max_steps"`
+	MaxToolCalls      int    `json:"max_tool_calls"`
+	MaxTokens         int    `json:"max_tokens"`
+	QuestionsPerHour  int    `json:"questions_per_hour"`
+	Concurrent        int    `json:"concurrent"`
 }
 
 // NotifyConfig is the notification service: NOTIFY_URL (its base URL) and NOTIFY_TOKEN (the bearer token of this service there).
@@ -384,6 +400,18 @@ func loadAppConfiguration() (AppConfiguration, error) {
 			LLMModel:          envconf.String("ESTIMATE_LLM_MODEL", "chat-large"),
 			LLMTimeoutSeconds: envconf.Int("ESTIMATE_LLM_TIMEOUT_SECONDS", 60),
 		},
+		Assistant: AssistantConfig{
+			LLMURL:            envconf.String("ASSISTANT_LLM_URL", ""),
+			LLMAPIKey:         envconf.String("ASSISTANT_LLM_API_KEY", ""),
+			LLMModel:          envconf.String("ASSISTANT_LLM_MODEL", "agent"),
+			LLMTimeoutSeconds: envconf.Int("ASSISTANT_LLM_TIMEOUT_SECONDS", 60),
+			TimeoutSeconds:    envconf.Int("ASSISTANT_TIMEOUT_SECONDS", 120),
+			MaxSteps:          envconf.Int("ASSISTANT_MAX_STEPS", 0),
+			MaxToolCalls:      envconf.Int("ASSISTANT_MAX_TOOL_CALLS", 0),
+			MaxTokens:         envconf.Int("ASSISTANT_MAX_TOKENS", 0),
+			QuestionsPerHour:  envconf.Int("ASSISTANT_QUESTIONS_PER_HOUR", 30),
+			Concurrent:        envconf.Int("ASSISTANT_CONCURRENT", 4),
+		},
 	}
 	// A JSON object rather than three numbers: envconf reads no floats, and the
 	// prices belong together.
@@ -497,6 +525,7 @@ func redactedConfig(appConfig AppConfiguration) AppConfiguration {
 	appConfig.RoleProvider.APIToken = redact.Secret(appConfig.RoleProvider.APIToken)
 	appConfig.AIaaS.Token = redact.Secret(appConfig.AIaaS.Token)
 	appConfig.Estimate.LLMAPIKey = redact.Secret(appConfig.Estimate.LLMAPIKey)
+	appConfig.Assistant.LLMAPIKey = redact.Secret(appConfig.Assistant.LLMAPIKey)
 	appConfig.Storage.ConnectionString = redact.ConnString(appConfig.Storage.ConnectionString)
 	return appConfig
 }

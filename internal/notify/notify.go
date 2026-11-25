@@ -53,7 +53,8 @@ type Event struct {
 	Class      string         `json:"class"`
 	Resolve    bool           `json:"resolve"`
 	Recipients []Recipient    `json:"recipients"`
-	Actor      string         `json:"actor"`
+	// Actor is the person whose action caused the event (a mail address); empty for what the service does by itself.
+	Actor      string         `json:"actor,omitempty"`
 	Due        string         `json:"due,omitempty"`
 	Object     Object         `json:"object"`
 	Data       map[string]any `json:"data"`

@@ -465,7 +465,7 @@ func TestExpiry_MarkThenCutOnlyWithNotifications(t *testing.T) {
 		t.Fatalf("sweep with notifications: %v %+v", err, res)
 	}
 	sent := rec.ofType(notify.TypeAllocationExpired)
-	if len(sent) != 2 || sent[0].Class != notify.ClassAction || sent[0].Due == "" || sent[0].Actor == "" || sent[0].Object.ID != p.ID {
+	if len(sent) != 2 || sent[0].Class != notify.ClassAction || sent[0].Due == "" || sent[0].Actor != "" || sent[0].Object.ID != p.ID {
 		t.Fatalf("allocation.expired = %+v", sent)
 	}
 	recips := map[string]bool{}

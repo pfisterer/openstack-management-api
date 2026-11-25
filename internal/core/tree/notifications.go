@@ -17,12 +17,12 @@ import (
 // systemActor is the actor of what the service does by itself (the expiry sweep).
 const systemActor = "system:openstack-management-api"
 
-// actorOf is who an event names as having caused it.
+// actorOf is who an event names as having caused it: the person acting. What the service does by itself (the expiry sweep) has no person behind it, and the notification service takes only a mail address there, so it goes without one.
 func actorOf(a model.Actor) string {
-	if a.Email != "" {
-		return a.Email
+	if a.Email == "" || strings.HasPrefix(a.Email, "system") {
+		return ""
 	}
-	return systemActor
+	return a.Email
 }
 
 // recipientsOf turns token lists into recipients, each once: user:x a person ({"user": x}), group:y a group as its userset ({"group": "group:y"}).
@@ -235,5 +235,5 @@ func (s *Service) notifyEnding(project model.Node) {
 		return
 	}
 	data := map[string]any{"termination_date": *project.TerminationDate}
-	s.notifier.Notify(notify.Event{Type: notify.TypeProjectEnding, Key: "project-ending:" + project.ID + ":" + *project.TerminationDate, Class: notify.ClassAction, Recipients: recipientsOf(projectHolders(project)), Actor: systemActor, Due: dueRFC3339(project.TerminationDate), Object: s.projectObject(project), Data: data})
+	s.notifier.Notify(notify.Event{Type: notify.TypeProjectEnding, Key: "project-ending:" + project.ID + ":" + *project.TerminationDate, Class: notify.ClassAction, Recipients: recipientsOf(projectHolders(project)), Due: dueRFC3339(project.TerminationDate), Object: s.projectObject(project), Data: data})
 }

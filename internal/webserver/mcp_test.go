@@ -57,7 +57,7 @@ func mcpTestServerWithService(t *testing.T) (*httptest.Server, *tree.Service) {
 // read-only token is offered.
 var mcpReadTools = []string{
 	"get_project", "list_budget_contents", "list_my_budgets", "list_my_projects",
-	"list_requestable_budgets", "list_requests_to_decide", "search_projects",
+	"list_requestable_budgets", "list_requests_to_decide", "search_projects", "plan_project_split",
 }
 
 // The whole reason the read-only rule moved off the HTTP method: every MCP call
@@ -232,13 +232,16 @@ func TestMCP_ToolsDeclareTheirRequiredArguments(t *testing.T) {
 
 	want := map[string][]string{
 		"create_budget":            {"parent_id", "name", "reason", "limit", "admin_scope"},
-		"create_project":           {"budget_id", "name", "reason", "limit"},
+		"create_project":           {"name", "reason"},
+		"plan_project_split":       {"limit"},
+		"add_project_allocation":   {"project_id", "budget_id", "limit", "reason"},
+		"end_allocation":           {"id", "confirm_budget_id"},
 		"release_project":          {"id", "confirm_name"},
 		"delete_budget":            {"id", "confirm_name"},
 		"rename_project":           {"id", "name"},
 		"move_to_budget":           {"id", "new_budget_id"},
 		"transfer_ownership":       {"id", "new_owner"},
-		"request_project_change":   {"id", "limit"},
+		"request_project_change":   {"id"},
 		"get_project":              {"id"},
 		"search_projects":          {"query"},
 		"list_my_projects":         {},

@@ -88,6 +88,24 @@
           },
           "additionalProperties": false
         },
+        "notify": {
+          "type": "object",
+          "properties": {
+            "url": { "type": "string" },
+            "token": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "expiry": {
+          "type": "object",
+          "properties": {
+            "graceDays": { "type": "integer", "minimum": 1 },
+            "endingNoticeDays": { "type": "integer", "minimum": 1 },
+            "intervalMinutes": { "type": "integer", "minimum": 1 },
+            "portalURL": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
         "roleProvider": {
           "type": "object",
           "additionalProperties": false,

@@ -48,7 +48,7 @@ func TestUpdateNodeRequest_EveryFieldClassified(t *testing.T) {
 // Every field of CreateNodeRequest is either common to both kinds, a project's, a budget setting a project refuses, or a budget field a project ignores; and each budget setting is refused by its JSON name.
 func TestCreateNodeRequest_EveryFieldClassified(t *testing.T) {
 	common := []string{"ParentID", "Kind", "Name", "Reason", "Limit", "TerminationDate", "AdminScope"}
-	project := []string{"AuthorizedUsers"}
+	project := []string{"AuthorizedUsers", "Allocations", "StartWhen", "ProjectID"}
 	typ := reflect.TypeFor[CreateNodeRequest]()
 	for i := range typ.NumField() {
 		name := typ.Field(i).Name

@@ -27,6 +27,7 @@ type nodeRow struct {
 	Kind               string  `gorm:"column:kind;index"`
 	Status             string  `gorm:"column:status;index"`
 	Owner              string  `gorm:"column:owner;index"`
+	ProjectID          string  `gorm:"column:project_id;index;not null;default:''"`
 	AdminScope         []byte  `gorm:"column:admin_scope;type:jsonb;not null"`
 	EligibleRequesters []byte  `gorm:"column:eligible_requesters;type:jsonb;not null"`
 	DataJSON           []byte  `gorm:"column:data;type:jsonb;not null"`
@@ -53,11 +54,19 @@ type PostgresStore struct {
 // connection budget is the reason for the limits set below.
 func (s *PostgresStore) DB() *gorm.DB { return s.db }
 
-func NewPostgresStore(dsn string, log *zap.SugaredLogger) (*PostgresStore, error) {
-	// Wait up to a minute for Postgres: since the NetworkPolicies a new pod is let through only a moment after it starts, so the first attempts can be refused although nothing is wrong. Each refused attempt is a warning; wrong credentials or a missing database end it at once (openDBWithRetry).
+// openPostgres connects, waiting up to a minute for Postgres: since the NetworkPolicies a new pod is let through only a moment after it starts, so the first attempts can be refused although nothing is wrong. Each refused attempt is a warning; wrong credentials or a missing database end it at once (openDBWithRetry).
+func openPostgres(dsn string, log *zap.SugaredLogger) (*gorm.DB, error) {
 	db, err := openDBWithRetry(context.Background(), dbStartupPolicy, log, postgres.Open(dsn), nil)
 	if err != nil {
 		return nil, fmt.Errorf("postgres: connect: %w", err)
+	}
+	return db, nil
+}
+
+func NewPostgresStore(dsn string, log *zap.SugaredLogger) (*PostgresStore, error) {
+	db, err := openPostgres(dsn, log)
+	if err != nil {
+		return nil, err
 	}
 
 	// Cap how many connections this service may hold open.
@@ -109,6 +118,10 @@ func NewPostgresStore(dsn string, log *zap.SugaredLogger) (*PostgresStore, error
 	if err := migrateCaps(db, log); err != nil {
 		return nil, fmt.Errorf("postgres: caps: %w", err)
 	}
+	// Fatal: nothing reads projects in the tree any more (allocation_leaves, 25.11.2026). One transaction, checked before it commits.
+	if _, err := migrateAllocationLeaves(db, log, false); err != nil {
+		return nil, fmt.Errorf("postgres: allocation leaves: %w", err)
+	}
 	// Not fatal: every reader understands the former spellings too, so a failure leaves the service working and the migration runs again at the next start.
 	if err := normalizeEndDates(db, log); err != nil {
 		log.Warnw("Stored end dates not written as days", "error", err)
@@ -131,6 +144,9 @@ func toNodeRow(n model.Node) nodeRow {
 	n.Usage = nil
 	// So is what the projects below use: it changes with every provider pass.
 	n.SubtreeInUse = nil
+	// So are a project's allocations and an allocation's project: they are nodes of their own.
+	n.Allocations = nil
+	n.Project = nil
 	// So are the caps inherited from above: a stored copy would go stale the moment a budget above changes its own.
 	n.InheritedCaps = nil
 	// And how the caller of a listing sees the node.
@@ -143,6 +159,7 @@ func toNodeRow(n model.Node) nodeRow {
 		Kind:               n.Kind,
 		Status:             n.Status,
 		Owner:              n.Owner,
+		ProjectID:          n.ProjectID,
 		AdminScope:         mustMarshalPG(n.AdminScope),
 		EligibleRequesters: mustMarshalPG(n.EligibleRequesters),
 		DataJSON:           mustMarshalPG(n),
@@ -314,6 +331,9 @@ func applyNodeQuery(db *gorm.DB, q NodeQuery) *gorm.DB {
 	}
 	if len(q.Kinds) > 0 {
 		db = db.Where("kind IN ?", q.Kinds)
+	}
+	if len(q.ProjectIDs) > 0 {
+		db = db.Where("project_id IN ?", q.ProjectIDs)
 	}
 	if len(q.Statuses) > 0 {
 		db = db.Where("status IN ?", q.Statuses)

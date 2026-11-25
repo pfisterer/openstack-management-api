@@ -27,7 +27,7 @@ func TestSubtreeInUse(t *testing.T) {
 	}
 	root := model.RootNodeID
 	uni, chair, other := "uni", "chair", "other"
-	for _, n := range []model.Node{
+	seedLegacy(t, store, []model.Node{
 		{ID: uni, Kind: model.KindBudget, ParentID: &root, Status: model.StatusApproved, Name: "Uni", Limit: common.ProjectQuota{"cores": 400, "gpu-hours": 200, "ram": 100}},
 		{ID: chair, Kind: model.KindBudget, ParentID: &uni, Status: model.StatusApproved, Name: "Chair", Limit: common.ProjectQuota{"cores": 20, "gpu-hours": 50}},
 		{ID: other, Kind: model.KindBudget, ParentID: &uni, Status: model.StatusApproved, Name: "Other", Limit: common.ProjectQuota{"cores": 20}},
@@ -40,11 +40,7 @@ func TestSubtreeInUse(t *testing.T) {
 		// Not charged, so neither allocated nor counted as used.
 		{ID: "p4", Kind: model.KindProject, ParentID: &other, Status: model.StatusRejected, Limit: common.ProjectQuota{"cores": 4},
 			Bindings: map[string]model.Binding{"openstack": {InUse: common.ProjectQuota{"cores": 9}}}},
-	} {
-		if err := store.UpsertNode(ctx, n); err != nil {
-			t.Fatal(err)
-		}
-	}
+	}...)
 	nodes, err := svc.attachUsage(ctx, []model.Node{mustLoad(t, store, uni), mustLoad(t, store, chair), mustLoad(t, store, other), mustLoad(t, store, "p1")}, common.TokenList{"group:admins"})
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +74,8 @@ func TestSubtreeInUse_Saturates(t *testing.T) {
 		{ID: "x", ParentID: &b, Bindings: map[string]model.Binding{"openstack": {InUse: common.ProjectQuota{"cores": math.MaxInt}}}},
 		{ID: "y", ParentID: &b, Bindings: map[string]model.Binding{"openstack": {InUse: common.ProjectQuota{"cores": 1}}}},
 	}
-	if got := rollUpInUse(leaves, parents)[b]["cores"]; got != math.MaxInt {
+	allocs, projects := asAllocations(leaves)
+	if got := rollUpInUse(allocs, projects, parents)[b]["cores"]; got != math.MaxInt {
 		t.Fatalf("sum wrapped to %d", got)
 	}
 }

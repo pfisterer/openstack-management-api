@@ -171,7 +171,7 @@ const descriptionPathSeparator = " -> "
 func budgetPath(budgetByID map[string]model.Node, leaf model.Node) []string {
 	var path []string
 	seen := map[string]struct{}{}
-	for id := leaf.ParentID; id != nil && *id != model.RootNodeID; {
+	for id := leaf.BudgetAnchor(); id != nil && *id != model.RootNodeID; {
 		if _, dup := seen[*id]; dup {
 			break
 		}

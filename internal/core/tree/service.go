@@ -12,6 +12,7 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 
 	"github.com/pfisterer/openstack-management-api/internal/common"
+	"github.com/pfisterer/openstack-management-api/internal/notify"
 	"go.uber.org/zap"
 )
 
@@ -68,6 +69,11 @@ type Service struct {
 
 	// clock is what the tree takes as now: the day a maximum project term counts from and the time a node is created. time.Now unless a test sets another (SetClock).
 	clock func() time.Time
+
+	// notifier sends events to the notification service (notify.Nop without one).
+	notifier notify.Notifier
+	// expiry is how expired allocations are followed up (SetExpiry).
+	expiry Expiry
 
 	log *zap.SugaredLogger
 }
@@ -137,6 +143,8 @@ func NewService(store nodestore.Store, roles roles.Provider, resources []common.
 		maxProjectsPerOwner: common.DefaultMaxProjectsPerOwner,
 		accounting:          accounting,
 		clock:               time.Now,
+		notifier:            notify.Nop{},
+		expiry:              DefaultExpiry,
 		log:                 log,
 	}
 	s.store = signallingStore{Store: store, changed: s.signalChange}
@@ -172,6 +180,25 @@ func (s *Service) SetClock(now func() time.Time) {
 		now = time.Now
 	}
 	s.clock = now
+}
+
+// SetNotifier sets where events go (notify.New); nil means nowhere.
+func (s *Service) SetNotifier(n notify.Notifier) {
+	if n == nil {
+		n = notify.Nop{}
+	}
+	s.notifier = n
+}
+
+// SetExpiry sets how expired allocations are followed up; zero fields keep the defaults.
+func (s *Service) SetExpiry(e Expiry) {
+	if e.GraceDays <= 0 {
+		e.GraceDays = DefaultExpiry.GraceDays
+	}
+	if e.EndingNoticeDays <= 0 {
+		e.EndingNoticeDays = DefaultExpiry.EndingNoticeDays
+	}
+	s.expiry = e
 }
 
 // now is the current time by the service's clock (SetClock).

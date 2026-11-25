@@ -270,7 +270,7 @@ func TestHistory_Capped(t *testing.T) {
 			t.Fatalf("amend %d: %v", i, err)
 		}
 	}
-	got := f.get(t, p.ID)
+	got := allocOf(t, f.svc, p.ID)
 	if len(got.History) != common.MaxHistoryEntries {
 		t.Fatalf("history holds %d entries, want %d", len(got.History), common.MaxHistoryEntries)
 	}

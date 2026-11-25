@@ -174,11 +174,10 @@ func (r *Reconciler) upsertImported(
 		externalGroups = external
 	}
 
-	parent := model.UnassignedNodeID
+	// Outside the tree like every project; those who manage the unassigned node adopt it.
 	leaf := model.Node{
 		ID:              syntheticID,
 		Kind:            model.KindProject,
-		ParentID:        &parent,
 		Status:          model.StatusImported,
 		Name:            osProject.Name,
 		Reason:          fmt.Sprintf("OpenStack-Projekt: %s (%s)", osProject.Name, osProject.ID),

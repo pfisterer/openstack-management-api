@@ -45,7 +45,8 @@ func TestAvailability_DoesNotSumAcrossSiblings(t *testing.T) {
 	// parent of its own, so the climb stops there.
 	parents := map[string]*string{parent: nil}
 
-	usage := buildRolledUpUsage(leaves, parents, svc.countIDs(), svc.leafCost)
+	allocs, projects := asAllocations(leaves)
+	usage := buildRolledUpUsage(allocs, projects, parents, svc.countIDs(), svc.leafCost)
 	total := usage[parent].Total(svc.countIDs())
 
 	if total["cores"] != 6 {
@@ -177,11 +178,7 @@ func TestAvailability_CannotBeWithdrawnWhileSomethingBelowHoldsIt(t *testing.T) 
 	parent := budget.ID
 	leaf := model.Node{ID: "p1", Kind: model.KindProject, Status: model.StatusApproved, Name: "Someone's project",
 		ParentID: &parent, Limit: common.ProjectQuota{"cores": 2, "dhbw-ipv4": 1}}
-	for _, n := range []model.Node{budget, leaf} {
-		if err := svc.store.UpsertNode(ctx, n); err != nil {
-			t.Fatalf("seed %s: %v", n.ID, err)
-		}
-	}
+	seedLegacy(t, svc.store, budget, leaf)
 
 	err := svc.checkAvailabilityWithdrawal(ctx, budget, common.ProjectQuota{"cores": 10, "dhbw-ipv4": 0})
 	if err == nil {
@@ -332,9 +329,7 @@ func TestAvailability_WithdrawalPassesABudgetThatInherits(t *testing.T) {
 	inGroup := group.ID
 	leaf := model.Node{ID: "p1", Kind: model.KindProject, Status: model.StatusApproved, Name: "Below the group", ParentID: &inGroup,
 		Limit: common.ProjectQuota{"cores": 2, "dhbw-ipv4": 1}}
-	if err := svc.store.UpsertNode(ctx, leaf); err != nil {
-		t.Fatalf("seed leaf: %v", err)
-	}
+	seedLegacy(t, svc.store, leaf)
 	if err := svc.checkAvailabilityWithdrawal(ctx, budget, common.ProjectQuota{"cores": 10, "dhbw-ipv4": 0}); err == nil {
 		t.Fatal("withdrawn while a project below the group holds it")
 	}

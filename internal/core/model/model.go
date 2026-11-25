@@ -48,9 +48,12 @@ func (n *Node) ExtensionsAutoApproved() bool {
 }
 
 // Node kinds.
+//
+// Since the allocation_leaves model (25.11.2026) a project is not part of the tree: it is an object of its own (ParentID nil) made of one or more allocations, and each allocation is a leaf directly under the one budget that pays for it. The tree stays a real tree of budgets and allocations, so every subtree mechanism (usage, ends and terms carried down, withdrawals, deletion, rights) works per allocation as it did per project leaf. What OpenStack and the AI service are given is the sum of a project's allocations, cached on the project (Limit) and recomputed whenever one of them changes.
 const (
-	KindBudget  = "budget"  // inner node: a delegated budget
-	KindProject = "project" // leaf: a concrete resource allocation request
+	KindBudget     = "budget"     // inner node: a delegated budget
+	KindProject    = "project"    // a project: owner, members, provider bindings; not in the tree
+	KindAllocation = "allocation" // leaf: the part of a project one budget pays for
 )
 
 // Node lifecycle statuses.
@@ -77,6 +80,24 @@ const (
 	StatusReleased      = "released"
 	StatusArchived      = "archived"
 	StatusImported      = "imported"
+	// StatusEnded is an allocation that no longer pays for its project: given back, withdrawn by a manager, or cut after it expired (see Expiry). Terminal and never charged; the project itself goes on with its other allocations.
+	StatusEnded = "ended"
+)
+
+// Allocation expiry causes (Expiry.Cause).
+const (
+	// ExpiryEnded: the allocation's end date has passed.
+	ExpiryEnded = "ended"
+	// ExpiryBudgetDeleted: the budget that paid for it was deleted; the allocation now hangs under the budget above it.
+	ExpiryBudgetDeleted = "budget_deleted"
+)
+
+// Project start modes (Node.StartWhen).
+const (
+	// StartNow: the project starts as soon as one of its allocations is approved; the others follow when decided.
+	StartNow = "now"
+	// StartAll: the project waits until every allocation it asked for is decided.
+	StartAll = "all"
 )
 
 // Node flags — orthogonal markers that modify reconciler behaviour.
@@ -160,19 +181,39 @@ func (a *AutoApprove) IsPool() bool {
 	return a != nil && len(a.PerRequesterLimit) == 0
 }
 
-// Allocation is a share of a project's resources drawn from a budget above its
-// own (see Node.Allocations).
+// Allocation is how a project shows one of its allocation leaves (attached to API responses, never persisted on the project): which budget pays for what, until when, and in which state.
 type Allocation struct {
-	BudgetID  string              `json:"budget_id"`
-	Limit     common.ProjectQuota `json:"limit"`
-	Reason    string              `json:"reason"`
-	GrantedBy string              `json:"granted_by"`
-	GrantedAt string              `json:"granted_at"`
-	// BudgetName is attached to API responses (never persisted).
+	ID       string              `json:"id"`
+	BudgetID string              `json:"budget_id"`
+	Status   string              `json:"status"`
+	Limit    common.ProjectQuota `json:"limit"`
+	// TerminationDate is the allocation's own end; the project runs as long as its latest one.
+	TerminationDate *string `json:"termination_date,omitempty"`
+	// Pending is a change of this allocation waiting for the budget's managers.
+	Pending   *PendingChanges `json:"pending,omitempty"`
+	Reason    string          `json:"reason,omitempty"`
+	CreatedBy string          `json:"created_by,omitempty"`
+	CreatedAt string          `json:"created_at,omitempty"`
+	// Expired is set while the allocation has expired but still pays (see Expiry).
+	Expired *Expiry `json:"expired,omitempty"`
+	// Home marks the allocation the project's place in the tree is read from (Node.HomeBudgetID).
+	Home bool `json:"home,omitempty"`
+	// Revision of the allocation node, for deciding on it (ApproveNodeRequest.ExpectedRevision).
+	Revision int `json:"revision"`
+	// BudgetName is the name of the paying budget.
 	BudgetName string `json:"budget_name,omitempty"`
-	// BudgetPath is attached to API responses (never persisted): the budgets
-	// from below the root down to BudgetID, root-most first.
+	// BudgetPath is the budgets from below the root down to BudgetID, root-most first.
 	BudgetPath []PathEntry `json:"budget_path,omitempty"`
+}
+
+// Expiry marks an allocation that has run out — its end passed, or its budget was deleted — while it still pays for the project: overbooking is accepted, nothing is taken away at once (decided 25.11.2026). Its owner and managers can extend it or move it to another budget; once Due has passed it is cut and the project shrinks by it. Without a notification service Due stays empty and nothing is cut automatically.
+type Expiry struct {
+	At    string `json:"at"`
+	Cause string `json:"cause" enums:"ended,budget_deleted"`
+	// Due is the day after which the allocation is cut, empty while nothing is cut automatically.
+	Due *string `json:"due,omitempty"`
+	// BudgetName names the budget that was deleted (cause budget_deleted).
+	BudgetName string `json:"budget_name,omitempty"`
 }
 
 // PathEntry is one budget on the way down from the root.
@@ -181,30 +222,9 @@ type PathEntry struct {
 	Name string `json:"name"`
 }
 
-// AllocatedOut sums a budget's allocations to projects further down.
-type AllocatedOut struct {
-	Projects int                 `json:"projects"`
-	Limit    common.ProjectQuota `json:"limit"`
-}
-
-// EffectiveLimit is what the project holds in total: its own Limit plus every
-// allocation — what OpenStack is given. Quantities add up; an availability
-// comes from one place only, so adding its 0s and 1s is the same as asking
-// whether any of them grants it.
+// EffectiveLimit is what a node holds in total. On a project that is the sum of its allocations, cached in Limit; on every other node its Limit.
 func (n Node) EffectiveLimit() common.ProjectQuota {
-	if len(n.Allocations) == 0 {
-		return n.Limit
-	}
-	out := make(common.ProjectQuota, len(n.Limit))
-	for id, v := range n.Limit {
-		out[id] = v
-	}
-	for _, a := range n.Allocations {
-		for id, v := range a.Limit {
-			out[id] += v
-		}
-	}
-	return out
+	return n.Limit
 }
 
 // PendingChanges holds proposed modifications awaiting approval (status change_pending).
@@ -246,6 +266,9 @@ const ChannelReconciler = "reconciler"
 
 // ChannelMCP is an agent acting with a person's API token.
 const ChannelMCP = "mcp"
+
+// ChannelSystem is the service acting by itself (the expiry sweep, the migration).
+const ChannelSystem = "system"
 
 // Channel returns the channel to record, defaulting an unset one to ChannelUI.
 //
@@ -369,7 +392,7 @@ type UsagePerNode map[string]UsageByStatus
 // capacity mechanism.
 type Node struct {
 	ID       string  `json:"id"`
-	Kind     string  `json:"kind"` // KindBudget | KindProject
+	Kind     string  `json:"kind" enums:"budget,project,allocation"`
 	ParentID *string `json:"parent_id"`
 	Status   string  `json:"status"`
 
@@ -439,17 +462,26 @@ type Node struct {
 	// change of a limit.
 	InheritsLimit bool `json:"inherits_limit,omitempty"`
 
-	// Allocations are what a project draws from budgets ABOVE its own, on top
-	// of Limit — a GPU for one student project, more cores for a thesis,
-	// without handing the same to every project in the student budget. Limit
-	// stays what the project draws from its parent and is what every existing
-	// rule (requests, auto-approve, a person's share, the lifetime) applies to;
-	// each allocation is charged to its budget and the budgets above that one,
-	// not to those in between, so every budget still carries only what it
-	// holds. An availability comes from exactly one place: Limit or one
-	// allocation. Only managers of the allocating budget (or above) grant or
-	// raise one; the project's owner may give it back.
+	// ── Projects and their allocations (allocation_leaves) ───────────────────
+
+	// ProjectID is, on an allocation, the project it pays for.
+	ProjectID string `json:"project_id,omitempty"`
+	// Expired marks an allocation that has run out but still pays (see Expiry).
+	Expired *Expiry `json:"expired,omitempty"`
+	// StartWhen is, on a project, when it starts: StartNow (as soon as one allocation is approved, the default) or StartAll (once every allocation asked for is decided).
+	StartWhen string `json:"start_when,omitempty" enums:"now,all"`
+	// HomeBudgetID and HomeAllocationID are, on a project, the allocation its place in the tree is read from: the budget path in OpenStack's description, the budget settings passed down to it (release times, attributes), where what it uses beyond its limits is charged. The oldest allocation that pays, recomputed with Limit.
+	HomeBudgetID     *string `json:"home_budget_id,omitempty"`
+	HomeAllocationID string  `json:"home_allocation_id,omitempty"`
+	// WaitingKey is, on a node waiting for a decision, the key of the approval.waiting notification sent for it, so the decision can resolve it.
+	WaitingKey string `json:"waiting_key,omitempty"`
+	// EndingNotified is, on a project, the end date project.ending was sent for.
+	EndingNotified string `json:"ending_notified,omitempty"`
+
+	// Allocations is attached to API responses for projects (never persisted): its allocations, live ones first.
 	Allocations []Allocation `json:"allocations,omitempty"`
+	// Project is attached to API responses for allocations (never persisted): the project it pays for, with its allocations but without history.
+	Project *Node `json:"project,omitempty"`
 
 	// Attributes are the node's own free-form facts, set by managers — a cost
 	// centre, a project number — and inherited group by group by the nodes
@@ -497,10 +529,6 @@ type Node struct {
 	// expand into, and how many projects to list beside it.
 	ChildBudgetCount  int `json:"child_budget_count"`
 	ChildProjectCount int `json:"child_project_count"`
-	// AllocatedOut is attached to API responses for budgets (never persisted):
-	// what this budget has allocated to projects below other budgets — it is
-	// part of Usage, and this says how much of it and to how many projects.
-	AllocatedOut *AllocatedOut `json:"allocated_out,omitempty"`
 	// AncestorIDs is attached to /v1/nodes/my-budgets (never persisted): every
 	// node above this one, root-most first, excluding the node itself.
 	//
@@ -570,8 +598,19 @@ func CapHistory(n *Node) {
 	}
 }
 
-// IsLeaf reports whether the node is a project leaf.
-func (n *Node) IsLeaf() bool { return n.Kind == KindProject }
+// IsLeaf reports whether the node is a leaf of the tree: an allocation.
+func (n *Node) IsLeaf() bool { return n.Kind == KindAllocation }
+
+// IsProject reports whether the node is a project.
+func (n *Node) IsProject() bool { return n.Kind == KindProject }
+
+// BudgetAnchor is where a node hangs in the tree for everything that reads a path or settings along it: its parent, or for a project its home budget (HomeBudgetID).
+func (n *Node) BudgetAnchor() *string {
+	if n.Kind == KindProject {
+		return n.HomeBudgetID
+	}
+	return n.ParentID
+}
 
 // OwnerEmail returns the email part of the owner token ("" when unset).
 func (n *Node) OwnerEmail() string {
@@ -602,7 +641,7 @@ func IsRetiredStatus(status string) bool { return slices.Contains(RetiredStatuse
 
 // IsTerminalStatus reports whether a node in this status must not transition further.
 func IsTerminalStatus(status string) bool {
-	return status == StatusRejected || IsRetiredStatus(status)
+	return status == StatusRejected || status == StatusEnded || IsRetiredStatus(status)
 }
 
 // NewHistoryEntry creates a HistoryEntry with the current timestamp.

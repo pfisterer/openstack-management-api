@@ -172,9 +172,12 @@ func TestMemberCap_AllocationBringingOpenStack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = f.svc.SetAllocation(p.ID, tree.AllocationRequest{BudgetID: f.uni.ID, Limit: common.ProjectQuota{"cores": 2}, Reason: "lab"}, model.UIActor("root@x"), common.TokenList{"group:root"})
-	wantCapError(t, err, capOpenStack, common.ProviderOpenStack)
-	if _, err := f.svc.SetAllocation(p.ID, tree.AllocationRequest{BudgetID: f.uni.ID, Limit: common.ProjectQuota{"ws-storage-gb": 10}, Reason: "more space"}, model.UIActor("root@x"), common.TokenList{"group:root"}); err != nil {
+	add := func(limit common.ProjectQuota) error {
+		_, err := f.svc.CreateNode(tree.CreateNodeRequest{Kind: model.KindAllocation, ProjectID: p.ID, ParentID: f.uni.ID, Limit: limit, Reason: "lab"}, model.UIActor("root@x"), "root@x", common.TokenList{"group:root"})
+		return err
+	}
+	wantCapError(t, add(common.ProjectQuota{"cores": 2}), capOpenStack, common.ProviderOpenStack)
+	if err := add(common.ProjectQuota{"ws-storage-gb": 10}); err != nil {
 		t.Errorf("a workspace allocation was refused: %v", err)
 	}
 }

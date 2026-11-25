@@ -21,7 +21,7 @@ import (
 // a budget in the management view, where a budget for all students of a
 // location holds hundreds of projects.
 type ChildFilter struct {
-	// Kind restricts to KindBudget or KindProject; empty means both.
+	// Kind restricts to KindBudget or KindAllocation (KindProject means the same: a budget's projects are its allocations); empty means both.
 	Kind string
 	// Query matches the same fields as SearchNodes (name, purpose, id, owner,
 	// OpenStack project, tokens), case-insensitively.
@@ -37,14 +37,9 @@ type ChildFilter struct {
 	// Sort is one of the ChildSort* keys; empty keeps the store's order.
 	Sort string
 	Desc bool
-	// Allocated lists, instead of the direct children, the projects anywhere
-	// below that draw an allocation from this budget — the ones its managers
-	// handed out past the budgets in between, which are otherwise scattered
-	// over the subtree.
-	Allocated bool
-	// Deep lists the projects of the whole subtree — the budget's own and
+	// Deep lists the allocations of the whole subtree — the budget's own and
 	// those of every sub-budget below it — instead of its direct children.
-	// Projects only: the sub-budgets themselves are what the tree shows.
+	// Allocations only: the sub-budgets themselves are what the tree shows.
 	Deep bool
 	// Area restricts to the projects of one area ("cloud", "workspaces", "llm"):
 	// those holding or asking for more than zero of its resources, and those
@@ -82,7 +77,7 @@ func numericSort(key string) (func(model.Node) float64, bool) {
 	switch {
 	case key == ChildSortServers:
 		return func(n model.Node) float64 {
-			servers, measured := n.ServerCount()
+			servers, measured := subject(n).ServerCount()
 			if !measured {
 				return -1
 			}
@@ -103,7 +98,7 @@ func numericSort(key string) (func(model.Node) float64, bool) {
 			return nil, false
 		}
 		return func(n model.Node) float64 {
-			inUse := n.InUse()
+			inUse := subject(n).InUse()
 			sum, measured := 0, false
 			for _, id := range ids {
 				if v, ok := inUse[id]; ok {
@@ -120,15 +115,23 @@ func numericSort(key string) (func(model.Node) float64, bool) {
 }
 
 func (f ChildFilter) needsMemory() bool {
-	return f.Query != "" || f.Group != "" || f.Sort != "" || f.Allocated || f.Deep || f.Area != ""
+	return f.Query != "" || f.Group != "" || f.Sort != "" || f.Deep || f.Area != ""
+}
+
+// subject is what a row stands for: an allocation's project where it is attached (attachAllocations), else the node.
+func subject(n model.Node) model.Node {
+	if n.Kind == model.KindAllocation && n.Project != nil {
+		return *n.Project
+	}
+	return n
 }
 
 // Validate refuses values that would otherwise be silently ignored.
 func (f ChildFilter) Validate() error {
 	switch f.Kind {
-	case "", model.KindBudget, model.KindProject:
+	case "", model.KindBudget, model.KindProject, model.KindAllocation:
 	default:
-		return invalid("kind muss %q oder %q sein.", "kind must be %q or %q.", model.KindBudget, model.KindProject)
+		return invalid("kind muss %q oder %q sein.", "kind must be %q or %q.", model.KindBudget, model.KindAllocation)
 	}
 	switch f.Sort {
 	case "", ChildSortName, ChildSortOwner, ChildSortStatus, ChildSortEnd, ChildSortCreated:
@@ -179,14 +182,18 @@ func (s *Service) ListChildren(parentID string, f ChildFilter, userTokens common
 	}
 
 	q := nodestore.NodeQuery{ParentIDs: []string{parentID}, Statuses: f.Statuses}
-	if f.Kind != "" {
+	switch f.Kind {
+	case "":
+	case model.KindProject, model.KindAllocation:
+		q.Kinds = []string{model.KindAllocation}
+	default:
 		q.Kinds = []string{f.Kind}
 	}
 	if !f.needsMemory() {
 		return s.listPage(ctx, q, limit, offset, userTokens)
 	}
 
-	if f.Allocated || f.Deep {
+	if f.Deep {
 		parentMap, err := s.buildSubtreeParentMap(ctx, []model.Node{*parent})
 		if err != nil {
 			return NodePage{}, fmt.Errorf("walk subtree: %w", err)
@@ -195,16 +202,15 @@ func (s *Service) ListChildren(parentID string, f ChildFilter, userTokens common
 		for id := range parentMap {
 			q.ParentIDs = append(q.ParentIDs, id)
 		}
-		q.Kinds = []string{model.KindProject}
+		q.Kinds = []string{model.KindAllocation}
 	}
 	children, err := s.store.ListNodes(ctx, q, 0, 0)
 	if err != nil {
 		return NodePage{}, fmt.Errorf("load children: %w", err)
 	}
-	if f.Allocated {
-		children = slices.DeleteFunc(children, func(n model.Node) bool {
-			return !slices.ContainsFunc(n.Allocations, func(a model.Allocation) bool { return a.BudgetID == parentID })
-		})
+	// What is filtered and sorted by — owner, members, what is measured — is the project's.
+	if children, err = s.attachAllocations(ctx, children); err != nil {
+		return NodePage{}, err
 	}
 	if needle := strings.ToLower(strings.TrimSpace(f.Query)); needle != "" {
 		children = slices.DeleteFunc(children, func(n model.Node) bool { return !nodeMatches(n, needle) })
@@ -212,7 +218,7 @@ func (s *Service) ListChildren(parentID string, f ChildFilter, userTokens common
 	if f.Area != "" {
 		resources := s.resources()
 		children = slices.DeleteFunc(children, func(n model.Node) bool {
-			if n.Kind != model.KindProject {
+			if n.Kind != model.KindAllocation {
 				return false
 			}
 			areas := projectAreas(n, resources)
@@ -238,6 +244,9 @@ func (s *Service) ListChildren(parentID string, f ChildFilter, userTokens common
 // unlimited amount counts).
 func projectAreas(n model.Node, resources []common.Resource) map[string]bool {
 	limits := []common.ProjectQuota{n.EffectiveLimit()}
+	if n.Project != nil {
+		limits = append(limits, n.Project.Limit)
+	}
 	if n.Pending != nil && n.Pending.Limit != nil {
 		limits = append(limits, *n.Pending.Limit)
 	}
@@ -274,9 +283,10 @@ func (s *Service) filterByGroup(ctx context.Context, nodes []model.Node, token, 
 	return slices.DeleteFunc(nodes, func(n model.Node) bool { return !holds[n.OwnerEmail()] }), nil
 }
 
-// grantsAccess reports whether the token is named on the node: as its owner,
+// grantsAccess reports whether the token is named on the node — on an allocation, its project: as its owner,
 // an admin, or a member.
 func grantsAccess(n model.Node, token string) bool {
+	n = subject(n)
 	if n.Owner == token || slices.Contains(n.AdminScope, token) {
 		return true
 	}

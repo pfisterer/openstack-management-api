@@ -135,7 +135,7 @@ func TestMaxTerm_LoweringCascades(t *testing.T) {
 		t.Errorf("the sub-budget should take the term, got %v", n.MaxProjectTermDays)
 	}
 	for _, id := range []string{deep.ID, open.ID} {
-		n := mustGet(t, f.svc, id)
+		n := allocOf(t, f.svc, id)
 		if endOf(n) != inDays(90) {
 			t.Errorf("%s should be shortened to the term, got %s", n.Name, endOf(n))
 		}
@@ -143,7 +143,7 @@ func TestMaxTerm_LoweringCascades(t *testing.T) {
 			t.Errorf("%s should say in its history why it ends earlier, got %+v", n.Name, last)
 		}
 	}
-	n := mustGet(t, f.svc, short.ID)
+	n := allocOf(t, f.svc, short.ID)
 	if endOf(n) != inDays(20) || n.Pending == nil || *n.Pending.TerminationDate != inDays(90) {
 		t.Errorf("a shorter project keeps its date, its waiting extension is cut to the term; got %s / %+v", endOf(n), n.Pending)
 	}
@@ -213,7 +213,7 @@ func TestMaxTerm_ApprovalCaps(t *testing.T) {
 		t.Fatalf("set term: %v", err)
 	}
 	// Lowering the term shortened the request, which is a new revision of it.
-	shortened := f.get(t, p.ID)
+	shortened := allocOf(t, f.svc, p.ID)
 	n, err := f.svc.ApproveNode(p.ID, tree.ApproveNodeRequest{ExpectedRevision: new(shortened.CurrentRevision())}, rootActor(), rootTokens)
 	if err != nil {
 		t.Fatalf("approve: %v", err)

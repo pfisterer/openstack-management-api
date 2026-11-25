@@ -27,7 +27,7 @@ func archivedSvc(t *testing.T, acc Accounting) (*Service, model.Node, model.Node
 	}
 	root := model.RootNodeID
 	uniID, chairID := "uni", "chair"
-	for _, n := range []model.Node{
+	seedLegacy(t, store, []model.Node{
 		{ID: uniID, Kind: model.KindBudget, ParentID: &root, Status: model.StatusApproved, Name: "Uni",
 			Limit: common.ProjectQuota{"cores": 100, "storage": 1000}},
 		{ID: chairID, Kind: model.KindBudget, ParentID: &uniID, Status: model.StatusApproved, Name: "Chair",
@@ -36,11 +36,7 @@ func archivedSvc(t *testing.T, acc Accounting) (*Service, model.Node, model.Node
 			Limit:       common.ProjectQuota{"cores": 4, "storage": 50},
 			Allocations: []model.Allocation{{BudgetID: uniID, Limit: common.ProjectQuota{"cores": 2}}},
 			Bindings:    map[string]model.Binding{"openstack": {InUse: common.ProjectQuota{"cores": 0, "storage": 30}}}},
-	} {
-		if err := store.UpsertNode(ctx, n); err != nil {
-			t.Fatal(err)
-		}
-	}
+	}...)
 	uni, _ := store.GetNode(ctx, uniID)
 	chair, _ := store.GetNode(ctx, chairID)
 	return svc, *uni, *chair

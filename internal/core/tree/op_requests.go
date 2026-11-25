@@ -32,21 +32,28 @@ func newNodePage(items []model.Node, total, limit, offset int) NodePage {
 	return NodePage{Items: items, Total: total, Limit: limit, Offset: offset}
 }
 
-// CreateNodeRequest creates a child node under ParentID. Two entry paths share it:
-//   - a manager of the parent chain creates the child directly (status approved),
-//   - an eligible requester submits a request (status pending, possibly auto-approved).
+// CreateNodeRequest creates a node. Three kinds share it:
+//   - budget: a child under ParentID — created directly (approved) by a manager of the parent chain, or requested by an eligible requester (pending, possibly auto-approved);
+//   - project: a project with its allocations — named in Allocations, or all of Limit from the budget ParentID, or Limit split automatically over the caller's budgets when neither is given (see the split, POST /v1/nodes/split);
+//   - allocation: another allocation of the project ProjectID under the budget ParentID, asked for by the project's owner or admins, or granted directly by a manager of the budget (Reason required then).
 type CreateNodeRequest struct {
-	ParentID string `json:"parent_id" binding:"required"`
-	Kind     string `json:"kind" binding:"required,oneof=budget project"`
+	ParentID string `json:"parent_id"`
+	Kind     string `json:"kind" binding:"required,oneof=budget project allocation"`
 	Name     string `json:"name"`
-	Reason   string `json:"reason" binding:"required"`
-	// Limit is the requested allocation (leaves) or cap (budgets).
-	Limit common.ProjectQuota `json:"limit" binding:"required"`
+	Reason   string `json:"reason"`
+	// Limit is the cap (budgets), the allocation (allocations), or on a project what it asks for in total when Allocations is empty.
+	Limit common.ProjectQuota `json:"limit"`
 	// TerminationDate may not lie after the end of any budget above. Omitted
-	// under a budget that ends, it is that budget's end.
+	// under a budget that ends, it is that budget's end. On a project it is the end of every allocation that names none.
 	TerminationDate *string `json:"termination_date"`
-	// Leaf fields.
+	// Project fields.
 	AuthorizedUsers []common.AuthorizedUser `json:"authorized_users"`
+	// Allocations are the allocations a new project asks for, one per budget.
+	Allocations []AllocationSpec `json:"allocations"`
+	// StartWhen says when a new project starts: "now" (default) as soon as one allocation is approved, "all" once every one is decided.
+	StartWhen string `json:"start_when" enums:"now,all"`
+	// Allocation fields.
+	ProjectID string `json:"project_id"`
 	// Budget fields.
 	AdminScope         common.TokenList   `json:"admin_scope"`
 	EligibleRequesters common.TokenList   `json:"eligible_requesters"`
@@ -106,10 +113,11 @@ type UpdateNodeRequest struct {
 	InheritsLimit *bool `json:"inherits_limit,omitempty"`
 }
 
-// ChangeNodeRequest proposes changes to a node. On an active leaf a change that
-// gives something back, changes members only, or that the budget's auto-approve
-// policy covers takes effect at once; anything else waits for a manager of the
-// parent chain in change_pending.
+// ChangeNodeRequest proposes changes to a node. On an allocation a change that
+// gives something back or that the budget's auto-approve policy covers takes
+// effect at once; anything else waits for a manager of the budget in
+// change_pending. On a project, members change at once; limit and end go to
+// its allocation when it has a single one (several: name the allocation).
 type ChangeNodeRequest struct {
 	Limit           *common.ProjectQuota     `json:"limit"`
 	TerminationDate *string                  `json:"termination_date"`
@@ -144,7 +152,7 @@ type TransferOwnerRequest struct {
 	NewOwner string `json:"new_owner" binding:"required"`
 }
 
-// ReleaseNodeRequest releases an approved project. Delete marks it for deletion
+// ReleaseNodeRequest releases an approved project, or ends an allocation (gives it back, withdraws it). Delete marks a project for deletion
 // in the same step (see Service.RequestDeletion), instead of archiving it and
 // keeping it for the grace period.
 type ReleaseNodeRequest struct {

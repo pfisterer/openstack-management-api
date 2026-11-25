@@ -20,7 +20,7 @@ func TestNodeWriteHandlers_BadBodyAndNoCaller(t *testing.T) {
 		"reparentNode":      reparentNode(cfg),
 		"transferNodeOwner": transferNodeOwner(cfg),
 		"setNodeAttributes": setNodeAttributes(cfg),
-		"setNodeAllocation": setNodeAllocation(cfg),
+		"planProjectSplit":  planProjectSplit(cfg),
 		"promoteNode":       promoteNode(cfg),
 		"approveNode":       approveNode(cfg),
 	}
@@ -31,7 +31,7 @@ func TestNodeWriteHandlers_BadBodyAndNoCaller(t *testing.T) {
 		"reparentNode":      `{"new_parent_id":"b"}`,
 		"transferNodeOwner": `{"new_owner":"x@x"}`,
 		"setNodeAttributes": `{}`,
-		"setNodeAllocation": `{"budget_id":"b"}`,
+		"planProjectSplit":  `{"limit":{}}`,
 		"promoteNode":       `{"new_parent_id":"b","owner":"x@x","reason":"r"}`,
 		"approveNode":       `{"expected_revision":1}`,
 	}

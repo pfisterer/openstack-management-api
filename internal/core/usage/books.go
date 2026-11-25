@@ -142,9 +142,10 @@ func (c *Books) RecordDay(ctx context.Context, day time.Time, report DayReport) 
 			Reserved:   c.reserved(n),
 			Backfilled: backfilled, CollectedAt: now,
 		}
-		if n.ParentID != nil {
-			row.BudgetID = *n.ParentID
-			row.BudgetPath = pathOf(*n.ParentID, budgets)
+		// A project's row is booked under its home budget (Node.HomeBudgetID): what it used is not split by who pays.
+		if anchor := n.BudgetAnchor(); anchor != nil {
+			row.BudgetID = *anchor
+			row.BudgetPath = pathOf(*anchor, budgets)
 		}
 		row.Attributes = attributesOf(n, budgets)
 		if !backfilled && storageID != "" {
@@ -239,7 +240,7 @@ func pathOf(start string, budgets map[string]model.Node) []PathEntry {
 func attributesOf(n model.Node, budgets map[string]model.Node) model.Attributes {
 	chain := []model.Node{n}
 	seen := map[string]bool{n.ID: true}
-	for p := n.ParentID; p != nil && !seen[*p]; {
+	for p := n.BudgetAnchor(); p != nil && !seen[*p]; {
 		seen[*p] = true
 		b, ok := budgets[*p]
 		if !ok {

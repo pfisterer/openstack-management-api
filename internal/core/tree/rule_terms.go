@@ -99,7 +99,7 @@ func fitProjectEnd(end *string, chain []model.Node, now time.Time) (*string, err
 
 // endBound is the latest end a node of kind may have below chain, nearest first, today: for a project projectBound (the earliest budget end or the end of the shortest term, term naming the latter), for a budget the earliest budget end alone. Nil when nothing bounds it. The one place that says which rule bounds which kind of node.
 func (s *Service) endBound(kind string, chain []model.Node) (bound *string, term *int) {
-	if kind == model.KindProject {
+	if kind == model.KindProject || kind == model.KindAllocation {
 		return projectBound(chain, s.now())
 	}
 	return chainEnd(chain), nil
@@ -107,7 +107,7 @@ func (s *Service) endBound(kind string, chain []model.Node) (bound *string, term
 
 // fitNodeEnd applies the lifetime rule to the end asked for a node of kind below chain: fitProjectEnd for a project, fitEnd under the chain's end for a budget. No end asked means the bound; a later one is refused.
 func (s *Service) fitNodeEnd(kind string, end *string, chain []model.Node) (*string, error) {
-	if kind == model.KindProject {
+	if kind == model.KindProject || kind == model.KindAllocation {
 		return fitProjectEnd(end, chain, s.now())
 	}
 	return fitEnd(end, chainEnd(chain))
@@ -164,6 +164,15 @@ func (s *Service) shortenSubtreeTerms(ctx context.Context, parentIDs []string, d
 // mutateLiveSubtree walks the subtree below parentIDs level by level and changes every live node in it: mutate says, for a node as listed, what to do to its current stored state (nodestore.ErrSkipUpdate where nothing changes). Imports and retired or rejected nodes are skipped, and so is what lies below them. what names the change in errors. Returns how many nodes it changed. Callers hold approvalMu.
 func (s *Service) mutateLiveSubtree(ctx context.Context, parentIDs []string, what string, mutate func(child model.Node) func(*model.Node) error) (int, error) {
 	changed := 0
+	// The projects whose allocations changed end: their own end follows.
+	touched := map[string]bool{}
+	defer func() {
+		for pid := range touched {
+			if _, err := s.refreshProject(ctx, pid, model.Actor{Email: systemActor, Via: model.ChannelSystem}); err != nil {
+				s.log.Warnw("project not refreshed after a change of ends", "project_id", pid, "error", err)
+			}
+		}
+	}()
 	for len(parentIDs) > 0 {
 		children, err := s.store.ListNodes(ctx, nodestore.NodeQuery{ParentIDs: parentIDs}, 0, 0)
 		if err != nil {
@@ -183,6 +192,9 @@ func (s *Service) mutateLiveSubtree(ctx context.Context, parentIDs []string, wha
 			}
 			if wrote {
 				changed++
+				if child.Kind == model.KindAllocation {
+					touched[child.ProjectID] = true
+				}
 			}
 		}
 	}

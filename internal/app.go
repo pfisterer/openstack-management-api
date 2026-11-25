@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/core/nodestore"
 	"github.com/pfisterer/openstack-management-api/internal/core/roles"
 	"github.com/pfisterer/openstack-management-api/internal/identity"
+	"github.com/pfisterer/openstack-management-api/internal/notify"
 	"gorm.io/gorm"
 
 	"github.com/gin-gonic/gin"
@@ -157,6 +159,21 @@ func RunApplication() {
 		logger.Fatal("API_DUMMY_AUTH=true is not allowed when API_MODE=production — refusing to start with an authentication bypass")
 	}
 
+	// A trial run of the migration to allocation leaves: report and leave, nothing written.
+	if config.MigrateDryRun {
+		if config.Storage.Type != "postgres" {
+			logger.Fatal("MIGRATE_DRY_RUN needs DB_TYPE=postgres")
+		}
+		rep, err := nodestore.DryRunAllocationMigration(config.Storage.ConnectionString, logger)
+		out, _ := json.MarshalIndent(rep, "", "  ")
+		fmt.Println(string(out))
+		if err != nil {
+			logger.Fatalw("Migration to allocation leaves would fail", "error", err)
+		}
+		logger.Info("Migration to allocation leaves: dry run passed, nothing written")
+		return
+	}
+
 	// Configure resource storage and token lookup
 	nodeStore, apiTokens, usageStore, catalogStore, gpuClassStore, err := configureStores(&config.Storage, logger)
 	if err != nil {
@@ -240,6 +257,7 @@ func RunApplication() {
 		logger.Fatalw("Invalid caps of the providers", "error", err)
 	}
 	treeSvc.SetProviderRules(osclient.Rules{Members: config.MaxAuthorizedUsers}, aiaas.Rules{Members: config.MaxAuthorizedUsersOther})
+	treeSvc.SetExpiry(tree.Expiry{GraceDays: config.Expiry.GraceDays, EndingNoticeDays: config.Expiry.EndingNoticeDays, PortalURL: config.Expiry.PortalURL})
 
 	// Bootstrap: optional mock seed into an empty store, then ensure the
 	// structural root/unassigned nodes (root admin scope is synced from config).
@@ -261,6 +279,14 @@ func RunApplication() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Events for the notification service; without NOTIFY_URL none, and expired allocations are only marked.
+	if config.Notify.URL != "" && config.Notify.Token == "" {
+		logger.Fatal("NOTIFY_URL is set but NOTIFY_TOKEN is not")
+	}
+	treeSvc.SetNotifier(notify.New(ctx, config.Notify.URL, config.Notify.Token, logger))
+	logger.Infow("Expiry of allocations", "notifications", config.Notify.URL != "", "grace_days", config.Expiry.GraceDays, "ending_notice_days", config.Expiry.EndingNoticeDays)
+	go treeSvc.RunExpiryLoop(ctx, time.Duration(config.Expiry.IntervalMinutes)*time.Minute)
 
 	// Setup Gin web server with configured dependencies.
 

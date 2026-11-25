@@ -120,16 +120,18 @@ func TestChange_WithoutPolicy(t *testing.T) {
 	}
 }
 
-// One part that needs a decision sends the whole proposal to a manager —
-// nothing of it is applied behind their back.
-func TestChange_MixedProposalWaitsAsAWhole(t *testing.T) {
+// Members belong to the project and change at once (decided 25.11.2026: who works in a project is its owner's business); growth belongs to the allocation and waits for its budget's managers.
+func TestChange_MembersAtOnceGrowthWaits(t *testing.T) {
 	f := newChangeFixture(t, nil, nil)
 	p := f.approved(t, 4, nil)
 
 	members := []common.AuthorizedUser{{Token: "user:friend@x", Role: "member"}}
 	n := f.change(t, p.ID, tree.ChangeNodeRequest{Limit: quota(cores(6)), AuthorizedUsers: &members})
-	if n.Status != model.StatusChangePending || len(n.AuthorizedUsers) != 0 {
-		t.Fatalf("growth plus members should wait as one, got %q with members %v", n.Status, n.AuthorizedUsers)
+	if n.Kind != model.KindProject || len(n.AuthorizedUsers) != 1 || n.Limit["cores"] != 4 {
+		t.Fatalf("members should apply at once and the limit stay, got %q with members %v and %v", n.Kind, n.AuthorizedUsers, n.Limit)
+	}
+	if a := allocOf(t, f.svc, p.ID); a.Status != model.StatusChangePending || a.Pending == nil || (*a.Pending.Limit)["cores"] != 6 {
+		t.Fatalf("growth should wait on the allocation, got %q %+v", a.Status, a.Pending)
 	}
 }
 

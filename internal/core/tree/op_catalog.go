@@ -25,7 +25,7 @@ type Holder struct {
 	Name   string `json:"name"`
 	Kind   string `json:"kind"`
 	Status string `json:"status"`
-	// Via is where the 1 is stored: "limit", "allocation" (from AllocationFrom),
+	// Via is where the 1 is stored: "limit" (a budget), "allocation" (an allocation under the budget AllocationFrom),
 	// "pending" (a change waiting for approval) or "auto_approve" (a
 	// per-requester cap).
 	Via            string `json:"via"`
@@ -44,16 +44,17 @@ func (s *Service) Holders(ctx context.Context, id string) ([]Holder, error) {
 		if n.ID == model.RootNodeID {
 			continue
 		}
+		// A project's limit is the sum of its allocations, which are listed themselves.
+		if n.Kind == model.KindProject || n.Status == model.StatusEnded || n.Status == model.StatusRejected {
+			continue
+		}
 		h := Holder{NodeID: n.ID, Name: nodeLabel(n), Kind: n.Kind, Status: n.Status}
 		if n.Limit.Grants(id) {
 			h.Via = "limit"
-			out = append(out, h)
-		}
-		for _, a := range n.Allocations {
-			if a.Limit.Grants(id) {
-				h.Via, h.AllocationFrom = "allocation", a.BudgetID
-				out = append(out, h)
+			if n.Kind == model.KindAllocation {
+				h.Via, h.AllocationFrom = "allocation", derefParent(n.ParentID)
 			}
+			out = append(out, h)
 		}
 		h.AllocationFrom = ""
 		if n.Pending != nil && n.Pending.Limit != nil && n.Pending.Limit.Grants(id) {
@@ -156,8 +157,8 @@ func (s *Service) AdoptAvailability(ctx context.Context, id string) error {
 	return err
 }
 
-// rewriteAll applies edit to every stored limit map of every node — own limit,
-// allocations, a pending change, the per-requester cap — and writes the nodes
+// rewriteAll applies edit to every stored limit map of every node — its limit
+// (a project's sum included), a pending change, the per-requester cap — and writes the nodes
 // it changed. Under approvalMu, so no approval interleaves with a half
 // rewritten tree.
 func (s *Service) rewriteAll(ctx context.Context, edit func(common.ProjectQuota) bool) (int, error) {
@@ -174,21 +175,6 @@ func (s *Service) rewriteAll(ctx context.Context, edit func(common.ProjectQuota)
 			if n.Limit != nil && edit(n.Limit) {
 				touched = true
 			}
-			kept := n.Allocations[:0]
-			for _, a := range n.Allocations {
-				if a.Limit != nil && edit(a.Limit) {
-					touched = true
-					if grantsNothing(a.Limit) {
-						// It existed for this availability alone.
-						continue
-					}
-				}
-				kept = append(kept, a)
-			}
-			if len(kept) == 0 {
-				kept = nil
-			}
-			n.Allocations = kept
 			if n.Pending != nil && n.Pending.Limit != nil && edit(*n.Pending.Limit) {
 				touched = true
 			}
@@ -208,15 +194,6 @@ func (s *Service) rewriteAll(ctx context.Context, edit func(common.ProjectQuota)
 		}
 	}
 	return changed, nil
-}
-
-func grantsNothing(q common.ProjectQuota) bool {
-	for _, v := range q {
-		if v != 0 {
-			return false
-		}
-	}
-	return true
 }
 
 // ProjectsByExternalID maps the ID at provider of every project that has one

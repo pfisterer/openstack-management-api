@@ -30,8 +30,8 @@ func TestAttachParentNames_PathsBelowTheRoot(t *testing.T) {
 		}
 	}
 	nodes := []model.Node{
-		{ID: "p1", Kind: model.KindProject, ParentID: &casLecture},
-		{ID: "p2", Kind: model.KindProject, ParentID: &maLecture,
+		{ID: "p1", Kind: model.KindProject, HomeBudgetID: &casLecture},
+		{ID: "p2", Kind: model.KindProject, HomeBudgetID: &maLecture,
 			Allocations: []model.Allocation{{BudgetID: ma, Limit: common.ProjectQuota{"cores": 1}}}},
 		{ID: "top", Kind: model.KindBudget, ParentID: &root},
 	}

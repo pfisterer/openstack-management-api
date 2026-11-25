@@ -37,6 +37,19 @@ func mustGet(t *testing.T, svc *tree.Service, id string) model.Node {
 	return *n
 }
 
+// allocOf is a node as the end and change rules see it: for a project its single allocation, which holds the end, the waiting change and their history; anything else as it is.
+func allocOf(t *testing.T, svc *tree.Service, id string) model.Node {
+	t.Helper()
+	n := mustGet(t, svc, id)
+	if n.Kind != model.KindProject {
+		return n
+	}
+	if len(n.Allocations) != 1 {
+		t.Fatalf("%s: want a single allocation, got %d", id, len(n.Allocations))
+	}
+	return mustGet(t, svc, n.Allocations[0].ID)
+}
+
 func endOf(n model.Node) string {
 	if n.TerminationDate == nil {
 		return "<none>"
@@ -98,7 +111,7 @@ func TestLifetime_ShorteningCascades(t *testing.T) {
 	}
 
 	for _, id := range []string{sub.ID, deep.ID, waiting.ID} {
-		n := mustGet(t, f.svc, id)
+		n := allocOf(t, f.svc, id)
 		if endOf(n) != mar2027 {
 			t.Errorf("%s should end with the budget, got %s", n.Name, endOf(n))
 		}

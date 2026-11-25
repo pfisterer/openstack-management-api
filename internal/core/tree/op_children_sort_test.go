@@ -23,8 +23,7 @@ func TestSortChildren_ByResource(t *testing.T) {
 		{ID: "a", Limit: common.ProjectQuota{"cores": 10}, Bindings: map[string]model.Binding{"openstack": {InUse: common.ProjectQuota{"cores": 0}, Facts: map[string]int{model.FactServers: 1}}}},
 		{ID: "b", Limit: common.ProjectQuota{"cores": 9}, Bindings: map[string]model.Binding{"openstack": {InUse: common.ProjectQuota{"cores": 4}, Facts: map[string]int{model.FactServers: 3}}}},
 		{ID: "c", Limit: common.ProjectQuota{"cores": common.UnlimitedQuota}},
-		{ID: "d", Limit: common.ProjectQuota{"cores": 2},
-			Allocations: []model.Allocation{{BudgetID: "x", Limit: common.ProjectQuota{"cores": 16}}}},
+		{ID: "d", Limit: common.ProjectQuota{"cores": 18}},
 	}
 	cases := []struct {
 		key  string

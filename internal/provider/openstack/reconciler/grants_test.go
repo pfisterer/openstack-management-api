@@ -176,12 +176,10 @@ func TestSyncGrants_ReportsOnlyRealChanges(t *testing.T) {
 	}
 }
 
-// An availability a project has by allocation from a budget further up is
-// granted like one from its own limit: OpenStack sees what the project holds.
+// An availability one of a project's allocations grants is in the project's limit, the sum of its allocations: OpenStack sees what the project holds, whichever budget pays for it.
 func TestSyncGrants_GrantsWhatAnAllocationHolds(t *testing.T) {
 	f := newFakeGrants()
-	leaf := leafWithLimit(common.ProjectQuota{"cores": 4})
-	leaf.Allocations = []model.Allocation{{BudgetID: "b_uni", Limit: common.ProjectQuota{"gpu-rtx6000": 1}}}
+	leaf := leafWithLimit(common.ProjectQuota{"cores": 4, "gpu-rtx6000": 1})
 
 	syncGrants(f, grantCatalogue, leaf, "os-project", false, zap.NewNop().Sugar())
 

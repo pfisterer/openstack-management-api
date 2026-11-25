@@ -32,7 +32,7 @@ func fixture(t *testing.T) (*Books, *MemoryStore) {
 	t.Helper()
 	ctx := context.Background()
 	nodes := nodestore.NewInMemoryStore(zap.NewNop().Sugar())
-	for _, n := range []model.Node{
+	for _, n := range migrated(t, []model.Node{
 		{ID: "root", Kind: model.KindBudget, Name: "Root", Status: model.StatusApproved},
 		{ID: "uni", Kind: model.KindBudget, Name: "Uni", ParentID: ptr("root"), Status: model.StatusApproved,
 			Attributes: model.Attributes{"billing": {"cost_center": "4711"}}},
@@ -48,7 +48,7 @@ func fixture(t *testing.T) (*Books, *MemoryStore) {
 		{ID: "p_idle", Kind: model.KindProject, Name: "Idle", ParentID: ptr("stud"), Status: model.StatusApproved,
 			Owner: "user:d@x", Bindings: map[string]model.Binding{"openstack": {ExternalID: "os-idle"}}, Limit: common.ProjectQuota{"cores": 2}},
 		{ID: "p_rej", Kind: model.KindProject, Name: "No", ParentID: ptr("stud"), Status: model.StatusRejected, Owner: "user:e@x"},
-	} {
+	}) {
 		if err := nodes.UpsertNode(ctx, n); err != nil {
 			t.Fatal(err)
 		}
@@ -175,4 +175,14 @@ func TestDaysToRecord(t *testing.T) {
 	if len(again) != 2 {
 		t.Errorf("a day recorded twice holds %d rows, want 2", len(again))
 	}
+}
+
+// migrated is test data written as the former model (projects in the tree) as it is stored since allocation_leaves.
+func migrated(t *testing.T, nodes []model.Node) []model.Node {
+	t.Helper()
+	out, err := nodestore.MigrateNodes(nodes, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }

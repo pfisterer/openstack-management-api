@@ -58,7 +58,7 @@ func setup(t *testing.T) fixture {
 	}
 	root := model.RootNodeID
 	budget := "b1"
-	for _, n := range []model.Node{
+	migrated, err := nodestore.MigrateNodes([]model.Node{
 		{ID: budget, Kind: model.KindBudget, ParentID: &root, Status: model.StatusApproved, Name: "Budget",
 			Limit: common.ProjectQuota{"cores": 10, "net": 1}},
 		{ID: "p1", Kind: model.KindProject, ParentID: &budget, Status: model.StatusApproved, Name: "P1", Bindings: map[string]model.Binding{"openstack": {ExternalID: "os-p1"}},
@@ -66,7 +66,11 @@ func setup(t *testing.T) fixture {
 		{ID: "p2", Kind: model.KindProject, ParentID: &budget, Status: model.StatusApproved, Name: "P2", Bindings: map[string]model.Binding{"openstack": {ExternalID: "os-p2"}},
 			Limit:       common.ProjectQuota{"cores": 1, "net": 0},
 			Allocations: []model.Allocation{{BudgetID: root, Limit: common.ProjectQuota{"net": 1}, Reason: "lab"}}},
-	} {
+	}, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range migrated {
 		if err := store.UpsertNode(ctx, n); err != nil {
 			t.Fatal(err)
 		}
@@ -132,15 +136,15 @@ func TestWithdrawThenRemove(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(st.Holders) != 3 {
-		t.Fatalf("holders = %+v, want budget, project and allocation", st.Holders)
+		t.Fatalf("holders = %+v, want the budget and the two allocations (p1's under the budget, p2's from the root)", st.Holders)
 	}
 
 	_, changed, err := f.admin.Withdraw(f.ctx, "net", "admin@x")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed != 4 {
-		t.Errorf("changed = %d, want root, budget and both projects", changed)
+	if changed != 6 {
+		t.Errorf("changed = %d, want root, budget, both projects and their two allocations holding it", changed)
 	}
 	if r, _ := resource(f.cat, "net"); !r.Withdrawn {
 		t.Error("withdrawn availability must stay known, marked withdrawn")
@@ -148,8 +152,8 @@ func TestWithdrawThenRemove(t *testing.T) {
 	if got := f.node(t, model.RootNodeID).Limit["net"]; got != 0 {
 		t.Errorf("root net = %d, want 0", got)
 	}
-	if a := f.node(t, "p2").Allocations; len(a) != 0 {
-		t.Errorf("allocation for net alone must go, got %+v", a)
+	if a := f.node(t, nodestore.MigratedAllocationID("p2", model.RootNodeID)); a.Limit.Grants("net") {
+		t.Errorf("the allocation for net must not grant it any more, got %+v", a.Limit)
 	}
 	if st, _ := f.admin.Status(f.ctx, "net"); len(st.Holders) != 0 {
 		t.Errorf("holders after withdraw = %+v", st.Holders)

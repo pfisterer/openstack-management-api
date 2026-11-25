@@ -64,10 +64,10 @@ func (a ancestry) effectiveAttributes(n model.Node) map[string]model.AttributeGr
 // owner and admins too. Members of a project and those who may only request
 // under a budget do not.
 func (a ancestry) attributesVisible(n model.Node, viewer common.TokenSet) bool {
-	if viewer.ContainsAny(n.AdminScope) || (n.IsLeaf() && n.Owner != "" && viewer.Contains(n.Owner)) {
+	if viewer.ContainsAny(n.AdminScope) || ((n.IsLeaf() || n.IsProject()) && n.Owner != "" && viewer.Contains(n.Owner)) {
 		return true
 	}
-	if n.ParentID == nil {
+	if n.BudgetAnchor() == nil {
 		return false
 	}
 	return managesInChain(viewer, a.budgetsAbove(n))
@@ -78,8 +78,8 @@ func (s *Service) AttributesVisible(n *model.Node, userTokens common.TokenList) 
 	ctx, cancel := s.newCtx()
 	defer cancel()
 	var start []string
-	if n.ParentID != nil {
-		start = []string{*n.ParentID}
+	if anchor := n.BudgetAnchor(); anchor != nil {
+		start = []string{*anchor}
 	}
 	tree, err := s.walkAncestors(ctx, start)
 	if err != nil {
@@ -103,9 +103,13 @@ func (s *Service) SetAttributes(id string, req SetAttributesRequest, actor model
 		return model.Node{}, err
 	}
 	var manages bool
-	if current.IsLeaf() {
-		manages, err = s.managesParentChain(ctx, userTokens, current)
-	} else {
+	switch {
+	case current.IsLeaf():
+		return model.Node{}, invalid("Attribute gehören an das Projekt, nicht an eine Zuteilung.", "Attributes belong on the project, not on an allocation.")
+	case current.IsProject():
+		// The budget the project's place in the tree is read from, and the attributes it inherits.
+		manages, err = s.managesChainFrom(ctx, common.NewTokenSet(userTokens), current.HomeBudgetID)
+	default:
 		manages, err = s.managesNode(ctx, userTokens, current)
 	}
 	if err != nil {

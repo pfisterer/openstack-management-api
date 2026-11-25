@@ -62,7 +62,7 @@ func (s *Service) descendantsHolding(ctx context.Context, root model.Node, resou
 	}
 	// Leaves are not in the parent map — it walks budgets only — so they are
 	// fetched in one go under every budget of the subtree.
-	leaves, err := s.store.ListNodes(ctx, nodestore.NodeQuery{ParentIDs: budgetIDs, Kinds: []string{model.KindProject}}, 0, 0)
+	leaves, err := s.store.ListNodes(ctx, nodestore.NodeQuery{ParentIDs: budgetIDs, Kinds: []string{model.KindAllocation}}, 0, 0)
 	if err != nil {
 		return nil, fmt.Errorf("load subtree leaves: %w", err)
 	}
@@ -71,19 +71,12 @@ func (s *Service) descendantsHolding(ctx context.Context, root model.Node, resou
 		return nil, fmt.Errorf("load subtree budgets: %w", err)
 	}
 
-	// A project holds it from this subtree through its own limit — it lives
-	// here — or through an allocation from a budget of the subtree. One that
-	// has it from a budget further up does not depend on this one at all.
+	// An allocation of the subtree holds it through its limit; a project that has it from an allocation elsewhere does not depend on this budget at all. Ended and rejected allocations hold nothing any more.
 	holds := func(n model.Node, id string) bool {
-		if n.Limit.Grants(id) {
-			return true
+		if n.Kind == model.KindAllocation && (n.Status == model.StatusEnded || n.Status == model.StatusRejected) {
+			return false
 		}
-		for _, a := range n.Allocations {
-			if _, inSubtree := parentMap[a.BudgetID]; inSubtree && a.Limit.Grants(id) {
-				return true
-			}
-		}
-		return false
+		return n.Limit.Grants(id)
 	}
 	out := make(map[string][]string, len(resourceIDs))
 	for _, n := range append(budgets, leaves...) {
@@ -414,10 +407,11 @@ func (s *Service) checkBudgetLimit(ctx context.Context, n model.Node, chain []mo
 	return nil
 }
 
-// checkLeafLimit checks limit as the limit of a project placed under chain,
+// checkLeafLimit checks limit as the limit of an allocation placed under chain,
 // nearest first: a valid limit, every availability in it held by the budget
-// whose limit applies there, and nothing in it that the project also draws
-// from a budget further up. commit says the limit is being granted: then
+// whose limit applies there, and no availability in it that another allocation
+// of the same project already grants (project is the allocation; a new one
+// carries only its ProjectID). commit says the limit is being granted: then
 // every budget in the chain must have room for it, subtract being what the
 // project holds there already. A request that only waits for a decision
 // commits nothing, so capacity is checked when it is decided. Every path that
@@ -431,7 +425,7 @@ func (s *Service) checkLeafLimit(ctx context.Context, project model.Node, chain 
 			return err
 		}
 	}
-	if err := s.checkOwnLimitAgainstAllocations(project, limit); err != nil {
+	if err := s.checkProjectAvailabilities(ctx, project.ProjectID, project.ID, limit); err != nil {
 		return err
 	}
 	if commit {

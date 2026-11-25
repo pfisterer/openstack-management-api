@@ -124,9 +124,9 @@ func newMCPServer(cfg APIConfig, caller mcpCaller, log *zap.SugaredLogger) *mcp.
 
 type mcpProject struct {
 	ID     string `json:"id" jsonschema:"the project's id, used to refer to it in other tools"`
-	Kind   string `json:"kind" jsonschema:"project or budget"`
+	Kind   string `json:"kind" jsonschema:"project, budget, or allocation (the part of a project one budget pays for, a row in that budget's table)"`
 	Name   string `json:"name" jsonschema:"human-readable name"`
-	Status string `json:"status" jsonschema:"one of pending, approved, change_pending, rejected, released, archived, imported"`
+	Status string `json:"status" jsonschema:"one of pending, approved, change_pending, rejected, released, archived, imported; on an allocation also ended"`
 	// Set from the moment someone asked for the deletion until the project is
 	// gone; then it disappears.
 	DeletionRequested bool   `json:"deletion_requested,omitempty" jsonschema:"true while a released or archived project is being deleted for good"`
@@ -137,14 +137,17 @@ type mcpProject struct {
 	// owner. Named for what it is on both rather than for either.
 	Admins []string `json:"admins,omitempty" jsonschema:"on a project: who administers it together with the owner; on a budget: who approves requests there"`
 	Shared bool     `json:"shared,omitempty" jsonschema:"true for a project that others administer together with its owner"`
-	// PaidFrom is the id of the budget this project is charged to, not its name:
-	// the name is not unique and cannot be fed back into another tool.
-	PaidFrom     string         `json:"paid_from,omitempty" jsonschema:"id of the budget this is charged to"`
+	// PaidFrom is the id of a budget, not its name: the name is not unique and cannot be fed back into another tool.
+	PaidFrom     string         `json:"paid_from,omitempty" jsonschema:"on an allocation: id of the budget paying it; on a project: the budget of its home allocation (where its place in the tree is read from)"`
 	PaidFromName string         `json:"paid_from_name,omitempty" jsonschema:"name of that budget, where known"`
-	Limit        map[string]int `json:"limit,omitempty" jsonschema:"granted resources in total, e.g. cores, ram, storage — the project's own share plus its allocations"`
-	// The breakdown of Limit where part of it comes from budgets further up;
-	// without it a model cannot tell what a change request may touch.
-	Allocations []mcpAllocation `json:"allocations,omitempty" jsonschema:"resources this project draws from budgets above its own, on top of its own share; a change request changes only the own share"`
+	Limit        map[string]int `json:"limit,omitempty" jsonschema:"on a project: granted resources in total, the sum of its allocations; on an allocation: what its budget pays; on a budget: its cap"`
+	// The breakdown of a project's Limit; without it a model cannot tell what a change request may touch.
+	Allocations []mcpAllocation `json:"allocations,omitempty" jsonschema:"on a project: its allocations, one per paying budget; resources and end change per allocation"`
+	// The project an allocation pays for.
+	ProjectID   string `json:"project_id,omitempty" jsonschema:"on an allocation: the project it pays for"`
+	ProjectName string `json:"project_name,omitempty" jsonschema:"on an allocation: that project's name"`
+	// An allocation that ran out but still pays.
+	Expired *mcpExpiry `json:"expired,omitempty" jsonschema:"on an allocation: set while it has expired (its end passed or its budget was deleted) but still pays; it is cut after due unless extended or moved"`
 	// What a pending request or change asks for. Without it a manager asked to
 	// approve "with less" cannot know what "more" was.
 	RequestedLimit     map[string]int       `json:"requested_limit,omitempty" jsonschema:"resources a pending request or change asks for; limit keeps what is granted until it is decided"`
@@ -164,10 +167,32 @@ type mcpRunsAt struct {
 }
 
 type mcpAllocation struct {
-	BudgetID   string         `json:"budget_id" jsonschema:"the budget it comes from"`
-	BudgetName string         `json:"budget_name,omitempty" jsonschema:"that budget's name"`
-	Limit      map[string]int `json:"limit" jsonschema:"what comes from there"`
-	Reason     string         `json:"reason,omitempty" jsonschema:"why it was granted"`
+	ID              string         `json:"id" jsonschema:"the allocation's id: change, approve, reject or end it by this id"`
+	BudgetID        string         `json:"budget_id" jsonschema:"the budget paying it"`
+	BudgetName      string         `json:"budget_name,omitempty" jsonschema:"that budget's name"`
+	Status          string         `json:"status" jsonschema:"pending, approved, change_pending, rejected, ended, released, archived"`
+	Limit           map[string]int `json:"limit" jsonschema:"what this budget pays"`
+	RequestedLimit  map[string]int `json:"requested_limit,omitempty" jsonschema:"what a waiting change asks for"`
+	TerminationDate string         `json:"termination_date,omitempty" jsonschema:"the allocation's end"`
+	Expired         *mcpExpiry     `json:"expired,omitempty" jsonschema:"set while it has expired but still pays"`
+	Reason          string         `json:"reason,omitempty" jsonschema:"why it was asked for or granted"`
+	Revision        int            `json:"revision" jsonschema:"approve_request needs it back as expected_revision"`
+}
+
+type mcpExpiry struct {
+	Cause string `json:"cause" jsonschema:"ended (its end passed) or budget_deleted"`
+	Due   string `json:"due,omitempty" jsonschema:"the day after which it is cut; empty while nothing is cut automatically"`
+}
+
+func toMCPExpiry(e *model.Expiry) *mcpExpiry {
+	if e == nil {
+		return nil
+	}
+	out := &mcpExpiry{Cause: e.Cause}
+	if e.Due != nil {
+		out.Due = *e.Due
+	}
+	return out
 }
 
 func toMCPProject(n model.Node) mcpProject {
@@ -188,9 +213,14 @@ func toMCPProject(n model.Node) mcpProject {
 		InheritsLimit:      n.InheritsLimit,
 		Revision:           n.CurrentRevision(),
 	}
-	if n.ParentID != nil {
-		p.PaidFrom = *n.ParentID
+	if anchor := n.BudgetAnchor(); anchor != nil {
+		p.PaidFrom = *anchor
 	}
+	p.ProjectID = n.ProjectID
+	if n.Project != nil {
+		p.ProjectName = n.Project.Name
+	}
+	p.Expired = toMCPExpiry(n.Expired)
 	if n.Pending != nil && n.Pending.Limit != nil {
 		p.RequestedLimit = *n.Pending.Limit
 	}
@@ -210,7 +240,14 @@ func toMCPProject(n model.Node) mcpProject {
 		p.RunsAt[provider] = mcpRunsAt{ExternalID: b.ExternalID, ExternalName: b.ExternalName}
 	}
 	for _, a := range n.Allocations {
-		p.Allocations = append(p.Allocations, mcpAllocation{BudgetID: a.BudgetID, BudgetName: a.BudgetName, Limit: a.Limit, Reason: a.Reason})
+		m := mcpAllocation{ID: a.ID, BudgetID: a.BudgetID, BudgetName: a.BudgetName, Status: a.Status, Limit: a.Limit, Reason: a.Reason, Expired: toMCPExpiry(a.Expired), Revision: a.Revision}
+		if a.Pending != nil && a.Pending.Limit != nil {
+			m.RequestedLimit = *a.Pending.Limit
+		}
+		if a.TerminationDate != nil {
+			m.TerminationDate = *a.TerminationDate
+		}
+		p.Allocations = append(p.Allocations, m)
 	}
 	return p
 }
@@ -261,25 +298,54 @@ type mcpToDecideInput struct {
 }
 
 type mcpRequestInput struct {
-	BudgetID string `json:"budget_id" jsonschema:"id of the budget to charge this to; list_requestable_budgets lists the ones you may request under"`
-	Name     string `json:"name" jsonschema:"name for the new project"`
-	Reason   string `json:"reason" jsonschema:"why it is needed; a manager reads this when deciding"`
+	BudgetID string `json:"budget_id,omitempty" jsonschema:"id of the one budget to pay all of it; list_requestable_budgets lists the ones you may request from. Leave it out (and allocations too) to have it split automatically, see plan_project_split"`
+	// Several budgets: the split plan_project_split proposed, possibly changed.
+	Allocations []mcpAllocationSpec `json:"allocations,omitempty" jsonschema:"optional: the allocations to ask for, one per budget, e.g. the parts plan_project_split proposed; each follows the rules of its budget"`
+	StartWhen   string              `json:"start_when,omitempty" jsonschema:"optional: now (default) starts the project as soon as one allocation is approved, all waits until every one is decided"`
+	Name        string              `json:"name" jsonschema:"name for the new project"`
+	Reason      string              `json:"reason" jsonschema:"why it is needed; a manager reads this when deciding"`
 	// A map, not named fields: which resources exist is deployment
 	// configuration (get_project shows what an existing one uses), and
 	// hard-coding cores/ram/storage here would be a second place to change.
-	Limit           map[string]int `json:"limit" jsonschema:"requested resources by id, e.g. {\"cores\": 4, \"ram\": 8192}"`
+	Limit           map[string]int `json:"limit,omitempty" jsonschema:"requested resources by id in total, e.g. {\"cores\": 4, \"ram\": 8192}; not used with allocations"`
 	TerminationDate string         `json:"termination_date,omitempty" jsonschema:"optional intended end of life, a day 2006-01-02 (an RFC 3339 timestamp is accepted and counts as its day in Europe/Berlin); at most the budget's own end and, where the budget sets max_project_term_days, at most that many days from today; the latest allowed is also the default"`
 	Admins          []string       `json:"admins,omitempty" jsonschema:"optional: people or groups who administer the project together with you, e.g. user:a@b.c or group:x; they get no access in OpenStack by this"`
 }
 
+type mcpAllocationSpec struct {
+	BudgetID        string         `json:"budget_id" jsonschema:"the budget paying this part"`
+	Limit           map[string]int `json:"limit" jsonschema:"what it pays"`
+	TerminationDate string         `json:"termination_date,omitempty" jsonschema:"optional end of this part"`
+}
+
+type mcpSplitInput struct {
+	Limit           map[string]int `json:"limit" jsonschema:"what the project needs in total"`
+	TerminationDate string         `json:"termination_date,omitempty" jsonschema:"optional end"`
+	BudgetIDs       []string       `json:"budget_ids,omitempty" jsonschema:"optional: only consider these budgets"`
+}
+
+type mcpAddAllocationInput struct {
+	ProjectID       string         `json:"project_id" jsonschema:"id of the project"`
+	BudgetID        string         `json:"budget_id" jsonschema:"the budget to pay it: one you may request from (a request under its rules), or one you manage (granted at once)"`
+	Limit           map[string]int `json:"limit" jsonschema:"what this budget is to pay, e.g. {\"cores\": 8}"`
+	Reason          string         `json:"reason" jsonschema:"why; whoever decides or runs the project reads it"`
+	TerminationDate string         `json:"termination_date,omitempty" jsonschema:"optional end of this allocation"`
+}
+
+type mcpEndAllocationInput struct {
+	ID              string `json:"id" jsonschema:"id of the allocation to end (get_project lists a project's allocations)"`
+	ConfirmBudgetID string `json:"confirm_budget_id" jsonschema:"the id of the budget paying it, as a confirmation that this is the right one"`
+}
+
 type mcpChangeInput struct {
-	ID     string         `json:"id" jsonschema:"id of the project to change"`
-	Limit  map[string]int `json:"limit" jsonschema:"the new resource amounts, given in full rather than as a delta"`
-	Reason string         `json:"reason,omitempty" jsonschema:"why the change is needed"`
+	ID              string         `json:"id" jsonschema:"id of the allocation to change, or of a project with a single allocation"`
+	Limit           map[string]int `json:"limit,omitempty" jsonschema:"the new resource amounts of that allocation, given in full rather than as a delta"`
+	TerminationDate string         `json:"termination_date,omitempty" jsonschema:"optional new end of that allocation"`
+	Reason          string         `json:"reason,omitempty" jsonschema:"why the change is needed"`
 }
 
 type mcpApproveInput struct {
-	ID string `json:"id" jsonschema:"id of the request to approve"`
+	ID string `json:"id" jsonschema:"id of the request to approve: an allocation, a budget, or a project with a single waiting allocation"`
 	// Approving with less than was asked for is a normal outcome, and it has
 	// to be expressible or the only options are all or nothing.
 	ModifiedLimit map[string]int `json:"modified_limit,omitempty" jsonschema:"optional: approve with these amounts instead of the requested ones"`
@@ -288,7 +354,7 @@ type mcpApproveInput struct {
 }
 
 type mcpRejectInput struct {
-	ID     string `json:"id" jsonschema:"id of the request to reject"`
+	ID     string `json:"id" jsonschema:"id of the request to reject: an allocation, a budget, or a project with a single waiting allocation"`
 	Reason string `json:"reason,omitempty" jsonschema:"why it was turned down; the requester sees this"`
 }
 
@@ -302,13 +368,6 @@ type mcpSetAdminsInput struct {
 	// No omitempty: the list replaces the current one, and an empty list is a
 	// real answer (no co-admins any more), not a missing one.
 	Admins []string `json:"admins" jsonschema:"the complete new list, e.g. [\"user:a@b.c\", \"group:x\"]; an empty list removes all co-admins"`
-}
-
-type mcpAllocationInput struct {
-	ID       string         `json:"id" jsonschema:"id of the project"`
-	BudgetID string         `json:"budget_id" jsonschema:"id of a budget above the project's own budget that you manage; the allocation is charged there"`
-	Limit    map[string]int `json:"limit" jsonschema:"the whole allocation from that budget, not a delta, e.g. {\"cores\": 8}; {} removes it"`
-	Reason   string         `json:"reason,omitempty" jsonschema:"why; required when granting or raising, the managers of the budgets in between read it"`
 }
 
 type mcpCreateBudgetInput struct {
@@ -432,7 +491,7 @@ func registerProjectTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *z
 
 	mcpserve.AddTool(s, caller, false, &mcp.Tool{
 		Name:        "list_budget_contents",
-		Description: "List the projects and sub-budgets directly under a budget, to walk the tree one level at a time.",
+		Description: "List the allocations (one per project the budget pays for, with that project) and sub-budgets directly under a budget, to walk the tree one level at a time.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpBudgetContentsInput) (*mcp.CallToolResult, mcpProjectList, error) {
 		r := in.Request()
 		p, err := cfg.Service.ListChildren(in.ID, tree.ChildFilter{}, caller.tokens, r.Limit, r.Offset)
@@ -466,19 +525,28 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 	// for something that is already running.
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
 		Name: "create_project",
-		Description: "Create a cloud project under a budget. If you manage that budget it is created directly; " +
-			"otherwise it becomes a request waiting for a decision, unless the budget auto-approves this size. " +
-			"The returned status says which of the three happened.",
+		Description: "Create a cloud project. Name one budget (budget_id) to pay all of it, the allocations to ask for " +
+			"(see plan_project_split), or neither to have limit split automatically over the budgets you may request from. " +
+			"Each allocation follows the rules of its budget: created directly if you manage it, approved at once within " +
+			"what the budget auto-approves, else a request waiting for a decision. The returned status and allocations say which happened.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpRequestInput) (*mcp.CallToolResult, mcpProject, error) {
 		if in.Reason == "" {
 			return nil, mcpProject{}, msg.Errorf("reason darf nicht leer sein, über die Anfrage entscheidet eine verwaltende Person", "reason must not be empty, a person who manages the budget decides on the request")
 		}
 		req := tree.CreateNodeRequest{
-			ParentID: in.BudgetID,
-			Kind:     model.KindProject,
-			Name:     in.Name,
-			Reason:   in.Reason,
-			Limit:    common.ProjectQuota(in.Limit),
+			ParentID:  in.BudgetID,
+			Kind:      model.KindProject,
+			Name:      in.Name,
+			Reason:    in.Reason,
+			Limit:     common.ProjectQuota(in.Limit),
+			StartWhen: in.StartWhen,
+		}
+		for _, a := range in.Allocations {
+			spec := tree.AllocationSpec{BudgetID: a.BudgetID, Limit: common.ProjectQuota(a.Limit)}
+			if a.TerminationDate != "" {
+				spec.TerminationDate = new(a.TerminationDate)
+			}
+			req.Allocations = append(req.Allocations, spec)
 		}
 		if len(in.Admins) > 0 {
 			req.AdminScope = common.TokenList(in.Admins)
@@ -486,21 +554,44 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 		if in.TerminationDate != "" {
 			req.TerminationDate = &in.TerminationDate
 		}
-		log.Infow("MCP create_project", "actor", caller.actorEmail, "budget_id", in.BudgetID)
+		log.Infow("MCP create_project", "actor", caller.actorEmail, "budget_id", in.BudgetID, "allocations", len(in.Allocations))
 		node, err := cfg.Service.CreateNode(req, caller.serviceActor(), caller.userEmail, caller.tokens)
 		return nodeResult(log, node, err, "Projekt anfragen", "request a project")
 	})
 
+	mcpserve.AddTool(s, caller, false, &mcp.Tool{
+		Name: "plan_project_split",
+		Description: "Propose how a project needing limit would be paid for by the budgets you may request from: first what " +
+			"each budget grants without a decision, the most specific budget first, then the rest as a request. Nothing is " +
+			"written; pass the parts (changed if you like) to create_project as allocations.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpSplitInput) (*mcp.CallToolResult, tree.SplitPlan, error) {
+		req := tree.SplitRequest{Limit: common.ProjectQuota(in.Limit), BudgetIDs: in.BudgetIDs}
+		if in.TerminationDate != "" {
+			req.TerminationDate = &in.TerminationDate
+		}
+		plan, err := cfg.Service.PlanSplit(req, caller.userEmail, caller.tokens)
+		if err != nil {
+			return nil, tree.SplitPlan{}, mcpServiceError(log, err, "Aufteilung vorschlagen", "propose a split")
+		}
+		return nil, plan, nil
+	})
+
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
 		Name: "request_project_change",
-		Description: "Propose new resource amounts for an existing project. Giving resources back, or growing " +
-			"within what the budget approves automatically, takes effect at once (status approved), and so does any change by someone " +
-			"who manages a budget above the project, if it fits; otherwise " +
-			"the project keeps running on its currently approved limits until someone accepts the proposal " +
-			"(status change_pending).",
+		Description: "Propose new resource amounts or a new end for one allocation of a project (the id of the allocation, " +
+			"or of a project that has only one). Giving resources back, or growing within what the allocation's budget approves " +
+			"automatically, takes effect at once (status approved), and so does any change by someone who manages that budget, " +
+			"if it fits; otherwise the allocation keeps its approved amounts until someone accepts the proposal (status change_pending). " +
+			"To get more from another budget, use add_project_allocation.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpChangeInput) (*mcp.CallToolResult, mcpProject, error) {
-		limit := common.ProjectQuota(in.Limit)
-		req := tree.ChangeNodeRequest{Limit: &limit}
+		var req tree.ChangeNodeRequest
+		if in.Limit != nil {
+			limit := common.ProjectQuota(in.Limit)
+			req.Limit = &limit
+		}
+		if in.TerminationDate != "" {
+			req.TerminationDate = &in.TerminationDate
+		}
 		if in.Reason != "" {
 			req.Reason = &in.Reason
 		}
@@ -579,21 +670,22 @@ func registerProjectWriteTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, l
 	})
 }
 
-// registerAllocationTools offers the exception path: a project gets something
-// from a budget further up without the budgets in between holding it.
+// registerAllocationTools offers what changes which budgets pay for a project.
 func registerAllocationTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, log *zap.SugaredLogger) {
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
-		Name: "set_project_allocation",
-		Description: "Give a project resources from a budget above its own budget — a GPU or a network for one " +
-			"project, more cores than its own budget grants — without giving them to that budget. It is charged " +
-			"to the budget named, not to the ones in between. Needs a manager of that budget or above; the " +
-			"project's owner may lower or remove it. The limit replaces the allocation from that budget; {} removes it.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpAllocationInput) (*mcp.CallToolResult, mcpProject, error) {
-		log.Infow("MCP set_project_allocation", "actor", caller.actorEmail, "node_id", in.ID, "budget_id", in.BudgetID)
-		node, err := cfg.Service.SetAllocation(in.ID, tree.AllocationRequest{
-			BudgetID: in.BudgetID, Limit: common.ProjectQuota(in.Limit), Reason: in.Reason,
-		}, caller.serviceActor(), caller.tokens)
-		return nodeResult(log, node, err, "Zuteilung von %q setzen", "set the allocation of %q", in.ID)
+		Name: "add_project_allocation",
+		Description: "Have another budget pay part of a project. From a budget you may request from it is a request under " +
+			"that budget's rules (approved at once within its auto-approval, else waiting); from a budget you manage it is " +
+			"granted at once, with a reason. A project has one allocation per budget; more from the same budget is a change " +
+			"of that allocation (request_project_change).",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpAddAllocationInput) (*mcp.CallToolResult, mcpProject, error) {
+		req := tree.CreateNodeRequest{Kind: model.KindAllocation, ProjectID: in.ProjectID, ParentID: in.BudgetID, Limit: common.ProjectQuota(in.Limit), Reason: in.Reason}
+		if in.TerminationDate != "" {
+			req.TerminationDate = &in.TerminationDate
+		}
+		log.Infow("MCP add_project_allocation", "actor", caller.actorEmail, "project_id", in.ProjectID, "budget_id", in.BudgetID)
+		node, err := cfg.Service.CreateNode(req, caller.serviceActor(), caller.userEmail, caller.tokens)
+		return nodeResult(log, node, err, "Zuteilung für %q anlegen", "add an allocation to %q", in.ProjectID)
 	})
 }
 
@@ -730,6 +822,27 @@ func registerDestructiveTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, lo
 	})
 
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
+		Name: "end_allocation",
+		Description: "End one allocation of a project: its owner gives it back, or a manager of its budget withdraws it. " +
+			"The project shrinks by it at once — in OpenStack, servers beyond the new quota keep running, but nothing new " +
+			"fits. A request still waiting is withdrawn. Ask the person before calling this.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpEndAllocationInput) (*mcp.CallToolResult, mcpProject, error) {
+		node, err := mcpLookup(cfg, caller, log, in.ID)
+		if err != nil {
+			return nil, mcpProject{}, err
+		}
+		if node.Kind != model.KindAllocation {
+			return nil, mcpProject{}, msg.Errorf("%q ist keine Zuteilung; get_project listet die Zuteilungen eines Projekts", "%q is not an allocation; get_project lists the allocations of a project", in.ID)
+		}
+		if node.ParentID == nil || *node.ParentID != in.ConfirmBudgetID {
+			return nil, mcpProject{}, mcpRefusal("confirm_budget_id %q stimmt nicht: %q wird von einem anderen Budget bezahlt. Erst lesen, dann die ID des Budgets zurückgeben.", "confirm_budget_id %q does not match: %q is paid by another budget. Read it first, then pass back the budget's id.", in.ConfirmBudgetID, in.ID)
+		}
+		log.Infow("MCP end_allocation", "actor", caller.actorEmail, "node_id", in.ID)
+		out, err := cfg.Service.ReleaseNode(in.ID, tree.ReleaseNodeRequest{}, caller.serviceActor(), caller.tokens)
+		return nodeResult(log, out, err, "Zuteilung %q beenden", "end the allocation %q", in.ID)
+	})
+
+	mcpserve.AddTool(s, caller, true, &mcp.Tool{
 		Name: "delete_project",
 		Description: "Delete a released or archived project for good, to free what it still holds, such as its " +
 			"volumes. Everything in its OpenStack project — servers, volumes, snapshots, images, networks, data — " +
@@ -746,7 +859,8 @@ func registerDestructiveTools(s *mcp.Server, cfg APIConfig, caller mcpCaller, lo
 	mcpserve.AddTool(s, caller, true, &mcp.Tool{
 		Name: "delete_budget",
 		Description: "Delete a budget. Only budgets, never projects — those are released instead. This cannot " +
-			"be undone. Ask the person before calling this.",
+			"be undone. Allocations of projects below it move to the budget above and are marked as expired; the projects " +
+			"keep their resources until the allocations are extended elsewhere or cut. Ask the person before calling this.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in mcpDeleteBudgetInput) (*mcp.CallToolResult, mcpProject, error) {
 		node, err := confirmName(in.ID, in.ConfirmName)
 		if err != nil {

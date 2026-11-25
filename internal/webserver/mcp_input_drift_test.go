@@ -27,6 +27,7 @@ var toolInputContracts = []mcptest.Input{
 		Tool: "create_project", Domain: tree.CreateNodeRequest{}, Input: mcpRequestInput{},
 		Renamed: map[string]string{"parent_id": "budget_id", "admin_scope": "admins"},
 		Omitted: map[string]string{
+			"project_id":                         "allocation-only; add_project_allocation sets it",
 			"kind":                               "the tool sets it; offering it would let a model create a budget through the project tool",
 			"authorized_users":                   "participants are managed in the UI, where the person can see who they are adding",
 			"eligible_requesters":                "budget-only",
@@ -46,6 +47,9 @@ var toolInputContracts = []mcptest.Input{
 			"kind":                               "the tool sets it",
 			"termination_date":                   "budgets are not given an end date through this tool",
 			"authorized_users":                   "leaf-only",
+			"allocations":                        "project-only",
+			"start_when":                         "project-only",
+			"project_id":                         "allocation-only",
 			"allow_requests_beyond_auto_approve": "defaults to allowed; a hard limit is a policy decision made in the UI",
 			"caps":                               "the caps of the providers (release times, local storage, batch jobs at the AI service) are set in the UI; without them the budgets above apply",
 		},
@@ -53,7 +57,6 @@ var toolInputContracts = []mcptest.Input{
 	{
 		Tool: "request_project_change", Domain: tree.ChangeNodeRequest{}, Input: mcpChangeInput{},
 		Omitted: map[string]string{
-			"termination_date": "changing the end date is not offered yet",
 			"authorized_users": "participants are managed in the UI",
 		},
 	},
@@ -97,9 +100,6 @@ var toolInputContracts = []mcptest.Input{
 	},
 	{
 		Tool: "release_project", Domain: tree.ReleaseNodeRequest{}, Input: mcpReleaseInput{},
-	},
-	{
-		Tool: "set_project_allocation", Domain: tree.AllocationRequest{}, Input: mcpAllocationInput{},
 	},
 	{
 		Tool: "set_project_admins", Domain: tree.UpdateNodeRequest{}, Input: mcpSetAdminsInput{},

@@ -74,7 +74,8 @@ func TestBuildRolledUpUsage_MaxAppliesPerLeafNotToTheSum(t *testing.T) {
 	parentMap := map[string]*string{budget: nil}
 
 	osInUse := (&Service{accounting: Accounting{ChargeInUse: true}, catalog: common.StaticCatalog{{ID: "cores"}, {ID: "ram"}}}).leafCost
-	usage := buildRolledUpUsage(leaves, parentMap, chargedResources, osInUse)
+	allocs, projects := asAllocations(leaves)
+	usage := buildRolledUpUsage(allocs, projects, parentMap, chargedResources, osInUse)
 	total := usage[budget].Total(chargedResources)
 	if total["cores"] != 16 {
 		t.Errorf("expected 8+8=16 charged cores, got %d", total["cores"])

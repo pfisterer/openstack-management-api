@@ -21,6 +21,11 @@ func (s *Service) Bootstrap(ctx context.Context, mockIdentities []common.Identit
 			return fmt.Errorf("tree service: check state emptiness: %w", err)
 		}
 		if empty {
+			// Seed data may still be written as the former model, projects in the tree.
+			mockNodes, err = nodestore.MigrateNodes(mockNodes, s.now())
+			if err != nil {
+				return fmt.Errorf("tree service: migrate mock state: %w", err)
+			}
 			if err := s.store.Seed(ctx, mockIdentities, mockNodes); err != nil {
 				return fmt.Errorf("tree service: seed mock state: %w", err)
 			}

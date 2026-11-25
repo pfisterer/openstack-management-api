@@ -55,11 +55,16 @@ func (s *Service) attachChildCounts(ctx context.Context, nodes []model.Node) ([]
 func (s *Service) attachParentNames(ctx context.Context, nodes []model.Node, viewer common.TokenList) ([]model.Node, error) {
 	var start []string
 	for _, n := range nodes {
-		if n.ParentID != nil {
-			start = append(start, *n.ParentID)
+		if anchor := n.BudgetAnchor(); anchor != nil {
+			start = append(start, *anchor)
 		}
 		for _, a := range n.Allocations {
 			start = append(start, a.BudgetID)
+		}
+		if n.Project != nil {
+			for _, a := range n.Project.Allocations {
+				start = append(start, a.BudgetID)
+			}
 		}
 	}
 	tree, err := s.walkAncestors(ctx, start)
@@ -76,29 +81,47 @@ func (s *Service) attachParentNames(ctx context.Context, nodes []model.Node, vie
 		}
 		above := tree.budgetsAbove(nodes[i])
 		nodes[i].InheritedCaps = model.ResolveCaps(above, s.capDefs())
-		if nodes[i].ParentID != nil {
-			nodes[i].ParentName = tree.nodes[*nodes[i].ParentID].Name
-			nodes[i].ParentPath = tree.path(*nodes[i].ParentID)
+		if anchor := nodes[i].BudgetAnchor(); anchor != nil {
+			nodes[i].ParentName = tree.nodes[*anchor].Name
+			nodes[i].ParentPath = tree.path(*anchor)
 		}
-		if len(nodes[i].Allocations) > 0 {
-			// A copy: the slice may be the store's own.
-			named := slices.Clone(nodes[i].Allocations)
-			for j := range named {
-				named[j].BudgetName = tree.nodes[named[j].BudgetID].Name
-				named[j].BudgetPath = tree.path(named[j].BudgetID)
+		nodes[i].Allocations = tree.nameAllocations(nodes[i].Allocations)
+		if nodes[i].Project != nil {
+			p := *nodes[i].Project
+			p.Allocations = tree.nameAllocations(p.Allocations)
+			if p.HomeBudgetID != nil {
+				p.ParentName = tree.nodes[*p.HomeBudgetID].Name
+				p.ParentPath = tree.path(*p.HomeBudgetID)
 			}
-			nodes[i].Allocations = named
+			if !tree.attributesVisible(nodes[i], viewerSet) {
+				p.Attributes = nil
+			}
+			nodes[i].Project = &p
 		}
 	}
 	return nodes, nil
 }
 
+// nameAllocations gives each allocation the name and path of its budget, in a copy.
+func (a ancestry) nameAllocations(allocs []model.Allocation) []model.Allocation {
+	if len(allocs) == 0 {
+		return allocs
+	}
+	named := slices.Clone(allocs)
+	for j := range named {
+		named[j].BudgetName = a.nodes[named[j].BudgetID].Name
+		named[j].BudgetPath = a.path(named[j].BudgetID)
+	}
+	return named
+}
+
 // budgetsAbove are the budgets above n as walkAncestors loaded them, parent first: the chain the model.Resolve* functions take, as parentChainNodes would load it. Only the fields walkAncestors keeps (slimNode) are set; a budget it could not load is an empty node with its id. Nil for the root.
 func (a ancestry) budgetsAbove(n model.Node) []model.Node {
-	if n.ParentID == nil {
+	anchor := n.BudgetAnchor()
+	if anchor == nil {
 		return nil
 	}
-	ids := append([]string{*n.ParentID}, a.chain(*n.ParentID)...)
+	ids := append([]string{*anchor}, a.chain(*anchor)...)
 	out := make([]model.Node, 0, len(ids))
 	for _, id := range ids {
 		b := a.nodes[id]
@@ -237,7 +260,7 @@ func (s *Service) attachUsage(ctx context.Context, nodes []model.Node, viewer co
 			budgets = append(budgets, n)
 		}
 	}
-	usage, allocated, inUse, err := s.loadSubtreeUsageAndAllocations(ctx, budgets)
+	usage, inUse, err := s.loadSubtreeUsageAndInUse(ctx, budgets)
 	if err != nil {
 		return nil, fmt.Errorf("compute subtree usage: %w", err)
 	}
@@ -245,12 +268,13 @@ func (s *Service) attachUsage(ctx context.Context, nodes []model.Node, viewer co
 	for _, n := range nodes {
 		if n.Kind == model.KindBudget {
 			n.Usage = usage[n.ID]
-			if a, ok := allocated[n.ID]; ok {
-				n.AllocatedOut = &a
-			}
 			n.SubtreeInUse = inUse[n.ID]
 		}
 		out = append(out, n)
+	}
+	out, err = s.attachAllocations(ctx, out)
+	if err != nil {
+		return nil, err
 	}
 	out, err = s.attachInheritedLimits(ctx, out)
 	if err != nil {

@@ -85,14 +85,14 @@ func TestPass(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	store := nodestore.NewInMemoryStore(log)
 	svc := tree.NewService(store, nil, catalog, nil, time.Second, 0, tree.Accounting{}, log)
-	for _, n := range []model.Node{
+	for _, n := range migrated(t, []model.Node{
 		{ID: "p_ws", Kind: model.KindProject, Status: model.StatusApproved, Name: "WS", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
 		{ID: "p_vm", Kind: model.KindProject, Status: model.StatusApproved, Name: "VM", Limit: common.ProjectQuota{"cores": 4}},
 		{ID: "p_end", Kind: model.KindProject, Status: model.StatusReleased, Name: "End", Limit: common.ProjectQuota{"ws-vcpu-hours": 100},
 			Bindings: map[string]model.Binding{Provider: {ExternalID: "t-p_end"}}},
 		{ID: "p_del", Kind: model.KindProject, Status: model.StatusReleased, Name: "Del", Flags: []string{model.FlagDeleteRequested},
 			Limit: common.ProjectQuota{"llm-mtokens": 10}, Bindings: map[string]model.Binding{Provider: {ExternalID: "t-p_del"}}},
-	} {
+	}) {
 		if err := store.UpsertNode(ctx, n); err != nil {
 			t.Fatal(err)
 		}
@@ -184,7 +184,7 @@ func TestExpiry(t *testing.T) {
 	store := nodestore.NewInMemoryStore(log)
 	svc := tree.NewService(store, nil, catalog, nil, time.Second, 0, tree.Accounting{}, log)
 	day := func(s string) *string { return &s }
-	for _, n := range []model.Node{
+	for _, n := range migrated(t, []model.Node{
 		{ID: "p_old", Kind: model.KindProject, Status: model.StatusApproved, Name: "Old", TerminationDate: day("2026-09-20"), Limit: common.ProjectQuota{"ws-storage-gb": 5}},
 		{ID: "p_soon", Kind: model.KindProject, Status: model.StatusApproved, Name: "Soon", TerminationDate: day("2026-10-05"), Limit: common.ProjectQuota{"ws-storage-gb": 5}},
 		{ID: "p_rel", Kind: model.KindProject, Status: model.StatusReleased, Name: "Released", TerminationDate: day("2027-03-31"), Limit: common.ProjectQuota{"ws-storage-gb": 5},
@@ -195,7 +195,7 @@ func TestExpiry(t *testing.T) {
 			History:  []model.HistoryEntry{{Timestamp: "2026-09-01T10:00:00Z", StatusTo: model.StatusReleased}}},
 		{ID: "p_fresh", Kind: model.KindProject, Status: model.StatusReleased, Name: "Fresh", Limit: common.ProjectQuota{"ws-storage-gb": 5},
 			History: []model.HistoryEntry{{Timestamp: "2026-10-10T23:30:00Z", StatusTo: model.StatusReleased}}},
-	} {
+	}) {
 		if err := store.UpsertNode(ctx, n); err != nil {
 			t.Fatal(err)
 		}
@@ -276,14 +276,14 @@ func TestPassSendsReleaseMax(t *testing.T) {
 	store := nodestore.NewInMemoryStore(log)
 	svc := tree.NewService(store, nil, catalog, nil, time.Second, 0, tree.Accounting{}, log)
 	root, b1, b2 := "r", "b1", "b2"
-	for _, n := range []model.Node{
+	for _, n := range migrated(t, []model.Node{
 		{ID: root, Kind: model.KindBudget, Status: model.StatusApproved, Caps: common.Caps{CapReleaseCPUIdleOpen: 120, CapReleaseCPUIdleClosed: 120, CapReleaseCPUMaxHours: 12, CapReleaseGPUIdleOpen: 30, CapReleaseGPUIdleClosed: 5, CapReleaseGPUMaxHours: 4}},
 		{ID: b1, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &root},
 		{ID: b2, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &b1, Caps: common.Caps{CapReleaseCPUIdleOpen: 60, CapReleaseCPUMaxHours: 24, CapReleaseGPUMaxHours: 2}},
 		{ID: "lone", Kind: model.KindBudget, Status: model.StatusApproved},
 		{ID: "p_deep", Kind: model.KindProject, Status: model.StatusApproved, ParentID: &b2, Name: "Deep", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
 		{ID: "p_free", Kind: model.KindProject, Status: model.StatusApproved, ParentID: new("lone"), Name: "Free", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
-	} {
+	}) {
 		if err := store.UpsertNode(ctx, n); err != nil {
 			t.Fatal(err)
 		}
@@ -313,14 +313,14 @@ func TestPassSendsWorkspaceScratch(t *testing.T) {
 	store := nodestore.NewInMemoryStore(log)
 	svc := tree.NewService(store, nil, catalog, nil, time.Second, 0, tree.Accounting{}, log)
 	root, b1, b2 := "r", "b1", "b2"
-	for _, n := range []model.Node{
+	for _, n := range migrated(t, []model.Node{
 		{ID: root, Kind: model.KindBudget, Status: model.StatusApproved, Caps: common.Caps{CapWorkspaceScratchGB: 20}},
 		{ID: b1, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &root, Caps: common.Caps{CapWorkspaceScratchGB: 4}},
 		{ID: b2, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &b1, Caps: common.Caps{CapWorkspaceScratchGB: 10}},
 		{ID: "lone", Kind: model.KindBudget, Status: model.StatusApproved},
 		{ID: "p_deep", Kind: model.KindProject, Status: model.StatusApproved, ParentID: &b2, Name: "Deep", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
 		{ID: "p_free", Kind: model.KindProject, Status: model.StatusApproved, ParentID: new("lone"), Name: "Free", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
-	} {
+	}) {
 		if err := store.UpsertNode(ctx, n); err != nil {
 			t.Fatal(err)
 		}
@@ -348,7 +348,7 @@ func TestPassSendsBatchPriority(t *testing.T) {
 	store := nodestore.NewInMemoryStore(log)
 	svc := tree.NewService(store, nil, catalog, nil, time.Second, 0, tree.Accounting{}, log)
 	root, b1, b2, g := "r", "b1", "b2", "g"
-	for _, n := range []model.Node{
+	for _, n := range migrated(t, []model.Node{
 		{ID: root, Kind: model.KindBudget, Status: model.StatusApproved, Caps: common.Caps{CapBatchPriority: 1}},
 		{ID: b1, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &root, Caps: common.Caps{CapBatchPriority: 0}},
 		{ID: b2, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &b1, Caps: common.Caps{CapBatchPriority: 1}},
@@ -357,7 +357,7 @@ func TestPassSendsBatchPriority(t *testing.T) {
 		{ID: "p_deep", Kind: model.KindProject, Status: model.StatusApproved, ParentID: &b2, Name: "Deep", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
 		{ID: "p_guar", Kind: model.KindProject, Status: model.StatusApproved, ParentID: &g, Name: "Guaranteed", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
 		{ID: "p_free", Kind: model.KindProject, Status: model.StatusApproved, ParentID: new("lone"), Name: "Free", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
-	} {
+	}) {
 		if err := store.UpsertNode(ctx, n); err != nil {
 			t.Fatal(err)
 		}
@@ -388,7 +388,7 @@ func TestPassSendsBatchJobs(t *testing.T) {
 	store := nodestore.NewInMemoryStore(log)
 	svc := tree.NewService(store, nil, catalog, nil, time.Second, 0, tree.Accounting{}, log)
 	root, b1, b2, inh, off := "r", "b1", "b2", "inh", "off"
-	for _, n := range []model.Node{
+	for _, n := range migrated(t, []model.Node{
 		{ID: root, Kind: model.KindBudget, Status: model.StatusApproved, Caps: common.Caps{CapBatchJobsPerPerson: 4, CapBatchMaxHours: 8}},
 		{ID: b1, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &root, Caps: common.Caps{CapBatchJobsPerPerson: 2, CapBatchMaxHours: 8}},
 		{ID: b2, Kind: model.KindBudget, Status: model.StatusApproved, ParentID: &b1, Caps: common.Caps{CapBatchJobsPerPerson: 3, CapBatchMaxHours: 4}},
@@ -397,7 +397,7 @@ func TestPassSendsBatchJobs(t *testing.T) {
 		{ID: "p_deep", Kind: model.KindProject, Status: model.StatusApproved, ParentID: &b2, Name: "Deep", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
 		{ID: "p_inh", Kind: model.KindProject, Status: model.StatusApproved, ParentID: &inh, Name: "Inherits", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
 		{ID: "p_off", Kind: model.KindProject, Status: model.StatusApproved, ParentID: &off, Name: "Off", Limit: common.ProjectQuota{"ws-vcpu-hours": 100}},
-	} {
+	}) {
 		if err := store.UpsertNode(ctx, n); err != nil {
 			t.Fatal(err)
 		}
@@ -415,4 +415,14 @@ func TestPassSendsBatchJobs(t *testing.T) {
 	if b, _ := json.Marshal(fake.projects["p_off"]); !strings.Contains(string(b), `"batch_jobs":{"jobs_per_person":0,"max_hours":0}`) {
 		t.Errorf("off must be sent, not left out, got %s", b)
 	}
+}
+
+// migrated is test data written as the former model (projects in the tree) as it is stored since allocation_leaves.
+func migrated(t *testing.T, nodes []model.Node) []model.Node {
+	t.Helper()
+	out, err := nodestore.MigrateNodes(nodes, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }

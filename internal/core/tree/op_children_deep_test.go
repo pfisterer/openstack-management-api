@@ -14,7 +14,7 @@ func TestListChildrenDeep(t *testing.T) {
 	own := mustCreate(t, f.svc, tree.CreateNodeRequest{ParentID: f.uni.ID, Kind: model.KindProject, Name: "Own", Limit: cores(1)})
 
 	page, err := f.svc.ListChildren(f.uni.ID, tree.ChildFilter{Kind: model.KindProject}, uniTokens, 50, 0)
-	if err != nil || page.Total != 1 || page.Items[0].ID != own.ID {
+	if err != nil || page.Total != 1 || page.Items[0].ProjectID != own.ID {
 		t.Fatalf("direct children: %v, %+v", err, page)
 	}
 	page, err = f.svc.ListChildren(f.uni.ID, tree.ChildFilter{Kind: model.KindProject, Deep: true}, uniTokens, 50, 0)
@@ -22,15 +22,15 @@ func TestListChildrenDeep(t *testing.T) {
 		t.Fatalf("deep: want the own project and the one in the student budget, got %v, %d", err, page.Total)
 	}
 	for _, n := range page.Items {
-		if n.Kind != model.KindProject {
-			t.Errorf("deep must list projects only, got %s", n.Kind)
+		if n.Kind != model.KindAllocation {
+			t.Errorf("deep must list allocations only, got %s", n.Kind)
 		}
-		if n.ID == f.project.ID && n.ParentName != "Students" {
+		if n.ProjectID == f.project.ID && n.ParentName != "Students" {
 			t.Errorf("a project from a sub-budget should name it, got %q", n.ParentName)
 		}
 	}
 	page, err = f.svc.ListChildren(f.uni.ID, tree.ChildFilter{Kind: model.KindProject, Deep: true, Query: "thesis"}, uniTokens, 50, 0)
-	if err != nil || page.Total != 1 || page.Items[0].ID != f.project.ID {
+	if err != nil || page.Total != 1 || page.Items[0].ProjectID != f.project.ID {
 		t.Errorf("deep with a text filter: %v, %+v", err, page.Items)
 	}
 }

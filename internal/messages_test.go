@@ -39,6 +39,22 @@ var storedGerman = []string{
 	"Projekte im Budget %q laufen höchstens %d Tage am Stück",
 	"Sammelstelle für OpenStack-Projekte, die der Abgleich gefunden hat. Limit 0: Hier lässt sich nichts genehmigen — Importe in ein richtiges Budget übernehmen.",
 	"OpenStack-Projekt: %s (%s)",
+	"Aus dem eigenen Anteil des Projekts (Umstellung auf Zuteilungen)",
+	"Aus einer Sonderzuteilung (Umstellung auf Zuteilungen)",
+	"Nach Ablauf der Frist gekürzt",
+	"Nach Ablauf der Frist gekürzt (Budget %q gelöscht)",
+	": der Teil, den das Budget ohne Antrag gibt",
+	"Der Rest wartet auf die Verwaltenden des Budgets",
+	"Gestartet: eine Zuteilung ist genehmigt",
+	"Gestartet: über alle Zuteilungen ist entschieden",
+	"Keine Zuteilung genehmigt",
+	"Mit dem Projekt beendet",
+	"Von den Verantwortlichen des Projekts zurückgegeben",
+	"Von den Verwaltenden des Budgets entzogen",
+	"Anfrage zurückgezogen",
+	"Das Budget %q wurde gelöscht",
+	"Das Budget %q wurde gelöscht; die Zuteilung hängt jetzt am Budget darüber und ist als abgelaufen markiert",
+	"Abgelaufen am %s",
 }
 
 var (

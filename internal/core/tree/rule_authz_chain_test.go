@@ -82,15 +82,4 @@ func TestAuthz_ManagementOnTheLoadedChain(t *testing.T) {
 	if _, err := svc.ReparentNode(byUni.ID, tree.ReparentNodeRequest{NewParentID: other.ID}, model.UIActor("uni@x"), uniT); err != nil {
 		t.Fatalf("a manager of both moves it: %v", err)
 	}
-
-	// AllocationSources: a stranger is refused, the owner gets none.
-	if _, err := svc.AllocationSources(byStud.ID, otherT); !errors.Is(err, common.ErrForbidden) {
-		t.Fatalf("a stranger must not list allocation sources, got %v", err)
-	}
-	if got, err := svc.AllocationSources(byStud.ID, studT); err != nil || len(got) != 0 {
-		t.Fatalf("the owner gets no sources: %v / %d", err, len(got))
-	}
-	if got, err := svc.AllocationSources(byStud.ID, uniT); err != nil || len(got) != 1 || got[0].ID != uni.ID {
-		t.Fatalf("a manager above gets the budget it manages above the project's own: %v / %+v", err, got)
-	}
 }

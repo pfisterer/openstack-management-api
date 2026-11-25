@@ -29,15 +29,9 @@ func (s *Service) GetNode(id string, userTokens common.TokenList) (*model.Node, 
 		return nil, nil
 	}
 
-	allowed := isOwner(userTokens, node) ||
-		isAuthorizedUser(userTokens, node) ||
-		isEligibleRequester(userTokens, node)
-	if !allowed {
-		manages, err := s.managesNode(ctx, userTokens, node)
-		if err != nil {
-			return nil, err
-		}
-		allowed = manages
+	allowed, err := s.mayRead(ctx, node, userTokens)
+	if err != nil {
+		return nil, err
 	}
 	if !allowed {
 		return nil, errNoPermission
@@ -48,6 +42,41 @@ func (s *Service) GetNode(id string, userTokens common.TokenList) (*model.Node, 
 		return nil, err
 	}
 	return &withUsage[0], nil
+}
+
+// mayRead says whether the caller may read a node. A budget: its eligible requesters and its managers (and those above). A project: its owner, admins and members, and the managers of every budget an allocation of it hangs under — they see it in their table. An allocation: whoever may read its project, and the managers of its budget.
+func (s *Service) mayRead(ctx context.Context, node *model.Node, userTokens common.TokenList) (bool, error) {
+	switch node.Kind {
+	case model.KindProject:
+		if isOwner(userTokens, node) || isAuthorizedUser(userTokens, node) || common.NewTokenSet(userTokens).ContainsAny(node.AdminScope) {
+			return true, nil
+		}
+		allocs, err := s.allocationsOf(ctx, node.ID)
+		if err != nil {
+			return false, err
+		}
+		if len(allocs[node.ID]) == 0 && node.Status == model.StatusImported {
+			// An import belongs to nobody yet; those who adopt imports read it.
+			return s.managesChainFrom(ctx, common.NewTokenSet(userTokens), new(model.UnassignedNodeID))
+		}
+		return s.managesSomeAllocation(ctx, userTokens, allocs[node.ID])
+	case model.KindAllocation:
+		if isOwner(userTokens, node) {
+			return true, nil
+		}
+		if manages, err := s.managesNode(ctx, userTokens, node); err != nil || manages {
+			return manages, err
+		}
+		project, err := s.projectOf(ctx, node)
+		if err != nil {
+			return false, err
+		}
+		return s.mayRead(ctx, project, userTokens)
+	}
+	if isEligibleRequester(userTokens, node) {
+		return true, nil
+	}
+	return s.managesNode(ctx, userTokens, node)
 }
 
 // ListMine returns the leaves the user answers for or works in: the ones they own, the ones whose admin scope names them or one of their groups, and the ones whose authorized users do (members, who may read them, see GetNode). Which of these the caller is, the client reads from owner, admin_scope and authorized_users of each node.
@@ -215,19 +244,29 @@ func (s *Service) ListToManage(userTokens common.TokenList, includeSubtree bool,
 
 	query := nodestore.NodeQuery{
 		ParentIDs: parentIDs,
-		Statuses:  []string{model.StatusPending, model.StatusChangePending, model.StatusImported},
+		Statuses:  []string{model.StatusPending, model.StatusChangePending},
 	}
-	waiting, err := s.store.ListNodes(ctx, query, limit, offset)
+	waiting, err := s.store.ListNodes(ctx, query, 0, 0)
 	if err != nil {
 		return NodePage{}, fmt.Errorf("load requests to manage: %w", err)
 	}
-	total, err := s.store.CountNodes(ctx, query)
-	if err != nil {
-		return NodePage{}, fmt.Errorf("count requests to manage: %w", err)
+	// Imports hang under no budget; they wait for those who manage the unassigned node (root admins).
+	if slices.Contains(parentIDs, model.UnassignedNodeID) {
+		imported, err := s.store.ListNodes(ctx, nodestore.NodeQuery{Kinds: []string{model.KindProject}, Statuses: []string{model.StatusImported}}, 0, 0)
+		if err != nil {
+			return NodePage{}, fmt.Errorf("load imports: %w", err)
+		}
+		waiting = append(waiting, imported...)
 	}
+	slices.SortFunc(waiting, func(a, b model.Node) int { return strings.Compare(a.ID, b.ID) })
+	total := len(waiting)
 	// The name of the funding budget travels with the request, so the inbox can
-	// say where something arrived without a lookup per entry.
-	named, err := s.attachParentNames(ctx, waiting, userTokens)
+	// say where something arrived without a lookup per entry; an allocation carries its project.
+	page, err := s.attachAllocations(ctx, nodestore.PaginateInMemory(waiting, limit, offset))
+	if err != nil {
+		return NodePage{}, err
+	}
+	named, err := s.attachParentNames(ctx, page, userTokens)
 	if err != nil {
 		return NodePage{}, err
 	}
@@ -282,6 +321,18 @@ func (s *Service) SearchNodes(userTokens common.TokenList, query string, limit, 
 	if err != nil {
 		return NodePage{}, fmt.Errorf("load subtree: %w", err)
 	}
+	// Imports hang under no budget; they are searched by those who manage the unassigned node.
+	if _, ok := parentMap[model.UnassignedNodeID]; ok {
+		imported, err := s.store.ListNodes(ctx, nodestore.NodeQuery{Kinds: []string{model.KindProject}, Statuses: []string{model.StatusImported}}, 0, 0)
+		if err != nil {
+			return NodePage{}, fmt.Errorf("load imports: %w", err)
+		}
+		candidates = append(candidates, imported...)
+	}
+	// An allocation is found by its project: owner, members, the OpenStack project.
+	if candidates, err = s.attachAllocations(ctx, candidates); err != nil {
+		return NodePage{}, err
+	}
 	// The administered budgets themselves are searchable as well; they are
 	// nobody's child within this set unless their parent is also administered.
 	seen := make(map[string]bool, len(candidates))
@@ -316,6 +367,9 @@ func (s *Service) SearchNodes(userTokens common.TokenList, query string, limit, 
 // nodeMatches reports whether a node contains the (already lower-cased) needle
 // in any of its searchable fields.
 func nodeMatches(n model.Node, needle string) bool {
+	if n.Kind == model.KindAllocation && n.Project != nil && nodeMatches(*n.Project, needle) {
+		return true
+	}
 	fields := []string{
 		n.Name, n.Reason, n.ID, n.Owner, n.CreatedBy,
 		n.Status,
@@ -347,6 +401,10 @@ func (s *Service) UsageScope(id string, userTokens common.TokenList) (*model.Nod
 	}
 	if node == nil {
 		return nil, errNodeNotFound
+	}
+	// Usage is booked per project; an allocation's is its project's.
+	if node.Kind == model.KindAllocation {
+		return s.GetNode(node.ProjectID, userTokens)
 	}
 	if node.Kind == model.KindBudget {
 		ctx, cancel := s.newCtx()

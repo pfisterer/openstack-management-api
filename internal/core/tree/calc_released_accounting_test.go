@@ -52,13 +52,11 @@ func accountingSvc(t *testing.T, acc Accounting, leafStatus string) (*Service, s
 	}); err != nil {
 		t.Fatalf("write budget: %v", err)
 	}
-	if err := store.UpsertNode(ctx, model.Node{
+	seedLegacy(t, store, model.Node{
 		ID: "p_accounting", Kind: model.KindProject, ParentID: &budgetID,
 		Status: leafStatus, Name: "Leaf", Limit: common.ProjectQuota{"cores": 7},
 		Owner: "user:someone@example.edu",
-	}); err != nil {
-		t.Fatalf("write leaf: %v", err)
-	}
+	})
 	return svc, budgetID
 }
 

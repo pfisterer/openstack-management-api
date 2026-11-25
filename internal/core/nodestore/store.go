@@ -19,8 +19,10 @@ type NodeQuery struct {
 	IDs []string
 	// ParentIDs restricts to nodes whose parent is one of these IDs.
 	ParentIDs []string
-	// Kinds restricts to the given node kinds (KindBudget / KindProject).
+	// Kinds restricts to the given node kinds (KindBudget / KindProject / KindAllocation).
 	Kinds []string
+	// ProjectIDs restricts to allocations of one of these projects.
+	ProjectIDs []string
 	// Statuses restricts to the given lifecycle statuses.
 	Statuses []string
 	// Owner restricts to leaves with this exact owner token ("user:<email>").
@@ -84,7 +86,7 @@ type Store interface {
 	CountChildren(ctx context.Context, parentIDs []string) (map[string]ChildCounts, error)
 }
 
-// ChildCounts is how many budgets and projects sit directly under a budget.
+// ChildCounts is how many budgets and allocations (Projects) sit directly under a budget.
 type ChildCounts struct {
 	Budgets  int
 	Projects int
@@ -146,6 +148,9 @@ func matchesQuery(n model.Node, q NodeQuery) bool {
 		}
 	}
 	if len(q.Kinds) > 0 && !slices.Contains(q.Kinds, n.Kind) {
+		return false
+	}
+	if len(q.ProjectIDs) > 0 && !slices.Contains(q.ProjectIDs, n.ProjectID) {
 		return false
 	}
 	if len(q.Statuses) > 0 && !slices.Contains(q.Statuses, n.Status) {

@@ -23,6 +23,16 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 	if strings.TrimSpace(userEmail) == "" || len(userTokens) == 0 {
 		return model.Node{}, errNoPermission
 	}
+	// binding:"required" did this before projects could come without a parent: every request says what it is for.
+	if strings.TrimSpace(req.Reason) == "" {
+		return model.Node{}, invalid("Ein Zweck (reason) ist erforderlich.", "A purpose (reason) is required.")
+	}
+	switch req.Kind {
+	case model.KindProject:
+		return s.createProject(req, actor, userEmail, userTokens)
+	case model.KindAllocation:
+		return s.createAllocation(req, actor, userEmail, userTokens)
+	}
 	req.AdminScope = common.CanonicalTokens(req.AdminScope)
 	req.EligibleRequesters = common.CanonicalTokens(req.EligibleRequesters)
 	var err error
@@ -46,13 +56,6 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		return model.Node{}, err
 	}
 	switch req.Kind {
-	case model.KindProject:
-		if err := s.validateLeafLimit(req.Limit); err != nil {
-			return model.Node{}, err
-		}
-		if name := req.budgetSetting(); name != "" {
-			return model.Node{}, invalid("%s ist eine Einstellung von Budgets.", "%s is a setting of budgets.", name)
-		}
 	case model.KindBudget:
 		// A budget without an admin scope is invisible in the UI: "My Budgets"
 		// matches AdminScope directly (the ancestor rule does not apply there),
@@ -75,15 +78,8 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		return model.Node{}, invalid("Unbekannte Art %q.", "Unknown kind %q.", req.Kind)
 	}
 
-	// Validated before the approval lock: checking the group tokens talks to the
-	// role provider, and that call has no business holding up every other
-	// approval in the process.
-	// Whether the caller manages the parent decides which groups they may add; it is decided again under the lock below, this read only serves the check of the members.
-	validateCtx, cancelValidate := s.newCtx()
-	normalizedAuthorizedUsers, err := s.normalizeCreateMembers(validateCtx, req, userTokens)
-	cancelValidate()
-	if err != nil {
-		return model.Node{}, err
+	if len(req.AuthorizedUsers) > 0 {
+		return model.Node{}, invalid("Mitglieder gibt es nur an Projekten.", "Only projects have members.")
 	}
 
 	// Serialize the capacity-affecting approval paths below.
@@ -115,17 +111,6 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 	isManager := managesInChain(common.NewTokenSet(userTokens), parentChain)
 	if !isManager && !isEligibleRequester(userTokens, parent) {
 		return model.Node{}, errNoPermission
-	}
-	if req.Kind == model.KindProject {
-		req.Limit = s.withDefaultAvailabilities(parentChain, req.Limit)
-		if err := s.checkLeafLimit(ctx, model.Node{}, parentChain, req.Limit, nil, false); err != nil {
-			return model.Node{}, err
-		}
-		if !isManager {
-			if err := s.checkProjectsPerOwner(ctx, parent, userEmail); err != nil {
-				return model.Node{}, err
-			}
-		}
 	}
 	// Requesters may be limited to leaves: a course budget usually wants
 	// projects from its students, not a sub-budget tree underneath. Managers are
@@ -177,29 +162,16 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 	createdEntry.LimitTo = &req.Limit
 	createdEntry.Reason = new(req.Reason)
 
-	if req.Kind == model.KindProject {
-		node.ID = "p_" + uuid.New().String()
-		owner, err := normalizeOwnerToken(userEmail)
-		if err != nil {
-			return model.Node{}, err
-		}
-		node.Owner = owner
-		node.AuthorizedUsers = normalizedAuthorizedUsers
-		// Optional on a project: the people who administer it together with the
-		// owner. It grants self-service rights only, no OpenStack role.
-		node.AdminScope = req.AdminScope
-	} else {
-		node.ID = "b_" + uuid.New().String()
-		node.AdminScope = req.AdminScope
-		node.EligibleRequesters = req.EligibleRequesters
-		node.AutoApprove = req.AutoApprove
-		node.AllowSubBudgetRequests = req.AllowSubBudgetRequests
-		node.AllowRequestsBeyondAutoApprove = req.AllowRequestsBeyondAutoApprove
-		node.AutoApproveExtensions = req.AutoApproveExtensions
-		node.MaxProjectTermDays = maxTerm
-		node.Caps = req.Caps.Clone()
-		node.InheritsLimit = req.InheritsLimit
-	}
+	node.ID = "b_" + uuid.New().String()
+	node.AdminScope = req.AdminScope
+	node.EligibleRequesters = req.EligibleRequesters
+	node.AutoApprove = req.AutoApprove
+	node.AllowSubBudgetRequests = req.AllowSubBudgetRequests
+	node.AllowRequestsBeyondAutoApprove = req.AllowRequestsBeyondAutoApprove
+	node.AutoApproveExtensions = req.AutoApproveExtensions
+	node.MaxProjectTermDays = maxTerm
+	node.Caps = req.Caps.Clone()
+	node.InheritsLimit = req.InheritsLimit
 	node.History = []model.HistoryEntry{createdEntry}
 
 	// Decide the initial status.
@@ -207,11 +179,7 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 	case isManager:
 		// Direct creation by a manager of the parent chain — approved immediately,
 		// subject to the same checks an explicit approval would run.
-		if req.Kind == model.KindProject {
-			if err := s.checkCapacity(ctx, parentChain, node.Limit, nil); err != nil {
-				return model.Node{}, err
-			}
-		} else if !node.InheritsLimit {
+		if !node.InheritsLimit {
 			if err := s.checkBudgetLimit(ctx, node, parentChain, node.Limit, false); err != nil {
 				return model.Node{}, err
 			}
@@ -221,22 +189,6 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 		approvedEntry.StatusFrom = new(model.StatusPending)
 		approvedEntry.Reason = new("Direkt angelegt von einer Person, die das Budget verwaltet")
 		node.History = append(node.History, approvedEntry)
-
-	case req.Kind == model.KindProject && parent.AutoApprove != nil:
-		// A request for nothing at all is no allocation the policy could be about; granted on the spot, it would still be an OpenStack project with its groups, created on demand without anybody looking. It waits for a manager.
-		if allZero(node.Limit) {
-			break
-		}
-		ok, err := s.autoApprovable(ctx, parent, node.Owner, node.Limit, nil)
-		if err != nil {
-			return model.Node{}, err
-		}
-		if ok {
-			node.Status = model.StatusApproved
-			node.History = append(node.History, autoApprovedEntry(actor, model.StatusPending, autoApproveReason(parent)))
-		} else if !parent.RequestsBeyondAutoApproveAllowed() {
-			return model.Node{}, errBeyondAutoApprove
-		}
 
 	case req.Kind == model.KindBudget && parent.AutoApprove.IsPool():
 		// A pool grants a sub-budget whenever the edge rule allows it: a budget limit is a cap, not a reservation, and the projects below it are held to every ancestor when they are granted. A budget with a per-requester limit takes no sub-budget requests at all (validateSubBudgetRequests). As with projects, a request for nothing at all waits for a manager.
@@ -260,21 +212,6 @@ func (s *Service) CreateNode(req CreateNodeRequest, actor model.Actor, userEmail
 	return node, nil
 }
 
-// normalizeCreateMembers checks the members of a new project for CreateNode, with the parent's managers free to add any group. Their ceiling depends on whether the requested limit holds anything of OpenStack.
-func (s *Service) normalizeCreateMembers(ctx context.Context, req CreateNodeRequest, userTokens common.TokenList) ([]common.AuthorizedUser, error) {
-	ceiling := s.memberCeilingOf(model.Node{}, req.Limit)
-	if len(req.AuthorizedUsers) == 0 {
-		return s.normalizeAuthorizedUsers(ctx, req.AuthorizedUsers, ceiling, userTokens, false)
-	}
-	// The parent and the budgets above it; empty when there is no such parent, which CreateNode refuses next.
-	parentChain, err := s.nodeChain(ctx, req.ParentID)
-	if err != nil {
-		return nil, err
-	}
-	manager := managesInChain(common.NewTokenSet(userTokens), parentChain)
-	return s.normalizeAuthorizedUsers(ctx, req.AuthorizedUsers, ceiling, userTokens, manager)
-}
-
 // allZero reports whether a limit asks for nothing: every value 0, availabilities included.
 func allZero(q common.ProjectQuota) bool {
 	for _, v := range q {
@@ -285,7 +222,7 @@ func allZero(q common.ProjectQuota) bool {
 	return true
 }
 
-// checkProjectsPerOwner refuses a request that would give owner more live projects under budget than the configured maximum (see SetMaxProjectsPerOwner). Live are the ones that hold or wait for an OpenStack project: pending, active and released — released ones keep theirs until it is deleted. Rejected and archived ones do not count.
+// checkProjectsPerOwner refuses a request that would give owner more live projects under budget than the configured maximum (see SetMaxProjectsPerOwner), counted by the allocations of their projects in it. Live are the ones that hold or wait for an OpenStack project: pending, active and released — released ones keep theirs until it is deleted. Rejected, ended and archived ones do not count.
 func (s *Service) checkProjectsPerOwner(ctx context.Context, budget *model.Node, ownerEmail string) error {
 	if s.maxProjectsPerOwner <= 0 {
 		return nil
@@ -296,7 +233,7 @@ func (s *Service) checkProjectsPerOwner(ctx context.Context, budget *model.Node,
 	}
 	n, err := s.store.CountNodes(ctx, nodestore.NodeQuery{
 		ParentIDs: []string{budget.ID},
-		Kinds:     []string{model.KindProject},
+		Kinds:     []string{model.KindAllocation},
 		Statuses:  liveProjectStatuses,
 		Owner:     owner,
 	})
@@ -345,8 +282,14 @@ func (s *Service) UpdateNode(id string, req UpdateNodeRequest, actor model.Actor
 	if err != nil {
 		return model.Node{}, err
 	}
+	if current.IsLeaf() {
+		return model.Node{}, invalid("Eine Zuteilung ändert sich über eine Änderungsanfrage.", "An allocation changes through a change request.")
+	}
 	if current.Kind != model.KindBudget && !req.leafDirectEdit() {
 		return model.Node{}, invalid("An einem Projekt lassen sich nur Name und Admins direkt ändern; alles andere über eine Änderungsanfrage.", "Only the name and the admins of a project can be changed directly; everything else through a change request.")
+	}
+	if current.IsProject() {
+		return s.updateProject(ctx, current, req, actor, userTokens)
 	}
 
 	// Which fields need whom is listed once, in updateFieldClass.
@@ -592,8 +535,26 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor model.Ac
 	if err != nil {
 		return model.Node{}, err
 	}
+	if current.IsProject() {
+		return s.requestProjectChange(ctx, current, req, actor, userTokens)
+	}
+	return s.requestChangeLocked(ctx, current, req, actor, userTokens)
+}
 
-	// Authorization: the leaf owner, a budget's own managers (asking their parent
+// requestChangeLocked is RequestChange on a budget or an allocation. Callers hold approvalMu.
+func (s *Service) requestChangeLocked(ctx context.Context, current *model.Node, req ChangeNodeRequest, actor model.Actor, userTokens common.TokenList) (model.Node, error) {
+	var project *model.Node
+	if current.IsLeaf() {
+		var err error
+		if project, err = s.projectOf(ctx, current); err != nil {
+			return model.Node{}, err
+		}
+		if model.IsTerminalStatus(project.Status) || project.Status == model.StatusImported {
+			return model.Node{}, refuse(common.ErrConflict, "Im Status %q lässt sich am Projekt nichts mehr ändern.", "Nothing can be changed on the project in status %q.", project.Status)
+		}
+	}
+
+	// Authorization: the project's owner and admins, a budget's own managers (asking their parent
 	// for more), or a manager of the parent chain.
 	// The budgets above: they decide who may ask, bound a new limit and end,
 	// and the policy of the one a leaf draws from decides whether the change
@@ -603,7 +564,7 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor model.Ac
 		return model.Node{}, err
 	}
 	caller := common.NewTokenSet(userTokens)
-	if !(current.IsLeaf() && isOwner(userTokens, current)) && !managesNodeIn(caller, current, chain) {
+	if !(project != nil && holdsProject(userTokens, project)) && !managesNodeIn(caller, current, chain) {
 		return model.Node{}, errNoPermission
 	}
 	var parent *model.Node
@@ -643,29 +604,15 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor model.Ac
 	if req.Limit != nil {
 		requestedLimit = append(requestedLimit, *req.Limit)
 	}
-	ceiling := s.memberCeilingOf(*current, requestedLimit...)
-	if req.AuthorizedUsers == nil && current.IsLeaf() {
-		if err := checkMemberCeilingFalls(len(current.AuthorizedUsers), s.memberCeilingOf(*current), ceiling); err != nil {
+	if project != nil {
+		if err := checkMemberCeilingFalls(len(project.AuthorizedUsers), s.memberCeilingOf(*project), s.memberCeilingOf(*project, requestedLimit...)); err != nil {
 			return model.Node{}, err
 		}
 	}
-
-	var normalizedAuthorizedUsers *[]common.AuthorizedUser
 	if req.AuthorizedUsers != nil {
-		if !current.IsLeaf() {
-			return model.Node{}, invalid("Mitglieder gibt es nur an Projekten.", "Only projects have members.")
-		}
-		manager := managesInChain(caller, chain)
-		keep := [][]common.AuthorizedUser{current.AuthorizedUsers}
-		if current.Pending != nil && current.Pending.AuthorizedUsers != nil {
-			keep = append(keep, *current.Pending.AuthorizedUsers)
-		}
-		normalized, err := s.normalizeAuthorizedUsers(ctx, *req.AuthorizedUsers, ceiling, userTokens, manager, keep...)
-		if err != nil {
-			return model.Node{}, err
-		}
-		normalizedAuthorizedUsers = &normalized
+		return model.Node{}, invalid("Mitglieder gibt es nur an Projekten, nicht an Budgets oder Zuteilungen.", "Only projects have members, not budgets or allocations.")
 	}
+	var normalizedAuthorizedUsers *[]common.AuthorizedUser
 
 	updated := *current
 
@@ -691,10 +638,11 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor model.Ac
 			updated.Reason = *req.Reason
 		}
 		updated.History = append(slices.Clone(current.History), historyEntry)
+		updated.WaitingKey = ""
 		if err := s.store.UpsertNode(ctx, updated); err != nil {
 			return model.Node{}, fmt.Errorf("persist node: %w", err)
 		}
-		return updated, nil
+		return s.afterAllocationChange(ctx, *current, updated, project, actor, userTokens)
 	}
 
 	// approved / change_pending: store (or replace) the pending proposal.
@@ -772,15 +720,42 @@ func (s *Service) RequestChange(id string, req ChangeNodeRequest, actor model.Ac
 		} else {
 			updated.History = append(updated.History, autoApprovedEntry(actor, model.StatusChangePending, reason))
 		}
+		if updated.Expired != nil && updated.Expired.Cause == model.ExpiryEnded && !endPassed(updated.TerminationDate, s.today()) {
+			updated.Expired = nil
+		}
 	} else {
 		updated.Pending = pending
 		updated.Status = model.StatusChangePending
 	}
 
+	updated.WaitingKey = ""
 	if err := s.store.UpsertNode(ctx, updated); err != nil {
 		return model.Node{}, fmt.Errorf("persist node: %w", err)
 	}
-	return updated, nil
+	return s.afterAllocationChange(ctx, *current, updated, project, actor, userTokens)
+}
+
+// afterAllocationChange follows a change written on a budget or an allocation: the project derives what it holds anew, a decision still waited for is announced to the budget's managers (and the one it replaces closed). A budget is returned as written, an allocation decorated. Callers hold approvalMu.
+func (s *Service) afterAllocationChange(ctx context.Context, before, updated model.Node, project *model.Node, actor model.Actor, userTokens common.TokenList) (model.Node, error) {
+	if !updated.IsLeaf() || project == nil {
+		return updated, nil
+	}
+	if _, err := s.refreshProject(ctx, project.ID, actor); err != nil {
+		return model.Node{}, err
+	}
+	s.resolveWaiting(ctx, before, actor)
+	if slices.Contains(model.ManagedStatuses, updated.Status) {
+		s.notifyWaiting(ctx, updated, *project, actor)
+	}
+	stored, err := s.loadNode(ctx, updated.ID)
+	if err != nil {
+		return model.Node{}, err
+	}
+	out, err := s.attachUsage(ctx, []model.Node{*stored}, userTokens)
+	if err != nil {
+		return *stored, nil
+	}
+	return out[0], nil
 }
 
 // errBeyondAutoApprove refuses a request that a budget with a hard
@@ -843,8 +818,26 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor model.Act
 	if err != nil {
 		return model.Node{}, err
 	}
+	// On a project it is the decision on the one allocation waiting for it.
+	var viaProject *model.Node
+	if current.IsProject() {
+		viaProject = current
+		if current, err = s.soleLive(ctx, current, model.ManagedStatuses); err != nil {
+			return model.Node{}, err
+		}
+		id = current.ID
+	}
 	if current.Status != model.StatusPending && current.Status != model.StatusChangePending {
 		return model.Node{}, refuse(common.ErrConflict, "Im Status %q lässt sich nichts genehmigen.", "Nothing can be approved in status %q.", current.Status)
+	}
+	var project *model.Node
+	if current.IsLeaf() {
+		if project, err = s.projectOf(ctx, current); err != nil {
+			return model.Node{}, err
+		}
+		if project.Status != model.StatusPending && project.Status != model.StatusApproved {
+			return model.Node{}, refuse(common.ErrConflict, "Das Projekt ist im Status %q; seine Zuteilungen lassen sich nicht mehr genehmigen.", "The project is in status %q; its allocations can no longer be approved.", project.Status)
+		}
 	}
 
 	ancestors, err := s.parentChainNodes(ctx, current)
@@ -927,6 +920,10 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor model.Act
 		n.TerminationDate = finalTerminationDate
 		n.AuthorizedUsers = finalAuthorizedUsers
 		n.Pending = nil
+		n.WaitingKey = ""
+		if n.Expired != nil && n.Expired.Cause == model.ExpiryEnded && !endPassed(n.TerminationDate, s.today()) {
+			n.Expired = nil
+		}
 		n.History = append(slices.Clone(n.History), historyEntry)
 		updated = *n
 		return nil
@@ -941,7 +938,29 @@ func (s *Service) ApproveNode(id string, req ApproveNodeRequest, actor model.Act
 			return model.Node{}, err
 		}
 	}
-	return updated, nil
+	return s.afterDecision(ctx, *current, updated, project, viaProject, "approved", nil, actor, userTokens)
+}
+
+// afterDecision follows a decision on a budget or an allocation: the project derives what it holds anew, the approval notification is closed and the person who asked is told. Decided on a project (viaProject), the project is returned, else the decided node. Callers hold approvalMu.
+func (s *Service) afterDecision(ctx context.Context, before, updated model.Node, project, viaProject *model.Node, decision string, reason *string, actor model.Actor, userTokens common.TokenList) (model.Node, error) {
+	if !updated.IsLeaf() || project == nil {
+		return updated, nil
+	}
+	stored, err := s.refreshProject(ctx, project.ID, actor)
+	if err != nil {
+		return model.Node{}, err
+	}
+	s.resolveWaiting(ctx, before, actor)
+	s.notifyDecided(ctx, before, updated, decision, reason, actor)
+	result := updated
+	if viaProject != nil {
+		result = *stored
+	}
+	out, err := s.attachUsage(ctx, []model.Node{result}, userTokens)
+	if err != nil {
+		return result, nil
+	}
+	return out[0], nil
 }
 
 // checkRevision refuses to decide on a node whose revision is not the one the caller saw, and a decision that does not say which one that was.
@@ -976,8 +995,22 @@ func (s *Service) RejectNode(id string, req RejectNodeRequest, actor model.Actor
 	if err != nil {
 		return model.Node{}, err
 	}
+	var viaProject *model.Node
+	if current.IsProject() {
+		viaProject = current
+		if current, err = s.soleLive(ctx, current, model.ManagedStatuses); err != nil {
+			return model.Node{}, err
+		}
+		id = current.ID
+	}
 	if current.Status != model.StatusPending && current.Status != model.StatusChangePending {
 		return model.Node{}, refuse(common.ErrConflict, "Im Status %q lässt sich nichts ablehnen.", "Nothing can be rejected in status %q.", current.Status)
+	}
+	var project *model.Node
+	if current.IsLeaf() {
+		if project, err = s.projectOf(ctx, current); err != nil {
+			return model.Node{}, err
+		}
 	}
 
 	if manages, err := s.managesParentChain(ctx, userTokens, current); err != nil {
@@ -1004,6 +1037,7 @@ func (s *Service) RejectNode(id string, req RejectNodeRequest, actor model.Actor
 			historyEntry.Reason = req.Reason
 		}
 		n.Pending = nil
+		n.WaitingKey = ""
 		n.History = append(slices.Clone(n.History), historyEntry)
 		updated = *n
 		return nil
@@ -1013,5 +1047,5 @@ func (s *Service) RejectNode(id string, req RejectNodeRequest, actor model.Actor
 	if updated.ID == "" {
 		return model.Node{}, errNodeNotFound
 	}
-	return updated, nil
+	return s.afterDecision(ctx, *current, updated, project, viaProject, "rejected", req.Reason, actor, userTokens)
 }

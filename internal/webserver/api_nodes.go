@@ -54,8 +54,7 @@ func getNode(cfg APIConfig) gin.HandlerFunc {
 //	@Param			group_mode	query		string	false	"access: the token is owner, admin or member of the project; owner: the owner holds the token"	Enums(access, owner)
 //	@Param			sort		query		string	false	"Sort key: name, owner, status, termination_date, created_at, servers, reserved:<resource id>, used:<resource id> or used:<id>,<id>,… (sum in use)"
 //	@Param			order		query		string	false	"Sort order"	Enums(asc, desc)
-//	@Param			allocated	query		bool	false	"Instead of the direct children: the projects anywhere below that draw an allocation from this budget"
-//	@Param			deep		query		bool	false	"Instead of the direct children: the projects of the whole subtree, sub-budgets included"
+//	@Param			deep		query		bool	false	"Instead of the direct children: the allocations of the whole subtree, sub-budgets included"
 //	@Param			area		query		string	false	"Only the projects of one area (holding or asking for any of its resources), and those holding nothing yet"	Enums(cloud, workspaces, llm)
 //	@Success		200	{object}	tree.NodePage	"List of child nodes, with the total number of matches."
 //	@Failure		400	{object}	map[string]any	"Invalid filter."
@@ -73,7 +72,6 @@ func listNodeChildren(cfg APIConfig) gin.HandlerFunc {
 			GroupMode: c.Query("group_mode"),
 			Sort:      c.Query("sort"),
 			Desc:      c.Query("order") == "desc",
-			Allocated: c.Query("allocated") == "true",
 			Deep:      c.Query("deep") == "true",
 			Area:      c.Query("area"),
 		}
@@ -221,10 +219,10 @@ func searchNodes(cfg APIConfig) gin.HandlerFunc {
 	})
 }
 
-// createNode creates a child node (budget or project leaf) under a parent budget.
+// createNode creates a budget, a project with its allocations, or another allocation of a project.
 //
 //	@Summary		Create node
-//	@Description	Creates a child node under a parent budget. Managers of the parent chain create directly approved children; eligible requesters submit a pending request, which the parent's auto-approve policy may approve immediately.
+//	@Description	kind budget: a child budget under parent_id; managers of the parent chain create it approved, eligible requesters submit a pending request, which the parent's auto-approve policy may approve immediately. kind project: a project and its allocations (one leaf under each paying budget) — allocations names them, or parent_id and limit name one budget, or limit alone is split automatically (POST /v1/nodes/split); each allocation follows the rules of its budget, and the project starts once one is approved (start_when now) or all are decided (all). kind allocation: another allocation of project_id under the budget parent_id, asked for by the project's owner or admins or granted directly by a manager of the budget (reason required). Returns the project for kind project.
 //	@Tags			nodes
 //	@Accept			json
 //	@Produce		json
@@ -479,49 +477,24 @@ func removeNodeExternalGroup(cfg APIConfig) gin.HandlerFunc {
 	})
 }
 
-// setNodeAllocation grants, changes or removes what a project draws from a
-// budget above its own.
+// planProjectSplit proposes how a project would be paid for.
 //
-//	@Summary		Set a project's allocation from a budget above its own
-//	@Description	Grants, changes or removes the resources a project draws from a budget above its own budget, on top of its own limit. The allocation is charged to that budget and the budgets above it, not to the ones in between. Granting or raising needs a manager of that budget or above and a reason; the project's owner and admins may lower or remove it. An empty limit removes the allocation. An availability comes from one place only: the project's own limit or one allocation.
+//	@Summary		Propose the split of a project over budgets
+//	@Description	Proposes how a project asking for limit in total would be paid for by the budgets the caller may request from (or only those in budget_ids): first what each budget grants on its own (auto-approve), the most specific budget first, then the rest as a request to the most specific budget that takes one. Nothing is written; the parts can be changed and sent as the allocations of POST /v1/nodes (kind project). unplaced is what no budget would even take as a request.
 //	@Tags			nodes
 //	@Accept			json
 //	@Produce		json
 //	@Security		Bearer
-//	@Param			id		path		string					true	"Project node ID"
-//	@Param			request	body		tree.AllocationRequest	true	"The whole allocation from that budget"
-//	@Success		200		{object}	model.Node	"Updated project."
+//	@Param			request	body		tree.SplitRequest	true	"What the project asks for"
+//	@Success		200		{object}	tree.SplitPlan	"Proposed allocations."
 //	@Failure		400		{object}	map[string]any	"Bad request."
 //	@Failure		401		{object}	map[string]any	"Unauthorized."
 //	@Failure		403		{object}	map[string]any	"Forbidden."
-//	@Failure		404		{object}	map[string]any	"Not found."
-//	@Failure		409		{object}	map[string]any	"Conflict: the node changed status; reload."
-//	@ID				setNodeAllocation
-//	@Router			/v1/nodes/{id}/allocations [put]
-func setNodeAllocation(cfg APIConfig) gin.HandlerFunc {
-	return writeNode(cfg, http.StatusOK, func(c *gin.Context, req tree.AllocationRequest, auth identity.AuthContext) (model.Node, error) {
-		return cfg.Service.SetAllocation(c.Param("id"), req, uiActor(auth), auth.EffectiveTokens)
-	})
-}
-
-// listAllocationSources lists the budgets the caller may allocate to a project from.
-//
-//	@Summary		List budgets a project may draw an allocation from
-//	@Description	The approved budgets above the project's own budget that the caller manages, nearest first, with their usage — the budgets PUT /v1/nodes/{id}/allocations accepts from this caller. Empty for anyone who manages none of them.
-//	@Tags			nodes
-//	@Produce		json
-//	@Security		Bearer
-//	@Param			id	path		string	true	"Project node ID"
-//	@Success		200	{array}		model.Node	"Budgets, nearest first."
-//	@Failure		400	{object}	map[string]any	"Not a project."
-//	@Failure		401	{object}	map[string]any	"Unauthorized."
-//	@Failure		403	{object}	map[string]any	"Forbidden."
-//	@Failure		404	{object}	map[string]any	"Not found."
-//	@ID				listAllocationSources
-//	@Router			/v1/nodes/{id}/allocation-sources [get]
-func listAllocationSources(cfg APIConfig) gin.HandlerFunc {
-	return respond(cfg, http.StatusOK, func(c *gin.Context, auth identity.AuthContext) ([]model.Node, error) {
-		return cfg.Service.AllocationSources(c.Param("id"), auth.EffectiveTokens)
+//	@ID				planProjectSplit
+//	@Router			/v1/nodes/split [post]
+func planProjectSplit(cfg APIConfig) gin.HandlerFunc {
+	return handle(cfg, http.StatusOK, jsonBody[tree.SplitRequest](msg.Text{}), func(c *gin.Context, req tree.SplitRequest, auth identity.AuthContext) (tree.SplitPlan, error) {
+		return cfg.Service.PlanSplit(req, auth.UserEmail, auth.EffectiveTokens)
 	})
 }
 

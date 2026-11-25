@@ -87,6 +87,11 @@ func newTestTree(t *testing.T, nodes []model.Node, acc tree.Accounting, before .
 func newTestTreeOn(t *testing.T, store nodestore.Store, sugar *zap.SugaredLogger, nodes []model.Node, acc tree.Accounting, before ...func(*tree.Service)) testTree {
 	t.Helper()
 	ids, _ := dev.DefaultMockTreeState()
+	// The mock tree is written as the former model, projects in the tree: stored as since allocation_leaves.
+	nodes, err := nodestore.MigrateNodes(nodes, time.Now())
+	if err != nil {
+		t.Fatalf("migrate seed: %v", err)
+	}
 	if err := store.Seed(context.Background(), ids, nodes); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -231,16 +236,24 @@ func decodePage(t *testing.T, rr *httptest.ResponseRecorder) []model.Node {
 func nodeIDs(ns []model.Node) []string {
 	ids := make([]string, len(ns))
 	for i, n := range ns {
-		ids[i] = n.ID
+		ids[i] = rowID(n)
 	}
 	return ids
+}
+
+// rowID is what a row of a listing stands for: an allocation for its project (a budget's table lists a project by its allocation), anything else for itself.
+func rowID(n model.Node) string {
+	if n.Kind == model.KindAllocation {
+		return n.ProjectID
+	}
+	return n.ID
 }
 
 // idSet is the ids of a node slice as a set, for asserting who is and is not in a listing.
 func idSet(ns []model.Node) map[string]bool {
 	ids := make(map[string]bool, len(ns))
 	for _, n := range ns {
-		ids[n.ID] = true
+		ids[rowID(n)] = true
 	}
 	return ids
 }
@@ -260,5 +273,13 @@ func approval(t *testing.T, h http.Handler, id string, modified *common.ProjectQ
 	}
 	var n model.Node
 	mustDecode(t, rr, &n)
+	// On a project the decision is on its waiting allocation, and so is the revision.
+	if n.Kind == model.KindProject {
+		for _, a := range n.Allocations {
+			if a.Status == model.StatusPending || a.Status == model.StatusChangePending {
+				return tree.ApproveNodeRequest{ModifiedLimit: modified, ExpectedRevision: new(a.Revision)}
+			}
+		}
+	}
 	return tree.ApproveNodeRequest{ModifiedLimit: modified, ExpectedRevision: new(n.Revision)}
 }

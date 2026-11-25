@@ -392,8 +392,8 @@ func TestPromote_Flow(t *testing.T) {
 	if n.Status != model.StatusImported {
 		t.Errorf("status should remain imported until the reconciler tags the OS project, got %q", n.Status)
 	}
-	if n.ParentID == nil || *n.ParentID != "b_cs_faculty" || n.Owner != "user:"+userFaculty {
-		t.Errorf("promotion should set parent + owner, got parent=%v owner=%q", n.ParentID, n.Owner)
+	if n.HomeBudgetID == nil || *n.HomeBudgetID != "b_cs_faculty" || n.Owner != "user:"+userFaculty {
+		t.Errorf("promotion should set the budget and the owner, got home=%v owner=%q", n.HomeBudgetID, n.Owner)
 	}
 	found := false
 	for _, f := range n.Flags {

@@ -222,6 +222,31 @@ spec:
                   key: aiaas-tree-token
             {{- end }}
             {{- end }}
+            {{- with .Values.openstackManagementApi.notify }}
+            {{- if .url }}
+            # The notification service (pfisterer/notifications): events on expired allocations, waiting approvals, ending projects. Without it expired allocations are only marked, never cut.
+            - name: NOTIFY_URL
+              value: {{ .url | quote }}
+            - name: NOTIFY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: notify-token
+            {{- end }}
+            {{- end }}
+            {{- with .Values.openstackManagementApi.expiry }}
+            # Follow-up of expired allocations (tree.Expiry).
+            - name: EXPIRY_GRACE_DAYS
+              value: {{ .graceDays | default 14 | quote }}
+            - name: EXPIRY_ENDING_NOTICE_DAYS
+              value: {{ .endingNoticeDays | default 14 | quote }}
+            - name: EXPIRY_INTERVAL_MINUTES
+              value: {{ .intervalMinutes | default 60 | quote }}
+            {{- if .portalURL }}
+            - name: PORTAL_URL
+              value: {{ .portalURL | quote }}
+            {{- end }}
+            {{- end }}
             {{- with .Values.openstackManagementApi.api.providerResources }}
             - name: PROVIDER_RESOURCES
               value: {{ toJson . | quote }}

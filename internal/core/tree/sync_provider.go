@@ -86,11 +86,11 @@ func (p *ProviderSync) Budgets(ctx context.Context) (map[string]model.Node, erro
 	return budgets, nil
 }
 
-// BudgetChain is the budgets above a leaf, parent first and the root last when it is among budgets; it stops at a budget it does not know or at a cycle.
+// BudgetChain is the budgets above a project — those above its home allocation (Node.HomeBudgetID) —, parent first and the root last when it is among budgets; it stops at a budget it does not know or at a cycle.
 func BudgetChain(budgets map[string]model.Node, leaf model.Node) []model.Node {
 	var out []model.Node
 	seen := map[string]bool{}
-	for id := leaf.ParentID; id != nil && !seen[*id]; {
+	for id := leaf.BudgetAnchor(); id != nil && !seen[*id]; {
 		seen[*id] = true
 		b, ok := budgets[*id]
 		if !ok {
@@ -146,13 +146,31 @@ func (p *ProviderSync) RecordObservation(ctx context.Context, leafID, externalID
 // MarkArchived records that a released project was archived. A leaf in any
 // other status is left alone.
 func (p *ProviderSync) MarkArchived(ctx context.Context, leafID string) error {
-	_, err := p.store.UpdateNode(ctx, leafID, func(n *model.Node) error {
+	wrote, err := p.store.UpdateNode(ctx, leafID, func(n *model.Node) error {
 		if !model.MarkArchived(n) {
 			return nodestore.ErrSkipUpdate
 		}
 		return nil
 	})
-	return err
+	if err != nil || !wrote {
+		return err
+	}
+	// Its allocations follow: what an archived project costs is the storage it still holds (leafCost).
+	allocs, err := p.store.ListNodes(ctx, nodestore.NodeQuery{Kinds: []string{model.KindAllocation}, ProjectIDs: []string{leafID}, Statuses: []string{model.StatusReleased}}, 0, 0)
+	if err != nil {
+		return err
+	}
+	for _, a := range allocs {
+		if _, err := p.store.UpdateNode(ctx, a.ID, func(n *model.Node) error {
+			if !model.MarkArchived(n) {
+				return nodestore.ErrSkipUpdate
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // PurgeReport is one pass's progress in emptying a project before its
@@ -241,8 +259,20 @@ func (p *ProviderSync) RemoveRetired(ctx context.Context, leafID string) (bool, 
 	deleted, err := p.store.DeleteNodeIf(ctx, leafID, func(n model.Node) bool {
 		return model.IsRetiredStatus(n.Status) && !boundElsewhere(n, p.provider)
 	})
-	if err != nil || deleted {
+	if err != nil {
 		return deleted, err
+	}
+	if deleted {
+		// Its allocations go with it; what it used stays in the usage history.
+		allocs, err := p.store.ListNodes(ctx, nodestore.NodeQuery{Kinds: []string{model.KindAllocation}, ProjectIDs: []string{leafID}}, 0, 0)
+		if err != nil {
+			return true, err
+		}
+		ids := make([]string, 0, len(allocs))
+		for _, a := range allocs {
+			ids = append(ids, a.ID)
+		}
+		return true, p.store.DeleteNodes(ctx, ids)
 	}
 	_, err = p.store.UpdateNode(ctx, leafID, func(n *model.Node) error {
 		if _, bound := n.Bindings[p.provider]; !bound || !model.IsRetiredStatus(n.Status) {

@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
@@ -494,6 +496,7 @@ func RunApplication() {
 			UsagePrices:           config.UsagePrices,
 			Estimate:              estimateAPI,
 			Assistant:             assistantAPI,
+			Features:              config.FeatureGates,
 		},
 		Tokens: webserver.TokenConfig{
 			Service: apiTokens,
@@ -512,11 +515,39 @@ func RunApplication() {
 	// Start the Web server. An http.Server of its own rather than router.Run, which sets no timeouts: a client that sends its headers or body one byte a minute would hold a connection for ever.
 	server := newHTTPServer(config.WebServer.GinBindString, router)
 	logger.Infow("Listening", "address", server.Addr)
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		logger.Fatal("Failed to start server", zap.Error(err))
+	stop, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stopSignals()
+	if err := serveUntil(stop, server, shutdownGrace); err != nil {
+		logger.Fatal("Server failed or did not stop in time", zap.Error(err))
 	}
-
+	// The background work (expiry loop, syncers) ends with the process; what it was writing is in a transaction or retried on the next pass.
+	cancel()
 	logger.Info("Application completed successfully")
+}
+
+// shutdownGrace is how long requests in flight may take to finish after SIGTERM. Below the pod's terminationGracePeriodSeconds (30) minus the preStop pause (5, chart shutdown.preStopSeconds), so Kubernetes does not kill what is still answering.
+const shutdownGrace = 20 * time.Second
+
+// serveUntil serves until stop is done, then shuts the server down gracefully: no new connections, requests in flight answered (up to grace), idle keep-alive connections closed. Without it SIGTERM killed the process at once, and every request in flight or still routed to the old pod during a rollout came back to the portal as a proxy's 502 (25.11.2026). The chart's preStop pause lets the endpoint go before the signal comes.
+func serveUntil(stop context.Context, server *http.Server, grace time.Duration) error {
+	failed := make(chan error, 1)
+	go func() {
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			failed <- err
+		}
+		close(failed)
+	}()
+	select {
+	case err := <-failed:
+		return err
+	case <-stop.Done():
+	}
+	ctx, done := context.WithTimeout(context.Background(), grace)
+	defer done()
+	if err := server.Shutdown(ctx); err != nil {
+		return fmt.Errorf("graceful shutdown: %w", err)
+	}
+	return <-failed
 }
 
 // newHTTPServer is the server the API runs in, with timeouts. The write timeout leaves room for the slowest legitimate answer — a usage report over a year, a listing that computes the rollup of a large subtree — and the service's own request deadline (SERVICE_TIMEOUT_SECONDS) ends work long before it.

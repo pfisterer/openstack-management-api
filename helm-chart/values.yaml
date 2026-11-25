@@ -84,6 +84,8 @@ openstackManagementApi:
     maxToolCalls: 0
     maxTokens: 0
     llmAPIKey: ""
+  # Feature gates: a new feature of the portal shown to a small group first. Gate name -> tokens it is open to, e.g. {estimator: ["group:leiter-zwr"], assistant: ["group:leiter-zwr"]}; a gate not named, or with "*" in its list, is open to everyone, an empty list closes it. UI-only (GET /v1/config features): the API behind a gated feature, REST and MCP, stays open. Known gates: estimator, assistant.
+  featureGates: {}
 
   # endingNoticeDays before a project's end its people are told. portalURL is the self-service portal, for links in notifications. graceDays is accepted for older values and unused.
   expiry:

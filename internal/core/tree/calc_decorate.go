@@ -51,7 +51,7 @@ func (s *Service) attachChildCounts(ctx context.Context, nodes []model.Node) ([]
 // walk.
 //
 // viewer is who asks: attributes go only to those who look after the node
-// (see attributesVisible), everyone else gets the node without them.
+// (see attributesVisible), everyone else gets the node without them; and a project's members see it without the other members (seesProjectInFull, redactForMember).
 func (s *Service) attachParentNames(ctx context.Context, nodes []model.Node, viewer common.TokenList) ([]model.Node, error) {
 	var start []string
 	for _, n := range nodes {
@@ -63,6 +63,9 @@ func (s *Service) attachParentNames(ctx context.Context, nodes []model.Node, vie
 			for _, a := range n.Project.Allocations {
 				start = append(start, a.BudgetID)
 			}
+		}
+		if n.IsProject() && n.Status == model.StatusImported {
+			start = append(start, model.UnassignedNodeID)
 		}
 	}
 	tree, err := s.walkAncestors(ctx, start)
@@ -87,6 +90,9 @@ func (s *Service) attachParentNames(ctx context.Context, nodes []model.Node, vie
 			p := *nodes[i].Project
 			p.Allocations = tree.nameAllocations(p.Allocations)
 			nodes[i].Project = &p
+		}
+		if (nodes[i].IsProject() || nodes[i].IsLeaf()) && !tree.seesProjectInFull(nodes[i], viewerSet, s.rootAdminTokens) {
+			redactForMember(&nodes[i], viewerSet)
 		}
 	}
 	return nodes, nil

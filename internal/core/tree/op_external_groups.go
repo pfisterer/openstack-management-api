@@ -64,9 +64,9 @@ func (s *Service) RemoveExternalGroup(id, groupID string, actor model.Actor, use
 	if !found {
 		return model.Node{}, errNodeNotFound
 	}
-	named, err := s.attachParentNames(ctx, []model.Node{updated}, userTokens)
+	named, err := s.attachUsage(ctx, []model.Node{updated}, userTokens)
 	if err != nil {
-		return updated, nil
+		return model.Node{}, err
 	}
 	return named[0], nil
 }

@@ -88,6 +88,10 @@
           },
           "additionalProperties": false
         },
+        "featureGates": {
+          "type": "object",
+          "additionalProperties": { "type": "array", "items": { "type": "string" } }
+        },
         "estimate": {
           "type": "object",
           "properties": {

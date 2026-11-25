@@ -18,6 +18,12 @@ metadata:
     {{- $labels | nindent 4 }}
 spec:
   replicas: {{ .Values.openstackManagementApi.replicas }}
+  # A rollout (also one that only changes configuration) without a gap: the new pod first, the old one only once the new one is ready. With one replica the defaults (25 %) round to the same, stated here so it does not depend on rounding.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
       {{- $selectors | nindent 6 }}
@@ -30,6 +36,8 @@ spec:
     spec:
       # This pod never talks to the Kubernetes API — do not hand it a token for it.
       automountServiceAccountToken: false
+      # preStop pause (5 s) + the server's own drain after SIGTERM (20 s, internal/app.go shutdownGrace) fit in here.
+      terminationGracePeriodSeconds: 30
       volumes:
         # Writable scratch so the container rootfs can stay read-only.
         - name: tmp
@@ -43,6 +51,11 @@ spec:
           # keeps driving the standalone releases.
           image: {{ .Values.openstackManagementApi.image }}:{{ .Values.openstackManagementApi.version | default .Chart.AppVersion }}{{ with .Values.openstackManagementApi.digest }}@{{ . }}{{ end }}
           imagePullPolicy: {{ .Values.openstackManagementApi.imagePullPolicy | default "Always" }}
+          # Wait before SIGTERM until the pod is out of the Service's endpoints, so no request is still routed to a process that is stopping; then the server answers what is in flight and ends (25.11.2026: rollouts showed the portal a proxy's 502).
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: 5
           ports:
             - name: http
               containerPort: 8083
@@ -277,6 +290,11 @@ spec:
                   name: {{ $secretName }}
                   key: assistant-llm-api-key
             {{- end }}
+            {{- end }}
+            {{- with .Values.openstackManagementApi.featureGates }}
+            # Feature gates (package features): which new features of the portal a caller sees; UI-only.
+            - name: FEATURE_GATES
+              value: {{ toJson . | quote }}
             {{- end }}
             {{- with .Values.openstackManagementApi.expiry }}
             # Follow-up of the ends of projects (tree.Expiry).

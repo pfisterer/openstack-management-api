@@ -147,7 +147,7 @@ func (s *Service) SetAttributes(id string, req SetAttributesRequest, actor model
 	}
 	named, err := s.attachParentNames(ctx, []model.Node{updated}, userTokens)
 	if err != nil {
-		return updated, nil
+		return model.Node{}, err
 	}
 	return named[0], nil
 }

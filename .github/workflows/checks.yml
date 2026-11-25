@@ -4,11 +4,12 @@ name: Checks
 # convention nothing is verified inside the image build (the emulated arm64
 # build OOM-killed the in-image test run). This is where the checks live
 # instead — no Docker build, no registry.
+# On a push to main it runs as the first job of CI (docker-image.yml), which publishes only after it is green; on a pull request it runs by itself.
 on:
-  push:
-    branches: ["main"]
   pull_request:
     branches: ["main"]
+  workflow_call:
+  workflow_dispatch:
 
 jobs:
   checks:

@@ -1,7 +1,7 @@
 name: CI
 
-# DRAFT (release-speedup, not merged): one workflow from push to published artifact, in three jobs:
-#   checks   the Checks workflow (checks.yml, needs a workflow_call trigger and no own push trigger), called here on a push to main so a version is only published from a green commit
+# One workflow from push to published artifact, in three jobs:
+#   checks   the Checks workflow (checks.yml), called here on a push to main so a version is only published from a green commit
 #   build    the image, in parallel with the checks; on main it is pushed only under its commit (sha-<commit>), which nothing deploys
 #   publish  after both: gives the image a version by retagging (no second build), pushes the chart, tags stable releases
 #
@@ -149,7 +149,44 @@ jobs:
           helm package helm-chart/ --version "$V" --app-version "$V" --destination "$RUNNER_TEMP"
           helm push "$RUNNER_TEMP"/*.tgz "oci://ghcr.io/${{ github.repository_owner }}/charts"
 
-      # TODO (resume): copy the "Tag and release stable versions" step from main unchanged, conditioned on steps.ver.outputs.auto != 'true' && !contains(steps.ver.outputs.version, '-').
+      # --- release ---
+      # A stable VERSION gets a Git tag and a GitHub release; a "-test.N" one
+      # deliberately gets neither. That omission is the whole mechanism: Argo CD
+      # pulls this repo's Helm chart, and production resolves it against tags,
+      # so an untagged commit simply does not exist for production.
+      - name: Tag and release stable versions
+        if: steps.ver.outputs.auto != 'true' && !contains(steps.ver.outputs.version, '-')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "v$VERSION is already tagged — nothing to release."
+            exit 0
+          fi
+          # The commit subjects are the changelog; they are already written as
+          # one. Only the "release X.Y.Z" bumps say nothing worth reading.
+          NOTES="$RUNNER_TEMP/notes.md"
+          PREV=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || true)
+          RANGE=HEAD
+          [ -n "$PREV" ] && RANGE="$PREV..HEAD"
+          git log --pretty=%s "$RANGE" | grep -v '^release ' |
+            awk -F': ' '{ line = $0; g = "zz-other";
+                          # Only a bare lowercase word counts as a topic prefix.
+                          # Without that test, `Revert "nodes: ..."` splits at its
+                          # own colon and invents the group `Revert "nodes`.
+                          if (NF > 1 && $1 ~ /^[a-z0-9._-]+$/) { g = $1; sub(/^[^:]*: /, "", line) }
+                          printf "%s\t%s\n", g, line }' |
+            sort -s -t "$(printf '\t')" -k1,1 |
+            awk -F'\t' '{ g = $1; sub(/^zz-/, "", g);   # sorts ungrouped ones last
+                          if (g != last) { printf "\n**%s**\n", g; last = g }
+                          printf "- %s\n", $2 }' > "$NOTES" || true
+          [ -s "$NOTES" ] || echo "Maintenance release." > "$NOTES"
+          git tag "v$VERSION"
+          git push origin "v$VERSION"
+          gh release create "v$VERSION" --title "v$VERSION" --notes-file "$NOTES"
+
 
       # Tells the umbrella to pick the new chart up now. Needs secret UMBRELLA_DISPATCH_TOKEN (fine-grained, Actions: write on cloud-self-service); without it the umbrella's schedule applies.
       - name: Trigger the umbrella bump
@@ -159,4 +196,42 @@ jobs:
           if [ -z "$GH_TOKEN" ]; then echo "no UMBRELLA_DISPATCH_TOKEN — the umbrella's schedule picks this up"; exit 0; fi
           gh workflow run bump.yml -R "${{ github.repository_owner }}/cloud-self-service" || echo "::warning::could not trigger the umbrella bump"
 
-      # TODO (resume): retention steps from main, plus rules for '^\d+\.\d+\.\d+-(test\.\d+\.\d+|0\.ci\.\d+)$' (keep 3) and '^sha-[0-9a-f]{40}$' (keep 10).
+      # --- ghcr retention (runs after the push, so counts include the new tag) ---
+      # Keep only the newest pre-release "-test.N" tag
+      - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+        with:
+          use-regex: true
+          exclude-tags: '^latest$'
+          delete-tags: '^\d+\.\d+\.\d+-test\.\d+$'
+          keep-n-tagged: 1
+      # Keep the newest 3 automatic versions (X.Y.Z-test.N.R, X.Y.Z-0.ci.R)
+      - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+        with:
+          use-regex: true
+          exclude-tags: '^latest$'
+          delete-tags: '^\d+\.\d+\.\d+-(test\.\d+\.\d+|0\.ci\.\d+)$'
+          keep-n-tagged: 3
+      # Keep the newest 10 commit images (sha-<commit>); nothing deploys them, they are only the source of the retag
+      - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+        with:
+          use-regex: true
+          delete-tags: '^sha-[0-9a-f]{40}$'
+          keep-n-tagged: 10
+      # Keep the newest 3 stable semver tags (X.Y.Z)
+      - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+        with:
+          use-regex: true
+          exclude-tags: '^latest$'
+          delete-tags: '^v?\d+\.\d+\.\d+$'
+          keep-n-tagged: 3
+      # Delete all old pre-release "-alpha" tags
+      - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+        with:
+          use-regex: true
+          delete-tags: '^.*-alpha$'
+      # Clean up untagged / ghost / orphaned leftovers
+      - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+        with:
+          delete-untagged: true
+          delete-ghost-images: true
+          delete-orphaned-images: true

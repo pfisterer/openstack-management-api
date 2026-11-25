@@ -70,7 +70,7 @@ func NewOpenAIClient(cfg ClientConfig, maxTokens int) *OpenAIClient {
 		timeout = 60 * time.Second
 	}
 	if strings.TrimSpace(cfg.Model) == "" {
-		cfg.Model = "agent"
+		cfg.Model = "assistant"
 	}
 	if maxTokens <= 0 {
 		maxTokens = 1500

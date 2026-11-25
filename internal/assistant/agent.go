@@ -1,6 +1,6 @@
 // Package assistant is the portal assistant (portal_assistant), stage 1: a person asks in their own words ("Wie viele GPU-Stunden habe ich noch?", "Warum ist mein Antrag offen?"), a language model of the platform answers from what the service's own MCP tools return, called as that person. Only tools that read are offered (ReadTools), the MCP server behind them is built for a read-only caller, and the loop is bounded in steps, tool calls, tokens and time. The answer carries every tool call made, so the portal can show what the answer rests on. Nothing is stored: neither the question nor the answer, only a log line with counts.
 //
-// The design, the later stages (preparing dialogs, executing small changes after a click) and the open questions are in docs/portal-assistant.md.
+// The design and stage 2 (a write only ever as a prefilled dialog the person sends; the assistant never executes one) are in docs/portal-assistant.md.
 package assistant
 
 import (
@@ -33,7 +33,7 @@ type Limits struct {
 	Timeout time.Duration
 }
 
-// DefaultLimits are sized for the `agent` alias (Qwen3.6-35B-A3B, 64k context): a typical question takes 1–3 steps and 5–15k tokens.
+// DefaultLimits are sized for the `assistant` alias (Qwen3.6-35B-A3B on the GPUs, 64k context); decided 25.11.2026: a typical question takes 1–3 steps and 5–15k tokens.
 var DefaultLimits = Limits{MaxSteps: 6, MaxToolCalls: 12, MaxTokens: 60000, MaxToolResultChars: 12000, MaxQuestionChars: 2000, MaxHistory: 6, Timeout: 120 * time.Second}
 
 func (l Limits) withDefaults() Limits {

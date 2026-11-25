@@ -256,7 +256,7 @@ spec:
             - name: ASSISTANT_LLM_URL
               value: {{ .llmURL | quote }}
             - name: ASSISTANT_LLM_MODEL
-              value: {{ .llmModel | default "agent" | quote }}
+              value: {{ .llmModel | default "assistant" | quote }}
             - name: ASSISTANT_LLM_TIMEOUT_SECONDS
               value: {{ .llmTimeoutSeconds | default 60 | quote }}
             - name: ASSISTANT_TIMEOUT_SECONDS

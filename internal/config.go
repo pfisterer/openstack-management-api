@@ -242,7 +242,7 @@ type EstimateConfig struct {
 	LLMTimeoutSeconds int    `json:"llm_timeout_seconds"`
 }
 
-// AssistantConfig is the portal assistant (POST /v1/assistant/ask, stage 1: read only): ASSISTANT_LLM_URL (an OpenAI-compatible base URL, the platform's LiteLLM …/v1), ASSISTANT_LLM_API_KEY and ASSISTANT_LLM_MODEL (default agent, a model whose tool calls work on its backend) — without URL and key the assistant is off. ASSISTANT_LLM_TIMEOUT_SECONDS bounds one call of the model, ASSISTANT_TIMEOUT_SECONDS a whole question; ASSISTANT_MAX_STEPS, ASSISTANT_MAX_TOOL_CALLS and ASSISTANT_MAX_TOKENS bound the loop (0 = the defaults of assistant.DefaultLimits); ASSISTANT_QUESTIONS_PER_HOUR per person and ASSISTANT_CONCURRENT at once over everyone bound the load on the GPUs (per replica).
+// AssistantConfig is the portal assistant (POST /v1/assistant/ask, stage 1: read only): ASSISTANT_LLM_URL (an OpenAI-compatible base URL, the platform's LiteLLM …/v1), ASSISTANT_LLM_API_KEY and ASSISTANT_LLM_MODEL (default assistant: the platform's alias for the assistant, GPU members only, so tool results never reach the Mac fleet; decided 25.11.2026) — without URL and key the assistant is off. ASSISTANT_LLM_TIMEOUT_SECONDS bounds one call of the model, ASSISTANT_TIMEOUT_SECONDS a whole question; ASSISTANT_MAX_STEPS, ASSISTANT_MAX_TOOL_CALLS and ASSISTANT_MAX_TOKENS bound the loop (0 = the defaults of assistant.DefaultLimits); ASSISTANT_QUESTIONS_PER_HOUR per person and ASSISTANT_CONCURRENT at once over everyone bound the load on the GPUs (per replica).
 type AssistantConfig struct {
 	LLMURL            string `json:"llm_url"`
 	LLMAPIKey         string `json:"llm_api_key"`
@@ -403,7 +403,7 @@ func loadAppConfiguration() (AppConfiguration, error) {
 		Assistant: AssistantConfig{
 			LLMURL:            envconf.String("ASSISTANT_LLM_URL", ""),
 			LLMAPIKey:         envconf.String("ASSISTANT_LLM_API_KEY", ""),
-			LLMModel:          envconf.String("ASSISTANT_LLM_MODEL", "agent"),
+			LLMModel:          envconf.String("ASSISTANT_LLM_MODEL", "assistant"),
 			LLMTimeoutSeconds: envconf.Int("ASSISTANT_LLM_TIMEOUT_SECONDS", 60),
 			TimeoutSeconds:    envconf.Int("ASSISTANT_TIMEOUT_SECONDS", 120),
 			MaxSteps:          envconf.Int("ASSISTANT_MAX_STEPS", 0),

@@ -3,12 +3,15 @@ package webserver_test
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/pfisterer/openstack-management-api/internal/assistant"
+	"github.com/pfisterer/openstack-management-api/internal/common"
 	"github.com/pfisterer/openstack-management-api/internal/core/model"
+	"github.com/pfisterer/openstack-management-api/internal/identity"
 	"github.com/pfisterer/openstack-management-api/internal/webserver"
 )
 
@@ -48,7 +51,7 @@ func assistantRouter(t *testing.T, model assistant.ChatModel, limiter *assistant
 	t.Helper()
 	tr := newTestTree(t, mockNodes(), testAccounting)
 	return tr.router(func(c *webserver.SetupConfig) {
-		c.API.Assistant = &webserver.AssistantConfig{Agent: &assistant.Agent{Model: model, ModelName: "agent"}, Limiter: limiter}
+		c.API.Assistant = &webserver.AssistantConfig{Agent: &assistant.Agent{Model: model, ModelName: "assistant"}, Limiter: limiter}
 	})
 }
 
@@ -84,7 +87,7 @@ func TestAssistant_ReadsAsThePersonAndCannotWrite(t *testing.T) {
 	var ans assistant.Answer
 	mustDecode(t, rr, &ans)
 
-	if ans.Answer != "Du hast das Projekt Faculty research sandbox." || ans.Stage != "read_only" || ans.Model != "agent" {
+	if ans.Answer != "Du hast das Projekt Faculty research sandbox." || ans.Stage != "read_only" || ans.Model != "assistant" {
 		t.Errorf("answer %+v", ans)
 	}
 	if len(ans.ToolCalls) != 3 {
@@ -132,5 +135,35 @@ func TestAssistant_QuotaPerPerson(t *testing.T) {
 	assertStatus(t, rr, http.StatusTooManyRequests)
 	if rr.Header().Get("Retry-After") == "" {
 		t.Error("no Retry-After")
+	}
+}
+
+// A read-only API token may ask (decided 25.11.2026): the assistant builds its tools read-only whatever the token, so the POST is a read. Every other POST stays refused for it.
+func TestAssistant_ReadOnlyTokenMayAsk(t *testing.T) {
+	tr := newTestTree(t, mockNodes(), testAccounting)
+	lookup := func(_ context.Context, secret string) (identity.TokenLookupResult, error) {
+		if secret == readOnlySecret {
+			return identity.TokenLookupResult{Found: true, Subject: "root.admin@uni.example", ReadOnly: true}, nil
+		}
+		return identity.TokenLookupResult{Found: false}, nil
+	}
+	resolve := func(_ context.Context, _ *common.UserClaims) (common.TokenList, error) { return rootAdminTokens, nil }
+	h := tr.router(func(c *webserver.SetupConfig) {
+		c.AuthMiddleware = identity.CombinedAuthMiddleware(nil, lookup, resolve, tr.log)
+		c.API.Assistant = &webserver.AssistantConfig{Agent: &assistant.Agent{Model: &scriptedModel{}}}
+	})
+	post := func(path string, body string) int {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer "+readOnlySecret)
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		return rr.Code
+	}
+	if got := post("/v1/assistant/ask", `{"question":"Welche Projekte habe ich?"}`); got != http.StatusOK {
+		t.Errorf("read-only token asking: %d, want 200", got)
+	}
+	if got := post("/v1/nodes/split", `{"limit":{"cores":1}}`); got != http.StatusForbidden {
+		t.Errorf("read-only token on another POST: %d, want 403", got)
 	}
 }

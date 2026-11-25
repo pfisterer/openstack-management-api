@@ -242,8 +242,8 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 
 	// The read-only rule for REST, mounted here rather than inside the auth
 	// middleware: "anything but GET is a write" is true of these routes and of
-	// nothing else, so it belongs to the group it describes.
-	apiV1Group.Use(ginweb.RejectWritesForReadOnlyTokens(cfg.Log))
+	// nothing else, so it belongs to the group it describes. The exceptions are the POSTs that read (readOnlyPOSTs), which a read-only token may use.
+	apiV1Group.Use(rejectWritesExceptReads(ginweb.RejectWritesForReadOnlyTokens(cfg.Log)))
 
 	// Register API routes with the provided tree service and the act-as allowlist
 	RegisterApiRoutes(apiV1Group, cfg.API, cfg.Log)
@@ -271,6 +271,20 @@ func SetupGinWebserver(cfg SetupConfig) *gin.Engine {
 	RegisterMCPRoutes(mcpGroup, cfg.API, cfg.Log)
 
 	return router
+}
+
+// readOnlyPOSTs are the routes under /v1 that are POSTs but change nothing, so a read-only token may use them: the portal assistant, which builds its tools for a read-only caller whatever the token (api_assistant.go). Decided 25.11.2026 (Dennis).
+var readOnlyPOSTs = map[string]bool{"/v1/assistant/ask": true}
+
+// rejectWritesExceptReads is the read-only rule for REST with the routes of readOnlyPOSTs let through.
+func rejectWritesExceptReads(reject gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.Method == http.MethodPost && readOnlyPOSTs[c.FullPath()] {
+			c.Next()
+			return
+		}
+		reject(c)
+	}
 }
 
 // MaxRequestBodyBytes bounds a request body (ginweb.LimitRequestBody: 413 where the request announces more, a failed read where it does not). The largest legitimate one — a project with its full list of members and a long reason — is a few kilobytes; without a bound a single request could make the server read and decode as much as it is sent.

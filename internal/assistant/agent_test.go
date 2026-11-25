@@ -247,7 +247,7 @@ func TestOpenAIClient(t *testing.T) {
 	if len(r.ToolCalls) != 1 || r.ToolCalls[0].Function.Name != "list_my_projects" || r.PromptTokens != 42 || r.CompletionTokens != 7 {
 		t.Errorf("%+v", r)
 	}
-	if got["model"] != "agent" || got["tool_choice"] != "auto" {
+	if got["model"] != "assistant" || got["tool_choice"] != "auto" {
 		t.Errorf("request %v", got)
 	}
 	tools, _ := got["tools"].([]any)

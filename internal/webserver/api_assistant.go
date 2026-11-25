@@ -16,7 +16,7 @@ import (
 	"github.com/pfisterer/openstack-management-api/internal/identity"
 )
 
-// The portal assistant (package assistant, docs/portal-assistant.md), stage 1: questions in the person's own words, answered by the platform's language model from what this service's own MCP tools return. The tools run in this process over an in-memory MCP session, built for the caller as /mcp builds them — same rights, same payloads — but for a READ-ONLY caller, so no tool that writes exists in that session, and the assistant offers only assistant.ReadTools on top. Nothing is stored.
+// The portal assistant (package assistant, docs/portal-assistant.md), stage 1 (decided 25.11.2026: there is no stage that executes; a write is only ever proposed as a prefilled dialog): questions in the person's own words, answered by the platform's language model from what this service's own MCP tools return. The tools run in this process over an in-memory MCP session, built for the caller as /mcp builds them — same rights, same payloads — but for a READ-ONLY caller, so no tool that writes exists in that session, and the assistant offers only assistant.ReadTools on top. Nothing is stored.
 
 // AssistantConfig wires the assistant; nil answers its route with 503.
 type AssistantConfig struct {
@@ -42,7 +42,7 @@ var (
 // postAssistantAsk answers a question.
 //
 //	@Summary		Ask the portal assistant (read only)
-//	@Description	The platform's language model answers a question about the caller's projects, budgets, allocations and requests, using only the read tools of /mcp (list_my_projects, get_project, list_requests_to_decide, …) as the caller and with the caller's rights; nothing can be changed through it. The loop is bounded in steps, tool calls, tokens and time; stopped names the bound that ended it early. tool_calls lists every call made with its arguments and result, so the portal can show what the answer rests on. history carries earlier turns of the conversation (the service keeps none). 503 while no model is configured, 429 when the person's questions per hour are used up or too many run at once, 502 when the model does not answer.
+//	@Description	The platform's language model answers a question about the caller's projects, budgets, allocations and requests, using only the read tools of /mcp (list_my_projects, get_project, list_requests_to_decide, …) as the caller and with the caller's rights; nothing can be changed through it. The loop is bounded in steps, tool calls, tokens and time; stopped names the bound that ended it early. tool_calls lists every call made with its arguments and result, so the portal can show what the answer rests on. history carries earlier turns of the conversation (the service keeps none). A read-only API token may ask: the tools are read-only whatever the token. 503 while no model is configured, 429 when the person's questions per hour are used up or too many run at once, 502 when the model does not answer.
 //	@Tags			assistant
 //	@Accept			json
 //	@Produce		json

@@ -67,12 +67,18 @@ func (s *Service) TokensFor(email string) (common.TokenList, error) {
 	return tokens, nil
 }
 
+// MinPrincipalQuery is the shortest query (trimmed, in characters) the principal search answers; shorter ones find nothing.
+const MinPrincipalQuery = 3
+
+// MaxPrincipalResults is the most entries of each kind (groups, users) the principal search returns, whatever limit the caller passes.
+const MaxPrincipalResults = 10
+
 // SearchPrincipals returns what a token field may be filled with: groups matched
 // on token, display name or description, and users matched on their email
 // address ONLY.
 //
-// The asymmetry is deliberate. A group is an organizational label and may be
-// browsed; a person is not, so you have to know (part of) someone's address to
+// The asymmetry is deliberate. A group is an organizational label and is found
+// by any part of its name (from MinPrincipalQuery characters on); a person is not, so you have to know (part of) someone's address to
 // find them — you cannot search the staff by name. Users come from the role
 // provider plus everyone already participating in the tree, which is how members
 // covered only by a pattern rule (students) become findable at all.
@@ -80,6 +86,13 @@ func (s *Service) TokensFor(email string) (common.TokenList, error) {
 // Both halves are best-effort: a directory outage yields the local half rather
 // than an error, so a form still works.
 func (s *Service) SearchPrincipals(query string, limit int) ([]roles.GroupSummary, []string, error) {
+	// A short query finds nothing and the result is small whatever the caller asks for, so neither persons nor groups can be read out by typing one letter after another (decided 25.11.2026 after a report from a student account).
+	if len([]rune(strings.TrimSpace(query))) < MinPrincipalQuery {
+		return nil, nil, nil
+	}
+	if limit <= 0 || limit > MaxPrincipalResults {
+		limit = MaxPrincipalResults
+	}
 	ctx, cancel := s.newCtx()
 	defer cancel()
 
@@ -87,6 +100,9 @@ func (s *Service) SearchPrincipals(query string, limit int) ([]roles.GroupSummar
 	if err != nil {
 		s.log.Warnw("principal search: group search failed", "error", err)
 		groups = nil
+	}
+	if len(groups) > limit {
+		groups = groups[:limit]
 	}
 
 	byEmail := map[string]struct{}{}

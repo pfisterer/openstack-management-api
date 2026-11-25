@@ -122,17 +122,24 @@ func TestPrincipalSearchEndpoint(t *testing.T) {
 		}
 	}
 
-	// ...but never listed wholesale: an empty query returns groups only, so the
-	// directory cannot be browsed by opening the picker.
-	rr := do(t, h, http.MethodGet, "/v1/principals/search", userRoot, nil)
-	assertStatus(t, rr, http.StatusOK)
-	var all webserver.PrincipalSearchResponse
-	mustDecode(t, rr, &all)
-	if len(all.Users) != 0 {
-		t.Errorf("an empty query must not return users, got %v", all.Users)
+	// ...but never listed wholesale: a query shorter than 3 characters finds neither users nor groups, so the directory cannot be read out by opening the picker or typing one letter after another.
+	for _, q := range []string{"", "d", "de", "%20de%20"} {
+		rr := do(t, h, http.MethodGet, "/v1/principals/search?q="+q, userRoot, nil)
+		assertStatus(t, rr, http.StatusOK)
+		var short webserver.PrincipalSearchResponse
+		mustDecode(t, rr, &short)
+		if len(short.Users) != 0 || len(short.Groups) != 0 {
+			t.Errorf("q=%q must find nothing, got %d groups and %d users", q, len(short.Groups), len(short.Users))
+		}
 	}
-	if len(all.Groups) == 0 {
-		t.Error("an empty query should still return groups")
+
+	// At most 10 per kind, also when the caller asks for more: the limit is clamped, not refused.
+	rr := do(t, h, http.MethodGet, "/v1/principals/search?q=example&limit=200", userRoot, nil)
+	assertStatus(t, rr, http.StatusOK)
+	var many webserver.PrincipalSearchResponse
+	mustDecode(t, rr, &many)
+	if len(many.Users) > 10 || len(many.Groups) > 10 {
+		t.Errorf("at most 10 per kind, got %d groups and %d users", len(many.Groups), len(many.Users))
 	}
 }
 

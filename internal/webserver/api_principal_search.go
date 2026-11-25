@@ -18,12 +18,12 @@ type PrincipalSearchResponse struct {
 // searchPrincipals searches for groups and users.
 //
 //	@Summary		Search groups and users
-//	@Description	Returns the principals a token field may be filled with. Groups match on token, label (display name) or description. Users match on their EMAIL ADDRESS ONLY and only once q is non-empty — the directory is deliberately not browsable by person or by name.
+//	@Description	Returns the principals a token field may be filled with. Groups match on token, label (display name) or description. Users match on their EMAIL ADDRESS ONLY. A query shorter than 3 characters (trimmed) returns neither groups nor users, and each kind returns at most 10 entries whatever limit asks for (a larger limit is clamped, not refused) — the directory is deliberately not browsable by person or by name.
 //	@Tags			groups
 //	@Produce		json
 //	@Security		Bearer
 //	@Param			q		query		string	false	"Search query text"
-//	@Param			limit	query		int		false	"Maximum entries per kind"	default(50)
+//	@Param			limit	query		int		false	"Maximum entries per kind, at most 10"	default(10)
 //	@Success		200	{object}	webserver.PrincipalSearchResponse	"Matching groups and users."
 //	@Failure		401	{object}	map[string]any	"Unauthorized."
 //	@Failure		500	{object}	map[string]any	"Internal server error."

@@ -2,9 +2,9 @@ package tree
 
 import (
 	"cmp"
-	"maps"
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 

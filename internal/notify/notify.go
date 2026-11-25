@@ -47,17 +47,17 @@ type Object struct {
 
 // Event is one notification as the service expects it. Key identifies the matter: the same key again updates it, Resolve closes it.
 type Event struct {
-	Source     string         `json:"source"`
-	Type       string         `json:"type"`
-	Key        string         `json:"key"`
-	Class      string         `json:"class"`
-	Resolve    bool           `json:"resolve"`
-	Recipients []Recipient    `json:"recipients"`
+	Source     string      `json:"source"`
+	Type       string      `json:"type"`
+	Key        string      `json:"key"`
+	Class      string      `json:"class"`
+	Resolve    bool        `json:"resolve"`
+	Recipients []Recipient `json:"recipients"`
 	// Actor is the person whose action caused the event (a mail address); empty for what the service does by itself.
-	Actor      string         `json:"actor,omitempty"`
-	Due        string         `json:"due,omitempty"`
-	Object     Object         `json:"object"`
-	Data       map[string]any `json:"data"`
+	Actor  string         `json:"actor,omitempty"`
+	Due    string         `json:"due,omitempty"`
+	Object Object         `json:"object"`
+	Data   map[string]any `json:"data"`
 }
 
 // Notifier is what the tree service sends through.

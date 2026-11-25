@@ -88,3 +88,13 @@ func mustLoad(t *testing.T, store *nodestore.InMemoryStore, id string) model.Nod
 	}
 	return *n
 }
+
+// Split among several allocations a sum near the end of the int range stays positive.
+func TestSplitByShare_Saturates(t *testing.T) {
+	a, b := model.Node{ID: "a", Limit: common.ProjectQuota{"cores": 1}}, model.Node{ID: "b", Limit: common.ProjectQuota{"cores": 1}}
+	f := funded{project: model.Node{Limit: common.ProjectQuota{"cores": 2}}, paying: []model.Node{a, b}}
+	x, y := splitByShare(f, "cores", math.MaxInt, "a"), splitByShare(f, "cores", math.MaxInt, "b")
+	if x <= 0 || y <= 0 {
+		t.Fatalf("parts %d, %d", x, y)
+	}
+}

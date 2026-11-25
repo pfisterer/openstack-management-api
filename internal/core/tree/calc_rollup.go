@@ -137,14 +137,32 @@ func splitByShare(f funded, rid string, total int, id string) int {
 	if n == 0 || total == 0 {
 		return 0
 	}
+	// A single allocation bears all of it, exactly: no float on the way, which near the end of the int range would not convert back (an out-of-range float-to-int conversion is not defined, and amd64 wraps it to the minimum).
+	if n == 1 {
+		if f.paying[0].ID == id {
+			return total
+		}
+		return 0
+	}
 	parts := make([]int, n)
 	fracs := make([]float64, n)
 	sum := 0
 	for i, a := range f.paying {
 		exact := float64(total) * usage.Share(f.project, f.paying, a, rid)
-		parts[i] = int(math.Floor(exact))
-		fracs[i] = exact - float64(parts[i])
-		sum += parts[i]
+		switch {
+		case exact >= math.MaxInt:
+			parts[i] = math.MaxInt
+		case exact <= math.MinInt:
+			parts[i] = math.MinInt
+		default:
+			parts[i] = int(math.Floor(exact))
+		}
+		fracs[i] = exact - math.Floor(exact)
+		if next, ok := addInts(sum, parts[i]); ok {
+			sum = next
+		} else {
+			sum = total
+		}
 	}
 	order := make([]int, n)
 	for i := range order {

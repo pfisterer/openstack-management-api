@@ -571,7 +571,12 @@ func (s *Service) requestProjectChange(ctx context.Context, current *model.Node,
 				live = append(live, a)
 			}
 		}
-		if len(live) > 1 {
+		switch len(live) {
+		case 0:
+		case 1:
+			// The one that carries the end, not one the project goes on without.
+			return s.requestChangeLocked(ctx, &live[0], req, actor, userTokens)
+		default:
 			return s.changeProjectEnd(ctx, current, live, req, actor, userTokens)
 		}
 	}

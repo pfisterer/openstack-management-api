@@ -20,6 +20,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/cloud-self-service-golib/ginweb"
 	"github.com/pfisterer/cloud-self-service-golib/logging"
+	"github.com/pfisterer/cloud-self-service-golib/loop"
 	"github.com/pfisterer/cloud-self-service-golib/oidcauth"
 	"github.com/pfisterer/cloud-self-service-golib/retry"
 	"github.com/pfisterer/cloud-self-service-golib/token"
@@ -389,6 +390,21 @@ func RunApplication() {
 		Flavors:      &estimate.CachedFlavors{Source: flavorSource{reconcilerAPI}, Fallback: estimateCfg.Cloud.FallbackFlavors, TTL: 10 * time.Minute},
 		FlavorGrants: func() map[string]string { return flavorGrants(resourceCatalog) },
 	}
+	// The measured usage profiles of the AI service (its GET /v1/usage-profiles, computed there nightly from LiteLLM's spend logs): fetched at the start and then once a day, retried every hour while none could be fetched; without them, or for a figure not measured enough, the configured profiles apply.
+	if aiaasClient != nil {
+		go loop.Run(context.Background(), loop.Schedule{Interval: time.Hour}, func(ctx context.Context) error {
+			if m := estimateAPI.Estimator.Measured(); m != nil && time.Since(m.FetchedAt) < 23*time.Hour {
+				return nil
+			}
+			rep, err := aiaasClient.UsageProfiles(ctx)
+			if err != nil {
+				return fmt.Errorf("usage profiles of the AI service: %w", err)
+			}
+			estimateAPI.Estimator.SetMeasured(measuredFrom(rep))
+			logger.Infow("Estimator: measured usage profiles", "from", rep.From, "to", rep.To, "aliases", len(rep.Models))
+			return nil
+		}, loop.Options{Name: "estimate_profiles", Log: logger})
+	}
 	llmClient := estimate.ClientConfig{URL: config.Estimate.LLMURL, APIKey: config.Estimate.LLMAPIKey, Model: config.Estimate.LLMModel, TimeoutSeconds: config.Estimate.LLMTimeoutSeconds}
 	if llmClient.Enabled() {
 		estimateAPI.Describer = estimate.NewDescriber(estimateCfg, estimate.NewOpenAIClient(llmClient))
@@ -530,4 +546,25 @@ func flavorGrants(c *catalog.Catalog) map[string]string {
 		}
 	}
 	return out
+}
+
+// measuredFrom is the AI service's report as the estimator reads it.
+func measuredFrom(rep aiaas.UsageProfiles) *estimate.Measured {
+	stat := func(s *aiaas.ProfileStat) *estimate.MeasuredStat {
+		if s == nil {
+			return nil
+		}
+		return &estimate.MeasuredStat{Median: s.Median, P90: s.P90, Samples: s.Samples, Keys: s.Keys}
+	}
+	m := &estimate.Measured{From: rep.From, To: rep.To, ComputedAt: rep.ComputedAt, MinKeys: rep.MinKeys, FetchedAt: time.Now(), Models: map[string]estimate.MeasuredModel{}}
+	for _, p := range rep.Models {
+		m.Models[p.Alias] = estimate.MeasuredModel{
+			Requests: p.Requests, Keys: p.Keys,
+			InputTokensPerRequest: stat(p.InputTokensPerRequest), OutputTokensPerRequest: stat(p.OutputTokensPerRequest),
+			RequestsPerKeyHour: stat(p.RequestsPerKeyHour), TokensPerKeyHour: stat(p.TokensPerKeyHour),
+			PeakTPMPerKey: stat(p.PeakTPMPerKey), ConcurrencyPerKey: stat(p.ConcurrencyPerKey), TokensPerKeyWindow: stat(p.TokensPerKeyWindow),
+			UserAgents: p.UserAgents,
+		}
+	}
+	return m
 }

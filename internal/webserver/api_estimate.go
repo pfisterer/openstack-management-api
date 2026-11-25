@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pfisterer/cloud-self-service-golib/apierr"
@@ -85,6 +86,8 @@ type EstimateOptions struct {
 	KeyWindow        estimate.KeyWindow      `json:"key_window"`
 	WindowDays       float64                 `json:"window_days"`
 	Pricing          estimate.PricingConfig  `json:"pricing"`
+	// Measurement is the measured usage profiles in use; nil = only the configured profiles.
+	Measurement *EstimateMeasurement `json:"measurement,omitempty"`
 }
 
 type EstimateTool struct {
@@ -97,6 +100,17 @@ type EstimateTool struct {
 	PeakTPMPerPerson       estimate.Pair `json:"peak_tpm_per_person"`
 	ConcurrentShare        float64       `json:"concurrent_share"`
 	Source                 string        `json:"source"`
+	// Measured is what the AI service measured of the tool's model alias (figures with too few keys missing); nil when nothing was. Where a figure is there, the estimate uses it instead of the profile's number.
+	Measured *estimate.MeasuredModel `json:"measured,omitempty"`
+}
+
+// EstimateMeasurement says which measurement the estimate uses: the time range of LiteLLM's spend logs, when the AI service computed it, the keys a figure needs, when it was fetched.
+type EstimateMeasurement struct {
+	From       time.Time `json:"from"`
+	To         time.Time `json:"to"`
+	ComputedAt time.Time `json:"computed_at"`
+	FetchedAt  time.Time `json:"fetched_at"`
+	MinKeys    int       `json:"min_keys"`
 }
 
 type EstimateWorkspaceKind struct {
@@ -284,11 +298,21 @@ func (cfg APIConfig) estimateOptions(ctx context.Context, tokens common.TokenLis
 	if out.Flavors == nil {
 		out.Flavors = []estimate.Flavor{}
 	}
+	m := cfg.Estimate.Estimator.Measured()
+	if m != nil {
+		out.Measurement = &EstimateMeasurement{From: m.From, To: m.To, ComputedAt: m.ComputedAt, FetchedAt: m.FetchedAt, MinKeys: m.MinKeys}
+	}
 	for _, id := range ec.ToolIDs() {
 		t := ec.LLM.Tools[id]
-		out.Tools = append(out.Tools, EstimateTool{ID: id, Name: msg.T(t.NameDE, t.NameEN).In(lang), Model: t.Model,
+		tool := EstimateTool{ID: id, Name: msg.T(t.NameDE, t.NameEN).In(lang), Model: t.Model,
 			InputTokensPerRequest: t.InputTokensPerRequest, OutputTokensPerRequest: t.OutputTokensPerRequest,
-			RequestsPerHour: t.RequestsPerHour, PeakTPMPerPerson: t.PeakTPMPerPerson, ConcurrentShare: t.ConcurrentShare, Source: t.Source})
+			RequestsPerHour: t.RequestsPerHour, PeakTPMPerPerson: t.PeakTPMPerPerson, ConcurrentShare: t.ConcurrentShare, Source: t.Source}
+		if m != nil {
+			if mm, ok := m.Models[t.Model]; ok {
+				tool.Measured = &mm
+			}
+		}
+		out.Tools = append(out.Tools, tool)
 	}
 	for _, id := range ec.WorkspaceKindIDs() {
 		out.WorkspaceKinds = append(out.WorkspaceKinds, EstimateWorkspaceKind{ID: id, WorkspaceKind: ec.Workspaces.Kinds[id]})

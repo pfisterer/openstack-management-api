@@ -235,3 +235,24 @@ func TestEstimate_MCPTool(t *testing.T) {
 		t.Fatalf("estimate_options: %s", mcptest.Text(res))
 	}
 }
+
+// The options say which measurement the estimate uses and what was measured of each tool's alias.
+func TestEstimate_OptionsCarryTheMeasurement(t *testing.T) {
+	est := estimate.New(estimate.DefaultConfig(), nil)
+	est.SetMeasured(&estimate.Measured{MinKeys: 5, Models: map[string]estimate.MeasuredModel{"code": {Keys: 12, RequestsPerKeyHour: &estimate.MeasuredStat{Median: 6, P90: 20, Samples: 40, Keys: 12}}}})
+	h := newTestTree(t, mockNodes(), testAccounting).router(func(c *webserver.SetupConfig) {
+		c.API.Estimate = &webserver.EstimateConfig{Estimator: est, Flavors: estimateFlavors}
+	})
+	rr := do(t, h, http.MethodGet, "/v1/estimate/options", "", nil)
+	assertStatus(t, rr, http.StatusOK)
+	var opts webserver.EstimateOptions
+	mustDecode(t, rr, &opts)
+	if opts.Measurement == nil || opts.Measurement.MinKeys != 5 {
+		t.Fatalf("measurement = %+v", opts.Measurement)
+	}
+	for _, tool := range opts.Tools {
+		if (tool.ID == "code") != (tool.Measured != nil) {
+			t.Errorf("tool %s measured = %+v", tool.ID, tool.Measured)
+		}
+	}
+}

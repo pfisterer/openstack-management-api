@@ -435,3 +435,55 @@ func TestGermanDecimals(t *testing.T) {
 		t.Errorf("germanDecimals = %q, want %q", got, want)
 	}
 }
+
+// Measured figures replace the profile's per figure; what is missing stays the profile's, what the input gives wins; the notes say which is which.
+func TestLLMMeasuredProfiles(t *testing.T) {
+	e := New(DefaultConfig(), nil)
+	from := time.Date(2026, 11, 11, 0, 0, 0, 0, time.UTC)
+	e.SetMeasured(&Measured{From: from, To: from.AddDate(0, 0, 14), MinKeys: 5, Models: map[string]MeasuredModel{
+		"code": {
+			InputTokensPerRequest: &MeasuredStat{Median: 15000, P90: 40000, Samples: 300, Keys: 12},
+			RequestsPerKeyHour:    &MeasuredStat{Median: 6, P90: 20, Samples: 40, Keys: 12},
+			PeakTPMPerKey:         &MeasuredStat{Median: 30000, P90: 80000, Samples: 40, Keys: 12},
+		},
+	}})
+	in := Input{Level: LevelHigh, LLM: &LLMInput{Tool: "code", Persons: 20, Schedule: Schedule{SessionsPerWeek: 1, HoursPerSession: 3.5, Weeks: 12, Together: true}}}
+	res, err := e.Estimate(in, env(nil), msg.DE)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := res.LLM
+	// per request the median also at the high level, requests and peak at their P90
+	if l.InputTokensPerRequest != 15000 || l.OutputTokensPerRequest != 200 || l.RequestsPerHour != 20 || l.PeakTPMPerPerson != 80000 {
+		t.Errorf("figures = %+v", l)
+	}
+	want := map[string]string{"input_tokens_per_request": SourceMeasured, "output_tokens_per_request": SourceProfile, "requests_per_hour": SourceMeasured, "peak_tpm_per_person": SourceMeasured}
+	for k, v := range want {
+		if l.Sources[k] != v {
+			t.Errorf("source of %s = %q, want %q", k, l.Sources[k], v)
+		}
+	}
+	if !hasNote(res.Assumptions, "llm_measured") || !hasNote(res.Assumptions, "llm_assumed") {
+		t.Fatalf("notes = %+v", res.Assumptions)
+	}
+	for _, n := range res.Assumptions {
+		if n.Code == "llm_measured" && (!strings.Contains(n.Text, "2026-11-11") || !strings.Contains(n.Text, "300 Werte, 12 Schlüssel")) {
+			t.Errorf("measured note = %q", n.Text)
+		}
+	}
+	// The input wins over the measurement; another alias is not touched.
+	rph := 3.0
+	in.LLM.RequestsPerHour = &rph
+	res, _ = e.Estimate(in, env(nil), msg.EN)
+	if res.LLM.RequestsPerHour != 3 || res.LLM.Sources["requests_per_hour"] != SourceGiven {
+		t.Errorf("given = %+v", res.LLM)
+	}
+	res, _ = e.Estimate(Input{LLM: &LLMInput{Tool: "chat", Persons: 1, Schedule: Schedule{SessionsPerWeek: 1, HoursPerSession: 1, Weeks: 1}}}, env(nil), msg.DE)
+	if res.LLM.Sources["requests_per_hour"] != SourceProfile || hasNote(res.Assumptions, "llm_measured") {
+		t.Errorf("chat is not measured: %+v", res.LLM.Sources)
+	}
+	e.SetMeasured(nil)
+	if e.Measured() != nil {
+		t.Error("cleared")
+	}
+}

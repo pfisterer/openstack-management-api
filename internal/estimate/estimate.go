@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/pfisterer/cloud-self-service-golib/msg"
 	"github.com/pfisterer/openstack-management-api/internal/common"
@@ -64,6 +66,8 @@ type LLMResult struct {
 	PoolMinForKeyWindow  float64 `json:"pool_min_for_key_window"`
 	// MTokens is the proposed pool, whole millions per 30 days.
 	MTokens int `json:"mtokens"`
+	// Sources says where each figure of the person comes from: measured (the AI service's usage profiles), profile (the configured profiles.json) or given (in the input).
+	Sources map[string]string `json:"sources"`
 }
 
 // CloudResult are the sums of the composition.
@@ -109,8 +113,9 @@ type WorkspaceResult struct {
 
 // Estimator computes estimates under one configuration.
 type Estimator struct {
-	cfg    Config
-	pricer Pricer
+	cfg      Config
+	pricer   Pricer
+	measured atomic.Pointer[Measured]
 }
 
 // New builds an estimator; pricer nil prices by the configuration (ConfigPricer).
@@ -239,10 +244,39 @@ func (e *Estimator) llm(r *run, in LLMInput, level Level) *LLMResult {
 	if model == "" {
 		model = t.Model
 	}
-	res := &LLMResult{Tool: in.Tool, Model: model, Level: level,
-		RequestsPerHour:        pick(in.RequestsPerHour, t.RequestsPerHour.At(level)),
-		InputTokensPerRequest:  pick(in.InputTokensPerRequest, t.InputTokensPerRequest),
-		OutputTokensPerRequest: pick(in.OutputTokensPerRequest, t.OutputTokensPerRequest),
+	res := &LLMResult{Tool: in.Tool, Model: model, Level: level, Sources: map[string]string{}}
+	mm, rep, measured := e.measuredFor(model)
+	figures := []struct {
+		f       figure
+		profile float64
+		level   bool
+		out     *float64
+	}{
+		{figure{"input_tokens_per_request", msg.T("Eingabe-Token je Anfrage", "input tokens per request"), mm.InputTokensPerRequest, in.InputTokensPerRequest}, t.InputTokensPerRequest, false, &res.InputTokensPerRequest},
+		{figure{"output_tokens_per_request", msg.T("Ausgabe-Token je Anfrage", "output tokens per request"), mm.OutputTokensPerRequest, in.OutputTokensPerRequest}, t.OutputTokensPerRequest, false, &res.OutputTokensPerRequest},
+		{figure{"requests_per_hour", msg.T("Anfragen je aktiver Schlüsselstunde", "requests per active key-hour"), mm.RequestsPerKeyHour, in.RequestsPerHour}, t.RequestsPerHour.At(level), true, &res.RequestsPerHour},
+		{figure{"peak_tpm_per_person", msg.T("Token in der stärksten Minute eines Schlüssels", "tokens in a key's busiest minute"), mm.PeakTPMPerKey, nil}, t.PeakTPMPerPerson.At(level), true, &res.PeakTPMPerPerson},
+	}
+	var fromMeasurement, fromProfile []msg.Text
+	for _, x := range figures {
+		switch {
+		case x.f.given != nil:
+			*x.out = *x.f.given
+			res.Sources[x.f.name] = SourceGiven
+		case measured && x.f.stat != nil:
+			// Per request the median at both levels: the level is in the requests per hour and the busiest minute, not twice.
+			v := x.f.stat.Median
+			if x.level {
+				v = x.f.stat.At(level)
+			}
+			*x.out = v
+			res.Sources[x.f.name] = SourceMeasured
+			fromMeasurement = append(fromMeasurement, msg.F("%s %.4g (%d Werte, %d Schlüssel)", "%s %.4g (%d values, %d keys)", x.f.label, v, x.f.stat.Samples, x.f.stat.Keys))
+		default:
+			*x.out = x.profile
+			res.Sources[x.f.name] = SourceProfile
+			fromProfile = append(fromProfile, x.f.label)
+		}
 	}
 	perReq := res.InputTokensPerRequest + res.OutputTokensPerRequest
 	res.TokensPerPersonHour = res.RequestsPerHour * perReq
@@ -258,6 +292,13 @@ func (e *Estimator) llm(r *run, in LLMInput, level Level) *LLMResult {
 	r.assume("llm_profile", "Werkzeug %s (Modell %s): %.0f Anfragen je Person und Stunde mit je %.0f Eingabe- und %.0f Ausgabe-Token, also etwa %.0f Token je Personenstunde (Profil vom %s, Stufe %s).",
 		"Tool %s (model %s): %.0f requests per person and hour of %.0f input and %.0f output tokens each, about %.0f tokens per person-hour (profiles of %s, level %s).",
 		in.Tool, model, res.RequestsPerHour, res.InputTokensPerRequest, res.OutputTokensPerRequest, res.TokensPerPersonHour, e.cfg.Version, level)
+	if len(fromMeasurement) > 0 {
+		r.assume("llm_measured", "Gemessen am KI-Dienst für %s vom %s bis %s (LiteLLM, Schlüssel statt Personen, Median bzw. P90 bei „großzügig“): %s.", "Measured at the AI service for %s from %s to %s (LiteLLM, keys instead of people, median or P90 for high): %s.",
+			model, rep.From.Format(time.DateOnly), rep.To.Format(time.DateOnly), joinTexts(fromMeasurement, "; "))
+	}
+	if len(fromProfile) > 0 {
+		r.assume("llm_assumed", "Aus dem Profil vom %s (nicht oder nicht genug gemessen): %s.", "From the profiles of %s (not measured, or not enough): %s.", e.cfg.Version, joinTexts(fromProfile, ", "))
+	}
 	r.assume("llm_time", "%d Personen × %.4g Termine/Woche × %.4g h = %.4g Personenstunden je Woche; in den 30 Tagen mit der meisten Nutzung %.4g Wochen, insgesamt %.4g Wochen.",
 		"%d people × %.4g sessions/week × %.4g h = %.4g person-hours per week; %.4g weeks in the busiest 30 days, %.4g weeks in all.",
 		in.Persons, in.SessionsPerWeek, in.HoursPerSession, res.PersonHoursPerWeek, ww, in.Weeks)
@@ -274,7 +315,7 @@ func (e *Estimator) llm(r *run, in LLMInput, level Level) *LLMResult {
 		r.assume("llm_concurrency", "Nicht alle arbeiten gleichzeitig: %.0f %% der Personen in derselben Minute aktiv, also %d.", "Not everybody works at the same time: %.0f %% of the people active in the same minute, i.e. %d.", t.ConcurrentShare*100, res.ConcurrentPersons)
 	}
 	// A burst of two requests in a minute is the least a person at work sends; the profile's peak covers the tools that send more.
-	res.PeakTPMPerPerson = math.Max(t.PeakTPMPerPerson.At(level), res.RequestsPerHour/60*perReq*2)
+	res.PeakTPMPerPerson = math.Max(res.PeakTPMPerPerson, res.RequestsPerHour/60*perReq*2)
 	res.ProjectTPM = roundUpTo(float64(res.ConcurrentPersons)*res.PeakTPMPerPerson*e.cfg.LLM.RateHeadroom, e.cfg.LLM.TPMRoundTo)
 	rpmPerPerson := math.Max(e.cfg.LLM.RPMPerPersonPeak.At(level), res.RequestsPerHour/60*2)
 	res.ProjectRPM = ceilInt(float64(res.ConcurrentPersons) * rpmPerPerson * e.cfg.LLM.RateHeadroom)
@@ -325,13 +366,6 @@ func (e *Estimator) modelAvailability(r *run, model string) string {
 		}
 	}
 	return ""
-}
-
-func pick(v *float64, def float64) float64 {
-	if v != nil {
-		return *v
-	}
-	return def
 }
 
 func (e *Estimator) cloud(r *run, in CloudInput) (*CloudResult, error) {

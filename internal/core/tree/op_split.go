@@ -2,6 +2,7 @@ package tree
 
 import (
 	"cmp"
+	"maps"
 	"context"
 	"fmt"
 	"slices"
@@ -42,8 +43,9 @@ type SplitPlan struct {
 
 // candidate is a budget considered for a split, with what decides about it.
 type candidate struct {
-	budget model.Node
-	chain  []model.Node // from the budget upward
+	budget  model.Node
+	chain   []model.Node // from the budget upward
+	manager bool         // the caller manages it: whatever is placed there is granted at once
 }
 
 // PlanSplit proposes how a project of req.Limit would be paid for by the caller's budgets (planSplit).
@@ -99,7 +101,7 @@ func (s *Service) candidates(ctx context.Context, ids []string, userTokens commo
 			}
 			continue
 		}
-		out = append(out, candidate{budget: b, chain: chain})
+		out = append(out, candidate{budget: b, chain: chain, manager: managesInChain(caller, chain)})
 	}
 	slices.SortStableFunc(out, func(a, b candidate) int {
 		return cmp.Or(cmp.Compare(len(b.chain), len(a.chain)), cmp.Compare(a.budget.Name, b.budget.Name), cmp.Compare(a.budget.ID, b.budget.ID))
@@ -176,10 +178,18 @@ func (s *Service) planSplit(ctx context.Context, want common.ProjectQuota, end *
 			break
 		}
 	}
+	managed := map[string]bool{}
+	for _, c := range cands {
+		managed[c.budget.ID] = c.manager
+	}
 	for _, id := range order {
 		p := parts[id]
-		maps := []common.ProjectQuota{p.Limit, p.AutoApproved}
-		for _, m := range maps {
+		// A manager's own budget grants all of it on creation (placeAllocation).
+		if managed[id] {
+			p.AutoApproved = maps.Clone(p.Limit)
+		}
+		quotas := []common.ProjectQuota{p.Limit, p.AutoApproved}
+		for _, m := range quotas {
 			for k, v := range m {
 				if v == 0 {
 					delete(m, k)

@@ -25,7 +25,7 @@ func actorOf(a model.Actor) string {
 	return systemActor
 }
 
-// recipientsOf turns token lists into recipients, each once: user:x a person, group:y a group.
+// recipientsOf turns token lists into recipients, each once: user:x a person ({"user": x}), group:y a group as its userset ({"group": "group:y"}).
 func recipientsOf(lists ...common.TokenList) []notify.Recipient {
 	seen := map[string]bool{}
 	out := []notify.Recipient{}
@@ -40,8 +40,9 @@ func recipientsOf(lists ...common.TokenList) []notify.Recipient {
 				seen[key] = true
 				out = append(out, notify.Recipient{User: strings.TrimPrefix(t, "user:")})
 			case strings.HasPrefix(t, "group:"):
+				// The userset as the role provider names it: group:<id> or group:<id>#<relation>.
 				seen[key] = true
-				out = append(out, notify.Recipient{Group: strings.TrimPrefix(t, "group:")})
+				out = append(out, notify.Recipient{Group: t})
 			}
 		}
 	}

@@ -117,6 +117,9 @@ func (s *Service) SweepExpiry(ctx context.Context) (ExpiryResult, error) {
 				res.Dated++
 				s.sendExpired(ctx, dated, actor)
 			}
+		case a.Expired != nil && a.Expired.Due != nil && s.notifier.Enabled() && !endPassed(a.Expired.Due, today.AddDays(1)):
+			// Sent again on every sweep until it is cut or lifted: the notification service drops a key it has seen, and an event lost on the way is not lost for good.
+			s.sendExpired(ctx, a, actor)
 		case a.Expired != nil && a.Expired.Due != nil && s.notifier.Enabled() && endPassed(a.Expired.Due, today.AddDays(1)):
 			reason := "Nach Ablauf der Frist gekürzt"
 			if a.Expired.Cause == model.ExpiryBudgetDeleted {

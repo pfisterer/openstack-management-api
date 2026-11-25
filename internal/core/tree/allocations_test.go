@@ -572,7 +572,7 @@ func TestNotify_ApprovalWaitingAndDecided(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := rec.ofType(notify.TypeApprovalWaiting)
-	if len(w) != 1 || w[0].Resolve || len(w[0].Recipients) != 1 || w[0].Recipients[0].Group != "course" || w[0].Actor != "stud@x" {
+	if len(w) != 1 || w[0].Resolve || len(w[0].Recipients) != 1 || w[0].Recipients[0].Group != "group:course" || w[0].Actor != "stud@x" {
 		t.Fatalf("approval.waiting = %+v", w)
 	}
 	a := f.allocations(t, p.ID)[f.course.ID]

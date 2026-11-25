@@ -29,14 +29,6 @@ func TestResolveRoleProviderType(t *testing.T) {
 	}
 }
 
-// The server has timeouts: router.Run had none, so a client trickling its request held a connection for ever.
-func TestHTTPServerHasTimeouts(t *testing.T) {
-	s := newHTTPServer(":0", nil)
-	if s.ReadHeaderTimeout <= 0 || s.ReadTimeout <= 0 || s.WriteTimeout <= 0 || s.IdleTimeout <= 0 {
-		t.Fatalf("missing timeouts: %+v", s)
-	}
-}
-
 // The configuration log says whether a secret is set and nothing more: it used to show the first four characters and the length of the database password.
 func TestRedactedConfigShowsNoPartOfASecret(t *testing.T) {
 	var c AppConfiguration

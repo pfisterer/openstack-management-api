@@ -1,0 +1,100 @@
+{
+  "version": "2026-11-25",
+  "source": "LiteLLM gateway metrics of the KI cluster (aiaas-prod) in the self-service Prometheus on prod, 2026-11-11 to 2026-11-25 (retention starts 2026-11-11): litellm_input_tokens_metric_total, litellm_output_tokens_metric_total, litellm_proxy_total_requests_metric_total, litellm_in_flight_requests by team_alias and requested_model. The metrics carry no key, user or user agent, so per-person numbers are team numbers divided by the people known to be there; the tool is told from the model alias (code, agent, chat-*). Workspace sizes from aiaas-deployment ansible/templates/jupyterhub-values.yaml.j2 (requests, which is what the AI service books as vCPU and RAM hours). Prices from the token price fix of 25.11.2026 (aiaas-management-api LLM_DOLLARS_PER_MTOKENS 0.5, LiteLLM code/agent 5e-7 input, 1.5e-6 output).",
+  "llm": {
+    "tools": {
+      "code": {
+        "name_de": "Code-Assistent (Positron, VS Code, Continue)",
+        "name_en": "Coding assistant (Positron, VS Code, Continue)",
+        "model": "code",
+        "input_tokens_per_request": 13000,
+        "output_tokens_per_request": 200,
+        "requests_per_hour": {"typical": 10, "high": 25},
+        "peak_tpm_per_person": {"typical": 25000, "high": 50000},
+        "concurrent_share": 0.3,
+        "source": "measured: course Datenanalyse mit R (team ma-t-inf-23iki1-datenanalyse-r, about 20 students with Positron, alias code), 308 successful requests with 3.93 M input and 58 k output tokens = 12.8 k input and 190 output per request; sessions 16.11. and 23.11.2026: 3.63 M and 2.04 M input tokens in the 4 hours, i.e. 182 k and 102 k per enrolled person and 4-hour window (52 k and 29 k per enrolled person-hour), peak 485 k tokens per minute over 2 minutes = 24 k per enrolled person; 86 requests (about 20 %) refused with 429, so the course was throttled and these are lower bounds. typical 10 requests/h ≈ 130 k tokens per person-hour is the course leader's figure (mail 25.11.2026); high 25 requests/h and 50 k TPM are assumptions (factor 2.5 and 2), not measured. concurrent_share (people active in the same minute when they do not work at the same time) is an assumption."
+      },
+      "agent": {
+        "name_de": "Agent-Modus (Code-Assistent arbeitet selbständig)",
+        "name_en": "Agent mode (assistant works on its own)",
+        "model": "agent",
+        "input_tokens_per_request": 25000,
+        "output_tokens_per_request": 300,
+        "requests_per_hour": {"typical": 15, "high": 40},
+        "peak_tpm_per_person": {"typical": 60000, "high": 120000},
+        "concurrent_share": 0.3,
+        "source": "partly measured: alias agent, 19 k input per request in the R course (130 requests), 36 k in a single-person test project (25 requests, 610 k tokens in its busiest hour), 300 output per request; requests per hour and peak TPM are assumptions from the TODO concept (100 k+ per minute of work), not measured per person."
+      },
+      "chat": {
+        "name_de": "Chat im Browser (LibreChat)",
+        "name_en": "Chat in the browser (LibreChat)",
+        "model": "chat-default",
+        "input_tokens_per_request": 4000,
+        "output_tokens_per_request": 800,
+        "requests_per_hour": {"typical": 10, "high": 20},
+        "peak_tpm_per_person": {"typical": 10000, "high": 20000},
+        "concurrent_share": 0.2,
+        "source": "mostly assumed: the TODO concept (a few thousand tokens per request, 10 to 20 per hour); the only data, a single-person project on chat-default, had 6 requests with 4.3 k input and 1 k output each. LibreChat's own traffic is not in the metrics by team."
+      },
+      "script": {
+        "name_de": "Eigene Skripte oder Anwendungen",
+        "name_en": "Own scripts or applications",
+        "model": "chat-default",
+        "input_tokens_per_request": 1000,
+        "output_tokens_per_request": 300,
+        "requests_per_hour": {"typical": 60, "high": 120},
+        "peak_tpm_per_person": {"typical": 5000, "high": 20000},
+        "concurrent_share": 1.0,
+        "source": "placeholder: a script's numbers belong to the script; give requests per hour and tokens per request in the request. For comparison, a student app (team StuddyBuddy, alias agent) used 2.6 k input and 340 output per request, at most 170 k tokens in an hour."
+      }
+    },
+    "token_headroom": 1.2,
+    "rate_headroom": 1.25,
+    "tpm_round_to": 10000,
+    "rpm_per_person_peak": {"typical": 4, "high": 8},
+    "key_window": {
+      "hours": 4,
+      "share": 0.05,
+      "source": "aiaas-management-api LLM_KEY_BUDGET_WINDOW (4h) and LLM_KEY_BUDGET_SHARE (0.05): every key may spend that share of its project's 30-day pool per window"
+    },
+    "pricing": {
+      "reference_per_token": 5e-7,
+      "models": {
+        "default": {"input_per_token": 5e-7, "output_per_token": 1.5e-6},
+        "chat-large": {"input_per_token": 1.5e-6, "output_per_token": 4.5e-6}
+      },
+      "source": "the AI service turns llm-mtokens into a LiteLLM money budget at LLM_DOLLARS_PER_MTOKENS = 0.5 per million (reference price 5e-7 per token); LiteLLM bills code and agent 5e-7 per input and 1.5e-6 per output token; chat-large three times chat-default (catalogue text). To be replaced by the documented reference price of the token price fix."
+    }
+  },
+  "workspaces": {
+    "kinds": {
+      "cpu": {"name_de": "CPU", "name_en": "CPU", "profile": "cpu", "vcpu": 0.5, "ram_gb": 2, "gpus": 0, "gpu_time_share": 0},
+      "cpu-gpukernel": {"name_de": "CPU + GPU-Kernel", "name_en": "CPU + GPU kernel", "profile": "cpu-gpukernel", "vcpu": 0.5, "ram_gb": 2, "gpus": 1, "gpu_time_share": 0.3},
+      "gpu": {"name_de": "GPU", "name_en": "GPU", "profile": "gpu", "vcpu": 1, "ram_gb": 2, "gpus": 1, "gpu_time_share": 1}
+    },
+    "concurrent_share": 0.3,
+    "headroom": 1.2,
+    "source": "requests of the JupyterHub profiles (cpu 0.5 cores / 2 GB guaranteed, limit 4 / 8 GB; gpu 1 core / 2 GB and one GPU); the AI service books requested cores and GB × hours. gpu_time_share of CPU + GPU kernel (the GPU is held only while a GPU kernel lives) and concurrent_share are assumptions."
+  },
+  "cloud": {
+    "headroom": 1.0,
+    "fallback_flavors": [],
+    "source": "flavours come from OpenStack (public ones for everybody, private ones as granted availabilities of the budget); fallback_flavors only when OpenStack is not connected"
+  },
+  "resources": {
+    "llm_mtokens": "llm-mtokens",
+    "llm_tpm": "llm-tpm",
+    "llm_rpm": "llm-rpm",
+    "llm_model_prefix": "llm-model-",
+    "ws_vcpu_hours": "ws-vcpu-hours",
+    "ws_ram_gb_hours": "ws-ram-gb-hours",
+    "ws_storage_gb": "ws-storage-gb",
+    "ws_gpu_hours_prefix": "ws-gpu-hours-",
+    "ws_gpus_prefix": "ws-gpus-",
+    "ws_profile_prefix": "ws-profile-",
+    "cores": "cores",
+    "ram_gb": "ram",
+    "storage_gb": "storage",
+    "window_days": 30
+  }
+}

@@ -73,6 +73,14 @@ func (s *Supervisor) GrantedProjects(g osclient.Grant) ([]string, error) {
 	return nil, catalog.ErrUnavailable
 }
 
+// Flavors lists OpenStack's flavours (the resource estimator asks, through a cache); until connected there is nobody to ask.
+func (s *Supervisor) Flavors() ([]osclient.FlavorInfo, error) {
+	if rec := s.inner.Load(); rec != nil {
+		return rec.Flavors()
+	}
+	return nil, catalog.ErrUnavailable
+}
+
 // backoff bounds for the connection retry. The floor is short because the usual
 // case is a cloud that is briefly away; the ceiling keeps a long outage from
 // hammering it, and the jitter (±10%) keeps several pods from retrying in lockstep.

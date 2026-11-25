@@ -193,3 +193,8 @@ func projectGrantUse(defs []osclient.ManagedResource, use osclient.GrantUse, osP
 	}
 	return out
 }
+
+// Flavors lists OpenStack's flavours for the resource estimator.
+func (r *Reconciler) Flavors() ([]osclient.FlavorInfo, error) {
+	return r.osClient.ListFlavors()
+}
